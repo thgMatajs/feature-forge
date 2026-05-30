@@ -1,0 +1,726 @@
+"""`forge verify` — read-only validator cascade.
+
+Resolves the verification scope (task / feature / inferred), discovers the
+registered validators for that scope from `workflow-config.yaml` (re-resolved
+against the snapshotted cards), and runs them sequentially with the cascade
+policy documented in `docs/design/07-discipline.md §2`:
+
+- `fail-fast: true` (default) — stop at the first hard fail.
+- `fail-fast: false`           — collect every error before returning.
+
+Cinematic output per `docs/ux/forge-verify-roteiro.md`:
+
+    ├ validator-name                         ✓ 124ms
+    ├ validator-name                         🛑 1.4s  FAIL
+    └ validator-name                         — não rodado (cascade parou)
+
+v1 realism: validators are shipped by individual cards in Phase 5+ — until
+then, the registry can be empty. In that case `verify` reports "Nenhum
+validator pra este scope" and exits 0. Once cards land their validator
+scripts, this module dispatches each one as a subprocess (`python3 <path>`)
+and parses the structured JSON tail of stdout to extract the three-paths
+block on hard fail.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
+
+from engine.memory.l1 import (
+    L1State,
+    list_active_features,
+    read_l1_status,
+    write_l1_status,
+)
+from engine.persona import mentor_calmo
+from engine.ui import question, renderer
+from engine.ui.question import PromptAbortedError
+from engine.utils.paths import (
+    ProjectRootNotFoundError,
+    cards_dir,
+    ensure_dir,
+    find_project_root,
+    memory_dir,
+    workflow_config_path,
+)
+from engine.utils.yaml_io import read_yaml_or_default
+
+_DEFAULT_RUNS_ON = "verify-task"
+
+
+@dataclass
+class _ValidatorSpec:
+    """One validator pulled from the resolved cards.
+
+    `script_path` is absolute. `severity` defaults to `warn` to keep the
+    cascade conservative when a card forgets to declare it.
+    """
+
+    name: str
+    script_path: Path
+    severity: str = "warn"
+    card_name: str = ""
+    runs_on: list[str] = field(default_factory=list)
+
+
+@dataclass
+class _ValidatorResult:
+    name: str
+    status: str  # "pass" | "warn" | "fail" | "skipped" | "degraded"
+    duration_ms: int = 0
+    message: str = ""
+    paths: list[dict[str, str]] = field(default_factory=list)
+    what_failed: str = ""
+    where: str = ""
+    why: list[str] = field(default_factory=list)
+
+
+# ── Public API ───────────────────────────────────────────────────────────────
+
+
+def run(argv: list[str]) -> int:
+    """Entry point. `argv`: ``task TASK-NNNN`` | ``feature {slug}`` | empty.
+
+    Return codes: 0 OK / warn-only; 1 hard fail; 130 user paused (raised by
+    cli.main on KeyboardInterrupt / `para`).
+    """
+    try:
+        project_root = find_project_root()
+    except ProjectRootNotFoundError as exc:
+        renderer.write(renderer.colored(str(exc), "red"))
+        return 1
+
+    try:
+        scope_kind, scope_target = _resolve_scope(argv, project_root)
+    except PromptAbortedError:
+        return 130
+
+    # Pesca opcional `--feature-slug X` que hooks às vezes anexam pra
+    # desambiguar scope task em projetos com múltiplas features ativas.
+    feature_hint = _extract_feature_slug_hint(argv)
+
+    return run_scope(
+        scope_kind,
+        scope_target,
+        project_root,
+        interactive=True,
+        feature_slug_hint=feature_hint,
+    )
+
+
+def _extract_feature_slug_hint(argv: list[str]) -> Optional[str]:
+    """Lê `--feature-slug X` (ou `--feature-slug=X`) de argv, sem mutar."""
+    if not argv:
+        return None
+    for i, token in enumerate(argv):
+        if token == "--feature-slug" and i + 1 < len(argv):
+            return argv[i + 1].strip() or None
+        if token.startswith("--feature-slug="):
+            value = token.split("=", 1)[1].strip()
+            return value or None
+    return None
+
+
+def run_scope(
+    scope_type: str,
+    scope_id: str | None,
+    project_root: Path,
+    *,
+    interactive: bool = False,
+    feature_slug_hint: Optional[str] = None,
+) -> int:
+    """Public API for hook-driven verify invocations.
+
+    Non-interactive (``interactive=False``) suppresses prompts and the
+    three-paths block — returns only an exit code so hooks can branch
+    silently. Hooks call this from `engine.ingest`.
+
+    Behavior shared with `run()`:
+    - Updates L1 status (task/feature scope) to ``verifying`` while running,
+      restoring the previous status on pass; on fail leaves the previous
+      status untouched but appends ``verify-failed`` to ``raw.notes``.
+    - Appends one record per invocation to
+      ``.claude/memory/L1/{feature_slug}/verify-log.jsonl`` (schema
+      MEM-L1-VL-001..005).
+    """
+    if scope_type not in ("task", "feature"):
+        scope_type = "feature"
+    scope_target = scope_id or ""
+
+    config = read_yaml_or_default(workflow_config_path(project_root), {}) or {}
+
+    if interactive:
+        renderer.write("")
+        renderer.write(
+            renderer.bold(
+                f"forge verify — {scope_type}: {scope_target or '(empty)'}"
+            )
+        )
+        renderer.write(renderer.dim("Read-only. Nada de mudar código."))
+        renderer.write("")
+
+    # L1 status: park feature as `verifying` so concurrent commands see the
+    # lock. We always record the previous status to restore on success.
+    feature_slug = _scope_to_feature_slug(
+        scope_type,
+        scope_target,
+        project_root,
+        interactive=interactive,
+        argv_hint=feature_slug_hint,
+    )
+    previous_state: Optional[L1State] = None
+    if feature_slug:
+        previous_state = read_l1_status(feature_slug, project_root)
+        if previous_state is not None and previous_state.status != "verifying":
+            transient = L1State(
+                feature_slug=previous_state.feature_slug,
+                status="verifying",
+                last_action_at=_utc_now_iso(),
+                last_action_kind="verify-started",
+                phase_lock=previous_state.phase_lock,
+                raw=dict(previous_state.raw or {}),
+            )
+            try:
+                write_l1_status(transient, project_root)
+            except Exception:  # pragma: no cover - defensive
+                previous_state = None  # don't try to restore an inconsistent state
+
+    validators = _discover_validators(project_root, config, scope_type)
+    if not validators:
+        if interactive:
+            renderer.write(renderer.dim("Nenhum validator pra este scope."))
+            renderer.write(
+                "Cards reais publicam seus validators em Phase 5+. "
+                "Sem nada registrado, verify só confirma estado."
+            )
+        _write_verify_log_entry(
+            project_root,
+            feature_slug=feature_slug,
+            scope_type=scope_type,
+            scope_id=scope_target,
+            validators=[],
+            result="pass",
+            hard_fails=[],
+            warnings_list=[],
+        )
+        _restore_l1_status(project_root, previous_state, failed=False, note="")
+        return 0
+
+    fail_fast = _resolve_fail_fast(config)
+    results = _run_cascade(
+        validators,
+        fail_fast=fail_fast,
+        project_root=project_root,
+        interactive=interactive,
+    )
+    if interactive:
+        _render_summary(results)
+
+    hard_fail = next((r for r in results if r.status == "fail"), None)
+    warnings_list = [r.name for r in results if r.status == "warn"]
+    hard_fails = [r.name for r in results if r.status == "fail"]
+    overall = "fail" if hard_fail else ("warn" if warnings_list else "pass")
+
+    _write_verify_log_entry(
+        project_root,
+        feature_slug=feature_slug,
+        scope_type=scope_type,
+        scope_id=scope_target,
+        validators=[v.name for v in validators],
+        result=overall,
+        hard_fails=hard_fails,
+        warnings_list=warnings_list,
+    )
+
+    if hard_fail is not None:
+        if interactive:
+            _render_hard_fail_block(hard_fail)
+        _restore_l1_status(
+            project_root,
+            previous_state,
+            failed=True,
+            note=f"verify-failed: {hard_fail.name}",
+        )
+        return 1
+
+    _restore_l1_status(project_root, previous_state, failed=False, note="")
+    return 0
+
+
+# ── L1 + verify-log plumbing ────────────────────────────────────────────────
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _scope_to_feature_slug(
+    scope_type: str,
+    scope_target: str,
+    project_root: Path,
+    *,
+    interactive: bool = True,
+    argv_hint: Optional[str] = None,
+) -> str:
+    """Resolve the feature slug owning a verify scope.
+
+    For ``feature`` scope the target *is* the slug. For ``task`` scope o
+    mapping task→feature ainda não é canônico; usamos fallbacks em ordem:
+
+    1. ``argv_hint`` quando passado (chamada via hook com ``--feature-slug``).
+    2. ``status='implementing'`` único — caso comum.
+    3. Conjunto de features ativas (planning/implementing/verifying):
+       - 1 ativa → retorna ela.
+       - múltiplas + ``interactive=True`` → pergunta via ``question.ask``.
+       - múltiplas + ``interactive=False`` → emite warn e retorna a 1ª em
+         ordem alfabética (determinístico, não-bloqueante).
+       - 0 ativas → string vazia.
+    """
+    if scope_type == "feature":
+        return scope_target or ""
+
+    if argv_hint:
+        return argv_hint
+
+    active_states = {"planning", "implementing", "verifying"}
+    active = [
+        slug for slug in list_active_features(project_root)
+        if (read_l1_status(slug, project_root) or L1State("", "", "", "")).status
+        in active_states
+    ]
+    if not active:
+        return ""
+    if len(active) == 1:
+        return active[0]
+
+    # Múltiplas features ativas — preferir a única em 'implementing'.
+    implementing = [
+        slug for slug in active
+        if (read_l1_status(slug, project_root) or L1State("", "", "", "")).status
+        == "implementing"
+    ]
+    if len(implementing) == 1:
+        return implementing[0]
+
+    if interactive:
+        try:
+            options = {slug: f"feature ativa ({slug})" for slug in active}
+            return question.ask(
+                "Múltiplas features ativas — qual escopo da verificação?",
+                options,
+                default=active[0],
+            )
+        except PromptAbortedError:
+            return active[0]
+
+    # Não-interativo (chamada via hook sem hint): determinístico + warn.
+    first = sorted(active)[0]
+    renderer.write(
+        renderer.colored(
+            f"⚠ verify: {len(active)} features ativas — usando '{first}' "
+            "(passe --feature-slug pra desambiguar)",
+            "yellow",
+        )
+    )
+    return first
+
+
+def _restore_l1_status(
+    project_root: Path,
+    previous_state: Optional[L1State],
+    *,
+    failed: bool,
+    note: str,
+) -> None:
+    if previous_state is None:
+        return
+    try:
+        if failed:
+            raw = dict(previous_state.raw or {})
+            existing_notes = str(raw.get("notes") or "")
+            raw["notes"] = (existing_notes + ("\n" if existing_notes else "") + note).strip()
+            failing = L1State(
+                feature_slug=previous_state.feature_slug,
+                status=previous_state.status,
+                last_action_at=_utc_now_iso(),
+                last_action_kind="verify-failed",
+                phase_lock=previous_state.phase_lock,
+                raw=raw,
+            )
+            write_l1_status(failing, project_root)
+            return
+        restored = L1State(
+            feature_slug=previous_state.feature_slug,
+            status=previous_state.status,
+            last_action_at=_utc_now_iso(),
+            last_action_kind="verify-passed",
+            phase_lock=previous_state.phase_lock,
+            raw=dict(previous_state.raw or {}),
+        )
+        write_l1_status(restored, project_root)
+    except Exception:  # pragma: no cover - defensive
+        pass
+
+
+def _write_verify_log_entry(
+    project_root: Path,
+    *,
+    feature_slug: str,
+    scope_type: str,
+    scope_id: str,
+    validators: list[str],
+    result: str,
+    hard_fails: list[str],
+    warnings_list: list[str],
+) -> None:
+    """Append one line to ``.claude/memory/L1/{slug}/verify-log.jsonl``.
+
+    Silently no-ops when there is no resolvable feature slug — the log is
+    per-feature by design (schema MEM-L1-VL-001..005).
+    """
+    if not feature_slug:
+        return
+    ts = _utc_now_iso()
+    compact = ts.replace(":", "").replace("-", "").replace(".", "")
+    entry = {
+        "schema-version": 1,
+        "verify-id": f"verify-{compact}",
+        "at": ts,
+        "scope": {"type": scope_type, "id": scope_id},
+        "validators-run": list(validators),
+        "result": result,
+        "hard-fails": list(hard_fails),
+        "warnings": list(warnings_list),
+    }
+    log_path = memory_dir(project_root) / "L1" / feature_slug / "verify-log.jsonl"
+    try:
+        ensure_dir(log_path.parent)
+        line = json.dumps(entry, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+    except OSError:
+        pass
+
+
+# ── Scope resolution ─────────────────────────────────────────────────────────
+
+
+def _resolve_scope(argv: list[str], project_root: Path) -> tuple[str, str]:
+    """Return ``(scope_kind, target)``.
+
+    ``scope_kind`` ∈ {task, feature}. ``target`` is the task id or feature
+    slug. Asks the user when ambiguous (more than one active feature).
+    """
+    if argv:
+        first = argv[0]
+        if first.upper().startswith("TASK-"):
+            return "task", first.upper()
+        if first == ".":
+            return "feature", _infer_active_feature(project_root, allow_prompt=True)
+        if len(argv) >= 2 and argv[0] == "task":
+            return "task", argv[1].upper()
+        if len(argv) >= 2 and argv[0] == "feature":
+            return "feature", argv[1]
+        return "feature", first
+
+    inferred = _infer_active_feature(project_root, allow_prompt=True)
+    return "feature", inferred
+
+
+def _infer_active_feature(project_root: Path, *, allow_prompt: bool) -> str:
+    """Choose the single in-progress feature, asking when there is more than one."""
+    active = list_active_features(project_root)
+    candidates: list[str] = []
+    for slug in active:
+        state = read_l1_status(slug, project_root)
+        if state is None:
+            continue
+        if state.status in {"implementing", "verifying", "planning"}:
+            candidates.append(slug)
+    if not candidates and active:
+        candidates = active
+
+    if not candidates:
+        return ""
+    if len(candidates) == 1:
+        return candidates[0]
+    if not allow_prompt:
+        return candidates[0]
+    options = {slug: f"feature {slug}" for slug in candidates}
+    return question.ask("Mais de um feature ativo. Qual?", options)
+
+
+# ── Validator discovery ──────────────────────────────────────────────────────
+
+
+def _discover_validators(
+    project_root: Path,
+    config: dict,
+    scope_kind: str,
+) -> list[_ValidatorSpec]:
+    """Read validator declarations from each active card's snapshot.
+
+    Filters by `runs-on` so only validators that match the current scope are
+    returned. `task` → ``verify-task``; `feature` → ``verify-task`` plus
+    ``forge-doctor`` (intentionally permissive so feature-scope sees more).
+    """
+    relevant = {"verify-task"}
+    if scope_kind == "feature":
+        relevant.add("forge-doctor")
+
+    cards_root = cards_dir(project_root)
+    out: list[_ValidatorSpec] = []
+    for card in (config.get("cards") or {}).get("active") or []:
+        if not isinstance(card, dict):
+            continue
+        card_name = str(card.get("name") or "")
+        if not card_name:
+            continue
+        card_yaml = cards_root / card_name / "card.yaml"
+        if not card_yaml.is_file():
+            continue
+        card_data = read_yaml_or_default(card_yaml, {}) or {}
+        contribs = (card_data.get("contributes") or {}).get("validators") or []
+        for entry in contribs:
+            if not isinstance(entry, dict):
+                continue
+            runs_on = list(entry.get("runs-on") or [])
+            if runs_on and not (set(runs_on) & relevant):
+                continue
+            script_rel = entry.get("file")
+            if not isinstance(script_rel, str) or not script_rel:
+                continue
+            script_path = (cards_root / card_name / script_rel).resolve()
+            out.append(
+                _ValidatorSpec(
+                    name=str(entry.get("name") or script_rel),
+                    script_path=script_path,
+                    severity=str(entry.get("severity") or "warn"),
+                    card_name=card_name,
+                    runs_on=runs_on or [_DEFAULT_RUNS_ON],
+                )
+            )
+    out.sort(key=lambda v: (v.card_name, v.name))
+    return out
+
+
+def _resolve_fail_fast(config: dict) -> bool:
+    block = config.get("validators")
+    if not isinstance(block, dict):
+        return True
+    raw = block.get("fail-fast")
+    if raw is None:
+        return True
+    return bool(raw)
+
+
+# ── Cascade ──────────────────────────────────────────────────────────────────
+
+
+def _run_cascade(
+    validators: list[_ValidatorSpec],
+    *,
+    fail_fast: bool,
+    project_root: Path,
+    interactive: bool = True,
+) -> list[_ValidatorResult]:
+    """Dispatch each validator and collect results.
+
+    Stops on the first ``fail`` when ``fail_fast`` is true; otherwise drains
+    the whole list, marking nothing as ``skipped``. When ``interactive`` is
+    False the cinematic per-line output is suppressed (hook callers don't
+    want it on stderr).
+    """
+    results: list[_ValidatorResult] = []
+    halted = False
+    for spec in validators:
+        if halted:
+            results.append(_ValidatorResult(name=spec.name, status="skipped"))
+            if interactive:
+                _render_line(results[-1])
+            continue
+        result = _invoke_validator(spec, project_root)
+        results.append(result)
+        if interactive:
+            _render_line(result)
+        if result.status == "fail" and fail_fast:
+            halted = True
+    return results
+
+
+def _invoke_validator(spec: _ValidatorSpec, project_root: Path) -> _ValidatorResult:
+    """Run a single validator as a subprocess.
+
+    Convention: validators print human output to stderr/stdout freely and
+    emit one final JSON line with ``{"status": ..., "message": ..., ...}`` on
+    stdout when they want structured output. Missing JSON → degrade to the
+    exit-code contract (0 pass, 1 warn, 2 fail).
+    """
+    if not spec.script_path.is_file():
+        return _ValidatorResult(
+            name=spec.name,
+            status="degraded",
+            message=f"script not found: {spec.script_path}",
+        )
+
+    started = time.monotonic()
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(spec.script_path), "--project-root", str(project_root)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        return _ValidatorResult(
+            name=spec.name,
+            status="degraded",
+            duration_ms=60_000,
+            message="timeout (>60s)",
+        )
+    except OSError as exc:
+        return _ValidatorResult(
+            name=spec.name,
+            status="degraded",
+            message=f"OS error: {exc}",
+        )
+
+    duration_ms = int((time.monotonic() - started) * 1000)
+    payload = _extract_json_tail(proc.stdout)
+    if payload is None:
+        status = (
+            "pass"
+            if proc.returncode == 0
+            else "warn"
+            if proc.returncode == 1
+            else "fail"
+        )
+        return _ValidatorResult(
+            name=spec.name,
+            status=status,
+            duration_ms=duration_ms,
+            message=(proc.stderr or proc.stdout).strip()[:200],
+        )
+
+    status = str(payload.get("status") or "pass").lower()
+    if status == "error":
+        status = "fail"
+    return _ValidatorResult(
+        name=spec.name,
+        status=status,
+        duration_ms=duration_ms,
+        message=str(payload.get("message") or ""),
+        paths=list(payload.get("paths") or []),
+        what_failed=str(payload.get("what-failed") or ""),
+        where=str(payload.get("where") or ""),
+        why=list(payload.get("why") or []),
+    )
+
+
+def _extract_json_tail(stdout: str) -> Optional[dict]:
+    """Pull the last JSON object printed by the validator, if any."""
+    stripped = stdout.strip()
+    if not stripped:
+        return None
+    last_line = stripped.splitlines()[-1].strip()
+    if not last_line.startswith("{"):
+        return None
+    try:
+        data = json.loads(last_line)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+# ── Rendering ────────────────────────────────────────────────────────────────
+
+
+_STATUS_GLYPH = {
+    "pass": "✓",
+    "warn": "⚠",
+    "fail": "🛑",
+    "skipped": "—",
+    "degraded": "⚠",
+}
+
+
+def _render_line(result: _ValidatorResult) -> None:
+    glyph = _STATUS_GLYPH.get(result.status, "?")
+    if result.status == "skipped":
+        renderer.write(
+            f"├ {result.name:<40} {glyph} não rodado (cascade parou)"
+        )
+        return
+    duration = _format_duration(result.duration_ms)
+    suffix = "FAIL" if result.status == "fail" else ""
+    line = f"├ {result.name:<40} {glyph} {duration:>6}"
+    if suffix:
+        line = f"{line}  {suffix}"
+    if result.status == "warn" and result.message:
+        line = f"{line}  ({result.message[:60]})"
+    renderer.write(line)
+
+
+def _format_duration(ms: int) -> str:
+    if ms < 1000:
+        return f"{ms}ms"
+    return f"{ms / 1000:.1f}s"
+
+
+def _render_summary(results: list[_ValidatorResult]) -> None:
+    passed = sum(1 for r in results if r.status == "pass")
+    warns = sum(1 for r in results if r.status == "warn")
+    fails = sum(1 for r in results if r.status == "fail")
+    skipped = sum(1 for r in results if r.status == "skipped")
+    degraded = sum(1 for r in results if r.status == "degraded")
+
+    renderer.write("")
+    title = "Verify clean" if fails == 0 else "Verify block"
+    body = [
+        f"Pass:      {passed}",
+        f"Warn:      {warns}",
+        f"Fail:      {fails}",
+        f"Skipped:   {skipped}",
+        f"Degraded:  {degraded}",
+    ]
+    renderer.write(renderer.box(title, body))
+
+
+def _render_hard_fail_block(result: _ValidatorResult) -> None:
+    """If the validator returned a structured 3-paths block, render it. Else
+    fall back to a generic Fix/Revert/Split shape so the user still gets the
+    discipline §1 affordance.
+    """
+    paths = result.paths
+    if len(paths) != 3:
+        paths = [
+            {"label": "Fix", "motive": "Ajuste mínimo no código que falhou."},
+            {"label": "Revert", "motive": "Volta ao último estado clean."},
+            {"label": "Split", "motive": "Abre tarefa nova e segue."},
+        ]
+    block = mentor_calmo.three_paths_block(
+        result.name,
+        what_failed=result.what_failed
+        or result.message
+        or "Validador retornou falha sem contexto estruturado.",
+        where=result.where or "(não informado pelo validador)",
+        why=result.why
+        or [
+            "Hard gate da cascade.",
+            "Sem auto-fix em verify — escolha humana (discipline §1).",
+        ],
+        paths=paths,
+    )
+    renderer.write("")
+    renderer.write(block)
