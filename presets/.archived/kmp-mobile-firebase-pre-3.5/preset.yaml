@@ -1,0 +1,253 @@
+# presets/kmp-mobile-firebase/preset.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# Read by:        forge init (detection + bootstrap), forge doctor (validation),
+#                 engine resolver (default card set + config-defaults seed)
+# ──────────────────────────────────────────────────────────────────────────
+# Presets são manifestos declarativos: listam quais cards canônicos formam
+# uma combinação coerente para um arquétipo de projeto. Não substituem
+# resolver de cards — o resolver continua aplicando requires/conflicts
+# canônicos definidos em cada card.yaml.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:        kmp-mobile-firebase
+  version:     1.0.0
+  description: "Android + iOS + KMP com Firebase como backend (Auth, Firestore, Storage, Crashlytics)"
+  maturity:    stable
+  category:    mobile-fullstack
+  maintainer:  feature-forge-core
+  created-at:  2026-05-29
+  last-updated: 2026-05-29
+
+
+# ── TARGET STACK ──────────────────────────────────────────────────────────
+target:
+  platforms:
+    - android
+    - ios
+    - kmp
+  primary-languages:
+    android: kotlin
+    ios:     swift
+    kmp:     kotlin
+  backend: firebase
+  ui-frameworks:
+    android: compose
+    ios:     swiftui
+
+
+# ── CARDS — composição canônica do preset (12) ────────────────────────────
+# Cada entrada referencia um card em ~/Documents/feature-forge/cards/{name}/.
+# O resolver lê o card.yaml de cada um para aplicar requires/conflicts/
+# contributions reais. Aqui é só a lista declarativa.
+cards:
+  # Camada base — linguagem e shared
+  - name: kotlin-language
+    version: ">=1.0.0"
+    role: foundation
+
+  - name: kmp-shared
+    version: ">=1.0.0"
+    role: foundation
+
+  # UI por plataforma
+  - name: compose-screens
+    version: ">=1.0.0"
+    role: ui-android
+
+  - name: swiftui-screens
+    version: ">=1.0.0"
+    role: ui-ios
+
+  # DI (cross-platform)
+  - name: koin-annotations
+    version: ">=1.0.0"
+    role: di
+
+  # Bridge KMP → Swift
+  - name: skie-bridge
+    version: ">=1.0.0"
+    role: kmp-bridge
+
+  # Navegação por plataforma
+  - name: nav3
+    version: ">=1.0.0"
+    role: navigation-android
+
+  - name: swiftui-navigation
+    version: ">=1.0.0"
+    role: navigation-ios
+
+  # Backend — Firebase
+  - name: firebase-auth
+    version: ">=1.0.0"
+    role: backend-auth
+
+  - name: firebase-firestore
+    version: ">=1.0.0"
+    role: backend-persistence
+
+  - name: firebase-storage
+    version: ">=1.0.0"
+    role: backend-storage
+
+  - name: crashlytics
+    version: ">=1.0.0"
+    role: observability-crash
+
+
+# ── CAPABILITIES — visão agregada do preset ───────────────────────────────
+# Computado pela união de `provides` de todos os cards listados.
+# Documentado aqui pra clareza humana e para outros presets/forge doctor
+# verificarem cobertura sem ter que abrir cada card.yaml.
+capabilities-provided:
+  - kotlin
+  - jvm-language
+  - kotlin-multiplatform
+  - shared-code
+  - android-ui
+  - compose
+  - ios-ui
+  - swiftui
+  - dependency-injection
+  - kmp-di
+  - android-di
+  - kotlin-swift-bridge
+  - skie
+  - navigation-android
+  - nav3
+  - navigation-ios
+  - auth-server
+  - firebase-auth
+  - persistence-server
+  - realtime-data
+  - file-storage
+  - firebase-storage
+  - crash-reporting
+  - crashlytics
+
+
+# ── CAPABILITIES — labels esperadas como latentes ─────────────────────────
+# Labels que cards do preset usam em `requires:` mas não vêm de outro card
+# do preset. Elas precisam ser providas pelo ambiente (sistema operacional,
+# toolchain, configuração de projeto) ou tratadas como pré-requisito de
+# instalação. `forge init` verifica presença antes de ativar o preset.
+capabilities-latent:
+  - android-platform    # Android SDK + Gradle Android plugin
+  - ios-platform        # Xcode + iOS SDK
+  - swift-language      # Swift compiler (vem com Xcode)
+
+
+# ── DETECTION — sinais a nível de preset ──────────────────────────────────
+# Quando os sinais batem no repo, `forge init` sugere este preset com alta
+# confiança. Threshold separado dos thresholds dos cards individuais.
+detection:
+  signals:
+    - type:       file-content
+      glob:       "**/settings.gradle*"
+      contains:   "kotlin(\"multiplatform\")"
+      confidence: 0.25
+
+    - type:       file-content
+      glob:       "**/build.gradle*"
+      contains:   "androidx.compose"
+      confidence: 0.15
+
+    - type:       file-content
+      glob:       "**/*.swift"
+      contains:   "import SwiftUI"
+      confidence: 0.15
+
+    - type:       directory-exists
+      path:       "shared"
+      confidence: 0.10
+
+    - type:       directory-exists
+      path:       "iosApp"
+      confidence: 0.10
+
+    - type:       file-exists
+      glob:       "**/google-services.json"
+      confidence: 0.10
+
+    - type:       file-exists
+      glob:       "**/GoogleService-Info.plist"
+      confidence: 0.10
+
+    - type:       file-content
+      glob:       "**/build.gradle*"
+      contains:   "firebase-firestore"
+      confidence: 0.15
+
+    - type:       file-content
+      glob:       "**/build.gradle*"
+      contains:   "co.touchlab:skie"
+      confidence: 0.10
+
+  threshold: 0.6                # ≥ 0.6 → auto-suggest este preset
+                                # ≥ 0.3 → listar como candidato
+                                # < 0.3 → não sugerir
+
+
+# ── DEFAULTS — workflow-config seeded quando preset é escolhido ───────────
+# Cards individuais também declaram config-defaults via card.yaml. Em conflito,
+# user-provided > preset-defaults > card-defaults (preset tem precedência
+# sobre defaults de cards para casos onde a combinação muda a recomendação).
+defaults:
+  platforms.active: [android, ios, kmp]
+  platforms.primary-language-per-platform.android: kotlin
+  platforms.primary-language-per-platform.ios: swift
+  platforms.primary-language-per-platform.kmp: kotlin
+
+  conventions.di-pattern: koin-annotations
+  conventions.di.ios-pattern: "factory-function create{ClassName}()"
+  conventions.navigation.android: nav3
+  conventions.navigation.ios: swiftui-navigation-stack
+  conventions.navigation.route-source-of-truth: "shared:core AppRoute sealed interface"
+  conventions.kmp.swift-bridge: skie
+  conventions.kmp.layer-structure: "data + domain + presentation"
+  conventions.kmp.dispatcher-injection: constructor
+
+  conventions.backend.auth: firebase-auth
+  conventions.backend.persistence: firebase-firestore
+  conventions.backend.file-storage: firebase-storage
+  conventions.observability.crash-reporting: crashlytics
+
+  conventions.folder-layout.android: "{Screen}Screen.kt + {Screen}Content.kt + {Screen}Components.kt + {Screen}Mappers.kt"
+  conventions.folder-layout.ios: "{Screen}ScreenView.swift + {Screen}ScreenContentView.swift + {Screen}Components.swift + {Screen}Strings.swift"
+
+  conventions.test-pattern.framework-shared: kotlin-test
+  conventions.testing.backend-e2e: firestore-emulator
+  conventions.style.swift.lint-tool: swiftlint
+  conventions.style.swift.format-tool: swiftformat
+
+
+# ── CONFLICTS WITH OTHER PRESETS ──────────────────────────────────────────
+# Mutuamente exclusivo com presets que cobrem o mesmo arquétipo. Forge init
+# bloqueia se outro preset incompatível já está instalado (raro — preset
+# muda só via fresh init em branch dedicada).
+conflicts-with-presets:
+  - android-only-firebase    # subset deste preset; usar este se Android+iOS
+  - ios-only-firebase        # subset
+  - kmp-mobile               # mesma stack sem Firebase — se Firebase entra, vira este
+  - kmp-fullstack            # adiciona backend customizado; conflito de capability
+
+
+# ── REFERENCE PROJECT ─────────────────────────────────────────────────────
+# Projeto-fixture usado como referência viva pra refinar templates e cards.
+# Quando this preset evolui, alterações são validadas contra este projeto.
+reference-project:
+  name: MeoBonsai
+  path-hint: "~/Documents/MeoBonsai"
+  description: "App de bonsai (Android + iOS + KMP + Firebase) — fonte canônica de templates e convenções"
+  influences-doc: "INFLUENCES.md"
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme: README.md
