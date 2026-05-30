@@ -1,0 +1,35 @@
+# Detection signals — swiftui-screens card
+# ──────────────────────────────────────────────────────────────────────────
+# Espelho do bloco `detection:` em card.yaml. Mantido aqui para inspeção
+# isolada e integração futura (forge doctor, scripts auxiliares).
+#
+# Threshold cumulativo: 0.6
+#   - file-content    **/*.swift           contém "import SwiftUI"      → 0.5
+#   - directory-exists iosApp                                            → 0.3
+#   - file-content    **/*.swift           contém "struct ContentView"  → 0.2
+#
+# Soma máxima: 1.0 (sanity ≤ 2.0 — CARD-016).
+#
+# Notas:
+# - Projetos baseados em template padrão do Xcode já satisfazem 0.5+0.2.
+# - MeoBonsai-like (sem `ContentView`) bate 0.5+0.3 via `iosApp/` e import.
+# - Projeto só UIKit típico (sem `import SwiftUI`) cai abaixo do threshold
+#   e não auto-ativa o card.
+# ──────────────────────────────────────────────────────────────────────────
+
+signals:
+  - type:       file-content
+    glob:       "**/*.swift"
+    contains:   "import SwiftUI"
+    confidence: 0.5
+
+  - type:       directory-exists
+    path:       "iosApp"
+    confidence: 0.3
+
+  - type:       file-content
+    glob:       "**/*.swift"
+    contains:   "struct ContentView"
+    confidence: 0.2
+
+threshold: 0.6

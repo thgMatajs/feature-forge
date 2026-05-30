@@ -1,0 +1,46 @@
+# cards/firebase-storage/detection/signals.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Sinais de detecção do card firebase-storage.
+#
+# `forge init` percorre o repositório em paralelo e soma confidence de cada
+# signal que casa. Se total ≥ threshold (0.5), o card é ativado automaticamente.
+# Se total ∈ [0.3, 0.5), forge pergunta ao usuário.
+#
+# Os signals aqui espelham `card.yaml > detection.signals`. Este arquivo
+# existe para evolução futura (matrizes de confidence por tipo de signal,
+# regex matches, etc.) sem precisar inflar o card.yaml.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+signals:
+  - id:         firebase-storage-gradle-dep
+    type:       file-content
+    glob:       "**/build.gradle*"
+    contains:   "firebase-storage"
+    confidence: 0.5
+    rationale:  "Dependência com.google.firebase:firebase-storage(-ktx) declarada em build.gradle(.kts) é evidência forte de uso do SDK no Android/JVM."
+
+  - id:         storage-rules-file
+    type:       file-exists
+    glob:       "**/storage.rules"
+    confidence: 0.3
+    rationale:  "Existência de storage.rules indica que o projeto define security rules de Storage — só faz sentido se o produto está em uso."
+
+  - id:         firebase-storage-spm
+    type:       file-content
+    glob:       "**/Package.swift"
+    contains:   "FirebaseStorage"
+    confidence: 0.3
+    rationale:  "Pacote FirebaseStorage no Swift Package Manager é usado pelo iOS para consumir Storage nativamente."
+
+  - id:         firebase-storage-cocoapods
+    type:       file-content
+    glob:       "**/Podfile"
+    contains:   "FirebaseStorage"
+    confidence: 0.3
+    rationale:  "Pod FirebaseStorage no Podfile é o caminho alternativo (legacy) de integração iOS."
+
+threshold: 0.5
+
+alternative-cards: []

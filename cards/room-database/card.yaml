@@ -1,0 +1,139 @@
+# cards/room-database/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# Card: Room como persistência local KMP-stable (v1 do feature-forge).
+#
+# Room 2.7+ trouxe suporte estável a Kotlin Multiplatform: Entities, DAO e
+# RoomDatabase podem ser declarados em commonMain. A construção do Database
+# usa drivers por plataforma (Android/iOS via expect/actual ou
+# RoomDatabase.Builder específico do alvo). Este card é a escolha canônica
+# v1 para `persistence-local` — `sqldelight` não está no catálogo v1.
+#
+# Pareado com kotlinx.coroutines: queries que retornam `Flow<...>` para
+# observabilidade reativa, suspend para single-shot. Migrations versionadas
+# (@AutoMigration sempre que possível, fallback para Migration manual).
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         room-database
+  version:      1.0.0
+  description:  "Room para persistência local — KMP-stable a partir do Room 2.7+ (commonMain support). Entities/DAO/Database em shared. Migrations versionadas. Pareado com kotlinx.coroutines Flow."
+  category:     persistence
+  maturity:     stable
+  maintainer:   feature-forge-core
+  created-at:   2026-05-29
+  last-updated: 2026-05-29
+  license:      MIT
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
+provides:
+  - persistence-local
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+# Room KMP (2.7+) roda em commonMain do shared module — requer Kotlin e
+# o módulo shared ativo.
+requires:
+  - kotlin
+  - kotlin-multiplatform
+
+
+# ── CONFLICTS ─────────────────────────────────────────────────────────────
+# `persistence-local` é label singular (capability-labels.md §Persistence).
+# Cards alternativos provendo persistence-local (hipotético `sqldelight`
+# em v1.1) entram aqui.
+conflicts-with:
+  - persistence-local
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+contributes:
+
+  # Template fragments — adicionados aos documentos do feature package
+  templates:
+    - target:  tech-spec.md
+      section: "Local Persistence — Room"
+      file:    templates/room-tech-spec.md
+      merge:   append-section
+
+    - target:  data-contract-spec.yaml
+      section: "room-tables"
+      file:    templates/room-data-contract.yaml
+      merge:   merge-keys
+
+  # Validators — stub Phase 5
+  validators:
+    - name:        check-room-migrations
+      file:        validators/check-room-migrations.py
+      runs-on:     [verify-task]
+      severity:    error
+      description: "Falha se o schema de uma @Entity mudou (campo novo/removido/renomeado, tipo alterado, índice modificado) sem uma migration correspondente declarada (@AutoMigration na @Database ou Migration manual em db/migrations/)."
+
+  # Agent prompts — fragments injected at known extension points
+  agent-prompts:
+    - inject-into:     tech-spec-agent
+      extension-point: "section:Shared (KMP) layer"
+      file:            agent-contributions/tech-spec-additions.md
+
+    - inject-into:     contract-planner-agent
+      extension-point: "section:Data Contract"
+      file:            agent-contributions/contract-planner-additions.md
+
+    - inject-into:     task-contract-writer
+      extension-point: "after:Allowed Files"
+      file:            agent-contributions/task-writer-additions.md
+
+  # Config defaults — convenções aplicadas se outro card/usuário não sobrescrever
+  config-defaults:
+    conventions.persistence.local:         "room"
+    conventions.persistence.flow-queries:  "Flow<List<Entity>>"
+    conventions.persistence.migrations:    "AutoMigration"
+
+
+# ── DETECTION ────────────────────────────────────────────────────────────
+# Threshold cumulativo: 0.5
+#   - build.gradle* contém "androidx.room" → 0.5
+#   - *.kt contém "@Entity"                → 0.3
+#   - *.kt contém "@Database"              → 0.3
+#   - *.kt contém "@Dao"                   → 0.3
+#   - *.kt contém "RoomDatabase"           → 0.2
+# Soma máxima: 1.6 (sanity ≤ 2.0 — CARD-016).
+detection:
+  signals:
+    - type:       file-content
+      glob:       "**/build.gradle*"
+      contains:   "androidx.room"
+      confidence: 0.5
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "@Entity"
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "@Database"
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "@Dao"
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "RoomDatabase"
+      confidence: 0.2
+
+  threshold: 0.5
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "architecture_kmp"

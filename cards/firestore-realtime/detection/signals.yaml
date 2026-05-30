@@ -1,0 +1,44 @@
+# cards/firestore-realtime/detection/signals.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Sinais de detecção do card firestore-realtime.
+#
+# Detecção tipicamente roda em paralelo com firestore-persistence: o
+# resolver ativa os dois cards juntos quando o repo usa snapshot listeners
+# sobre Firestore. Threshold 0.5 exige ao menos duas evidências
+# combinadas — um único `addSnapshotListener` (0.4) não basta sozinho.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+signals:
+  - id:         kotlin-add-snapshot-listener
+    type:       file-content
+    glob:       "**/*.kt"
+    contains:   "addSnapshotListener"
+    confidence: 0.4
+    rationale:  "Uso de addSnapshotListener no SDK Firestore (Android/JVM/KMP) é evidência direta de consumo realtime."
+
+  - id:         kotlin-snapshots-flow-ext
+    type:       file-content
+    glob:       "**/*.kt"
+    contains:   "snapshots()"
+    confidence: 0.3
+    rationale:  "Extensão `.snapshots()` da lib KTX/KMP retorna Flow a partir de DocumentReference/Query — padrão idiomático Kotlin para listeners."
+
+  - id:         gradle-firestore-dep
+    type:       file-content
+    glob:       "**/build.gradle*"
+    contains:   "firebase-firestore"
+    confidence: 0.2
+    rationale:  "Dependência firebase-firestore é pré-requisito (compartilhado com firestore-persistence). Confidence baixo porque sozinho não diferencia realtime de one-shot."
+
+  - id:         swift-add-snapshot-listener
+    type:       file-content
+    glob:       "**/*.swift"
+    contains:   "addSnapshotListener"
+    confidence: 0.3
+    rationale:  "Listener Firestore no SDK iOS — cobertura para projetos KMP onde a camada iOS consome via SKIE ou diretamente via SDK nativo."
+
+threshold: 0.5
+
+alternative-cards: []

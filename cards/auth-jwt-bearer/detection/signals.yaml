@@ -1,0 +1,58 @@
+# cards/auth-jwt-bearer/detection/signals.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Sinais de detecção do card auth-jwt-bearer.
+#
+# `forge init` percorre o repositório em paralelo e soma confidence de cada
+# signal que casa. Se total ≥ threshold (0.5), o card é ativado
+# automaticamente. Se total ∈ [0.3, 0.5), forge pergunta ao usuário.
+#
+# Signals aqui espelham `card.yaml > detection.signals`. Mantido em arquivo
+# separado para evolução futura (regex matches mais robustos, scoring por
+# heurística, etc.) sem inflar o card.yaml.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+signals:
+  - id:         kotlin-bearer-literal
+    type:       file-content
+    glob:       "**/*.kt"
+    contains:   "Bearer "
+    confidence: 0.3
+    rationale:  "String literal 'Bearer ' (com espaço) aparece em headers HTTP Authorization. Pode estar em código legado fora de pacote auth — confidence médio."
+
+  - id:         authorization-header-in-auth-path
+    type:       file-content
+    glob:       "**/auth/**/*.kt"
+    contains:   "Authorization"
+    confidence: 0.3
+    rationale:  "Header 'Authorization' referenciado dentro de pacote auth/ é evidência direta de flow Bearer manual ou via Ktor Auth plugin."
+
+  - id:         refresh-token-symbol
+    type:       file-content
+    glob:       "**/*.kt"
+    contains:   "RefreshToken"
+    confidence: 0.3
+    rationale:  "Símbolo 'RefreshToken' (classe, função, propriedade) é forte indicador de flow JWT com refresh — Firebase Auth não usa esse vocabulário no shared."
+
+  - id:         jwt-mention
+    type:       file-content
+    glob:       "**/*.kt"
+    contains:   "JWT"
+    confidence: 0.2
+    rationale:  "Termo 'JWT' em código sinaliza JSON Web Token. Confidence baixo isolado porque pode estar em comentário/doc — robustece junto com Bearer/RefreshToken."
+
+  - id:         ktor-auth-plugin-import
+    type:       file-content
+    glob:       "**/*.kt"
+    contains:   "io.ktor.client.plugins.auth"
+    confidence: 0.2
+    rationale:  "Import do plugin oficial Ktor Auth (`bearer { loadTokens / refreshTokens }`). Sinal técnico forte mas restrito — sozinho não basta porque também pode atender Basic auth."
+
+threshold: 0.5
+
+alternative-cards:
+  - firebase-auth
+  - auth0
+  - supabase-auth
+  - clerk-auth

@@ -1,0 +1,139 @@
+# cards/firebase-auth/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# Firebase Authentication (Email/Password + provedores OAuth como Google,
+# Apple) para Android/iOS/Web. Inclui observability canônica (test IDs +
+# analytics events) e integração Crashlytics via FirebaseAuthAnalyticsException
+# para paridade Android↔iOS na cadeia de erro.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         firebase-auth
+  version:      1.0.0
+  description:  "Firebase Authentication (Email/Password + provedores OAuth) para Android/iOS/Web. Inclui observability (test IDs + analytics events) e Crashlytics integration via FirebaseAuthAnalyticsException."
+  category:     backend
+  maturity:     stable
+  maintainer:   feature-forge-core
+  created-at:   2026-05-29
+  last-updated: 2026-05-29
+  license:      MIT
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
+# auth-provider: singular — apenas 1 provedor de identidade por projeto.
+# auth-token-bearer: auxiliar — Firebase Auth usa Bearer token (JWT/OAuth).
+# auth-firebase-managed: auxiliar — sessão gerenciada pelo SDK Firebase.
+provides:
+  - auth-provider
+  - auth-token-bearer
+  - auth-firebase-managed
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+# Nenhum requires obrigatório no catálogo v1 — Firebase Auth funciona em
+# Android, iOS e Web independentemente da escolha de UI/DI. Crashlytics
+# integration é opcional: quando o card `crashlytics` está ativo, o
+# fragmento de analytics ganha o bloco recordException; quando não, eventos
+# *_error apenas logam.
+requires: []
+
+
+# ── CONFLICTS ─────────────────────────────────────────────────────────────
+# Qualquer outro provedor de auth conflita pela label singular `auth-provider`
+# — apenas um pode prover identidade num projeto. Cards futuros (auth0,
+# supabase-auth, clerk-auth, auth-jwt-bearer) provêem `auth-provider` e caem
+# automaticamente neste conflito.
+conflicts-with:
+  - auth-provider
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+contributes:
+
+  # Template fragments — inseridos nos documentos do feature package
+  templates:
+    - target:  tech-spec.md
+      section: "Auth Strategy (Firebase)"
+      file:    templates/firebase-auth-tech-spec.md
+      merge:   append-section
+
+    - target:  analytics-spec.yaml
+      section: "firebase-auth-events"
+      file:    templates/firebase-auth-analytics.yaml
+      merge:   merge-keys
+
+  # Validators — checks executados no lifecycle do forge
+  validators:
+    - name:        check-auth-test-ids-canonical
+      file:        validators/check-auth-test-ids-canonical.py
+      runs-on:     [pre-commit, verify-task]
+      severity:    error
+      description: "Falha se código de auth tem test_id hardcoded fora de shared:core/observability/AuthTestIds.kt — paridade Android↔iOS exige consumo via contrato canônico."
+
+  # Agent prompts — fragments injetados em sub-agents em extension points
+  agent-prompts:
+    - inject-into:     contract-planner-agent
+      extension-point: "rule:error-event-binding"
+      file:            agent-contributions/contract-planner-additions.md
+
+    - inject-into:     tech-spec-agent
+      extension-point: "section:Data layer"
+      file:            agent-contributions/tech-spec-additions.md
+
+    - inject-into:     task-contract-writer
+      extension-point: "after:Allowed Files"
+      file:            agent-contributions/task-writer-additions.md
+
+  # Config defaults — convenções aplicadas se outro card/usuário não sobrescrever
+  config-defaults:
+    conventions.backend.auth:                       "firebase-auth"
+    conventions.observability.auth-contracts-location: "shared:core/observability/"
+
+
+# ── DETECTION ─────────────────────────────────────────────────────────────
+detection:
+  signals:
+    - type:       file-exists
+      glob:       "**/google-services.json"
+      confidence: 0.20
+
+    - type:       file-exists
+      glob:       "**/GoogleService-Info.plist"
+      confidence: 0.20
+
+    - type:       file-content
+      glob:       "**/build.gradle*"
+      contains:   "firebase-auth"
+      confidence: 0.35
+
+    - type:       file-content
+      glob:       "**/Podfile*"
+      contains:   "FirebaseAuth"
+      confidence: 0.30
+
+    - type:       file-content
+      glob:       "**/Package.swift"
+      contains:   "FirebaseAuth"
+      confidence: 0.30
+
+    - type:       file-content
+      glob:       "**/build.gradle*"
+      contains:   "firebase-auth-ktx"
+      confidence: 0.15
+
+  threshold: 0.50
+
+  alternative-cards:
+    - auth0
+    - supabase-auth
+    - clerk-auth
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "observability"

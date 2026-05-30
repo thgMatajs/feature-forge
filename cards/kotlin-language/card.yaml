@@ -1,0 +1,80 @@
+# cards/kotlin-language/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# Leaf card: Kotlin como linguagem primária para shared/Android.
+# Define convenções canônicas de idiomas (kotlinx.datetime, !! proibido,
+# KDoc só para contracts não-óbvios, dispatcher injection).
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         kotlin-language
+  version:      1.0.0
+  description:  "Kotlin como linguagem primária para shared/Android, com kotlin-test no shared e regras canônicas de idiomas (kotlinx.datetime, !! proibido, KDoc só para contracts não-óbvios)"
+  category:     language
+  maturity:     stable
+  maintainer:   feature-forge-core
+  created-at:   2026-05-29
+  last-updated: 2026-05-29
+  license:      MIT
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
+provides:
+  - kotlin
+  - jvm-language
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+requires: []
+
+
+# ── CONFLICTS ─────────────────────────────────────────────────────────────
+conflicts-with: []
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+contributes:
+
+  # Agent prompts — fragments injected into sub-agents at extension points
+  agent-prompts:
+    - inject-into:     tech-spec-agent
+      extension-point: "section:Shared (KMP) layer"
+      file:            agent-contributions/tech-spec-additions.md
+
+    - inject-into:     task-contract-writer
+      extension-point: "after:Allowed Files"
+      file:            agent-contributions/task-writer-additions.md
+
+  # Config defaults — kotlin-test no shared layer
+  config-defaults:
+    conventions.test-pattern.framework-shared: kotlin-test
+
+
+# ── DETECTION ─────────────────────────────────────────────────────────────
+detection:
+  signals:
+    - type:       file-exists
+      glob:       "**/*.kt"
+      confidence: 0.5
+
+    - type:       file-content
+      glob:       "**/settings.gradle*"
+      contains:   "kotlin"
+      confidence: 0.4
+
+    - type:       file-content
+      glob:       "**/build.gradle*"
+      contains:   "kotlin("
+      confidence: 0.3
+
+  threshold: 0.6
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "kotlin-idioms"

@@ -1,0 +1,53 @@
+# Detection signals — room-database card
+# ──────────────────────────────────────────────────────────────────────────
+# Espelho do bloco `detection:` em card.yaml. Mantido aqui para inspeção
+# isolada e para futuras integrações que leiam signals em arquivo dedicado
+# (forge doctor, scripts auxiliares).
+#
+# Threshold cumulativo: 0.5
+#   - file-content build.gradle*  +androidx.room   → 0.5
+#   - file-content *.kt           +@Entity         → 0.3
+#   - file-content *.kt           +@Database       → 0.3
+#   - file-content *.kt           +@Dao            → 0.3
+#   - file-content *.kt           +RoomDatabase    → 0.2
+#
+# Soma máxima: 1.6 (sanity ≤ 2.0 — CARD-016).
+#
+# Projetos com Room cruzam o threshold com folga: a dependência
+# `androidx.room` no Gradle já vale 0.5 sozinha. Qualquer arquivo
+# anotando uma Entity adiciona +0.3 (total 0.8) e a presença de um DAO
+# adiciona +0.3 (1.1) — bem acima do corte.
+# ──────────────────────────────────────────────────────────────────────────
+
+signals:
+  - type:       file-content
+    glob:       "**/build.gradle*"
+    contains:   "androidx.room"
+    confidence: 0.5
+    rationale:  "Dependência explícita do Room no Gradle (KSP plugin + room-runtime/room-compiler/room-paging). Sinal mais forte."
+
+  - type:       file-content
+    glob:       "**/*.kt"
+    contains:   "@Entity"
+    confidence: 0.3
+    rationale:  "Anotação canônica de tabela Room. Forte sinal de uso em commonMain (KMP) ou androidMain."
+
+  - type:       file-content
+    glob:       "**/*.kt"
+    contains:   "@Database"
+    confidence: 0.3
+    rationale:  "Anotação da classe abstrata RoomDatabase — uma por feature/módulo, raramente confundida com outras libs."
+
+  - type:       file-content
+    glob:       "**/*.kt"
+    contains:   "@Dao"
+    confidence: 0.3
+    rationale:  "Anotação de interface DAO. Combina com @Database para confirmar o stack Room."
+
+  - type:       file-content
+    glob:       "**/*.kt"
+    contains:   "RoomDatabase"
+    confidence: 0.2
+    rationale:  "Referência ao tipo base — captura projetos que ainda não anotaram nada mas já importam o tipo (raro, baixo peso)."
+
+threshold: 0.5

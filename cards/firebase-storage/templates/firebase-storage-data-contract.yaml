@@ -1,0 +1,60 @@
+# Template fragment contribuído pelo card `firebase-storage`.
+# Merge mode: merge-keys em data-contract-spec.yaml.
+#
+# O contract-planner-agent injeta a chave top-level `storage-paths` quando
+# o card está ativo. Cada feature consumidora deve preencher `assets:` com
+# os tipos de binário que upa para Storage e referenciar a rule
+# correspondente em `storage.rules`.
+
+storage_paths:
+  description: >
+    Convenção de paths em Firebase Cloud Storage para esta feature. Todo
+    upload/download referenciado pela feature precisa aparecer aqui e ter
+    rule equivalente em storage.rules. O validator
+    check-storage-rules-coverage falha se algum path usado em código
+    não estiver listado.
+
+  path_pattern: "{userId}/{collection}/{docId}/{filename}.{ext}"
+
+  rationale: >
+    O primeiro segmento sempre é `{userId}` (== `request.auth.uid`) para
+    que security rules autorizem com base em ownership direto. Sub-paths
+    de collection/docId espelham a hierarquia do Firestore quando aplicável.
+
+  assets:
+    # Preencher por feature. Exemplo de schema obrigatório por asset:
+    #
+    # - id:               bonsai-main-photo
+    #   path_template:    "{uid}/bonsais/{bonsaiId}/main.jpg"
+    #   content_type:     "image/jpeg"
+    #   max_size_bytes:   5242880          # 5 MiB
+    #   compression:
+    #     max_dimension:  1280
+    #     quality:        85
+    #   rule_ref:         "storage.rules#bonsai-photos"
+    #   operations:       [read, write, delete]
+    #   crashlytics_on_failure: true
+    []
+
+  forbidden_paths:
+    # Paths que NÃO podem aparecer em código (vazariam controle de acesso).
+    - description: "Path sem `{userId}` como primeiro segmento."
+      regex_must_not_match: '^/?(?!\{userId\}|\$\{[a-zA-Z]+(?:[Uu]id|[Uu]serId)\})'
+
+    - description: "Path absoluto a partir de raiz (sem userId) com nome de coleção pública."
+      regex_must_not_match: '^/?(public|shared|global)/'
+
+  rules_coverage:
+    rules_file: "storage.rules"
+    required_constraints:
+      - "request.auth != null"
+      - "request.auth.uid == userId"
+      - "request.resource.size < {max_size_bytes}"
+      - "request.resource.contentType.matches('{mime_prefix}/.*')"
+
+  validations:
+    - id:      storage-rules-coverage
+      command: "python3 .claude/cards/firebase-storage/validators/check-storage-rules-coverage.py"
+      runs_on: [verify-task, forge-doctor]
+      severity: error
+      description: "Todo path de Storage usado em código deve ter rule equivalente em storage.rules."

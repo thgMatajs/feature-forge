@@ -1,0 +1,118 @@
+# cards/koin-annotations/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# DI canônica para KMP + Android baseada em Koin Annotations
+# (`@Module @ComponentScan`, `@Single`, `@Factory`, `@KoinViewModel`).
+# DSL `module { ... }` é proibida em produção. iOS/Web não rodam Koin runtime
+# (JVM-only) — usam factory functions `create{ClassName}()` em
+# `di/{Feature}Factory.kt`.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         koin-annotations
+  version:      1.0.0
+  description:  "Koin Annotations para DI em KMP/Android com @Module @ComponentScan, @Single, @Factory, @KoinViewModel. DSL module { } proibida em produção. iOS/Web usam factory functions create{ClassName}()."
+  category:     dependency-injection
+  maturity:     stable
+  maintainer:   feature-forge-core
+  created-at:   2026-05-29
+  last-updated: 2026-05-29
+  license:      MIT
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
+provides:
+  - dependency-injection
+  - kmp-di
+  - android-di
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+requires:
+  - kotlin
+
+
+# ── CONFLICTS ─────────────────────────────────────────────────────────────
+# FOLLOWUP: hilt-di não está no capability label catalog v1.
+# Quando o card hilt-di for criado, adicionar aqui como conflito explícito.
+conflicts-with: []
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+contributes:
+
+  # Template fragments — inseridos nos documentos do feature package
+  templates:
+    - target:  tech-spec.md
+      section: "DI Strategy"
+      file:    templates/di-tech-spec-section.md
+      merge:   append-section
+
+    - target:  task-contract.yaml
+      section: "allowed-files-koin-modules"
+      file:    templates/koin-allowed-files.yaml
+      merge:   merge-keys
+
+  # Validators — checks executados no lifecycle do forge
+  validators:
+    - name:        validate-koin-modules
+      file:        validators/check-koin-modules.py
+      runs-on:     [pre-commit, verify-task]
+      severity:    error
+      description: "Garante que toda classe @Module está pareada com @ComponentScan e que a DSL module { } não é usada em produção."
+
+  # Agent prompts — fragments injetados em sub-agents em extension points
+  agent-prompts:
+    - inject-into:     tech-spec-agent
+      extension-point: "section:Shared (KMP) layer"
+      file:            agent-contributions/tech-spec-additions.md
+
+    - inject-into:     task-contract-writer
+      extension-point: "after:Allowed Files"
+      file:            agent-contributions/task-writer-additions.md
+
+  # Config defaults — convenções aplicadas se outro card/usuário não sobrescrever
+  config-defaults:
+    conventions.di-pattern:     "koin-annotations"
+    conventions.di.ios-pattern: "factory-function create{ClassName}()"
+    conventions.di.web-pattern: "factory-function create{ClassName}()"
+
+
+# ── DETECTION ─────────────────────────────────────────────────────────────
+detection:
+  signals:
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "@Module"
+      confidence: 0.4
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "@ComponentScan"
+      confidence: 0.4
+
+    - type:       file-content
+      glob:       "**/build.gradle*"
+      contains:   "koin-annotations"
+      confidence: 0.5
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "@KoinViewModel"
+      confidence: 0.2
+
+  threshold: 0.6
+
+  alternative-cards:
+    - koin-dsl
+    - hilt-di
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "architecture_kmp"

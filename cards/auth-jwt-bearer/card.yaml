@@ -1,0 +1,139 @@
+# cards/auth-jwt-bearer/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# Autenticação via JWT Bearer Token em REST APIs. Define o flow
+# login → access-token + refresh-token, interceptor Ktor pra anexar
+# Authorization header, refresh automático com retry e storage seguro do
+# refresh-token (DataStore criptografado ou Android Keystore). Alternativa
+# v1 ao `firebase-auth` para projetos que falam com backend próprio.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         auth-jwt-bearer
+  version:      1.0.0
+  description:  "Autenticação via JWT Bearer Token em REST APIs. Flow login → access-token + refresh-token, Ktor Auth plugin com loadTokens/refreshTokens, retry em 401, storage seguro do refresh-token (encrypted DataStore ou Android Keystore). Paridade Android↔iOS no shared."
+  category:     backend
+  maturity:     stable
+  maintainer:   feature-forge-core
+  created-at:   2026-05-29
+  last-updated: 2026-05-29
+  license:      MIT
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
+# auth-provider: singular — apenas 1 provedor de identidade por projeto.
+# auth-token-bearer: auxiliar — flow Bearer JWT (mesma label provida por
+#   firebase-auth, OAuth2 cards futuros).
+provides:
+  - auth-provider
+  - auth-token-bearer
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+# Auth via REST exige HTTP client cross-platform. O refresh-token plugin do
+# Ktor (`io.ktor.client.plugins.auth`) é a peça canônica do flow — sem
+# `http-client` ativo o card não tem onde injetar o interceptor.
+requires:
+  - http-client
+
+
+# ── CONFLICTS ─────────────────────────────────────────────────────────────
+# `auth-provider` é label singular — apenas um provedor de identidade pode
+# estar ativo num projeto. Conflita explicitamente com `firebase-auth` (e
+# com qualquer card futuro que provê `auth-provider`: auth0, supabase-auth,
+# clerk-auth).
+conflicts-with:
+  - auth-provider
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+contributes:
+
+  # Template fragments — inseridos nos documentos do feature package
+  templates:
+    - target:  tech-spec.md
+      section: "Auth Strategy (JWT Bearer)"
+      file:    templates/jwt-bearer-tech-spec.md
+      merge:   append-section
+
+  # Validators — checks executados no lifecycle do forge
+  validators:
+    - name:        check-no-plaintext-token-storage
+      file:        validators/check-no-plaintext-token-storage.py
+      runs-on:     [pre-commit, verify-task]
+      severity:    error
+      description: "Falha se refresh-token / access-token for salvo em SharedPreferences plain, UserDefaults plain ou arquivo texto — storage canônico é encrypted DataStore / Android Keystore / iOS Keychain."
+
+  # Agent prompts — fragmentos injetados em sub-agents em extension points
+  agent-prompts:
+    - inject-into:     tech-spec-agent
+      extension-point: "section:Data layer"
+      file:            agent-contributions/tech-spec-additions.md
+
+    - inject-into:     contract-planner-agent
+      extension-point: "section:Data Contract"
+      file:            agent-contributions/contract-planner-additions.md
+
+    - inject-into:     task-contract-writer
+      extension-point: "after:Allowed Files"
+      file:            agent-contributions/task-writer-additions.md
+
+  # Config defaults — convenções aplicadas se outro card/usuário não sobrescrever
+  config-defaults:
+    conventions.auth.provider:         "auth-jwt-bearer"
+    conventions.auth.token-storage:    "encrypted-datastore OR android-keystore"
+    conventions.auth.refresh-strategy: "ktor-auth-plugin-refresh-tokens"
+
+
+# ── DETECTION ─────────────────────────────────────────────────────────────
+# Threshold cumulativo: 0.5
+#   - *.kt contém "Bearer "                            → 0.3
+#   - *.kt contém "Authorization" em path auth/network → 0.3
+#   - *.kt contém "RefreshToken"                       → 0.3
+#   - *.kt contém "JWT"                                → 0.2
+#   - *.kt contém "io.ktor.client.plugins.auth"        → 0.2
+# Soma máxima: 1.3 (sanity ≤ 2.0 — CARD-016).
+detection:
+  signals:
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "Bearer "
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/auth/**/*.kt"
+      contains:   "Authorization"
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "RefreshToken"
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "JWT"
+      confidence: 0.2
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "io.ktor.client.plugins.auth"
+      confidence: 0.2
+
+  threshold: 0.5
+
+  alternative-cards:
+    - firebase-auth
+    - auth0
+    - supabase-auth
+    - clerk-auth
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "architecture_kmp"

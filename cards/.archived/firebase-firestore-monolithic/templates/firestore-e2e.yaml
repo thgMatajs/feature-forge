@@ -1,0 +1,50 @@
+# Fragmento contribuído por: firebase-firestore
+# Target: test-strategy.yaml
+# Section: backend-e2e
+# Merge: merge-keys
+
+backend-e2e:
+  runtime: "firestore-emulator"
+  description: |
+    Testes end-to-end de backend contra o Firestore Emulator local. Cobertura
+    obrigatória para toda operação declarada em firestore-collections.
+
+  required-services:
+    - firestore-emulator
+    - auth-emulator    # presence de Authentication para validar rules baseadas em request.auth
+
+  emulator:
+    command:    "npx -y firebase-tools@latest emulators:start --only firestore,auth"
+    ports:
+      firestore: 8080
+      auth:      9099
+      ui:        4000
+    seed-script: "<scripts/firestore-emulator-seed.ts ou equivalente>"
+
+  test-suites:
+    rules-unit-tests:
+      framework: "@firebase/rules-unit-testing"
+      runs-on:   [pre-commit, ci]
+      coverage:  "100% das operations declaradas em firestore-collections"
+      blocks-merge: true
+
+    backend-integration:
+      framework: "<KMP shared test ou jest>"
+      runs-on:   [ci]
+      scope:     "Repository → Firestore Emulator (sem UI)"
+      coverage:  "happy path + null/empty + network failure + permission denied"
+
+  required-scenarios:
+    # Para CADA collection.operation, gerar o quarteto:
+    - "<collection>.<op>: actor autorizado → sucesso"
+    - "<collection>.<op>: actor não autenticado → PERMISSION_DENIED"
+    - "<collection>.<op>: actor autenticado mas sem claim → PERMISSION_DENIED"
+    - "<collection>.<op>: input inválido → falha de validação no rules (não no client)"
+
+  query-coverage:
+    # Para CADA query custom, validar que o índice resolve:
+    rule: "executar query no emulator. FAILED_PRECONDITION (índice ausente) bloqueia merge."
+
+  validators-hook:
+    - check-firestore-rules-coverage
+    - check-firestore-indexes

@@ -1,0 +1,100 @@
+# cards/skie-bridge/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# Card: SKIE (co.touchlab.skie) — bridge Kotlin↔Swift idiomática para iOS.
+# Elimina wrappers manuais de async no Swift, expõe Flow como AsyncSequence,
+# sealed classes como enums Swift e preserva default arguments via
+# @DefaultArgumentInterop.Enabled.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         skie-bridge
+  version:      1.0.0
+  description:  "SKIE para bridge Kotlin→Swift idiomático: suspend→async automático, Flow→AsyncSequence, sealed→enum Swift, generics expostos. Sem wrappers manuais de async no iOS."
+  category:     kmp
+  maturity:     stable
+  maintainer:   feature-forge-core
+  created-at:   2026-05-29
+  last-updated: 2026-05-29
+  license:      MIT
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
+provides:
+  - kotlin-swift-bridge
+  - skie
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+requires:
+  - kotlin-multiplatform
+  - swift-language
+
+
+# ── CONFLICTS ─────────────────────────────────────────────────────────────
+conflicts-with: []
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+contributes:
+
+  # Template fragment — adicionado a tech-spec.md na seção iOS UI layer
+  templates:
+    - target:  tech-spec.md
+      section: "iOS UI layer"
+      file:    templates/skie-tech-spec-section.md
+      merge:   append-section
+
+  # Validators — checagem estática contra wrappers manuais de async
+  validators:
+    - name:        validate-no-manual-async-wrappers
+      file:        validators/check-no-manual-async-wrappers.py
+      runs-on:     [pre-commit, verify-task]
+      severity:    warn
+      description: "Detecta withCheckedContinuation envolvendo suspend funs expostas via SKIE (deveria usar bridge automático)"
+
+  # Agent prompts — fragments injected into sub-agents
+  agent-prompts:
+    - inject-into:     tech-spec-agent
+      extension-point: "section:iOS UI layer"
+      file:            agent-contributions/tech-spec-additions.md
+
+    - inject-into:     task-contract-writer
+      extension-point: "after:Allowed Files"
+      file:            agent-contributions/task-writer-additions.md
+
+  # Config defaults — convenções canônicas do bridge KMP↔iOS
+  config-defaults:
+    conventions.kmp.swift-bridge: "skie"
+    conventions.kmp.ios-flow-pattern: "SharingStarted.WhileSubscribed(5000)"
+
+
+# ── DETECTION ─────────────────────────────────────────────────────────────
+detection:
+  signals:
+    - type:       file-content
+      glob:       "**/build.gradle*"
+      contains:   "skie"
+      confidence: 0.5
+
+    - type:       file-content
+      glob:       "**/build.gradle*"
+      contains:   "co.touchlab:skie"
+      confidence: 0.4
+
+    - type:       file-content
+      glob:       "**/*.kts"
+      contains:   "co.touchlab.skie"
+      confidence: 0.3
+
+  threshold: 0.6
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "architecture_ios"

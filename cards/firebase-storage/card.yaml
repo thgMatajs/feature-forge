@@ -1,0 +1,118 @@
+# cards/firebase-storage/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# Firebase Cloud Storage como provedor de file-storage para uploads/downloads
+# de imagens e mídias. Inclui security rules (storage.rules) e progress
+# reporting via Flow<UploadProgress>. Emulator local em :9199.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         firebase-storage
+  version:      1.0.0
+  description:  "Firebase Cloud Storage para uploads/downloads de imagens e mídias. Inclui security rules para storage e progress reporting via Flow."
+  category:     backend
+  maturity:     stable
+  maintainer:   feature-forge-core
+  created-at:   2026-05-29
+  last-updated: 2026-05-29
+  license:      MIT
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
+provides:
+  - file-storage
+  - firebase-storage
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+# file-storage é capability auto-suficiente — não exige Firestore/Auth nem
+# Kotlin como pré-requisito do card resolver. Repositórios em commonMain
+# que consumam esse card decidem suas próprias deps de language/runtime.
+requires: []
+
+
+# ── CONFLICTS ─────────────────────────────────────────────────────────────
+# Outros provedores de file-storage conflitam (S3, Supabase Storage, GCS direto).
+# Resolver erra no install se outro card ativo também provê `file-storage`.
+conflicts-with:
+  - file-storage
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+contributes:
+
+  # Template fragments — inseridos nos documentos do feature package
+  templates:
+    - target:  tech-spec.md
+      section: "Storage Strategy (Firebase)"
+      file:    templates/firebase-storage-tech-spec.md
+      merge:   append-section
+
+    - target:  data-contract-spec.yaml
+      section: "storage-paths"
+      file:    templates/firebase-storage-data-contract.yaml
+      merge:   merge-keys
+
+  # Validators — checks executados no lifecycle do forge
+  validators:
+    - name:        check-storage-rules-coverage
+      file:        validators/check-storage-rules-coverage.py
+      runs-on:     [verify-task, forge-doctor]
+      severity:    error
+      description: "Falha se algum path de Firebase Storage usado por repositórios da feature não estiver coberto por uma rule em storage.rules."
+
+  # Agent prompts — fragments injetados em sub-agents em extension points
+  agent-prompts:
+    - inject-into:     contract-planner-agent
+      extension-point: "section:Data Contract"
+      file:            agent-contributions/contract-planner-additions.md
+
+    - inject-into:     tech-spec-agent
+      extension-point: "section:Data layer"
+      file:            agent-contributions/tech-spec-additions.md
+
+    - inject-into:     task-contract-writer
+      extension-point: "after:Allowed Files"
+      file:            agent-contributions/task-writer-additions.md
+
+  # Config defaults — convenções aplicadas se outro card/usuário não sobrescrever
+  config-defaults:
+    conventions.backend.file-storage:           "firebase-storage"
+    conventions.observability.storage-rules-source: "storage.rules"
+
+
+# ── DETECTION ─────────────────────────────────────────────────────────────
+detection:
+  signals:
+    - type:       file-content
+      glob:       "**/build.gradle*"
+      contains:   "firebase-storage"
+      confidence: 0.5
+
+    - type:       file-exists
+      glob:       "**/storage.rules"
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/Package.swift"
+      contains:   "FirebaseStorage"
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/Podfile"
+      contains:   "FirebaseStorage"
+      confidence: 0.3
+
+  threshold: 0.5
+
+  alternative-cards: []
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "architecture_kmp"

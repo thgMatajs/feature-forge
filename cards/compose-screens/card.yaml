@@ -1,0 +1,93 @@
+schema-version: 1
+
+
+identity:
+  name:        compose-screens
+  version:     1.0.0
+  description: "Jetpack Compose para UI Android com layout {Screen}Screen.kt + {Screen}Content.kt + {Screen}Components.kt, sem @Suppress, com previews no mesmo arquivo"
+  category:    ui
+  maturity:    stable
+  maintainer:  feature-forge-core
+  created-at:  2026-05-29
+  last-updated: 2026-05-29
+  license:     MIT
+
+
+provides:
+  - android-ui
+  - compose
+
+
+requires:
+  - kotlin
+  - android-platform
+
+
+conflicts-with: []
+
+
+contributes:
+
+  templates:
+    - target:  tech-spec.md
+      section: "UI — Android (Compose)"
+      file:    templates/compose-tech-spec-section.md
+      merge:   append-section
+
+    - target:  task-contract.yaml
+      section: "compose-file-patterns"
+      file:    templates/compose-allowed-files.yaml
+      merge:   merge-keys
+
+  validators:
+    - name:        validate-compose-no-suppress
+      file:        validators/check-no-suppress.py
+      runs-on:     [pre-commit, verify-task]
+      severity:    error
+      description: "Bloqueia @Suppress(...) e @file:Suppress(...) em código Compose UI"
+
+    - name:        validate-compose-screen-layout
+      file:        validators/check-screen-layout.py
+      runs-on:     [pre-commit, verify-task]
+      severity:    error
+      description: "Garante layout {Screen}Screen.kt + {Screen}Content.kt + {Screen}Components.kt + {Screen}Mappers.kt opcional"
+
+  agent-prompts:
+    - inject-into:     tech-spec-agent
+      extension-point: "section:Android UI layer"
+      file:            agent-contributions/tech-spec-additions.md
+
+    - inject-into:     task-contract-writer
+      extension-point: "after:Allowed Files"
+      file:            agent-contributions/task-writer-additions.md
+
+  config-defaults:
+    conventions.folder-layout.android: "{Screen}Screen.kt + {Screen}Content.kt + {Screen}Components.kt + {Screen}Mappers.kt"
+    conventions.ui.compose.preview-location: "same-file-as-component"
+
+
+detection:
+  signals:
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "androidx.compose"
+      confidence: 0.5
+
+    - type:       file-content
+      glob:       "**/build.gradle*"
+      contains:   "androidx.compose"
+      confidence: 0.4
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "@Composable"
+      confidence: 0.3
+
+  threshold: 0.6
+
+  alternative-cards: []
+
+
+documentation:
+  readme:      README.md
+  rules-link:  "architecture_android"

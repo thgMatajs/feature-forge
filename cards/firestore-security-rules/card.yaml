@@ -1,0 +1,141 @@
+# cards/firestore-security-rules/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# Card: Cobertura formal de Firestore security rules.
+#
+# Splits do antigo `firebase-firestore` (Fase 3.5):
+#   - firestore-persistence    (CRUD + queries + batch — card separado)
+#   - firestore-realtime       (snapshot listeners — card separado)
+#   - firestore-security-rules (este card)             → rules + tests + coverage
+#
+# Este card cobre apenas a camada de autorização declarativa em
+# `firestore.rules`. Não duplica responsabilidades dos outros dois:
+# não fala de query design (persistence) nem de listeners (realtime).
+#
+# Referência viva (MeoBonsai — 4-source-of-truth de dados):
+#   docs/specs/data/firestore-data-model.md
+#   docs/specs/data/query-catalog.md
+#   docs/specs/data/access-matrix.md
+#   docs/specs/data/security-and-threat-model.md
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         firestore-security-rules
+  version:      1.0.0
+  description:  "Cobertura formal de Firestore security rules — rule por collection mexida na feature, testes de regras via emulator + rules-unit-tests, atualização sincronizada do access-matrix.md."
+  category:     backend
+  maturity:     stable
+  maintainer:   feature-forge-core
+  created-at:   2026-05-29
+  last-updated: 2026-05-29
+  license:      MIT
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
+# Capability auxiliar — múltiplos projetos podem prover variantes no futuro,
+# mas em v1 só este card fornece `firestore-rules-guarded`. Não é singular
+# (não força exclusividade): convive com qualquer outro card que adicione
+# camada extra de autorização (Cloud Functions, custom claims, etc.).
+provides:
+  - firestore-rules-guarded
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+# Rules sem Firestore ativo não fazem sentido — exige `persistence-server`
+# provido (em v1) por `firestore-persistence`. Resolver erra no install se
+# faltar.
+requires:
+  - persistence-server
+
+
+# ── CONFLITOS ─────────────────────────────────────────────────────────────
+# Capability auxiliar — não singular. Sem conflitos declarados.
+conflicts-with: []
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+contributes:
+
+  # Template fragments — adicionados aos documentos do feature package
+  templates:
+    - target:  tech-spec.md
+      section: "Security Rules — Firestore"
+      file:    templates/firestore-rules-tech-spec.md
+      merge:   append-section
+
+    - target:  test-strategy.yaml
+      section: "firestore-rules-tests"
+      file:    templates/firestore-rules-test-strategy.yaml
+      merge:   merge-keys
+
+  # Validators — stubs Phase 5
+  validators:
+    - name:        check-firestore-rules-coverage
+      file:        validators/check-firestore-rules-coverage.py
+      runs-on:     [verify-task, forge-doctor]
+      severity:    error
+      description: "Falha se alguma collection mencionada em data-contract-spec.yaml não tiver rule cobrindo as operações declaradas (get/list/create/update/delete)."
+
+    - name:        check-firestore-rules-tests
+      file:        validators/check-firestore-rules-tests.py
+      runs-on:     [verify-task]
+      severity:    error
+      description: "Falha se uma rule existir sem teste correspondente em firebase-rules-unit-testing (allow/deny matrix por path)."
+
+  # Agent prompts — fragments injetados em extension-points conhecidos
+  agent-prompts:
+    - inject-into:     contract-planner-agent
+      extension-point: "section:Data Contract"
+      file:            agent-contributions/contract-planner-additions.md
+
+    - inject-into:     tech-spec-agent
+      extension-point: "section:Data layer"
+      file:            agent-contributions/tech-spec-additions.md
+
+    - inject-into:     task-contract-writer
+      extension-point: "after:Allowed Files"
+      file:            agent-contributions/task-writer-additions.md
+
+  # Hooks — eventos lifecycle
+  hooks:
+    - file:    hooks/post-edit-firestore-rules.sh
+      events:  [post-edit]
+      glob:    "**/firestore.rules"
+
+  # Config defaults — convenções aplicadas se outro card/usuário não sobrescrever
+  config-defaults:
+    conventions.security.firestore-rules-source: "firestore.rules"
+    conventions.security.rules-test-framework:   "firebase-rules-unit-testing"
+
+
+# ── DETECTION ─────────────────────────────────────────────────────────────
+detection:
+  signals:
+    - type:       file-exists
+      glob:       "**/firestore.rules"
+      confidence: 0.5
+
+    - type:       file-content
+      glob:       "**/firestore.rules"
+      contains:   "rules_version"
+      confidence: 0.2
+
+    - type:       directory-exists
+      path:       "firebase"
+      confidence: 0.1
+
+    - type:       file-exists
+      glob:       "**/firestore.indexes.json"
+      confidence: 0.2
+
+  threshold: 0.4
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "architecture"

@@ -1,0 +1,111 @@
+# Fragmento contribuído por: room-database
+# Target: data-contract-spec.yaml
+# Merge:  merge-keys
+#
+# Bloco YAML inserido em data-contract-spec.yaml descrevendo tabelas
+# Room tocadas pela feature em operações de persistência local.
+# Pareia com `firestore-collections` (server-side) quando a feature
+# tem cache local de dados remotos — declarar nesse caso a estratégia
+# de sincronização na seção `sync-strategy` da tabela.
+#
+# OBRIGATÓRIO: cada Entity declarada aqui precisa de:
+#   - arquivo {Entity}Entity.kt em data/local/entity/
+#   - exportSchema = true habilitado no @Database
+#   - migration declarada quando version > 1
+
+room_tables:
+  # Exemplo de bloco — UMA entrada por tabela tocada pela feature.
+  # Remover este exemplo após preencher com tabelas reais.
+  - name: "<table-name-snake-case-ex: bonsai>"
+    description: "<o que cada linha representa em domínio>"
+    entity_class: "<EntityClassName-ex: BonsaiEntity>"
+
+    schema:
+      # Cada coluna -> { type, nullable, primary_key, indexed, default }
+      # type: TEXT | INTEGER | REAL | BLOB (tipos SQLite suportados)
+      # primary_key: true em ao menos uma coluna ou composite_primary_keys
+      columns:
+        id:            { type: TEXT,    nullable: false, primary_key: true,  indexed: true }
+        owner_uid:     { type: TEXT,    nullable: false, primary_key: false, indexed: true }
+        name:          { type: TEXT,    nullable: false, primary_key: false }
+        created_at:    { type: INTEGER, nullable: false, primary_key: false, indexed: true }
+        # campos da feature ↓
+
+      indices:
+        # Índices compostos declarados explicitamente via @Index na entity.
+        # Necessários quando há query com `WHERE x = ? ORDER BY y`.
+        - name: "index_<table>_owner_created"
+          columns: [owner_uid, created_at]
+          unique: false
+
+      foreign_keys:
+        # Opcional. Apenas quando há relação inter-tabela neste mesmo DB.
+        # Cross-DB foreign-key não é suportado em Room.
+        # - { column: parent_id, references: "<parent_table>(id)", on_delete: CASCADE }
+
+    dao:
+      class_name: "<FeatureDao-ex: BonsaiDao>"
+      queries:
+        # Cada query do DAO precisa estar listada. `returns: flow` força
+        # observação reativa; `returns: suspend` é single-shot.
+        - id: "observe-by-owner"
+          signature: "observeByOwner(ownerUid: String): Flow<List<BonsaiEntity>>"
+          returns: flow
+          sql: "SELECT * FROM bonsai WHERE owner_uid = :ownerUid ORDER BY created_at DESC"
+          bdd_ref: "<scenario-id>"
+        - id: "find-by-id"
+          signature: "findById(id: String): BonsaiEntity?"
+          returns: suspend
+          sql: "SELECT * FROM bonsai WHERE id = :id LIMIT 1"
+          bdd_ref: "<scenario-id>"
+
+    operations:
+      # CRUD coberto pelo DAO. Cada op amarrada a um scenario BDD
+      # + actor (mesmo padrão de firestore-collections).
+      - op: insert
+        actor: "<role-or-uid>"
+        bdd_ref: "<scenario-id>"
+        on_conflict: "REPLACE"
+      - op: update
+        actor: "<role-or-uid>"
+        bdd_ref: "<scenario-id>"
+      - op: delete
+        actor: "<role-or-uid>"
+        bdd_ref: "<scenario-id>"
+
+    migrations:
+      # Toda mudança de schema (add column, rename, change type) sobe
+      # `version` em @Database e gera uma entrada aqui.
+      current_version: 1
+      strategy: "AutoMigration"   # AutoMigration | Manual
+      history:
+        # - from: 1
+        #   to: 2
+        #   kind: AutoMigration
+        #   change: "add column updated_at (INTEGER, nullable)"
+        #   spec_class: null
+        # - from: 2
+        #   to: 3
+        #   kind: Manual
+        #   change: "rename column 'pic_url' -> 'photo_url'"
+        #   migration_class: "BonsaiMigration2to3"
+
+    sync_strategy:
+      # Preencher APENAS quando a feature combina Room (local) com
+      # firestore-collections (server-side) ou outro persistence-server.
+      paired_with_server: false
+      mode: "<write-through | stale-while-revalidate | offline-first | local-only>"
+      invalidation: "<como o cache é invalidado: push, polling, on-write>"
+
+    cross_references:
+      domain_model:    "<path para o data class do domain>"
+      mapper_class:    "<EntityLocalMapper-ex: BonsaiLocalMapper>"
+      repository_class: "<FeatureRepositoryImpl-ex: BonsaiRepositoryImpl>"
+
+# ─────────────────────────────────────────────────────────────────────────
+# Validação (Phase 5):
+#  - check-room-migrations.py (este card): toda mudança em `schema.columns`
+#    entre versões precisa de entrada correspondente em `migrations.history`
+#    + bump em `migrations.current_version` + @AutoMigration ou Migration
+#    declarada na classe @Database.
+# ─────────────────────────────────────────────────────────────────────────

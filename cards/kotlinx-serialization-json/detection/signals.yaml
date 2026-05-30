@@ -1,0 +1,41 @@
+# Detection signals — kotlinx-serialization-json card
+# ──────────────────────────────────────────────────────────────────────────
+# Espelho do bloco `detection:` em card.yaml. Mantido aqui para
+# inspeção isolada e para futuras integrações que leiam signals em
+# arquivo dedicado (forge doctor, scripts auxiliares).
+#
+# Threshold cumulativo: 0.6
+#   - file-content build.gradle*  +kotlinx-serialization-json → 0.5
+#   - file-content build.gradle*  +kotlinx-serialization      → 0.3
+#   - file-content *.kt           +@Serializable              → 0.3
+#   - file-content *.kt           +kotlinx.serialization      → 0.2
+#
+# Soma máxima: 1.3 (sanity ≤ 2.0 — CARD-016).
+#
+# Projetos KMP reais facilmente cruzam o threshold: a presença do
+# dependency `kotlinx-serialization-json` no build.gradle já vale 0.5;
+# qualquer DTO com `@Serializable` adiciona 0.3 — soma 0.8 ≥ 0.6.
+# ──────────────────────────────────────────────────────────────────────────
+
+signals:
+  - type:       file-content
+    glob:       "**/build.gradle*"
+    contains:   "kotlinx-serialization-json"
+    confidence: 0.5
+
+  - type:       file-content
+    glob:       "**/build.gradle*"
+    contains:   "kotlinx-serialization"
+    confidence: 0.3
+
+  - type:       file-content
+    glob:       "**/*.kt"
+    contains:   "@Serializable"
+    confidence: 0.3
+
+  - type:       file-content
+    glob:       "**/*.kt"
+    contains:   "kotlinx.serialization"
+    confidence: 0.2
+
+threshold: 0.6

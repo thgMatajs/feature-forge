@@ -1,0 +1,47 @@
+compose_file_patterns:
+  description: |
+    Padrões de arquivos Compose que tasks de UI Android podem editar. O
+    task-contract-writer merge essas chaves em `allowed_files` da task quando
+    ela é classificada como `category: android-ui`.
+
+  allowed_files_globs:
+    - "androidApp/feature/{feature}/ui/{screen}/{Screen}Screen.kt"
+    - "androidApp/feature/{feature}/ui/{screen}/{Screen}Content.kt"
+    - "androidApp/feature/{feature}/ui/{screen}/{Screen}Components.kt"
+    - "androidApp/feature/{feature}/ui/{screen}/{Screen}Mappers.kt"
+    - "androidApp/feature/{feature}/ui/{screen}/{Screen}*Preview.kt"
+
+  forbidden_files_globs:
+    - "**/*.xml"
+    - "shared/**/*Screen.kt"
+    - "shared/**/*Content.kt"
+    - "iosApp/**"
+
+  required_when_screen:
+    - "{Screen}Screen.kt"
+    - "{Screen}Content.kt"
+
+  optional_when_screen:
+    - "{Screen}Components.kt"
+    - "{Screen}Mappers.kt"
+
+  validations_suggested:
+    - command: "./gradlew :composeApp:assembleDebug"
+      purpose: "Compila o módulo Compose; falha cedo em erros de tipo/Composable"
+    - command: "./gradlew :composeApp:lintDebug"
+      purpose: "Lint Android padrão"
+    - command: "./gradlew :composeApp:detekt"
+      purpose: "Detekt + ktlint — bloqueia @Suppress e LongMethod"
+    - command: "python3 .claude/cards/compose-screens/validators/check-no-suppress.py {file}"
+      purpose: "Valida que nenhum @Suppress entrou no arquivo Compose"
+    - command: "python3 .claude/cards/compose-screens/validators/check-screen-layout.py {dir}"
+      purpose: "Confere existência de {Screen}Screen.kt + {Screen}Content.kt no diretório da tela"
+
+  gates_suggested:
+    pre_commit:
+      - validate-compose-no-suppress
+      - validate-compose-screen-layout
+    verify_task:
+      - validate-compose-no-suppress
+      - validate-compose-screen-layout
+      - "./gradlew :composeApp:assembleDebug"

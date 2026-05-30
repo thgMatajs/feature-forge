@@ -1,0 +1,42 @@
+# cards/firebase-firestore/detection/signals.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Sinais de detecção de Cloud Firestore como persistência primária.
+# Espelha o bloco detection.signals do card.yaml (fonte canônica).
+# Threshold cumulativo 0.5 — auto-ativa quando confiança somada ≥ 0.5.
+# ──────────────────────────────────────────────────────────────────────────
+
+signals:
+  - type:       file-exists
+    glob:       "**/google-services.json"
+    confidence: 0.2
+    rationale:  "App Android conectado a um projeto Firebase. Não basta sozinho — outro produto Firebase poderia estar em uso."
+
+  - type:       file-content
+    glob:       "**/build.gradle*"
+    contains:   "firebase-firestore"
+    confidence: 0.5
+    rationale:  "Dependência explícita do SDK Firestore no Gradle. Sinal mais forte para Android/KMP."
+
+  - type:       file-exists
+    glob:       "**/firestore.rules"
+    confidence: 0.3
+    rationale:  "Arquivo de security rules existe — implica uso ativo de Firestore."
+
+  - type:       file-exists
+    glob:       "**/firestore.indexes.json"
+    confidence: 0.2
+    rationale:  "Índices compostos declarados — só fazem sentido com Firestore em uso."
+
+  - type:       file-content
+    glob:       "**/Package.swift"
+    contains:   "FirebaseFirestore"
+    confidence: 0.3
+    rationale:  "Dependência SPM iOS (sem CocoaPods)."
+
+  - type:       file-content
+    glob:       "**/Podfile"
+    contains:   "FirebaseFirestore"
+    confidence: 0.3
+    rationale:  "Dependência iOS via CocoaPods (fallback para projetos que não migraram para SPM)."
+
+threshold: 0.5

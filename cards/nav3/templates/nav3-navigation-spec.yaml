@@ -1,0 +1,59 @@
+# Fragment contribuído a navigation-spec.yaml pelo card nav3.
+# Merge mode: merge-keys (top-level keys somam-se ao template canônico).
+# Quando o card nav3 está ativo, estes blocos são injetados no
+# navigation-spec.yaml do feature e o contract-planner-agent deve
+# popular `card_contributions.applied` com "nav3:constraint:route-key-shape".
+
+# ---- card_contributions ---------------------------------------------------
+# Slot canônico do template; o card nav3 sempre adiciona este label.
+card_contributions:
+  applied:
+    - "nav3:constraint:route-key-shape"
+
+# ---- nav3_route_key_shape -------------------------------------------------
+# Bloco read-only consumido pelo lint do navigation-spec quando o card está
+# ativo. NÃO editar inline na feature: alterações devem ser feitas no card
+# canônico em ~/Documents/feature-forge/cards/nav3/.
+nav3_route_key_shape:
+  description: >
+    Toda entry em nav_graph.routes[] precisa ter route_key apontando para
+    um membro de AppRoute (sealed interface declarada em shared:core
+    como @Serializable sealed interface AppRoute : NavKey).
+
+  rules:
+    - id: "NAV3-RK-001"
+      rule: "route_key deve começar com 'AppRoute.'"
+      severity: error
+      example_ok:  "AppRoute.BonsaiDetail"
+      example_bad: "BonsaiDetailRoute"
+
+    - id: "NAV3-RK-002"
+      rule: "params[].type deve ser primitivo, String, String? ou outro @Serializable"
+      severity: error
+      example_ok:  "{ name: bonsaiId, type: String, nullable: false }"
+      example_bad: "{ name: bonsai, type: BonsaiDomainModel }"
+
+    - id: "NAV3-RK-003"
+      rule: "rotas sem params declaram-se como @Serializable data object"
+      severity: warn
+      example_ok:  "routes[].params == []  ⇒  data object Welcome : AppRoute"
+
+    - id: "NAV3-RK-004"
+      rule: "deep_link_pattern não substitui route_key — Nav3 não tem string routes"
+      severity: error
+      example_ok: >
+        route_key: 'AppRoute.BonsaiDetail' + deep_link_pattern: 'bonsai/{id}'
+      example_bad: >
+        route_key: 'bonsai/{id}'
+
+    - id: "NAV3-RK-005"
+      rule: "back_behavior fora da taxonomy { pop, replace, clear-stack, dismiss-dialog, dismiss-sheet, noop } é hard-fail"
+      severity: error
+
+  navigator_method_map:
+    pop: "navigator.goBack()"
+    replace: "navigator.replaceTop(route)"
+    clear-stack: "navigator.resetTo(route)"
+    dismiss-dialog: "navigator.goBack()"
+    dismiss-sheet: "navigator.goBack()"
+    noop: "—"

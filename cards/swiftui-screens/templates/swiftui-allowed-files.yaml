@@ -1,0 +1,66 @@
+# Contributed to: task-contract.yaml
+# Section:        swiftui-file-patterns
+# Source card:    swiftui-screens v1.0.0
+# Merge mode:     merge-keys
+#
+# Padrões reutilizáveis de `allowed_files` para tarefas iOS UI. O writer
+# de Task Contracts mescla estas chaves no YAML final substituindo
+# `{Feature}` / `{Screen}` pelos slugs reais da feature/tela.
+# ──────────────────────────────────────────────────────────────────────────
+
+swiftui_file_patterns:
+
+  screen_quartet:
+    description: "Quatro arquivos canônicos de uma tela SwiftUI nova ou editada."
+    patterns:
+      - "iosApp/iosApp/Features/{Feature}/{Screen}/{Screen}ScreenView.swift"
+      - "iosApp/iosApp/Features/{Feature}/{Screen}/{Screen}ScreenContentView.swift"
+      - "iosApp/iosApp/Features/{Feature}/{Screen}/{Screen}Components.swift"
+      - "iosApp/iosApp/Features/{Feature}/{Screen}/{Screen}Strings.swift"
+
+  screen_callbacks:
+    description: "Struct dedicada com os callbacks da ContentView (quando ≥ 4 callbacks)."
+    patterns:
+      - "iosApp/iosApp/Features/{Feature}/{Screen}/{Screen}ScreenContentCallbacks.swift"
+
+  feature_adapter:
+    description: "Bridge ObservableObject entre StateFlow Kotlin e SwiftUI."
+    patterns:
+      - "iosApp/iosApp/Features/{Feature}/{Feature}ViewModelAdapter.swift"
+
+  feature_factory:
+    description: "Factory functions Swift que instanciam adapter + dependências do shared."
+    patterns:
+      - "iosApp/iosApp/Features/{Feature}/{Feature}UIFactory.swift"
+
+  shared_ios_extensions:
+    description: "Helpers cross-feature (ViewModifier, AttributedString extensions)."
+    patterns:
+      - "iosApp/iosApp/Shared/Extensions/**/*.swift"
+      - "iosApp/iosApp/Shared/Modifiers/**/*.swift"
+
+# ──────────────────────────────────────────────────────────────────────────
+# Caminhos proibidos em qualquer tarefa UI iOS
+# ──────────────────────────────────────────────────────────────────────────
+swiftui_forbidden_patterns:
+  - "iosApp/iosApp/**/*Previews.swift"      # preview vive no mesmo arquivo
+  - "iosApp/iosApp/**/*.storyboard"          # projeto SwiftUI-only
+  - "iosApp/iosApp/**/*.xib"                 # projeto SwiftUI-only
+  - "iosApp/iosApp/**/Localizable.strings"   # gerado de shared/resources/i18n
+
+# ──────────────────────────────────────────────────────────────────────────
+# Validações canônicas atreladas a tarefas iOS UI
+# ──────────────────────────────────────────────────────────────────────────
+swiftui_validations:
+  - name:     swiftlint-format-check
+    command:  "./scripts/swift-style.sh --lint"
+    severity: error
+  - name:     ios-build
+    command:  "./scripts/run-ios-simulator.sh --build-only"
+    severity: error
+  - name:     card-validator-no-suppress
+    command:  "python3 .claude/cards/swiftui-screens/validators/check-no-swiftlint-disable.py"
+    severity: error
+  - name:     card-validator-screen-layout
+    command:  "python3 .claude/cards/swiftui-screens/validators/check-screen-layout-ios.py"
+    severity: warn

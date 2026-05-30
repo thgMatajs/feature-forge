@@ -1,0 +1,62 @@
+# cards/firebase-auth/detection/signals.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Sinais de detecção do card firebase-auth.
+#
+# `forge init` percorre o repositório em paralelo e soma confidence de cada
+# signal que casa. Se total ≥ threshold (0.5), o card é ativado
+# automaticamente. Se total ∈ [0.3, 0.5), forge pergunta ao usuário.
+#
+# Os signals aqui espelham `card.yaml > detection.signals`. Este arquivo
+# existe para evolução futura (matrizes de confidence por tipo de signal,
+# regex matches, etc.) sem precisar inflar o card.yaml.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+signals:
+  - id:         android-firebase-config
+    type:       file-exists
+    glob:       "**/google-services.json"
+    confidence: 0.3
+    rationale:  "google-services.json é gerado pelo Firebase Console e indica integração Firebase em Android. Não distingue Auth de outros módulos — confidence baixo."
+
+  - id:         ios-firebase-config
+    type:       file-exists
+    glob:       "**/GoogleService-Info.plist"
+    confidence: 0.3
+    rationale:  "GoogleService-Info.plist é o análogo iOS — também não distingue Auth de outros módulos sozinho."
+
+  - id:         android-gradle-firebase-auth
+    type:       file-content
+    glob:       "**/build.gradle*"
+    contains:   "firebase-auth"
+    confidence: 0.5
+    rationale:  "Dependência Gradle 'firebase-auth' (ou 'firebase-auth-ktx') é evidência forte de uso ativo do módulo Authentication."
+
+  - id:         ios-cocoapods-firebase-auth
+    type:       file-content
+    glob:       "**/Podfile*"
+    contains:   "FirebaseAuth"
+    confidence: 0.4
+    rationale:  "pod 'FirebaseAuth' em Podfile indica iOS consumindo Authentication via CocoaPods."
+
+  - id:         ios-spm-firebase-auth
+    type:       file-content
+    glob:       "**/Package.swift"
+    contains:   "FirebaseAuth"
+    confidence: 0.4
+    rationale:  "Produto FirebaseAuth declarado em Package.swift (SwiftPM) — alternativa ao CocoaPods."
+
+  - id:         android-gradle-firebase-auth-ktx
+    type:       file-content
+    glob:       "**/build.gradle*"
+    contains:   "firebase-auth-ktx"
+    confidence: 0.2
+    rationale:  "Variante KTX explícita. Confidence baixo porque já é coberto parcialmente por 'firebase-auth'; agrega sinal apenas quando ambas as strings aparecem em catálogos de versão."
+
+threshold: 0.5
+
+alternative-cards:
+  - auth0
+  - supabase-auth
+  - clerk-auth

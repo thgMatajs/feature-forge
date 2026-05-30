@@ -1,0 +1,147 @@
+# cards/firebase-firestore/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# Card: Cloud Firestore como persistência primária + realtime data.
+# Inclui security rules coverage, query catalog, access matrix e threat
+# model atualizados na MESMA PR onde a feature mexe em coleções/regras.
+# Referência viva (MeoBonsai):
+#   docs/specs/data/firestore-data-model.md
+#   docs/specs/data/query-catalog.md
+#   docs/specs/data/access-matrix.md
+#   docs/specs/data/security-and-threat-model.md
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         firebase-firestore
+  version:      1.0.0
+  description:  "Cloud Firestore como persistência primária + realtime data. Inclui security rules coverage, query catalog, access matrix, threat model atualizado por PR."
+  category:     backend
+  maturity:     stable
+  maintainer:   feature-forge-core
+  created-at:   2026-05-29
+  last-updated: 2026-05-29
+  license:      MIT
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
+provides:
+  - persistence-server
+  - realtime-data
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+# Sem dependência dura: o card descreve a camada de backend persistente.
+# Funciona com qualquer linguagem cliente (Kotlin, Swift, TypeScript).
+requires: []
+
+
+# ── CONFLITOS ─────────────────────────────────────────────────────────────
+# Outro backend que também provê persistência server-side conflita.
+# Persistência local (Room/SQLite/SwiftData) NÃO conflita — capabilities
+# diferentes (persistence-local, não persistence-server).
+conflicts-with:
+  - persistence-server
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+contributes:
+
+  # Template fragments — adicionados aos documentos do feature package
+  templates:
+    - target:  data-contract-spec.yaml
+      section: "firestore-collections"
+      file:    templates/firestore-data-contract.yaml
+      merge:   merge-keys
+
+    - target:  tech-spec.md
+      section: "Data layer"
+      file:    templates/firestore-tech-spec.md
+      merge:   append-section
+
+    - target:  test-strategy.yaml
+      section: "backend-e2e"
+      file:    templates/firestore-e2e.yaml
+      merge:   merge-keys
+
+  # Validators — stubs Phase 5
+  validators:
+    - name:        check-firestore-rules-coverage
+      file:        validators/check-firestore-rules-coverage.py
+      runs-on:     [verify-task, forge-doctor]
+      severity:    error
+      description: "Falha se uma coleção mexida na feature não tem rule em firestore.rules cobrindo create/read/update/delete."
+
+    - name:        check-firestore-indexes
+      file:        validators/check-firestore-indexes.py
+      runs-on:     [verify-task]
+      severity:    warn
+      description: "Avisa se há query custom (compound, orderBy + where) sem índice declarado em firestore.indexes.json."
+
+  # Agent prompts — fragments injetados em extension-points conhecidos
+  agent-prompts:
+    - inject-into:     contract-planner-agent
+      extension-point: "section:firestore-collections"
+      file:            agent-contributions/contract-planner-additions.md
+
+    - inject-into:     tech-spec-agent
+      extension-point: "section:Data layer"
+      file:            agent-contributions/tech-spec-additions.md
+
+    - inject-into:     task-contract-writer
+      extension-point: "after:Allowed Files"
+      file:            agent-contributions/task-writer-additions.md
+
+  # Hooks — stub Phase 5
+  hooks:
+    - file:   hooks/post-edit-firestore-rules.sh
+      events: [post-edit]
+      glob:   "**/firestore.rules"
+
+  # Config defaults — convenções aplicadas se outro card/usuário não sobrescrever
+  config-defaults:
+    conventions.backend.persistence:                 "firebase-firestore"
+    conventions.observability.firestore-rules-source: "firestore.rules"
+    conventions.testing.backend-e2e:                 "firestore-emulator"
+
+
+# ── DETECTION ─────────────────────────────────────────────────────────────
+detection:
+  signals:
+    - type:       file-exists
+      glob:       "**/google-services.json"
+      confidence: 0.2
+
+    - type:       file-content
+      glob:       "**/build.gradle*"
+      contains:   "firebase-firestore"
+      confidence: 0.5
+
+    - type:       file-exists
+      glob:       "**/firestore.rules"
+      confidence: 0.3
+
+    - type:       file-exists
+      glob:       "**/firestore.indexes.json"
+      confidence: 0.2
+
+    - type:       file-content
+      glob:       "**/Package.swift"
+      contains:   "FirebaseFirestore"
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/Podfile"
+      contains:   "FirebaseFirestore"
+      confidence: 0.3
+
+  threshold: 0.5
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "architecture"

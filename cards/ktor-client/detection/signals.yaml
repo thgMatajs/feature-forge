@@ -1,0 +1,41 @@
+# Detection signals — ktor-client card
+# ──────────────────────────────────────────────────────────────────────────
+# Espelho do bloco `detection:` em card.yaml. Mantido aqui para inspeção
+# isolada e para futuras integrações que leiam signals em arquivo dedicado
+# (forge doctor, scripts auxiliares).
+#
+# Threshold cumulativo: 0.5
+#   - file-content build.gradle*  +io.ktor:ktor-client → 0.5
+#   - file-content build.gradle*  +ktor-client-core    → 0.3
+#   - file-content *.kt           +HttpClient(         → 0.3
+#   - file-content *.kt           +io.ktor.client      → 0.2
+#
+# Soma máxima: 1.3 (sanity ≤ 2.0 — CARD-016).
+#
+# Projetos KMP com Ktor atingem o threshold facilmente: a dependency
+# `io.ktor:ktor-client-core` no Gradle já vale 0.5; qualquer instância de
+# `HttpClient(` ou import `io.ktor.client` confirma — soma 0.7 ≥ 0.5.
+# ──────────────────────────────────────────────────────────────────────────
+
+signals:
+  - type:       file-content
+    glob:       "**/build.gradle*"
+    contains:   "io.ktor:ktor-client"
+    confidence: 0.5
+
+  - type:       file-content
+    glob:       "**/build.gradle*"
+    contains:   "ktor-client-core"
+    confidence: 0.3
+
+  - type:       file-content
+    glob:       "**/*.kt"
+    contains:   "HttpClient("
+    confidence: 0.3
+
+  - type:       file-content
+    glob:       "**/*.kt"
+    contains:   "io.ktor.client"
+    confidence: 0.2
+
+threshold: 0.5

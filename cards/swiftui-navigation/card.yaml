@@ -1,0 +1,95 @@
+# cards/swiftui-navigation/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# Card: NavigationStack do SwiftUI para iOS. AppRoute Swift enum espelha
+# o AppRoute do shared (commonMain), mas é tipo nativo Swift Hashable —
+# nunca Navigation 3 no iOS, nunca compartilhar tipo Kotlin diretamente
+# como NavKey.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         swiftui-navigation
+  version:      1.0.0
+  description:  "NavigationStack do SwiftUI para iOS, com AppRoute Swift espelhando AppRoute do shared (mas como enum nativo Swift). Sem Navigation 3 no iOS."
+  category:     navigation
+  maturity:     stable
+  maintainer:   feature-forge-core
+  created-at:   2026-05-29
+  last-updated: 2026-05-29
+  license:      MIT
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
+provides:
+  - navigation-ios
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+requires:
+  - swiftui
+  - ios-platform
+
+
+# ── CONFLICTS ─────────────────────────────────────────────────────────────
+conflicts-with: []
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+contributes:
+
+  # Template fragments — adicionados a tech-spec.md
+  templates:
+    - target:  tech-spec.md
+      section: "Navigation — iOS (SwiftUI NavigationStack)"
+      file:    templates/swiftui-nav-tech-spec-section.md
+      merge:   append-section
+
+  # Agent prompts — fragments injected into sub-agents
+  agent-prompts:
+    - inject-into:     contract-planner-agent
+      extension-point: "constraint:route-key-shape"
+      file:            agent-contributions/contract-planner-additions.md
+
+    - inject-into:     tech-spec-agent
+      extension-point: "section:iOS UI layer"
+      file:            agent-contributions/tech-spec-additions.md
+
+    - inject-into:     task-contract-writer
+      extension-point: "after:Allowed Files"
+      file:            agent-contributions/task-writer-additions.md
+
+  # Config defaults — convenções canônicas de navegação iOS
+  config-defaults:
+    conventions.navigation.ios: "swiftui-navigation-stack"
+    conventions.navigation.ios-route-source: "Swift enum mirroring shared AppRoute"
+
+
+# ── DETECTION ─────────────────────────────────────────────────────────────
+detection:
+  signals:
+    - type:       file-content
+      glob:       "**/*.swift"
+      contains:   "NavigationStack"
+      confidence: 0.5
+
+    - type:       file-content
+      glob:       "**/*.swift"
+      contains:   "NavigationLink"
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/*.swift"
+      contains:   "navigationDestination"
+      confidence: 0.3
+
+  threshold: 0.6
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "architecture_ios"

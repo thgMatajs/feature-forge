@@ -1,0 +1,34 @@
+# Detection signals — swiftui-navigation card
+# ──────────────────────────────────────────────────────────────────────────
+# Espelho do bloco `detection:` em card.yaml. Mantido aqui para
+# inspeção isolada e para futuras integrações que leiam signals em
+# arquivo dedicado (forge doctor, scripts auxiliares).
+#
+# Threshold cumulativo: 0.6
+#   - file-content **/*.swift +"NavigationStack"        → 0.5
+#   - file-content **/*.swift +"NavigationLink"         → 0.3
+#   - file-content **/*.swift +"navigationDestination"  → 0.3
+#
+# Soma máxima: 1.1 (sanity ≤ 2.0 — CARD-016).
+# Threshold 0.6 garante activate quando existe NavigationStack OU a
+# combinação NavigationLink + navigationDestination — evita falso-positivo
+# em apps que só tem NavigationLink legado sem stack.
+# ──────────────────────────────────────────────────────────────────────────
+
+signals:
+  - type:       file-content
+    glob:       "**/*.swift"
+    contains:   "NavigationStack"
+    confidence: 0.5
+
+  - type:       file-content
+    glob:       "**/*.swift"
+    contains:   "NavigationLink"
+    confidence: 0.3
+
+  - type:       file-content
+    glob:       "**/*.swift"
+    contains:   "navigationDestination"
+    confidence: 0.3
+
+threshold: 0.6

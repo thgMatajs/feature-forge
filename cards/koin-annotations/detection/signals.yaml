@@ -1,0 +1,49 @@
+# cards/koin-annotations/detection/signals.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Sinais de detecção do card koin-annotations.
+#
+# `forge init` percorre o repositório em paralelo e soma confidence de cada
+# signal que casa. Se total ≥ threshold (0.6), o card é ativado automaticamente.
+# Se total ∈ [0.3, 0.6), forge pergunta ao usuário.
+#
+# Os signals aqui espelham `card.yaml > detection.signals`. Este arquivo
+# existe para evolução futura (matrizes de confidence por tipo de signal,
+# regex matches, etc.) sem precisar inflar o card.yaml.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+signals:
+  - id:         koin-module-annotation
+    type:       file-content
+    glob:       "**/*.kt"
+    contains:   "@Module"
+    confidence: 0.4
+    rationale:  "Classes anotadas com @Module são o marker primário do Koin Annotations Compiler Plugin."
+
+  - id:         koin-componentscan-annotation
+    type:       file-content
+    glob:       "**/*.kt"
+    contains:   "@ComponentScan"
+    confidence: 0.4
+    rationale:  "@ComponentScan acompanha @Module e indica varredura via KSP."
+
+  - id:         koin-annotations-gradle-dep
+    type:       file-content
+    glob:       "**/build.gradle*"
+    contains:   "koin-annotations"
+    confidence: 0.5
+    rationale:  "Dependência io.insert-koin:koin-annotations declarada em build.gradle(.kts) é evidência forte."
+
+  - id:         koin-viewmodel-annotation
+    type:       file-content
+    glob:       "**/*.kt"
+    contains:   "@KoinViewModel"
+    confidence: 0.2
+    rationale:  "@KoinViewModel é exclusivo de Android — confidence menor porque pode coexistir com outras estratégias."
+
+threshold: 0.6
+
+alternative-cards:
+  - koin-dsl
+  - hilt-di

@@ -1,0 +1,99 @@
+# cards/kotlinx-serialization-json/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# Leaf-ish card: kotlinx.serialization-json como serializador JSON canônico
+# para projetos KMP. Provê `serialization-json` (singular). Ancora regras
+# de DTOs/Request/Response com @Serializable, Json config canônica
+# (ignoreUnknownKeys=true, encodeDefaults=false), proibição de
+# gson/moshi/jackson no commonMain.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         kotlinx-serialization-json
+  version:      1.0.0
+  description:  "kotlinx.serialization-json para serialização JSON canônica KMP, com @Serializable em DTOs/Response/Request"
+  category:     kmp
+  maturity:     stable
+  maintainer:   feature-forge-core
+  created-at:   2026-05-29
+  last-updated: 2026-05-29
+  license:      MIT
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
+provides:
+  - serialization-json
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+requires:
+  - kotlin
+
+
+# ── CONFLICTS ─────────────────────────────────────────────────────────────
+# `serialization-json` é label singular (capability-labels.md §Network).
+# Cards alternativos que provêem serialization-json (ex.: moshi-kotlin,
+# kotlinx-serialization-cbor com mesmo label) entrariam aqui.
+conflicts-with:
+  - serialization-json
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+contributes:
+
+  # Agent prompts — fragments injected into sub-agents at extension points
+  agent-prompts:
+    - inject-into:     tech-spec-agent
+      extension-point: "section:Shared (KMP) layer"
+      file:            agent-contributions/tech-spec-additions.md
+
+    - inject-into:     task-contract-writer
+      extension-point: "after:Allowed Files"
+      file:            agent-contributions/task-writer-additions.md
+
+  # Config defaults — convenções canônicas de serialização JSON
+  config-defaults:
+    conventions.serialization.json:        "kotlinx-serialization-json"
+    conventions.serialization.json-config: "ignoreUnknownKeys=true, encodeDefaults=false"
+
+
+# ── DETECTION ─────────────────────────────────────────────────────────────
+# Threshold cumulativo: 0.6
+#   - build.gradle* contém "kotlinx-serialization-json" → 0.5
+#   - build.gradle* contém "kotlinx-serialization"      → 0.3
+#   - *.kt contém "@Serializable"                       → 0.3
+#   - *.kt contém "kotlinx.serialization"               → 0.2
+# Soma máxima: 1.3 (sanity ≤ 2.0).
+detection:
+  signals:
+    - type:       file-content
+      glob:       "**/build.gradle*"
+      contains:   "kotlinx-serialization-json"
+      confidence: 0.5
+
+    - type:       file-content
+      glob:       "**/build.gradle*"
+      contains:   "kotlinx-serialization"
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "@Serializable"
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "kotlinx.serialization"
+      confidence: 0.2
+
+  threshold: 0.6
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "architecture_kmp"

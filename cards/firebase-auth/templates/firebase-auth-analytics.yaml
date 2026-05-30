@@ -1,0 +1,128 @@
+# Template fragment contribuído por: firebase-auth
+# Target: analytics-spec.yaml
+# Merge: merge-keys (top-level keys são mergeados; conflito em chave = erro)
+#
+# Este fragmento garante que toda feature que toca auth declare os eventos
+# canônicos definidos em shared:core/observability/AuthAnalytics.kt. Naming
+# segue <feature>_<verb>_<outcome>.
+#
+# Crashlytics binding (recordException) é condicional: só vira ativo quando
+# o card `crashlytics` também está ativo. Quando inativo, o tracker apenas
+# loga o analytics event sem chamar recordException.
+
+firebase_auth_events:
+
+  contracts_source:
+    test_ids:  "shared:core/observability/AuthTestIds.kt"
+    analytics: "shared:core/observability/AuthAnalytics.kt"
+    crashlytics_exception: "shared/feature/auth/.../data/analytics/FirebaseAuthAnalyticsException.kt"
+
+  naming_rules:
+    event_format: "<feature>_<verb>_<outcome>"
+    param_format: "snake_case"
+    feature_prefix: "auth"
+
+  required_events:
+
+    - id:          register_attempt
+      const_ref:   "AuthAnalytics.Events.REGISTER_ATTEMPT"
+      trigger:     "Usuário submete formulário de criação de conta"
+      params:
+        - name: duration_ms
+          const_ref: "AuthAnalytics.Params.DURATION_MS"
+          required: false
+      crashlytics: false
+
+    - id:          register_success
+      const_ref:   "AuthAnalytics.Events.REGISTER_SUCCESS"
+      trigger:     "Conta criada com sucesso no Firebase Auth"
+      params:
+        - name: duration_ms
+          const_ref: "AuthAnalytics.Params.DURATION_MS"
+          required: true
+      crashlytics: false
+
+    - id:          register_error
+      const_ref:   "AuthAnalytics.Events.REGISTER_ERROR"
+      trigger:     "FirebaseAuthException ou falha de rede no fluxo de registro"
+      params:
+        - name: error_code
+          const_ref: "AuthAnalytics.Params.ERROR_CODE"
+          required: true
+        - name: duration_ms
+          const_ref: "AuthAnalytics.Params.DURATION_MS"
+          required: false
+      crashlytics:
+        when_card_active: "crashlytics"
+        exception_class:  "FirebaseAuthAnalyticsException"
+        bind_params:      ["error_code"]
+        cause_type:       "REGISTER"
+
+    - id:          register_offline
+      const_ref:   "AuthAnalytics.Events.REGISTER_OFFLINE"
+      trigger:     "Tentativa de registro sem conexão (detectada antes do call Firebase)"
+      params: []
+      crashlytics: false
+
+    - id:          login_attempt
+      const_ref:   "AuthAnalytics.Events.LOGIN_ATTEMPT"
+      trigger:     "Usuário submete formulário de login"
+      params:
+        - name: duration_ms
+          const_ref: "AuthAnalytics.Params.DURATION_MS"
+          required: false
+      crashlytics: false
+
+    - id:          login_success
+      const_ref:   "AuthAnalytics.Events.LOGIN_SUCCESS"
+      trigger:     "Login completou com sucesso no Firebase Auth"
+      params:
+        - name: duration_ms
+          const_ref: "AuthAnalytics.Params.DURATION_MS"
+          required: true
+      crashlytics: false
+
+    - id:          login_error
+      const_ref:   "AuthAnalytics.Events.LOGIN_ERROR"
+      trigger:     "FirebaseAuthException no fluxo de login"
+      params:
+        - name: error_code
+          const_ref: "AuthAnalytics.Params.ERROR_CODE"
+          required: true
+      crashlytics:
+        when_card_active: "crashlytics"
+        exception_class:  "FirebaseAuthAnalyticsException"
+        bind_params:      ["error_code"]
+        cause_type:       "LOGIN"
+
+    - id:          login_validation_error
+      const_ref:   "AuthAnalytics.Events.LOGIN_VALIDATION_ERROR"
+      trigger:     "Validação client-side (email vazio, senha curta) bloqueou o submit"
+      params:
+        - name: field_id
+          const_ref: "AuthAnalytics.Params.FIELD_ID"
+          required: true
+        - name: error_type
+          const_ref: "AuthAnalytics.Params.ERROR_TYPE"
+          required: true
+      crashlytics: false
+
+    - id:          login_offline
+      const_ref:   "AuthAnalytics.Events.LOGIN_OFFLINE"
+      trigger:     "Tentativa de login sem conexão"
+      params: []
+      crashlytics: false
+
+    - id:          screen_view_login
+      const_ref:   "AuthAnalytics.Events.SCREEN_VIEW_LOGIN"
+      trigger:     "Login screen entra em primeiro plano"
+      params: []
+      crashlytics: false
+
+  parity_checks:
+    android_tracker_path: "androidApp/feature/auth/.../analytics/AndroidAuthAnalyticsTracker.kt"
+    ios_tracker_path:     "iosApp/iosApp/Features/Auth/.../IOSAuthAnalyticsTracker.swift"
+    rule: |
+      Todo evento em required-events deve ser disparado por ambos os trackers
+      Android e iOS com a mesma constante de AuthAnalytics.Events. Diferença
+      de cobertura entre plataformas é code-review block.

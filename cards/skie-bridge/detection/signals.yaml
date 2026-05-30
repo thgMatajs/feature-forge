@@ -1,0 +1,30 @@
+# detection/signals.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Sinais de detecção canônicos do card skie-bridge.
+# Espelhado em card.yaml § detection. Este arquivo serve como referência
+# legível e local para ajustes futuros sem mexer no manifest principal.
+# ──────────────────────────────────────────────────────────────────────────
+
+signals:
+  - id:         skie-in-build-gradle
+    type:       file-content
+    glob:       "**/build.gradle*"
+    contains:   "skie"
+    confidence: 0.5
+    rationale:  "Alias do plugin SKIE em shared/build.gradle.kts é o sinal mais forte."
+
+  - id:         skie-touchlab-dependency
+    type:       file-content
+    glob:       "**/build.gradle*"
+    contains:   "co.touchlab:skie"
+    confidence: 0.4
+    rationale:  "Declaração explícita do artefato SKIE (caso o projeto use sem version catalog)."
+
+  - id:         skie-plugin-id-in-kts
+    type:       file-content
+    glob:       "**/*.kts"
+    contains:   "co.touchlab.skie"
+    confidence: 0.3
+    rationale:  "Plugin ID em libs.versions.toml ou settings.gradle.kts."
+
+threshold: 0.6

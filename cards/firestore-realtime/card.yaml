@@ -1,0 +1,110 @@
+# cards/firestore-realtime/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# Camada de streaming reativo sobre `firestore-persistence` — expõe
+# snapshotListener / Flow<T> a partir de coleções/documentos Firestore.
+# Único provedor de `realtime-stream` em v1 (WebSocket/SSE vêm em v1.1).
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         firestore-realtime
+  version:      1.0.0
+  description:  "Cloud Firestore realtime listeners (snapshotListener, snapshots Flow). Camada de streaming reativo sobre `firestore-persistence`."
+  category:     backend
+  maturity:     stable
+  maintainer:   feature-forge-core
+  created-at:   2026-05-29
+  last-updated: 2026-05-29
+  license:      MIT
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
+# `realtime-stream` é Singular — uma estratégia de realtime por projeto.
+# Em v1 só Firestore o provê; v1.1 adiciona WebSocket/SSE.
+provides:
+  - realtime-stream
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+# Requer `persistence-server` (provido por firestore-persistence em v1).
+# A camada realtime reaproveita a conexão/SDK já estabelecida pelo
+# persistence — listeners não fazem sentido sem o backend Firestore ativo.
+requires:
+  - persistence-server
+
+
+# ── CONFLICTS ─────────────────────────────────────────────────────────────
+# Singular: outro provedor de `realtime-stream` (websocket-realtime,
+# sse-realtime — reservados v1.1) não pode coexistir.
+conflicts-with:
+  - realtime-stream
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+contributes:
+
+  # Template fragments — inseridos nos documentos do feature package
+  templates:
+    - target:  tech-spec.md
+      section: "Realtime Strategy — Firestore Listeners"
+      file:    templates/firestore-realtime-tech-spec.md
+      merge:   append-section
+
+  # Agent prompts — fragments injetados em sub-agents em extension points
+  agent-prompts:
+    - inject-into:     contract-planner-agent
+      extension-point: "section:Data Contract"
+      file:            agent-contributions/contract-planner-additions.md
+
+    - inject-into:     tech-spec-agent
+      extension-point: "section:Data layer"
+      file:            agent-contributions/tech-spec-additions.md
+
+    - inject-into:     task-contract-writer
+      extension-point: "after:Allowed Files"
+      file:            agent-contributions/task-writer-additions.md
+
+  # Config defaults — convenções aplicadas se outro card/usuário não sobrescrever
+  config-defaults:
+    conventions.realtime.stream:        "firestore-listeners"
+    conventions.realtime.flow-strategy: "SharingStarted.WhileSubscribed(5000)"
+
+
+# ── DETECTION ─────────────────────────────────────────────────────────────
+# Detecção tipicamente ocorre em paralelo com firestore-persistence — quando
+# o repositório já usa addSnapshotListener ou .snapshots() do SDK KMP.
+detection:
+  signals:
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "addSnapshotListener"
+      confidence: 0.4
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "snapshots()"
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/build.gradle*"
+      contains:   "firebase-firestore"
+      confidence: 0.2
+
+    - type:       file-content
+      glob:       "**/*.swift"
+      contains:   "addSnapshotListener"
+      confidence: 0.3
+
+  threshold: 0.5
+
+  alternative-cards: []
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "architecture_kmp"

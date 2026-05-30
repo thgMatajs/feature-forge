@@ -1,0 +1,89 @@
+# Fragmento contribuído por: firestore-persistence
+# Target: data-contract-spec.yaml
+# Merge:  merge-keys
+#
+# Bloco YAML inserido em data-contract-spec.yaml descrevendo coleções
+# Firestore tocadas pela feature em operações CRUD + queries one-shot +
+# batch writes. Snapshot listeners (realtime) ficam no card
+# `firestore-realtime`; security rules em `firestore-security-rules`.
+#
+# OBRIGATÓRIO atualizar na MESMA PR (4-source-of-truth):
+#   docs/specs/data/firestore-data-model.md
+#   docs/specs/data/query-catalog.md
+#   docs/specs/data/access-matrix.md
+#   docs/specs/data/security-and-threat-model.md
+
+firestore_collections:
+  # Exemplo de bloco — UMA entrada por coleção tocada pela feature.
+  # Remover este exemplo após preencher com coleções reais.
+  - name: "<collection-path-ex: users/{uid}/bonsais>"
+    description: "<o que cada doc representa>"
+
+    doc_shape:
+      fields:
+        # nome -> { type, nullable, owned-by, sensitivity }
+        # type: string | number | boolean | timestamp | map | array | reference
+        # sensitivity: public | user_private | privileged
+        id:           { type: string,    nullable: false, owned_by: server, sensitivity: public }
+        owner_uid:    { type: string,    nullable: false, owned_by: server, sensitivity: user_private }
+        created_at:   { type: timestamp, nullable: false, owned_by: server, sensitivity: public }
+        # campos da feature ↓
+
+    operations:
+      # Operações CRUD one-shot cobertas POR ESTE CARD.
+      # (Listeners realtime → card firestore-realtime.)
+      # Cada operação amarrada a um scenario BDD (id estável) + actor.
+      # security_rules_ref aponta para o BLOCO em firestore.rules que cobre
+      # essa op (validação no card firestore-security-rules).
+      - op: create
+        actor: "<role-or-uid>"
+        bdd_ref: "<scenario-id>"
+        security_rules_ref: "<path:line ou nome do match block>"
+      - op: read
+        actor: "<role-or-uid>"
+        bdd_ref: "<scenario-id>"
+        security_rules_ref: "<path:line ou nome do match block>"
+      - op: update
+        actor: "<role-or-uid>"
+        bdd_ref: "<scenario-id>"
+        security_rules_ref: "<path:line ou nome do match block>"
+      - op: delete
+        actor: "<role-or-uid>"
+        bdd_ref: "<scenario-id>"
+        security_rules_ref: "<path:line ou nome do match block>"
+
+    queries:
+      # TODA query one-shot custom (filtro composto, orderBy + where)
+      # precisa estar listada e linkada a um índice.
+      # Queries com snapshot listener (realtime) ficam declaradas no card
+      # firestore-realtime — aqui só queries one-shot (`get()`, `await()`).
+      - id: "<query_id_ex: list_by_owner_recent>"
+        where:
+          - { field: owner_uid, op: "==", value: "<auth.uid>" }
+        order_by:
+          - { field: created_at, direction: desc }
+        limit: 50
+        index_ref: "<index-id em firestore.indexes.json ou 'single-field-implicit'>"
+        bdd_ref: "<scenario-id>"
+
+    batch_writes:
+      # Declarar quando a operação CRUD envolve múltiplos documentos
+      # transacionalmente (WriteBatch ou runTransaction). Opcional.
+      uses_batch: false
+      uses_transaction: false
+      rationale: "<por que precisa atomicidade entre documentos>"
+
+    cross_references:
+      data_model_doc:        "docs/specs/data/firestore-data-model.md#<anchor>"
+      query_catalog_doc:     "docs/specs/data/query-catalog.md#<anchor>"
+      access_matrix_doc:     "docs/specs/data/access-matrix.md#<anchor>"
+      threat_model_doc:      "docs/specs/data/security-and-threat-model.md#<anchor>"
+
+# ─────────────────────────────────────────────────────────────────────────
+# Validação (Phase 5):
+#  - check-firestore-indexes.py (este card): toda query custom one-shot
+#    precisa apontar para um índice declarado em firestore.indexes.json.
+#  - check-firestore-rules-coverage.py (card firestore-security-rules):
+#    toda operations[*].security_rules_ref precisa apontar para bloco
+#    existente em firestore.rules.
+# ─────────────────────────────────────────────────────────────────────────

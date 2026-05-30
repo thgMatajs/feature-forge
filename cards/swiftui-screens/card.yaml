@@ -1,0 +1,122 @@
+# cards/swiftui-screens/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# Card: SwiftUI para UI iOS com layout canônico de 4 arquivos por tela
+# ({Screen}ScreenView + {Screen}ScreenContentView + {Screen}Components +
+# {Screen}Strings), proibição absoluta de `// swiftlint:disable` /
+# `// swiftformat:disable`, previews no mesmo arquivo do componente e
+# pipeline SwiftFormat + SwiftLint bloqueante.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         swiftui-screens
+  version:      1.0.0
+  description:  "SwiftUI para UI iOS com layout {Screen}ScreenView + {Screen}ScreenContentView + {Screen}Components + {Screen}Strings, sem swiftlint:disable, previews no mesmo arquivo, SwiftFormat+SwiftLint obrigatórios"
+  category:     ui
+  maturity:     stable
+  maintainer:   feature-forge-core
+  created-at:   2026-05-29
+  last-updated: 2026-05-29
+  license:      MIT
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
+provides:
+  - ios-ui
+  - swiftui
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+requires:
+  - swift-language
+  - ios-platform
+
+
+# ── CONFLICTS ─────────────────────────────────────────────────────────────
+# UIKit/Storyboard ainda não têm capability label canônico em v1.
+# FOLLOWUP: introduzir label `ios-ui-uikit` (ou `ios-ui-storyboard`)
+# em card próprio e adicionar aqui em `conflicts-with` quando criado.
+conflicts-with: []
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+contributes:
+
+  # Template fragments — anexados ao tech-spec e ao task-contract
+  templates:
+    - target:  tech-spec.md
+      section: "iOS UI layer"
+      file:    templates/swiftui-tech-spec-section.md
+      merge:   append-section
+
+    - target:  task-contract.yaml
+      section: "swiftui-file-patterns"
+      file:    templates/swiftui-allowed-files.yaml
+      merge:   merge-keys
+
+  # Validators — stubs Phase 5
+  validators:
+    - name:        validate-no-swiftlint-disable
+      file:        validators/check-no-swiftlint-disable.py
+      runs-on:     [pre-commit, verify-task]
+      severity:    error
+      description: "Bloqueia `// swiftlint:disable` e `// swiftformat:disable` em qualquer arquivo .swift do iosApp"
+
+    - name:        validate-screen-layout-ios
+      file:        validators/check-screen-layout-ios.py
+      runs-on:     [verify-task]
+      severity:    warn
+      description: "Verifica layout canônico {Screen}ScreenView/{Screen}ScreenContentView/{Screen}Components/{Screen}Strings por tela"
+
+  # Agent prompts — fragments injected into sub-agents
+  agent-prompts:
+    - inject-into:     screen-analysis-agent
+      extension-point: "after:Component Detection"
+      file:            agent-contributions/screen-analysis-additions.md
+
+    - inject-into:     tech-spec-agent
+      extension-point: "section:iOS UI layer"
+      file:            agent-contributions/tech-spec-additions.md
+
+    - inject-into:     task-contract-writer
+      extension-point: "after:Allowed Files"
+      file:            agent-contributions/task-writer-additions.md
+
+  # Config defaults — convenções iOS canônicas
+  config-defaults:
+    conventions.folder-layout.ios:        "{Screen}ScreenView.swift + {Screen}ScreenContentView.swift + {Screen}Components.swift + {Screen}Strings.swift"
+    conventions.ui.swiftui.preview-location: "same-file-as-component"
+    conventions.style.swift.lint-tool:    "swiftlint"
+    conventions.style.swift.format-tool:  "swiftformat"
+
+
+# ── DETECTION ─────────────────────────────────────────────────────────────
+detection:
+  signals:
+    - type:       file-content
+      glob:       "**/*.swift"
+      contains:   "import SwiftUI"
+      confidence: 0.5
+
+    - type:       directory-exists
+      path:       "iosApp"
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/*.swift"
+      contains:   "struct ContentView"
+      confidence: 0.2
+
+  threshold: 0.6
+
+  alternative-cards: []
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "architecture_ios"

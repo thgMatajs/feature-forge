@@ -1,0 +1,44 @@
+# cards/rest-api-contract/detection/signals.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Sinais de detecção das convenções REST canônicas. Espelha o bloco
+# `detection.signals` de card.yaml (fonte canônica).
+#
+# Threshold cumulativo 0.4 — sinais REST são fracos isoladamente
+# (`@Serializable` aparece em muitos contextos não-REST: persistência,
+# config files, IPC). A combinação `@Serializable` + pasta `network/` ou
+# `api/` + `HttpClient` é o gatilho confiável.
+#
+# Card auxiliar: pode coexistir com `api-contract-firebase-sdk`. Detecção
+# é independente dos cards Firestore — projetos híbridos ativam ambos.
+# ──────────────────────────────────────────────────────────────────────────
+
+signals:
+  - type:       file-content
+    glob:       "**/*.kt"
+    contains:   "@SerialName"
+    confidence: 0.3
+    rationale:  "Anotação `@SerialName` é típica de DTOs REST com naming JSON divergente do Kotlin (snake_case → camelCase)."
+
+  - type:       file-content
+    glob:       "**/*.kt"
+    contains:   "@Serializable"
+    confidence: 0.3
+    rationale:  "Classes `@Serializable` em pacotes network/api indicam DTOs Request/Response. Sinal fraco isolado — combinar com diretório."
+
+  - type:       directory-exists
+    path:       "**/network"
+    confidence: 0.2
+    rationale:  "Convenção canônica: camada `data/network/` agrupa Service + DTOs + ApiEndpoints. Presença sugere arquitetura REST."
+
+  - type:       directory-exists
+    path:       "**/api"
+    confidence: 0.2
+    rationale:  "Variante comum de `network/` em projetos KMP. Mesma semântica."
+
+  - type:       file-content
+    glob:       "**/*.kt"
+    contains:   "HttpClient"
+    confidence: 0.2
+    rationale:  "Uso de `HttpClient` (Ktor) confirma cliente HTTP ativo. Combinado com `@Serializable` indica fluxo REST estabelecido."
+
+threshold: 0.4

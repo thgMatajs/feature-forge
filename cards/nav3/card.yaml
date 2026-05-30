@@ -1,0 +1,116 @@
+# cards/nav3/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# Card: Jetpack Navigation 3 (NavDisplay) para Android. RouteEntry com
+# @Factory + Render() composables, AppRoute sealed interface em shared:core
+# como :NavKey, EntryProviderInstaller multibinding por feature. DSL
+# `navigation<T> { }` proibida.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         nav3
+  version:      1.0.0
+  description:  "Jetpack Navigation 3 (NavDisplay) para Android com RouteEntry @Factory + Render() composables. AppRoute sealed interface em shared:core como :NavKey. DSL navigation<T> { } proibida."
+  category:     navigation
+  maturity:     beta
+  maintainer:   feature-forge-core
+  created-at:   2026-05-29
+  last-updated: 2026-05-29
+  license:      MIT
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
+provides:
+  - navigation-android
+  - nav3
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+requires:
+  - compose
+  - android-platform
+
+
+# ── CONFLICTS ─────────────────────────────────────────────────────────────
+# FOLLOWUP: Navigation 2 ainda não é capability label v1. Quando label
+# `navigation2-android` for adicionada ao catalog, declarar conflict aqui.
+conflicts-with: []
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+contributes:
+
+  # Template fragments — adicionados a artefatos do feature package
+  templates:
+    - target:  tech-spec.md
+      section: "Navigation — Android (Nav3)"
+      file:    templates/nav3-tech-spec-section.md
+      merge:   append-section
+
+    - target:  navigation-spec.yaml
+      section: "nav3-route-key-shape"
+      file:    templates/nav3-navigation-spec.yaml
+      merge:   merge-keys
+
+  # Validators — Phase 5 stubs (executor real só em release posterior)
+  validators:
+    - name:        check-no-nav-dsl
+      file:        validators/check-no-nav-dsl.py
+      runs-on:     [pre-commit, verify-task]
+      severity:    error
+      description: "Falha se a DSL navigation<T> { } aparece em módulos de produção (Nav3 substitui pelo padrão RouteEntry + EntryProviderInstaller)."
+
+  # Agent prompts — fragments injected into sub-agents at extension points
+  agent-prompts:
+    - inject-into:     contract-planner-agent
+      extension-point: "constraint:route-key-shape"
+      file:            agent-contributions/contract-planner-additions.md
+
+    - inject-into:     tech-spec-agent
+      extension-point: "section:Android UI layer"
+      file:            agent-contributions/tech-spec-additions.md
+
+    - inject-into:     task-contract-writer
+      extension-point: "after:Allowed Files"
+      file:            agent-contributions/task-writer-additions.md
+
+  # Config defaults — convenções canônicas Navigation 3
+  config-defaults:
+    conventions.navigation.android: "nav3"
+    conventions.navigation.route-source-of-truth: "shared:core AppRoute sealed interface"
+
+
+# ── DETECTION ─────────────────────────────────────────────────────────────
+detection:
+  signals:
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "NavDisplay"
+      confidence: 0.5
+
+    - type:       file-content
+      glob:       "**/build.gradle*"
+      contains:   "navigation3"
+      confidence: 0.4
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "NavKey"
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "EntryProviderInstaller"
+      confidence: 0.2
+
+  threshold: 0.6
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "architecture_android"

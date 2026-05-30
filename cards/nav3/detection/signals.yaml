@@ -1,0 +1,46 @@
+# Detection signals — nav3 card
+# ──────────────────────────────────────────────────────────────────────────
+# Espelho do bloco `detection:` em card.yaml. Mantido aqui para inspeção
+# isolada e para futuras integrações que leiam signals em arquivo dedicado
+# (forge doctor, scripts auxiliares).
+#
+# Threshold cumulativo: 0.6
+#   - file-content **/*.kt           +"NavDisplay"             → 0.5
+#   - file-content build.gradle*     +"navigation3"            → 0.4
+#   - file-content **/*.kt           +"NavKey"                 → 0.3
+#   - file-content **/*.kt           +"EntryProviderInstaller" → 0.2
+#
+# Soma máxima: 1.4 (sanity ≤ 2.0 — CARD-016).
+#
+# Justificativa do threshold:
+#   - 0.6 garante activate só quando há um sinal forte de Nav3 (NavDisplay
+#     no código OU dependência navigation3 declarada). Os outros dois
+#     (NavKey, EntryProviderInstaller) são reforços que sozinhos não
+#     classificam o projeto como Nav3-pleno (ex.: NavKey isolado pode ser
+#     só um type-alias defensivo durante migração).
+#   - Projetos com Navigation 2 (NavHost/composable) sem nenhum sinal
+#     acima ficam < 0.3 e o card não é sequer ofertado.
+# ──────────────────────────────────────────────────────────────────────────
+
+signals:
+  - type:       file-content
+    glob:       "**/*.kt"
+    contains:   "NavDisplay"
+    confidence: 0.5
+
+  - type:       file-content
+    glob:       "**/build.gradle*"
+    contains:   "navigation3"
+    confidence: 0.4
+
+  - type:       file-content
+    glob:       "**/*.kt"
+    contains:   "NavKey"
+    confidence: 0.3
+
+  - type:       file-content
+    glob:       "**/*.kt"
+    contains:   "EntryProviderInstaller"
+    confidence: 0.2
+
+threshold: 0.6

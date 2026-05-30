@@ -1,0 +1,104 @@
+# cards/datastore-prefs/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# Auxiliary card: androidx.datastore (Preferences) como storage KV small,
+# KMP-stable. Provê `local-prefs-storage` (auxiliar). Cobre feature
+# settings, last-shown flags, feature toggles, lightweight session
+# fragments. NÃO substitui Room — entidades estruturadas, queries
+# relacionais e cache de listas continuam em `persistence-local`
+# (room-database). Pode coexistir lado a lado.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         datastore-prefs
+  version:      1.0.0
+  description:  "androidx.datastore Preferences para KV small (user settings, feature flags, last-screen-shown). KMP-stable. Não substitui Room para entidades complexas."
+  category:     persistence
+  maturity:     stable
+  maintainer:   feature-forge-core
+  created-at:   2026-05-29
+  last-updated: 2026-05-29
+  license:      MIT
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
+# `local-prefs-storage` é label auxiliar (capability-labels.md §Persistence).
+# Múltiplos cards podem prover; este card é o provedor canônico v1.
+provides:
+  - local-prefs-storage
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+# Auxiliar / leaf — depende apenas das foundations Kotlin + KMP shared.
+requires:
+  - kotlin
+  - kotlin-multiplatform
+
+
+# ── CONFLICTS ─────────────────────────────────────────────────────────────
+# Label auxiliar — não força exclusividade. Coexiste com `persistence-local`
+# (room-database) por design: papéis distintos (KV small vs entidade
+# estruturada).
+conflicts-with: []
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+contributes:
+
+  # Template fragments — append-section ao tech-spec.md
+  templates:
+    - target:  tech-spec.md
+      section: "Local Prefs — DataStore"
+      file:    templates/datastore-tech-spec.md
+      merge:   append-section
+
+  # Agent prompts — fragments injetados em sub-agents
+  agent-prompts:
+    - inject-into:     tech-spec-agent
+      extension-point: "section:Shared (KMP) layer"
+      file:            agent-contributions/tech-spec-additions.md
+
+    - inject-into:     task-contract-writer
+      extension-point: "after:Allowed Files"
+      file:            agent-contributions/task-writer-additions.md
+
+  # Config defaults — convenções canônicas de preferences
+  config-defaults:
+    conventions.persistence.prefs:       "datastore-preferences"
+    conventions.persistence.prefs-scope: "small KV — feature settings, last-shown, flags"
+
+
+# ── DETECTION ─────────────────────────────────────────────────────────────
+# Threshold cumulativo: 0.5
+#   - build.gradle* contém "androidx.datastore" → 0.5
+#   - *.kt contém "PreferencesKey"              → 0.3
+#   - *.kt contém "datastore"                   → 0.2
+# Soma máxima: 1.0 (sanity ≤ 2.0 — CARD-016).
+detection:
+  signals:
+    - type:       file-content
+      glob:       "**/build.gradle*"
+      contains:   "androidx.datastore"
+      confidence: 0.5
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "PreferencesKey"
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "datastore"
+      confidence: 0.2
+
+  threshold: 0.5
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "architecture_kmp"

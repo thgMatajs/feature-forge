@@ -1,0 +1,36 @@
+# Detection signals — datastore-prefs card
+# ──────────────────────────────────────────────────────────────────────────
+# Espelho do bloco `detection:` em card.yaml. Mantido aqui para inspeção
+# isolada e para futuras integrações que leiam signals em arquivo dedicado
+# (forge doctor, scripts auxiliares).
+#
+# Threshold cumulativo: 0.5
+#   - file-content build.gradle*  +androidx.datastore  → 0.5
+#   - file-content *.kt           +PreferencesKey      → 0.3
+#   - file-content *.kt           +datastore           → 0.2
+#
+# Soma máxima: 1.0 (sanity ≤ 2.0 — CARD-016).
+#
+# Projetos KMP/Android que usam DataStore cruzam o threshold com a presença
+# do dependency `androidx.datastore-preferences-core` no build.gradle (0.5
+# sozinho atinge o threshold). Qualquer arquivo com `PreferencesKey` adiciona
+# 0.3 e confirma uso real (não só dependency declarada e esquecida).
+# ──────────────────────────────────────────────────────────────────────────
+
+signals:
+  - type:       file-content
+    glob:       "**/build.gradle*"
+    contains:   "androidx.datastore"
+    confidence: 0.5
+
+  - type:       file-content
+    glob:       "**/*.kt"
+    contains:   "PreferencesKey"
+    confidence: 0.3
+
+  - type:       file-content
+    glob:       "**/*.kt"
+    contains:   "datastore"
+    confidence: 0.2
+
+threshold: 0.5

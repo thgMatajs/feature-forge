@@ -1,0 +1,55 @@
+# Card: crashlytics — fragment merge-keys em analytics-spec.yaml
+# Adiciona binding de Crashlytics a cada evento *_error declarado pela feature.
+# O engine faz merge-keys: estas chaves top-level convivem com o resto do
+# artefato canônico (events, params, conventions).
+
+crash_reporting:
+  enabled: true
+
+  shared_exception_pattern: "Firebase{Feature}AnalyticsException"
+
+  required_fields:
+    - errorCode
+    - causeType
+
+  optional_fields:
+    - cause
+
+  custom_keys:
+    - name: feature
+      example: "auth"
+    - name: screen
+      example: "register"
+    - name: user_type
+      example: "anonymous"
+
+  pii_forbidden_keys:
+    - email
+    - phone
+    - name
+    - form_content
+    - uid
+
+  opt_out:
+    setting: "CrashlyticsManager.setCollectionEnabled"
+    default_when_no_consent: false
+
+bindings:
+  # O engine NÃO preenche esta lista automaticamente. O agente
+  # contract-planner-agent deve gerar uma entrada por evento *_error
+  # declarado em `events:`.
+  #
+  # Forma canônica de cada entrada (template — substituir placeholders):
+  #
+  # - event: <feature>_<verb>_error
+  #   exception_class: Firebase<Feature>AnalyticsException
+  #   error_code_source: <param do evento que carrega o errorCode>
+  #   cause_type_source: <param do evento que carrega o causeType>
+  #   optional_cause: true
+  #
+  # Exemplo já preenchido (feature auth):
+  # - event: register_error
+  #   exception_class: FirebaseAuthAnalyticsException
+  #   error_code_source: error_code
+  #   cause_type_source: cause_type
+  #   optional_cause: true

@@ -1,0 +1,132 @@
+# cards/firestore-persistence/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# Card: Cloud Firestore como persistência server-side (CRUD documents,
+#       queries, batch writes).
+#
+# Splits do antigo `firebase-firestore` (Fase 3.5):
+#   - firestore-persistence    (este card)        → CRUD + queries + batch
+#   - firestore-realtime       (card separado)    → snapshot listeners
+#   - firestore-security-rules (card separado)    → rules + coverage
+#
+# Referência viva (MeoBonsai — 4-source-of-truth de dados):
+#   docs/specs/data/firestore-data-model.md
+#   docs/specs/data/query-catalog.md
+#   docs/specs/data/access-matrix.md
+#   docs/specs/data/security-and-threat-model.md
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         firestore-persistence
+  version:      1.0.0
+  description:  "Cloud Firestore como persistência server-side (CRUD documents, queries, batch writes). Realtime listeners ficam em `firestore-realtime` (card separado); security rules em `firestore-security-rules`."
+  category:     backend
+  maturity:     stable
+  maintainer:   feature-forge-core
+  created-at:   2026-05-29
+  last-updated: 2026-05-29
+  license:      MIT
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
+provides:
+  - persistence-server
+  - api-contract-firebase-sdk
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+# Sem dependência dura: o card descreve a camada de backend persistente,
+# usando o SDK Firebase diretamente. Funciona com qualquer linguagem cliente
+# (Kotlin, Swift, TypeScript).
+requires: []
+
+
+# ── CONFLITOS ─────────────────────────────────────────────────────────────
+# Só um backend server-side principal por projeto.
+# Persistência local (Room/SQLite/SwiftData) NÃO conflita — capability
+# diferente (`persistence-local`).
+# Realtime/Rules são cards complementares (não conflitantes).
+conflicts-with:
+  - persistence-server
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+contributes:
+
+  # Template fragments — adicionados aos documentos do feature package
+  templates:
+    - target:  data-contract-spec.yaml
+      section: "firestore-collections"
+      file:    templates/firestore-persistence-data-contract.yaml
+      merge:   merge-keys
+
+    - target:  tech-spec.md
+      section: "Data layer"
+      file:    templates/firestore-persistence-tech-spec.md
+      merge:   append-section
+
+  # Validators — stub Phase 5
+  validators:
+    - name:        check-firestore-indexes
+      file:        validators/check-firestore-indexes.py
+      runs-on:     [verify-task]
+      severity:    warn
+      description: "Avisa se há query custom (compound where, orderBy + where) sem índice declarado em firestore.indexes.json."
+
+  # Agent prompts — fragments injetados em extension-points conhecidos
+  agent-prompts:
+    - inject-into:     contract-planner-agent
+      extension-point: "section:firestore-collections"
+      file:            agent-contributions/contract-planner-additions.md
+
+    - inject-into:     tech-spec-agent
+      extension-point: "section:Data layer"
+      file:            agent-contributions/tech-spec-additions.md
+
+    - inject-into:     task-contract-writer
+      extension-point: "after:Allowed Files"
+      file:            agent-contributions/task-writer-additions.md
+
+  # Config defaults — convenções aplicadas se outro card/usuário não sobrescrever
+  config-defaults:
+    conventions.backend.persistence: "firebase-firestore"
+    conventions.testing.backend-e2e: "firestore-emulator"
+
+
+# ── DETECTION ─────────────────────────────────────────────────────────────
+detection:
+  signals:
+    - type:       file-exists
+      glob:       "**/google-services.json"
+      confidence: 0.2
+
+    - type:       file-content
+      glob:       "**/build.gradle*"
+      contains:   "firebase-firestore"
+      confidence: 0.5
+
+    - type:       file-exists
+      glob:       "**/firestore.indexes.json"
+      confidence: 0.2
+
+    - type:       file-content
+      glob:       "**/Package.swift"
+      contains:   "FirebaseFirestore"
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/Podfile"
+      contains:   "FirebaseFirestore"
+      confidence: 0.3
+
+  threshold: 0.5
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "architecture"

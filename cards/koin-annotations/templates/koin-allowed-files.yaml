@@ -1,0 +1,50 @@
+# Template fragment contribuído pelo card `koin-annotations`.
+# Merge mode: merge-keys em task-contract.yaml.
+#
+# O writer do task-contract anexa estes patterns à seção `allowed-files`
+# de tasks que tocam DI (criação de Module, Factory, ou novos componentes
+# anotados). Também define commands de validação acionados em verify-task.
+
+allowed_files_koin_modules:
+  description: >
+    Patterns de arquivo permitidos para tasks que mexem com Koin DI.
+    Qualquer task que crie/modifique Module ou Factory deve listar
+    explicitamente o path concreto em `task.allowed_files`.
+
+  patterns:
+    # Módulo Koin canônico — uma classe @Module @ComponentScan por feature.
+    - "shared/feature/*/src/commonMain/kotlin/**/di/*Module.kt"
+
+    # Factory para iOS/Web — object com create{ClassName}() functions.
+    - "shared/feature/*/src/commonMain/kotlin/**/di/*Factory.kt"
+
+    # Módulo de host Android (composeApp).
+    - "composeApp/src/main/kotlin/**/di/*Module.kt"
+
+    # Módulo do shared:core (singletons cross-feature).
+    - "shared/core/src/commonMain/kotlin/**/di/*Module.kt"
+    - "shared/core/src/commonMain/kotlin/**/di/*Factory.kt"
+
+  forbidden_patterns:
+    # DSL module { } só pode aparecer em testes.
+    - description: "DSL module { } em produção é proibida."
+      match_glob: "**/src/{commonMain,androidMain,iosMain}/**/*.kt"
+      regex_must_not_contain: "module\\s*\\{"
+
+    # @KoinViewModel não pode vazar para commonMain.
+    - description: "@KoinViewModel é Android-only — proibido em commonMain."
+      match_glob: "**/src/commonMain/**/*.kt"
+      regex_must_not_contain: "@KoinViewModel"
+
+  validations:
+    - id:      koin-module-componentscan-pair
+      command: "python3 .claude/cards/koin-annotations/validators/check-koin-modules.py"
+      runs_on: [pre-commit, verify-task]
+      severity: error
+      description: "Toda classe @Module deve ter @ComponentScan no mesmo arquivo."
+
+    - id:      koin-dsl-banned-in-production
+      command: "python3 .claude/cards/koin-annotations/validators/check-koin-modules.py --dsl-check"
+      runs_on: [verify-task]
+      severity: error
+      description: "module { ... } DSL é proibido fora de source sets de teste."

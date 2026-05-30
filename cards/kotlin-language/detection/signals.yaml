@@ -1,0 +1,30 @@
+# Detection signals — kotlin-language card
+# ──────────────────────────────────────────────────────────────────────────
+# Espelho do bloco `detection:` em card.yaml. Mantido aqui para
+# inspeção isolada e para futuras integrações que leiam signals em
+# arquivo dedicado (forge doctor, scripts auxiliares).
+#
+# Threshold cumulativo: 0.6
+#   - file-exists  **/*.kt                 → 0.5
+#   - file-content settings.gradle*  +kotlin → 0.4
+#   - file-content build.gradle*     +kotlin( → 0.3
+#
+# Soma máxima: 1.2 (sanity ≤ 2.0 — CARD-016).
+# ──────────────────────────────────────────────────────────────────────────
+
+signals:
+  - type:       file-exists
+    glob:       "**/*.kt"
+    confidence: 0.5
+
+  - type:       file-content
+    glob:       "**/settings.gradle*"
+    contains:   "kotlin"
+    confidence: 0.4
+
+  - type:       file-content
+    glob:       "**/build.gradle*"
+    contains:   "kotlin("
+    confidence: 0.3
+
+threshold: 0.6

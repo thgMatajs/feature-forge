@@ -1,0 +1,113 @@
+# Fragmento contribuído por: rest-api-contract
+# Target: data-contract-spec.yaml
+# Merge:  merge-keys
+#
+# Bloco YAML inserido em data-contract-spec.yaml descrevendo endpoints
+# REST consumidos pela feature. UM bloco por endpoint tocado.
+#
+# Convenções canônicas (alinhadas com config-defaults do card):
+#   - Endpoints centralizados em `data/network/ApiEndpoints.kt` como const
+#   - DTOs `{Entity}Request.kt` / `{Entity}Response.kt` com @Serializable
+#   - Error envelope `{ "error": { "code": ..., "message": ..., "details"?: ... } }`
+#   - Paginação cursor-based (`cursor` + `limit` em query params)
+#   - Mapping HTTP status → domain error via `{Feature}HttpMapper.kt`
+#
+# Para projetos híbridos REST + Firestore: este bloco coexiste com
+# `firestore-collections` (do card firestore-persistence) na mesma feature.
+
+rest_endpoints:
+  # Exemplo de bloco — UMA entrada por endpoint tocado pela feature.
+  # Remover este exemplo após preencher com endpoints reais.
+  - id: "<endpoint-id-ex: list-bonsais-by-owner>"
+    method: GET                              # GET | POST | PUT | PATCH | DELETE
+    path: "/api/v1/<resource>"               # const em ApiEndpoints.kt
+    endpoint_const: "ApiEndpoints.<NAME>"    # ex: ApiEndpoints.BONSAIS_LIST
+    description: "<o que este endpoint faz>"
+
+    auth:
+      required: true
+      scheme: "Bearer"                       # Bearer | none | custom
+      scope: "<auth-scope-ou-null>"
+
+    request:
+      path_params:
+        # nome -> { type, required }
+        # ex: id: { type: string, required: true }
+      query_params:
+        # nome -> { type, required, default }
+        # ex: cursor: { type: string, required: false }
+        #     limit:  { type: int,    required: false, default: 50 }
+      headers:
+        # nome -> { type, required }
+      body:
+        # null se método não tem body
+        dto_class: "<EntityRequest-ou-null>" # ex: CreateBonsaiRequest
+        content_type: "application/json"
+
+    response:
+      # 200/201 — happy path
+      success:
+        status: 200                          # ou 201/204
+        dto_class: "<EntityResponse>"        # ex: BonsaiResponse
+        content_type: "application/json"
+
+      # Envelope canônico de erro
+      error_envelope:
+        shape: |
+          {
+            "error": {
+              "code": "string",            # snake_case domain error code
+              "message": "string",         # human-readable (i18n no client)
+              "details": { ... }           # opcional, estruturado
+            }
+          }
+        dto_class: "ErrorResponse"          # canônico em data/network/dto/
+
+    pagination:
+      # Cursor-based é padrão. Se este endpoint não pagina, deixar `style: none`.
+      style: cursor                          # cursor | offset | none
+      cursor_field: "next_cursor"           # campo no Response que aponta próxima página
+      limit_default: 50
+      limit_max: 200
+
+    status_mapping:
+      # Mapping HTTP status → domain error code. Toda entrada aqui DEVE
+      # existir em `domain/model/{Feature}DomainError.kt` como sealed subtype.
+      "400": "validation_error"             # body inválido / params inválidos
+      "401": "unauthorized"                 # token ausente/expirado
+      "403": "forbidden"                    # token válido mas sem permissão
+      "404": "not_found"
+      "409": "conflict"                     # ex: email_already_in_use
+      "422": "unprocessable"
+      "429": "rate_limited"
+      "500": "server_error"
+      "503": "service_unavailable"
+
+    idempotency:
+      # Obrigatório declarar para POST/PUT/PATCH/DELETE.
+      # GET é idempotente por definição (declare false).
+      is_idempotent: false                  # true para PUT/DELETE; POST quando usa Idempotency-Key
+      idempotency_key_header: null          # ex: "Idempotency-Key" para POST idempotente
+
+    timeout_ms: 15000                        # default 15s; ajustar quando endpoint é longo
+
+    bdd_refs:
+      # Cenários BDD cobertos por este endpoint.
+      - "<scenario-id-happy>"
+      - "<scenario-id-error-401>"
+
+    cross_references:
+      api_contract_doc:  "<link para docs/api/openapi.yaml ou Swagger UI>"
+      endpoints_source:  "<path:ApiEndpoints.kt>"
+      dto_source:        "<path:data/network/dto/>"
+      mapper_source:     "<path:data/network/mapper/{Feature}HttpMapper.kt>"
+
+# ─────────────────────────────────────────────────────────────────────────
+# Notas de implementação (alinhadas com tech-spec-additions.md):
+#  - Nunca hardcode path REST em Service classes — sempre via
+#    `ApiEndpoints.<NAME>`. Trocar versão (v1 → v2) muda 1 arquivo.
+#  - Status mapping vive em `{Feature}HttpMapper.kt` (data/network/mapper/);
+#    domain layer NUNCA importa tipos HTTP (HttpStatusCode, HttpResponse).
+#  - Pagination cursor-based é default — usar offset apenas quando backend
+#    explicitamente não suporta cursor. Justificar em `notes:` do tech-spec.
+# ─────────────────────────────────────────────────────────────────────────

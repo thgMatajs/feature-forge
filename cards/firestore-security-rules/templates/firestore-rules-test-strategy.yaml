@@ -1,0 +1,91 @@
+# Template fragment contribuído pelo card `firestore-security-rules`.
+# Merge mode: merge-keys em test-strategy.yaml.
+#
+# O tech-spec-agent injeta a chave top-level `firestore-rules-tests` quando
+# o card está ativo. Cada feature consumidora completa o bloco `cases:` com
+# os cenários allow/deny para suas collections.
+
+firestore_rules_tests:
+  description: >
+    Suite obrigatória de testes para Firestore security rules da feature.
+    Roda contra o emulator local (porta 8080) via firebase-rules-unit-testing.
+    Cobre allow/deny matrix por path + operação + actor, alinhada com
+    access-matrix.md e security-and-threat-model.md.
+
+  framework: "firebase-rules-unit-testing"
+
+  emulator:
+    host:           "localhost"
+    firestore_port: 8080
+    start_script:   "scripts/firebase-emulator.sh"
+    rationale:      >
+      Suite roda em emulator local (não Firebase real) para velocidade,
+      determinismo e custo zero. CI usa o mesmo emulator antes do deploy
+      de rules em bonsai-meo-dev.
+
+  test_file_location: "tests/firestore-rules/firestore-rules.test.ts"
+  # Alternativas aceitas: tests/firestore-rules/*.test.kt (kotlin-test +
+  # emulator client), tests/firestore-rules/*.test.swift (XCTest). Manter
+  # uma linguagem por projeto — não misturar.
+
+  coverage_requirements:
+    per_collection:
+      - "Pelo menos 1 caso `allow` por operação declarada em access-matrix.md (get/list/create/update/delete)."
+      - "Pelo menos 1 caso `deny` por threat declarado em security-and-threat-model.md."
+      - "1 caso `deny` anônimo (request.auth == null) por operação."
+      - "1 caso `deny` cross-user (auth.uid != ownerUid) para read e update."
+
+    global:
+      - "Catch-all `match /{document=**}` testado: deve negar tudo que não casa com bloco específico."
+      - "Update que tenta mudar `ownerUid` deve ser negado (preserves-owner invariant)."
+
+  cases:
+    # Preencher por feature. Schema obrigatório por caso:
+    #
+    # - id:          bonsais-owner-can-read
+    #   collection:  "bonsais"
+    #   path:        "bonsais/{bonsaiId}"
+    #   operation:   get
+    #   actor:
+    #     authenticated: true
+    #     uid:           "alice"
+    #     claims:        {}
+    #   document_state:
+    #     ownerUid: "alice"
+    #   expected:    allow
+    #   threat_ref:  null
+    #
+    # - id:          bonsais-cross-user-read-denied
+    #   collection:  "bonsais"
+    #   path:        "bonsais/{bonsaiId}"
+    #   operation:   get
+    #   actor:
+    #     authenticated: true
+    #     uid:           "bob"
+    #   document_state:
+    #     ownerUid: "alice"
+    #   expected:    deny
+    #   threat_ref:  "security-and-threat-model.md#idor-bonsai-read"
+    []
+
+  validations:
+    - id:          rules-tests-pass
+      command:     "npx -y firebase-tools@latest emulators:exec --only firestore 'npm test -- firestore-rules'"
+      runs_on:     [verify-task]
+      severity:    error
+      description: "Suite de rules tests precisa passar contra emulator. Bloqueio hard."
+
+    - id:          rules-tests-coverage
+      command:     "python3 .claude/cards/firestore-security-rules/validators/check-firestore-rules-tests.py"
+      runs_on:     [verify-task]
+      severity:    error
+      description: "Cada rule em firestore.rules precisa ter teste correspondente. Stub Phase 5."
+
+  ci_integration:
+    pre_deploy:
+      - "Rodar suite contra emulator (verde obrigatório)."
+      - "Deploy via `firebase-tools@latest deploy --only firestore:rules,firestore:indexes` em bonsai-meo-dev."
+      - "Smoke test pós-deploy em bonsai-meo-dev (ler/escrever doc canário)."
+    promote_to_prod:
+      - "Repetir suite com snapshot de prod (rare)."
+      - "Deploy em bonsai-meo via tag de release."

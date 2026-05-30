@@ -1,0 +1,83 @@
+# Fragmento contribuído por: firebase-firestore
+# Target: data-contract-spec.yaml
+# Merge: merge-keys
+#
+# Bloco YAML inserido em data-contract-spec.yaml descrevendo coleções
+# Firestore tocadas pela feature, queries usadas, índices necessários e
+# refs de security rules cobrindo cada operação.
+#
+# OBRIGATÓRIO atualizar na MESMA PR (4-source-of-truth):
+#   docs/specs/data/firestore-data-model.md
+#   docs/specs/data/query-catalog.md
+#   docs/specs/data/access-matrix.md
+#   docs/specs/data/security-and-threat-model.md
+
+firestore-collections:
+  # Exemplo de bloco — UMA entrada por coleção tocada pela feature.
+  # Remover este exemplo após preencher com coleções reais.
+  - name: "<collection-path-ex: users/{uid}/bonsais>"
+    description: "<o que cada doc representa>"
+
+    doc-shape:
+      fields:
+        # nome -> { type, nullable, owned-by, sensitivity }
+        # type: string | number | boolean | timestamp | map | array | reference
+        # sensitivity: public | user-private | privileged
+        id:           { type: string,    nullable: false, owned-by: server, sensitivity: public }
+        owner_uid:    { type: string,    nullable: false, owned-by: server, sensitivity: user-private }
+        created_at:   { type: timestamp, nullable: false, owned-by: server, sensitivity: public }
+        # campos da feature ↓
+
+    operations:
+      # Cada operação amarrada a um scenario BDD (id estável).
+      # Cada operação amarrada a um actor (uid|role).
+      # security-rules-ref aponta para o BLOCO em firestore.rules que cobre essa op.
+      - op: create
+        actor: "<role-or-uid>"
+        bdd-ref: "<scenario-id>"
+        security-rules-ref: "<path:line ou nome do match block>"
+      - op: read
+        actor: "<role-or-uid>"
+        bdd-ref: "<scenario-id>"
+        security-rules-ref: "<path:line ou nome do match block>"
+      - op: update
+        actor: "<role-or-uid>"
+        bdd-ref: "<scenario-id>"
+        security-rules-ref: "<path:line ou nome do match block>"
+      - op: delete
+        actor: "<role-or-uid>"
+        bdd-ref: "<scenario-id>"
+        security-rules-ref: "<path:line ou nome do match block>"
+
+    queries:
+      # TODA query custom (filtro composto, orderBy + where, listener com filtro)
+      # precisa estar listada e linkada a um índice.
+      - id: "<query-id-ex: list-by-owner-recent>"
+        where:
+          - { field: owner_uid, op: "==", value: "<auth.uid>" }
+        order-by:
+          - { field: created_at, direction: desc }
+        limit: 50
+        listener: false              # true se é snapshot listener (realtime)
+        index-ref: "<index-id em firestore.indexes.json ou 'single-field-implicit'>"
+        bdd-ref: "<scenario-id>"
+
+    realtime:
+      # Listener real-time? Descrever política de inscrição.
+      uses-snapshot-listener: false
+      lifecycle: "<ex: WhileSubscribed(5_000) no shared, .task em SwiftUI>"
+      backpressure: "<estratégia para evitar updates spam>"
+
+    cross-references:
+      data-model-doc:        "docs/specs/data/firestore-data-model.md#<anchor>"
+      query-catalog-doc:     "docs/specs/data/query-catalog.md#<anchor>"
+      access-matrix-doc:     "docs/specs/data/access-matrix.md#<anchor>"
+      threat-model-doc:      "docs/specs/data/security-and-threat-model.md#<anchor>"
+
+# ─────────────────────────────────────────────────────────────────────────
+# Validação (Phase 5):
+#  - check-firestore-rules-coverage.py: toda operations[*].security-rules-ref
+#    precisa apontar para um bloco existente em firestore.rules.
+#  - check-firestore-indexes.py: toda query custom (compound / orderBy+where)
+#    precisa apontar para um índice declarado em firestore.indexes.json.
+# ─────────────────────────────────────────────────────────────────────────

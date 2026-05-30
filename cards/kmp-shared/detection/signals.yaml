@@ -1,0 +1,39 @@
+# Detection signals — kmp-shared card
+# ──────────────────────────────────────────────────────────────────────────
+# Espelho do bloco `detection:` em card.yaml. Mantido aqui para
+# inspeção isolada e para futuras integrações que leiam signals em
+# arquivo dedicado (forge doctor, scripts auxiliares).
+#
+# Threshold cumulativo: 0.6
+#   - file-content build.gradle*    +kotlin-multiplatform   → 0.5
+#   - file-content build.gradle*    +kotlin("multiplatform") → 0.4
+#   - directory-exists shared                                → 0.2
+#   - file-content **/*.kt          +"expect "               → 0.3
+#
+# Soma máxima: 1.4 (sanity ≤ 2.0 — CARD-016).
+# Threshold 0.6 garante activate só quando há sinal forte de KMP
+# (gradle plugin OU expect/actual), evitando falso-positivo de projetos
+# JVM-puros com diretório `shared/`.
+# ──────────────────────────────────────────────────────────────────────────
+
+signals:
+  - type:       file-content
+    glob:       "**/build.gradle*"
+    contains:   "kotlin-multiplatform"
+    confidence: 0.5
+
+  - type:       file-content
+    glob:       "**/build.gradle*"
+    contains:   "kotlin(\"multiplatform\")"
+    confidence: 0.4
+
+  - type:       directory-exists
+    path:       "shared"
+    confidence: 0.2
+
+  - type:       file-content
+    glob:       "**/*.kt"
+    contains:   "expect "
+    confidence: 0.3
+
+threshold: 0.6

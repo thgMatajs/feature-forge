@@ -1,0 +1,45 @@
+# cards/firestore-security-rules/detection/signals.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Sinais de detecção do card firestore-security-rules.
+#
+# Espelha `card.yaml > detection.signals`. Threshold cumulativo 0.4 (mais
+# baixo que outros cards de propósito): é melhor ativar e pedir confirmação
+# do que silenciar a camada de autorização.
+#
+# Diferença para `firestore-persistence` / `firestore-realtime`:
+#   - persistence detecta SDK Firestore presente (build.gradle, Package.swift)
+#   - realtime detecta uso de `snapshotListener` / `addSnapshotListener`
+#   - este card detecta o ARTEFATO de rules (`firestore.rules`)
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+signals:
+  - id:         firestore-rules-file
+    type:       file-exists
+    glob:       "**/firestore.rules"
+    confidence: 0.5
+    rationale:  "Existência do arquivo firestore.rules é o sinal mais forte — só faz sentido se Firestore está em uso E o projeto declara rules versionadas."
+
+  - id:         firestore-rules-header
+    type:       file-content
+    glob:       "**/firestore.rules"
+    contains:   "rules_version"
+    confidence: 0.2
+    rationale:  "Header `rules_version = '2';` confirma que o arquivo é uma rules-spec válida (não placeholder vazio)."
+
+  - id:         firebase-config-dir
+    type:       directory-exists
+    path:       "firebase"
+    confidence: 0.1
+    rationale:  "Diretório `firebase/` (config Firebase Tools) é evidência fraca — pode existir sem rules ativas."
+
+  - id:         firestore-indexes-file
+    type:       file-exists
+    glob:       "**/firestore.indexes.json"
+    confidence: 0.2
+    rationale:  "Índices Firestore declarados sugerem queries em uso — onde há queries, rules precisam cobrir `list` operation."
+
+threshold: 0.4
+
+alternative-cards: []

@@ -1,0 +1,28 @@
+signals:
+  - type:       file-content
+    glob:       "**/*.kt"
+    contains:   "androidx.compose"
+    confidence: 0.5
+    rationale:  "Imports diretos de androidx.compose.* indicam uso de Compose no projeto"
+
+  - type:       file-content
+    glob:       "**/build.gradle*"
+    contains:   "androidx.compose"
+    confidence: 0.4
+    rationale:  "Dependência declarada nos arquivos Gradle — sinal estrutural"
+
+  - type:       file-content
+    glob:       "**/*.kt"
+    contains:   "@Composable"
+    confidence: 0.3
+    rationale:  "Anotação @Composable é prova de uso ativo de Compose UI"
+
+threshold: 0.6
+
+alternative-cards: []
+
+notes: |
+  O score máximo possível somando todos os sinais é 1.2. O threshold 0.6 ativa
+  o card automaticamente quando pelo menos dois sinais bem ranqueados batem
+  (ex.: import + dependência Gradle), evitando falso positivo de projetos que
+  apenas mencionam Compose em comentários.

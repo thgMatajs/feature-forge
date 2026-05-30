@@ -1,0 +1,98 @@
+# cards/kmp-shared/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# Card: Kotlin Multiplatform shared module com kotlinx.coroutines,
+# kotlinx.serialization, kotlinx.datetime, expect/actual para platform shims,
+# e camadas Domain/Data/Presentation em commonMain.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         kmp-shared
+  version:      1.0.0
+  description:  "Kotlin Multiplatform shared module com expect/actual, kotlinx.coroutines, kotlinx.serialization, kotlinx.datetime — camadas Domain/Data/Presentation"
+  category:     kmp
+  maturity:     stable
+  maintainer:   feature-forge-core
+  created-at:   2026-05-29
+  last-updated: 2026-05-29
+  license:      MIT
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
+provides:
+  - kotlin-multiplatform
+  - shared-code
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+requires:
+  - kotlin
+
+
+# ── CONFLICTS ─────────────────────────────────────────────────────────────
+conflicts-with: []
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+contributes:
+
+  # Template fragments — adicionados a tech-spec.md
+  templates:
+    - target:  tech-spec.md
+      section: "Shared (KMP) layer"
+      file:    templates/kmp-tech-spec-section.md
+      merge:   append-section
+
+  # Agent prompts — fragments injected into sub-agents
+  agent-prompts:
+    - inject-into:     tech-spec-agent
+      extension-point: "section:Shared (KMP) layer"
+      file:            agent-contributions/tech-spec-additions.md
+
+    - inject-into:     contract-planner-agent
+      extension-point: "section:Data Contract"
+      file:            agent-contributions/contract-planner-additions.md
+
+    - inject-into:     task-contract-writer
+      extension-point: "after:Allowed Files"
+      file:            agent-contributions/task-writer-additions.md
+
+  # Config defaults — convenções canônicas do shared layer
+  config-defaults:
+    conventions.kmp.layer-structure: "data + domain + presentation"
+    conventions.kmp.dispatcher-injection: "constructor"
+
+
+# ── DETECTION ─────────────────────────────────────────────────────────────
+detection:
+  signals:
+    - type:       file-content
+      glob:       "**/build.gradle*"
+      contains:   "kotlin-multiplatform"
+      confidence: 0.5
+
+    - type:       file-content
+      glob:       "**/build.gradle*"
+      contains:   "kotlin(\"multiplatform\")"
+      confidence: 0.4
+
+    - type:       directory-exists
+      path:       "shared"
+      confidence: 0.2
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "expect "
+      confidence: 0.3
+
+  threshold: 0.6
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "architecture_kmp"

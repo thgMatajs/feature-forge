@@ -1,0 +1,128 @@
+# cards/rest-api-contract/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# Card: Convenções REST canônicas para projetos KMP — endpoints como const
+#       em `ApiEndpoints.kt`, DTOs `{Entity}Request/Response`, error envelope
+#       padronizado, mapping HTTP status → domain errors, paginação cursor.
+#
+# Capability AUXILIAR (`api-contract-rest`):
+#   Pode coexistir com `api-contract-firebase-sdk` em projetos híbridos
+#   (REST para auth/feature-x + Firestore para feature-y). Não conflita.
+#
+# Combina obrigatoriamente com:
+#   - http-client       (provido por `ktor-client` — KMP cross-platform)
+#   - serialization-json(provido por `kotlinx-serialization-json`)
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         rest-api-contract
+  version:      1.0.0
+  description:  "Convenções REST canônicas: endpoints como const em ApiEndpoints.kt, DTOs `{Entity}Request/Response`, error envelope padronizado, mapping HTTP status → domain errors, pagination cursor-based."
+  category:     backend
+  maturity:     stable
+  maintainer:   feature-forge-core
+  created-at:   2026-05-29
+  last-updated: 2026-05-29
+  license:      MIT
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
+# Auxiliar — pode coexistir com api-contract-firebase-sdk em projetos
+# híbridos. Cards downstream (auth-jwt-bearer, qualquer feature REST)
+# declaram `requires: [api-contract-rest]` para puxar essas convenções.
+provides:
+  - api-contract-rest
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+# Convenções REST presumem cliente HTTP cross-platform + serialização JSON.
+# Sem esses dois cards o contrato não tem como ser executado.
+requires:
+  - http-client
+  - serialization-json
+
+
+# ── CONFLITOS ─────────────────────────────────────────────────────────────
+# Capability auxiliar — não conflita com api-contract-firebase-sdk.
+# Projetos híbridos legítimos (REST para feature A + Firestore para B) são
+# explicitamente suportados. Conflito explícito vazio.
+conflicts-with: []
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+contributes:
+
+  # Template fragments — adicionados aos documentos do feature package
+  templates:
+    - target:  data-contract-spec.yaml
+      section: "rest-endpoints"
+      file:    templates/rest-endpoints-data-contract.yaml
+      merge:   merge-keys
+
+    - target:  tech-spec.md
+      section: "REST API Contract"
+      file:    templates/rest-api-tech-spec.md
+      merge:   append-section
+
+  # Agent prompts — fragments injetados em extension-points conhecidos
+  agent-prompts:
+    - inject-into:     contract-planner-agent
+      extension-point: "section:Data Contract"
+      file:            agent-contributions/contract-planner-additions.md
+
+    - inject-into:     tech-spec-agent
+      extension-point: "section:Data layer"
+      file:            agent-contributions/tech-spec-additions.md
+
+    - inject-into:     task-contract-writer
+      extension-point: "after:Allowed Files"
+      file:            agent-contributions/task-writer-additions.md
+
+  # Config defaults — convenções aplicadas se outro card/usuário não sobrescrever
+  config-defaults:
+    conventions.api.contract-style:   "rest"
+    conventions.api.endpoints-source: "ApiEndpoints.kt"
+    conventions.api.error-envelope:   "{ error: { code, message, details? } }"
+    conventions.api.pagination:       "cursor-based"
+
+
+# ── DETECTION ─────────────────────────────────────────────────────────────
+# Threshold 0.4 — sinais REST são fracos isoladamente (kotlinx.serialization
+# é usado em muitos contextos não-REST). Combinação @Serializable + pasta
+# network/api é o gatilho confiável.
+detection:
+  signals:
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "@SerialName"
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "@Serializable"
+      confidence: 0.3
+
+    - type:       directory-exists
+      path:       "**/network"
+      confidence: 0.2
+
+    - type:       directory-exists
+      path:       "**/api"
+      confidence: 0.2
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "HttpClient"
+      confidence: 0.2
+
+  threshold: 0.4
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "architecture_kmp"
