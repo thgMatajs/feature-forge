@@ -1,0 +1,1187 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>feature-forge — apresentação</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0b0f0e;
+    --bg-elev: #111614;
+    --fg: #e7ece8;
+    --fg-dim: #8a958f;
+    --accent: #baff29;
+    --accent-dim: #496900;
+    --rule: #1f2724;
+    --warn: #ffb454;
+    --ok: #7be07b;
+    --s1: 8px;
+    --s2: 16px;
+    --s3: 24px;
+    --s4: 32px;
+    --s5: 40px;
+    --s6: 48px;
+    --s7: 56px;
+    --s8: 64px;
+    --mono: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
+    --sans: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--sans);
+    font-size: clamp(18px, 1.6vw, 22px);
+    line-height: 1.55;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .progress {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 2px;
+    background: var(--accent);
+    width: 0;
+    transition: width 240ms ease;
+    z-index: 50;
+  }
+
+  #deck {
+    position: relative;
+    height: 100vh;
+    width: 100vw;
+    overflow: hidden;
+  }
+
+  .slide {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: clamp(48px, 6vw, 96px) clamp(48px, 8vw, 120px);
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(8px);
+    transition: opacity 240ms ease, transform 240ms ease;
+  }
+  .slide.active {
+    opacity: 1;
+    pointer-events: auto;
+    transform: none;
+  }
+
+  .slide-inner {
+    max-width: 1100px;
+    width: 100%;
+    margin: 0 auto;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    color: var(--accent);
+    font-size: 0.85em;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: var(--s3);
+  }
+
+  h1.slide-title {
+    font-size: clamp(32px, 4vw, 56px);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    margin-bottom: var(--s5);
+  }
+  h1.slide-title .accent { color: var(--accent); }
+
+  .lede {
+    font-size: clamp(20px, 1.8vw, 26px);
+    color: var(--fg-dim);
+    max-width: 800px;
+    margin-bottom: var(--s5);
+  }
+
+  /* Hero slide */
+  .hero h1 {
+    font-size: clamp(56px, 9vw, 128px);
+    font-weight: 700;
+    font-family: var(--mono);
+    letter-spacing: -0.04em;
+    line-height: 0.95;
+    margin-bottom: var(--s4);
+  }
+  .hero h1 .glyph {
+    color: var(--accent);
+  }
+  .hero .tagline {
+    font-size: clamp(22px, 2.2vw, 32px);
+    color: var(--fg-dim);
+    max-width: 720px;
+    margin-bottom: var(--s8);
+  }
+  .hero .hint {
+    font-family: var(--mono);
+    font-size: 0.95em;
+    color: var(--fg-dim);
+  }
+  .hero .hint .key {
+    display: inline-block;
+    border: 1px solid var(--rule);
+    background: var(--bg-elev);
+    padding: 2px 10px;
+    border-radius: 4px;
+    color: var(--fg);
+    margin: 0 4px;
+  }
+  .cursor {
+    display: inline-block;
+    width: 0.55em;
+    height: 1em;
+    background: var(--accent);
+    margin-left: 6px;
+    transform: translateY(2px);
+    animation: blink 1.05s steps(2) infinite;
+  }
+  @keyframes blink { to { opacity: 0; } }
+
+  /* Bullets */
+  .bullets {
+    list-style: none;
+    display: grid;
+    gap: var(--s3);
+  }
+  .bullets li {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: var(--s3);
+    align-items: baseline;
+    padding-left: 0;
+  }
+  .bullets li::before {
+    content: "▸";
+    color: var(--accent);
+    font-family: var(--mono);
+    font-weight: 700;
+  }
+  .bullets li strong { color: var(--fg); font-weight: 600; }
+  .bullets li .dim { color: var(--fg-dim); }
+  .bullets.lg li { font-size: clamp(20px, 1.8vw, 24px); }
+
+  /* Diagram (ASCII / pre) */
+  pre.diagram, pre.terminal {
+    font-family: var(--mono);
+    font-size: clamp(13px, 1.05vw, 16px);
+    line-height: 1.55;
+    background: var(--bg-elev);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: var(--s4) var(--s5);
+    overflow: auto;
+    color: var(--fg);
+    white-space: pre;
+  }
+  pre.diagram .accent, pre.terminal .accent { color: var(--accent); }
+  pre.diagram .dim, pre.terminal .dim { color: var(--fg-dim); }
+  pre.diagram .ok { color: var(--ok); }
+  pre.diagram .warn { color: var(--warn); }
+
+  pre.terminal {
+    position: relative;
+  }
+  pre.terminal .prompt { color: var(--accent); }
+  pre.terminal .comment { color: var(--fg-dim); }
+
+  /* Tables */
+  table.cmd-grid {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--mono);
+  }
+  table.cmd-grid td {
+    border: 1px solid var(--rule);
+    padding: var(--s3);
+    vertical-align: top;
+    background: var(--bg-elev);
+  }
+  table.cmd-grid .num {
+    color: var(--accent);
+    font-size: 0.8em;
+    display: block;
+    margin-bottom: 6px;
+  }
+  table.cmd-grid .cmd {
+    color: var(--fg);
+    font-weight: 600;
+    font-size: 1.05em;
+  }
+  table.cmd-grid .desc {
+    display: block;
+    color: var(--fg-dim);
+    font-family: var(--sans);
+    font-size: 0.85em;
+    margin-top: 6px;
+    line-height: 1.4;
+  }
+
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s3); }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s4); }
+
+  .card {
+    background: var(--bg-elev);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: var(--s4);
+  }
+  .card h3 {
+    font-family: var(--mono);
+    color: var(--accent);
+    font-size: 0.95em;
+    margin-bottom: var(--s2);
+    letter-spacing: 0.04em;
+  }
+  .card p { color: var(--fg-dim); font-size: 0.95em; }
+  .card strong { color: var(--fg); }
+
+  /* Memory levels stack */
+  .memory-stack { display: grid; gap: var(--s2); }
+  .memory-stack .lvl {
+    display: grid;
+    grid-template-columns: 80px 1fr;
+    gap: var(--s3);
+    padding: var(--s2) var(--s3);
+    background: var(--bg-elev);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    align-items: baseline;
+  }
+  .memory-stack .lvl .tag {
+    font-family: var(--mono);
+    color: var(--accent);
+    font-weight: 700;
+  }
+  .memory-stack .lvl .desc { color: var(--fg-dim); font-size: 0.95em; }
+  .memory-stack .lvl strong { color: var(--fg); }
+
+  /* Roadmap */
+  .roadmap {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: var(--s2);
+    margin-top: var(--s4);
+  }
+  .roadmap .phase {
+    background: var(--bg-elev);
+    border: 1px solid var(--rule);
+    border-top: 3px solid var(--rule);
+    border-radius: 6px;
+    padding: var(--s3);
+    position: relative;
+  }
+  .roadmap .phase.done { border-top-color: var(--ok); }
+  .roadmap .phase.active { border-top-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .roadmap .phase.pending { border-top-color: var(--rule); }
+  .roadmap .phase .n {
+    font-family: var(--mono);
+    color: var(--fg-dim);
+    font-size: 0.8em;
+    letter-spacing: 0.08em;
+  }
+  .roadmap .phase .title {
+    font-weight: 600;
+    margin: 4px 0 var(--s2);
+    font-size: 1em;
+  }
+  .roadmap .phase .state {
+    font-family: var(--mono);
+    font-size: 0.85em;
+  }
+  .roadmap .phase.done .state { color: var(--ok); }
+  .roadmap .phase.active .state { color: var(--accent); }
+  .roadmap .phase.pending .state { color: var(--fg-dim); }
+  .roadmap .phase .desc {
+    color: var(--fg-dim);
+    font-size: 0.85em;
+    margin-top: var(--s2);
+    line-height: 1.4;
+  }
+
+  /* Footer of each slide */
+  .slide-footer {
+    position: absolute;
+    left: clamp(48px, 6vw, 96px);
+    right: clamp(48px, 6vw, 96px);
+    bottom: clamp(24px, 3vw, 40px);
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--mono);
+    font-size: 0.78em;
+    color: var(--fg-dim);
+    letter-spacing: 0.05em;
+  }
+
+  /* Overview */
+  .overview {
+    position: fixed;
+    inset: 0;
+    background: rgba(11, 15, 14, 0.96);
+    backdrop-filter: blur(8px);
+    z-index: 100;
+    overflow-y: auto;
+    padding: var(--s6);
+  }
+  .overview[hidden] { display: none; }
+  .overview h2 {
+    font-family: var(--mono);
+    color: var(--accent);
+    font-size: 0.9em;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: var(--s4);
+  }
+  .overview .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: var(--s2);
+  }
+  .overview .mini {
+    background: var(--bg-elev);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: var(--s3);
+    cursor: pointer;
+    transition: border-color 120ms, transform 120ms;
+    text-align: left;
+    color: var(--fg);
+    font-family: inherit;
+    font-size: inherit;
+  }
+  .overview .mini:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+  }
+  .overview .mini.current { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .overview .mini .n {
+    font-family: var(--mono);
+    color: var(--accent);
+    font-size: 0.78em;
+    letter-spacing: 0.08em;
+    display: block;
+    margin-bottom: 6px;
+  }
+  .overview .mini .t {
+    font-weight: 600;
+    font-size: 0.95em;
+    line-height: 1.3;
+    margin-bottom: 6px;
+  }
+  .overview .mini .a {
+    font-family: var(--mono);
+    font-size: 0.75em;
+    color: var(--fg-dim);
+  }
+
+  /* Help overlay */
+  .help {
+    position: fixed;
+    inset: 0;
+    background: rgba(11, 15, 14, 0.96);
+    backdrop-filter: blur(8px);
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .help[hidden] { display: none; }
+  .help-panel {
+    background: var(--bg-elev);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: var(--s5);
+    max-width: 480px;
+    width: calc(100% - 48px);
+  }
+  .help h2 {
+    font-family: var(--mono);
+    color: var(--accent);
+    font-size: 0.9em;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: var(--s3);
+  }
+  .help .row {
+    display: grid;
+    grid-template-columns: 140px 1fr;
+    gap: var(--s2);
+    padding: 10px 0;
+    border-bottom: 1px solid var(--rule);
+    align-items: center;
+  }
+  .help .row:last-child { border-bottom: none; }
+  .help .row .keys {
+    font-family: var(--mono);
+    color: var(--fg);
+  }
+  .help .row .keys kbd {
+    display: inline-block;
+    background: var(--bg);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 2px 8px;
+    margin-right: 4px;
+    font-family: var(--mono);
+    font-size: 0.9em;
+  }
+  .help .row .desc { color: var(--fg-dim); font-size: 0.95em; }
+
+  /* Status dots inline */
+  .dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+    transform: translateY(-1px);
+  }
+  .dot.ok { background: var(--ok); }
+  .dot.warn { background: var(--warn); }
+  .dot.dim { background: var(--rule); }
+
+  /* Encerramento (links list) */
+  .doc-links {
+    list-style: none;
+    display: grid;
+    gap: var(--s2);
+    margin-top: var(--s4);
+  }
+  .doc-links li {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: var(--s3);
+    padding: var(--s2) 0;
+    border-bottom: 1px solid var(--rule);
+    align-items: baseline;
+  }
+  .doc-links code {
+    font-family: var(--mono);
+    color: var(--accent);
+    font-size: 0.95em;
+  }
+  .doc-links .desc { color: var(--fg-dim); font-size: 0.95em; }
+
+  @media (max-width: 720px) {
+    .grid-3, .grid-2 { grid-template-columns: 1fr; }
+    .roadmap { grid-template-columns: 1fr 1fr; }
+    .doc-links li { grid-template-columns: 1fr; gap: 4px; }
+    table.cmd-grid { font-size: 0.85em; }
+  }
+</style>
+</head>
+<body>
+<div class="progress" id="progress"></div>
+<main id="deck">
+
+<!-- 01 HERO -->
+<section class="slide hero" data-act="Abertura">
+  <div class="slide-inner">
+    <h1><span class="glyph">$</span> feature-forge<span class="cursor"></span></h1>
+    <p class="tagline">Um sistema operacional para o desenvolvimento de features mobile — Android, iOS, KMP e Web — com zero ambiguidade.</p>
+    <p class="hint">pressione <span class="key">→</span> para começar &nbsp;·&nbsp; <span class="key">?</span> para atalhos</p>
+  </div>
+  <div class="slide-footer"><span>01 / 22</span><span>Abertura</span></div>
+</section>
+
+<!-- 02 O PROBLEMA -->
+<section class="slide" data-act="Abertura">
+  <div class="slide-inner">
+    <p class="eyebrow">o problema</p>
+    <h1 class="slide-title">Toda feature mobile <span class="accent">começa do zero</span>.</h1>
+    <ul class="bullets lg">
+      <li><span><strong>PRD vago.</strong> <span class="dim">Decisões espalhadas em PRs antigos, Notion, Slack e na cabeça de quem viu primeiro.</span></span></li>
+      <li><span><strong>Ambiguidade vira retrabalho.</strong> <span class="dim">Dev descobre o que fazer enquanto faz — e três pessoas fazem três coisas diferentes.</span></span></li>
+      <li><span><strong>Quatro plataformas, quatro padrões.</strong> <span class="dim">Android, iOS, shared (KMP), Web. Cada uma reinventa as mesmas regras.</span></span></li>
+      <li><span><strong>Cada projeto inventa sua skill.</strong> <span class="dim">Nada portável. Nada absorvível. Conhecimento evapora a cada migração.</span></span></li>
+    </ul>
+  </div>
+  <div class="slide-footer"><span>02 / 22</span><span>Abertura · o problema</span></div>
+</section>
+
+<!-- 03 PRINCÍPIOS -->
+<section class="slide" data-act="Princípios">
+  <div class="slide-inner">
+    <p class="eyebrow">princípios</p>
+    <h1 class="slide-title">6 regras que sustentam o forge.</h1>
+    <div class="grid-3" style="margin-top: var(--s4);">
+      <div class="card"><h3>01 · patterns ≠ deps</h3><p>Absorve <strong>essências</strong> de outras skills. Nunca amarra runtime.</p></div>
+      <div class="card"><h3>02 · files &gt; memory</h3><p>Tudo file-driven. <strong>Inspecionável, retomável, versionável.</strong></p></div>
+      <div class="card"><h3>03 · o user decide</h3><p>O engine <strong>nunca</strong> decide produto, arquitetura ou stack.</p></div>
+      <div class="card"><h3>04 · mentor calmo</h3><p>Caloroso na exploração. <strong>Firme nos gates.</strong></p></div>
+      <div class="card"><h3>05 · vocabulário nativo</h3><p>Lê CLAUDE.md e rules/. Usa <strong>as palavras do projeto</strong>.</p></div>
+      <div class="card"><h3>06 · reversibilidade</h3><p>Toda ação é <strong>undo-able</strong>. Sem estado oculto.</p></div>
+    </div>
+  </div>
+  <div class="slide-footer"><span>03 / 22</span><span>Princípios</span></div>
+</section>
+
+<!-- 04 O QUE NÃO É -->
+<section class="slide" data-act="Princípios">
+  <div class="slide-inner">
+    <p class="eyebrow">o que NÃO é</p>
+    <h1 class="slide-title">forge <span class="accent">não decide</span> por você.</h1>
+    <ul class="bullets lg">
+      <li><span><strong>Não é Product Manager.</strong> <span class="dim">Não decide O QUE a feature faz.</span></span></li>
+      <li><span><strong>Não é arquiteto.</strong> <span class="dim">Não decide QUAL stack usar.</span></span></li>
+      <li><span><strong>Não é code reviewer.</strong> <span class="dim">Não decide SE o código é bom.</span></span></li>
+      <li><span><strong>Não é project manager.</strong> <span class="dim">Não estima, agenda, nem coordena prazos.</span></span></li>
+    </ul>
+    <p class="lede" style="margin-top: var(--s5);">Quando perguntam qualquer dessas, redireciona oferecendo o valor adjacente que <em>pode</em> entregar.</p>
+  </div>
+  <div class="slide-footer"><span>04 / 22</span><span>Princípios · escopo OUT</span></div>
+</section>
+
+<!-- 05 OS 12 COMANDOS -->
+<section class="slide" data-act="Princípios">
+  <div class="slide-inner">
+    <p class="eyebrow">a interface</p>
+    <h1 class="slide-title">12 verbos. <span class="accent">Zero flags.</span></h1>
+    <table class="cmd-grid">
+      <tr>
+        <td><span class="num">01</span><span class="cmd">forge init</span><span class="desc">scan do projeto, propõe cards, escreve config, semeia memória</span></td>
+        <td><span class="num">02</span><span class="cmd">forge plan</span><span class="desc">pipeline de planning até readiness=ready</span></td>
+        <td><span class="num">03</span><span class="cmd">forge implement</span><span class="desc">executa 1 task: plan → apply → review → commit</span></td>
+      </tr>
+      <tr>
+        <td><span class="num">04</span><span class="cmd">forge verify</span><span class="desc">hard gates read-only por task ou feature</span></td>
+        <td><span class="num">05</span><span class="cmd">forge status</span><span class="desc">board read-only do estado atual</span></td>
+        <td><span class="num">06</span><span class="cmd">forge doctor</span><span class="desc">health check de config, cards, memória, hooks</span></td>
+      </tr>
+      <tr>
+        <td><span class="num">07</span><span class="cmd">forge reconfigure</span><span class="desc">único entrypoint pra qualquer mutação pós-init</span></td>
+        <td><span class="num">08</span><span class="cmd">forge graph</span><span class="desc">queries no graph (similares, blast-radius)</span></td>
+        <td><span class="num">09</span><span class="cmd">forge memory</span><span class="desc">inspeciona e gerencia memória L1–L5</span></td>
+      </tr>
+      <tr>
+        <td><span class="num">10</span><span class="cmd">forge evolve</span><span class="desc">revisa propostas do retrospective-agent</span></td>
+        <td><span class="num">11</span><span class="cmd">forge undo</span><span class="desc">reverte a última ação que mudou estado</span></td>
+        <td><span class="num">12</span><span class="cmd">forge raw</span><span class="desc">escape hatch pra scripts internos</span></td>
+      </tr>
+    </table>
+    <p class="lede" style="margin-top: var(--s4); font-size: 0.95em;">100% conversacional. Cada parâmetro é coletado por prompt interativo, dentro de um dos 12.</p>
+  </div>
+  <div class="slide-footer"><span>05 / 22</span><span>Princípios · 12 comandos</span></div>
+</section>
+
+<!-- 06 6 CAMADAS VISÃO GERAL -->
+<section class="slide" data-act="Anatomia">
+  <div class="slide-inner">
+    <p class="eyebrow">anatomia</p>
+    <h1 class="slide-title">6 camadas, de baixo pra cima.</h1>
+<pre class="diagram"><span class="dim">┌────────────────────────────────────────────────────────────────────┐</span>
+<span class="dim">│</span> <span class="accent">L6  UX</span>           init · plan · implement · verify · doctor · ...  <span class="dim">│</span>
+<span class="dim">├────────────────────────────────────────────────────────────────────┤</span>
+<span class="dim">│</span> <span class="accent">L5  Self-evolution</span>   retrospective → propostas → forge evolve   <span class="dim">│</span>
+<span class="dim">├────────────────────────────────────────────────────────────────────┤</span>
+<span class="dim">│</span> <span class="accent">L4  Orchestration</span>    planning-conductor · execution-conductor   <span class="dim">│</span>
+<span class="dim">├────────────────────────────────────────────────────────────────────┤</span>
+<span class="dim">│</span> <span class="accent">L3  Capability cards</span> templates · validators · agent-prompts     <span class="dim">│</span>
+<span class="dim">├────────────────────────────────────────────────────────────────────┤</span>
+<span class="dim">│</span> <span class="accent">L2  Integrations</span>     ticketing MCP · docs MCP · vision          <span class="dim">│</span>
+<span class="dim">├────────────────────────────────────────────────────────────────────┤</span>
+<span class="dim">│</span> <span class="accent">L1  Knowledge</span>        graph · inventory · memory L1–L5           <span class="dim">│</span>
+<span class="dim">├────────────────────────────────────────────────────────────────────┤</span>
+<span class="dim">│</span> <span class="accent">L0  Engine Core</span>      state machine file-driven · plan→apply→…   <span class="dim">│</span>
+<span class="dim">└────────────────────────────────────────────────────────────────────┘</span></pre>
+    <p class="lede" style="margin-top: var(--s4); font-size: 0.95em;">Cada camada serve a de cima. Cada uma é trocável sem reescrever as outras.</p>
+  </div>
+  <div class="slide-footer"><span>06 / 22</span><span>Anatomia · visão geral</span></div>
+</section>
+
+<!-- 07 L0 ENGINE CORE -->
+<section class="slide" data-act="Anatomia">
+  <div class="slide-inner">
+    <p class="eyebrow">L0 · engine core</p>
+    <h1 class="slide-title">Uma máquina de estados <span class="accent">em arquivos</span>.</h1>
+    <div class="grid-2">
+      <div>
+        <ul class="bullets">
+          <li><span><strong>Ciclo único.</strong> <span class="dim">plan → apply → verify → commit. Toda operação cabe nele.</span></span></li>
+          <li><span><strong>File-driven.</strong> <span class="dim">Estado em YAML/JSON no disco. Nada vive só em memória.</span></span></li>
+          <li><span><strong>Resumível.</strong> <span class="dim">Mata o processo, reabre — continua do checkpoint.</span></span></li>
+          <li><span><strong>Auditável.</strong> <span class="dim">history.jsonl registra cada transição com timestamp e rationale.</span></span></li>
+        </ul>
+      </div>
+      <div>
+<pre class="terminal"><span class="comment"># .claude/state.yaml</span>
+feature: register
+task: <span class="accent">TASK-0003</span>
+status: implementing
+last_checkpoint: 2026-05-29T14:32:11Z
+artifacts:
+  - feature-prd.md
+  - bdd.md
+  - tech-spec.md
+  - task-contracts/*.yaml</pre>
+      </div>
+    </div>
+  </div>
+  <div class="slide-footer"><span>07 / 22</span><span>Anatomia · L0 Engine Core</span></div>
+</section>
+
+<!-- 08 L1 KNOWLEDGE -->
+<section class="slide" data-act="Anatomia">
+  <div class="slide-inner">
+    <p class="eyebrow">L1 · knowledge substrate</p>
+    <h1 class="slide-title">O forge <span class="accent">aprende o seu projeto</span>.</h1>
+    <div class="grid-2">
+      <div>
+        <ul class="bullets">
+          <li><span><strong>codebase-graph.db</strong> <span class="dim">— SQLite vivo, atualizado via hooks. Responde "onde está X?" em ms.</span></span></li>
+          <li><span><strong>inventory/</strong> <span class="dim">— design-system, i18n, conventions em YAML, extraídos automaticamente.</span></span></li>
+          <li><span><strong>memory L1–L5</strong> <span class="dim">— do efêmero ao canônico.</span></span></li>
+        </ul>
+      </div>
+      <div class="memory-stack">
+        <div class="lvl"><span class="tag">L1</span><span class="desc"><strong>session</strong> · efêmero, esquecido ao fechar</span></div>
+        <div class="lvl"><span class="tag">L2</span><span class="desc"><strong>project</strong> · durável em .claude/memory/</span></div>
+        <div class="lvl"><span class="tag">L3</span><span class="desc"><strong>user</strong> · cross-project, no perfil do usuário</span></div>
+        <div class="lvl"><span class="tag">L4</span><span class="desc"><strong>card</strong> · padrões enviados por capability cards</span></div>
+        <div class="lvl"><span class="tag">L5</span><span class="desc"><strong>canonical</strong> · o repo do feature-forge</span></div>
+      </div>
+    </div>
+    <p class="lede" style="margin-top: var(--s4); font-size: 0.95em;">Meta: na feature N o questionário é <em>menor</em> que na feature 1.</p>
+  </div>
+  <div class="slide-footer"><span>08 / 22</span><span>Anatomia · L1 Knowledge</span></div>
+</section>
+
+<!-- 09 L2 INTEGRATIONS -->
+<section class="slide" data-act="Anatomia">
+  <div class="slide-inner">
+    <p class="eyebrow">L2 · external integrations</p>
+    <h1 class="slide-title">Conectado <span class="accent">onde já existe contexto</span>.</h1>
+    <div class="grid-2">
+      <div class="card">
+        <h3>ticketing MCP</h3>
+        <p>Lê tickets do <strong>Jira, Linear, GitHub Issues</strong>. <em>forge plan</em> aceita ID e puxa descrição, anexos, comentários.</p>
+      </div>
+      <div class="card">
+        <h3>docs MCP (Context7)</h3>
+        <p>Docs atualizadas de libs e frameworks. <strong>SDK syntax, APIs, breaking changes</strong> — sem chutar de memória.</p>
+      </div>
+      <div class="card">
+        <h3>vision</h3>
+        <p>Análise de screenshot. <strong>screen-analysis-agent</strong> lê o design e gera a especificação visual da tela.</p>
+      </div>
+      <div class="card">
+        <h3>find-skills</h3>
+        <p>Quando um card precisa de capacidade nova (TDD, debug, ship), <strong>instala via Skill ecosystem</strong>.</p>
+      </div>
+    </div>
+  </div>
+  <div class="slide-footer"><span>09 / 22</span><span>Anatomia · L2 Integrations</span></div>
+</section>
+
+<!-- 10 L3 CAPABILITY CARDS -->
+<section class="slide" data-act="Anatomia">
+  <div class="slide-inner">
+    <p class="eyebrow">L3 · capability cards</p>
+    <h1 class="slide-title">Tudo é composto de <span class="accent">cards atômicos</span>.</h1>
+    <div class="grid-2">
+      <div>
+        <ul class="bullets">
+          <li><span><strong>Card =</strong> <span class="dim">unidade declarativa de capacidade. Provides, requires, conflicts-with, contributes.</span></span></li>
+          <li><span><strong>Preset =</strong> <span class="dim">alias para uma combinação de cards. Não é estrutura fixa.</span></span></li>
+          <li><span><strong>Add/remove/swap</strong> <span class="dim">atomicamente. O engine resolve conflitos no init.</span></span></li>
+          <li><span><strong>Portabilidade</strong> <span class="dim">— funciona em qualquer combinação, mesmo as não previstas.</span></span></li>
+        </ul>
+      </div>
+      <div>
+<pre class="terminal"><span class="comment"># cards/koin-annotations/card.yaml</span>
+name: <span class="accent">koin-annotations</span>
+provides: [dependency-injection]
+conflicts-with: [hilt-di]
+requires: [kotlin-language]
+contributes:
+  templates:
+    - koin-module.kt.tmpl
+  validators:
+    - no-koin-dsl-in-prod
+  agent-prompts:
+    - koin-injection-rules.md</pre>
+      </div>
+    </div>
+  </div>
+  <div class="slide-footer"><span>10 / 22</span><span>Anatomia · L3 Cards</span></div>
+</section>
+
+<!-- 11 L4 ORCHESTRATION -->
+<section class="slide" data-act="Anatomia">
+  <div class="slide-inner">
+    <p class="eyebrow">L4 · orchestration</p>
+    <h1 class="slide-title">Dois super-agentes, <span class="accent">nove especialistas</span>.</h1>
+    <div class="grid-2">
+      <div>
+        <ul class="bullets">
+          <li><span><strong>planning-conductor</strong> <span class="dim">— conduz forge plan em waves A–E.</span></span></li>
+          <li><span><strong>execution-conductor</strong> <span class="dim">— conduz forge implement por task.</span></span></li>
+          <li><span><strong>9 sub-agents</strong> <span class="dim">— cada um com prompt isolado e contrato claro.</span></span></li>
+        </ul>
+      </div>
+      <div>
+<pre class="diagram"><span class="dim">sub-agents</span>
+─────────────────────────
+<span class="accent">▸</span> feature-intake-agent
+<span class="accent">▸</span> feature-prd-agent
+<span class="accent">▸</span> screen-analysis-agent
+<span class="accent">▸</span> contract-planner-agent
+<span class="accent">▸</span> tech-spec-agent
+<span class="accent">▸</span> task-contract-writer
+<span class="accent">▸</span> readiness-reviewer
+<span class="accent">▸</span> retrospective-agent
+<span class="accent">▸</span> memory-distiller</pre>
+      </div>
+    </div>
+    <p class="lede" style="margin-top: var(--s4); font-size: 0.95em;">~3.700 linhas de prompts. Cada agente recebe context-pack mínimo. Despacho paralelo onde dá.</p>
+  </div>
+  <div class="slide-footer"><span>11 / 22</span><span>Anatomia · L4 Orchestration</span></div>
+</section>
+
+<!-- 12 L5 SELF-EVOLUTION -->
+<section class="slide" data-act="Anatomia">
+  <div class="slide-inner">
+    <p class="eyebrow">L5 · self-evolution</p>
+    <h1 class="slide-title">O forge <span class="accent">sugere</span>. Nunca decide.</h1>
+<pre class="diagram">  <span class="dim">feature termina</span>
+        │
+        ▼
+  <span class="accent">retrospective-agent</span>  <span class="dim">→ detecta padrões repetidos, drift, gaps</span>
+        │
+        ▼
+  <span class="accent">proposed-evolutions.yaml</span>  <span class="dim">→ patches · novos cards · regras</span>
+        │
+        ▼
+  <span class="accent">forge evolve</span>  <span class="dim">→ user revisa, aceita, rejeita ou adia</span>
+        │
+        ▼
+  <span class="ok">aplicado</span> <span class="dim">·</span> <span class="warn">rejeitado</span> <span class="dim">·</span> <span class="dim">deferido</span></pre>
+    <p class="lede" style="margin-top: var(--s4);">A engine nunca se modifica sem aprovação. Cada proposta vem com rationale e diff.</p>
+  </div>
+  <div class="slide-footer"><span>12 / 22</span><span>Anatomia · L5 Self-evolution</span></div>
+</section>
+
+<!-- 13 BIG PICTURE -->
+<section class="slide" data-act="Fluxo">
+  <div class="slide-inner">
+    <p class="eyebrow">fluxo de uma feature</p>
+    <h1 class="slide-title">Três grandes blocos. <span class="accent">Nada fora deles.</span></h1>
+<pre class="diagram">  ┌─────────────────┐      ┌────────────────────┐      ┌─────────────────┐
+  │ <span class="accent">forge plan</span>      │  →   │ <span class="accent">forge implement</span>   │  →   │ <span class="accent">forge verify</span>   │
+  ├─────────────────┤      ├────────────────────┤      ├─────────────────┤
+  │ intake          │      │ 1 task por vez    │      │ hard gates     │
+  │ PRD             │      │ plan → apply       │      │ task / feature │
+  │ contracts       │      │ review → commit    │      │ read-only      │
+  │ tech-spec       │      │ atômico            │      │ pass / fail    │
+  │ task-contracts  │      │                    │      │                │
+  │ <span class="ok">readiness=ready</span> │      │                    │      │                │
+  └─────────────────┘      └────────────────────┘      └─────────────────┘</pre>
+  </div>
+  <div class="slide-footer"><span>13 / 22</span><span>Fluxo · big picture</span></div>
+</section>
+
+<!-- 14 FORGE PLAN -->
+<section class="slide" data-act="Fluxo">
+  <div class="slide-inner">
+    <p class="eyebrow">forge plan</p>
+    <h1 class="slide-title">Cinco waves até <span class="accent">readiness = ready</span>.</h1>
+    <div class="grid-2">
+      <div>
+        <ul class="bullets">
+          <li><span><strong>Wave A · intake</strong> <span class="dim">slug, owner, escopo, ticket</span></span></li>
+          <li><span><strong>Wave B · PRD + screen-analysis</strong> <span class="dim">paralelo — produto e tela</span></span></li>
+          <li><span><strong>Wave C · contracts</strong> <span class="dim">data · navigation · analytics · behavior · security</span></span></li>
+          <li><span><strong>Wave D · tech-spec</strong> <span class="dim">SDD: arquitetura, módulos, estados</span></span></li>
+          <li><span><strong>Wave E · task-contracts + readiness</strong> <span class="dim">microtarefas executáveis + auditoria final</span></span></li>
+        </ul>
+      </div>
+      <div>
+<pre class="terminal"><span class="prompt">$</span> forge plan register
+
+<span class="comment"># wave A complete  · 2m18s</span>
+<span class="comment"># wave B complete  · 4m02s</span>
+<span class="comment"># wave C complete  · 6m41s</span>
+<span class="comment"># wave D complete  · 3m57s</span>
+<span class="comment"># wave E complete  · 1m22s</span>
+
+readiness: <span class="accent">ready</span>
+artifacts: 14
+open_questions: 0</pre>
+      </div>
+    </div>
+  </div>
+  <div class="slide-footer"><span>14 / 22</span><span>Fluxo · forge plan</span></div>
+</section>
+
+<!-- 15 ARTEFATOS -->
+<section class="slide" data-act="Fluxo">
+  <div class="slide-inner">
+    <p class="eyebrow">artefatos do plan</p>
+    <h1 class="slide-title">Um <span class="accent">feature package</span> completo.</h1>
+    <div class="grid-3">
+      <div class="card"><h3>feature-prd.md</h3><p>O que a feature faz. Linguagem de produto, contexto, escopo IN/OUT.</p></div>
+      <div class="card"><h3>bdd.md</h3><p>Comportamento em Gherkin. <strong>Cada cenário vira teste</strong> no shared layer.</p></div>
+      <div class="card"><h3>screen-analysis.md</h3><p>Telas faithful ao design. Estados, transições, edge cases visuais.</p></div>
+      <div class="card"><h3>tech-spec.md</h3><p>SDD: módulos, estados, fluxos, decisões de arquitetura.</p></div>
+      <div class="card"><h3>*.contract.yaml</h3><p>4–5 contratos canônicos: data, nav, analytics, behavior, security.</p></div>
+      <div class="card"><h3>task-contracts/</h3><p>Microtarefas executáveis. Cada uma é <em>1 commit atômico</em>.</p></div>
+    </div>
+    <p class="lede" style="margin-top: var(--s4); font-size: 0.95em;">Cada arquivo tem schema. Validação programática bloqueia drift.</p>
+  </div>
+  <div class="slide-footer"><span>15 / 22</span><span>Fluxo · artefatos</span></div>
+</section>
+
+<!-- 16 FORGE IMPLEMENT -->
+<section class="slide" data-act="Fluxo">
+  <div class="slide-inner">
+    <p class="eyebrow">forge implement</p>
+    <h1 class="slide-title">Uma task. <span class="accent">Um commit.</span> Um ciclo.</h1>
+<pre class="diagram">  <span class="accent">▸ Plan Mode</span>     <span class="dim">— agente lê o task-contract, propõe diff. Sem editar nada.</span>
+       │
+       ▼
+  <span class="accent">▸ Apply Mode</span>    <span class="dim">— aplica a edição exatamente como planejada.</span>
+       │
+       ▼
+  <span class="accent">▸ Review</span>        <span class="dim">— pre-commit-reviewer audita diff vs contrato + gates.</span>
+       │
+       ▼
+  <span class="accent">▸ Commit</span>        <span class="dim">— atômico. Mensagem padronizada. Próxima task só depois do verde.</span></pre>
+    <p class="lede" style="margin-top: var(--s4);">Se algo desvia do contrato, <strong>para imediatamente</strong>. Sem improviso.</p>
+  </div>
+  <div class="slide-footer"><span>16 / 22</span><span>Fluxo · forge implement</span></div>
+</section>
+
+<!-- 17 FORGE VERIFY -->
+<section class="slide" data-act="Fluxo">
+  <div class="slide-inner">
+    <p class="eyebrow">forge verify</p>
+    <h1 class="slide-title">Hard gates. <span class="accent">Read-only.</span> Sem improviso.</h1>
+    <div class="grid-3">
+      <div class="card">
+        <h3>task-scope</h3>
+        <p>Roda os gates do task-contract: testes, lint, build, diff dentro de allowed_files.</p>
+      </div>
+      <div class="card">
+        <h3>feature-scope</h3>
+        <p>Integração end-to-end: cenários BDD, contratos cumpridos, cobertura, paridade entre plataformas.</p>
+      </div>
+      <div class="card">
+        <h3>inferred-scope</h3>
+        <p>Sem argumento? Detecta automaticamente onde o estado está e roda o escopo apropriado.</p>
+      </div>
+    </div>
+    <p class="lede" style="margin-top: var(--s4);">A engine <strong>nunca muta</strong> em verify. Só relata <span class="accent">pass</span> ou <span style="color:var(--warn)">fail</span> com evidências.</p>
+  </div>
+  <div class="slide-footer"><span>17 / 22</span><span>Fluxo · forge verify</span></div>
+</section>
+
+<!-- 18 COMO O FORGE APRENDE -->
+<section class="slide" data-act="Auto-evolução">
+  <div class="slide-inner">
+    <p class="eyebrow">auto-evolução</p>
+    <h1 class="slide-title">Cada feature <span class="accent">deixa o forge mais inteligente</span>.</h1>
+    <ul class="bullets lg">
+      <li><span><strong>retrospective-agent roda automático</strong> <span class="dim">ao terminar a feature. Lê history.jsonl, commits, gates falhados.</span></span></li>
+      <li><span><strong>Detecta o que repetiu.</strong> <span class="dim">Padrões em 3+ features viram candidatos a template ou regra.</span></span></li>
+      <li><span><strong>memory-distiller move L1 → L2.</strong> <span class="dim">O que era achado de sessão vira conhecimento durável de projeto.</span></span></li>
+      <li><span><strong>Propostas vão pra fila.</strong> <span class="dim">proposed-evolutions.yaml — esperando review humano.</span></span></li>
+    </ul>
+  </div>
+  <div class="slide-footer"><span>18 / 22</span><span>Auto-evolução · aprendizado</span></div>
+</section>
+
+<!-- 19 FORGE EVOLVE -->
+<section class="slide" data-act="Auto-evolução">
+  <div class="slide-inner">
+    <p class="eyebrow">forge evolve</p>
+    <h1 class="slide-title">O <span class="accent">controle final é seu</span>.</h1>
+    <div class="grid-2">
+      <div>
+        <ul class="bullets">
+          <li><span><strong>Cada proposta:</strong> <span class="dim">diff + contexto + rationale + features de origem.</span></span></li>
+          <li><span><strong>Aceitar:</strong> <span class="dim">aplica patch (template, card, regra, prompt).</span></span></li>
+          <li><span><strong>Rejeitar:</strong> <span class="dim">vai pra rejected-evolutions.yaml com motivo.</span></span></li>
+          <li><span><strong>Adiar:</strong> <span class="dim">fica na fila para próxima revisão.</span></span></li>
+        </ul>
+      </div>
+      <div>
+<pre class="terminal"><span class="prompt">$</span> forge evolve
+
+3 propostas na fila
+
+<span class="accent">[1/3]</span> add validator: detect-koin-dsl
+      origem: feat-register, feat-bonsai-form
+      <span class="dim">aceitar · rejeitar · adiar · ver diff</span>
+
+<span class="accent">[2/3]</span> patch template: tech-spec §11.3
+      ...</pre>
+      </div>
+    </div>
+    <p class="lede" style="margin-top: var(--s4); font-size: 0.95em;">Engine sugere, user decide. Sempre.</p>
+  </div>
+  <div class="slide-footer"><span>19 / 22</span><span>Auto-evolução · forge evolve</span></div>
+</section>
+
+<!-- 20 STATUS HOJE -->
+<section class="slide" data-act="Status">
+  <div class="slide-inner">
+    <p class="eyebrow">status hoje · 2026-05-29</p>
+    <h1 class="slide-title">Onde estamos.</h1>
+    <ul class="bullets lg">
+      <li><span><strong><span class="dot ok"></span>Fase 1 — Espinha dorsal</strong> <span class="dim">schemas, esqueleto de pastas, decisões locked.</span></span></li>
+      <li><span><strong><span class="dot ok"></span>Fase 2 — Cérebros</strong> <span class="dim">10 sub-agents, 7 roteiros UX, 27 decisões locked.</span></span></li>
+      <li><span><strong><span class="dot warn"></span>Fase 3 — Conteúdo</strong> <span class="dim">16 templates + 12 cards canônicos. Em andamento.</span></span></li>
+      <li><span><strong><span class="dot dim"></span>Fase 4 — Músculos</strong> <span class="dim">Python engine + bash dispatcher. Pendente.</span></span></li>
+      <li><span><strong><span class="dot dim"></span>Fase 5 — Pele e validação</strong> <span class="dim">Hooks, validators, E2E. Pendente.</span></span></li>
+    </ul>
+    <p class="lede" style="margin-top: var(--s5); font-family: var(--mono); font-size: 0.9em;">
+      27 decisões locked &nbsp;·&nbsp; ~3.700 linhas de prompts &nbsp;·&nbsp; 0 código de produção
+    </p>
+  </div>
+  <div class="slide-footer"><span>20 / 22</span><span>Status · onde estamos</span></div>
+</section>
+
+<!-- 21 ROADMAP -->
+<section class="slide" data-act="Status">
+  <div class="slide-inner">
+    <p class="eyebrow">roadmap</p>
+    <h1 class="slide-title">Cinco fases. <span class="accent">16–22 sessões focadas</span>.</h1>
+    <div class="roadmap">
+      <div class="phase done">
+        <div class="n">FASE 1</div>
+        <div class="title">Espinha dorsal</div>
+        <div class="state">✓ concluída</div>
+        <div class="desc">Schemas + esqueleto. 2–3 sessões.</div>
+      </div>
+      <div class="phase done">
+        <div class="n">FASE 2</div>
+        <div class="title">Cérebros</div>
+        <div class="state">✓ concluída</div>
+        <div class="desc">10 sub-agents + 7 roteiros UX. 3–4 sessões.</div>
+      </div>
+      <div class="phase active">
+        <div class="n">FASE 3</div>
+        <div class="title">Conteúdo</div>
+        <div class="state">⏳ agora</div>
+        <div class="desc">16 templates + 12 cards canônicos. 4–5 sessões.</div>
+      </div>
+      <div class="phase pending">
+        <div class="n">FASE 4</div>
+        <div class="title">Músculos</div>
+        <div class="state">○ pendente</div>
+        <div class="desc">Python engine + bash dispatcher. 5–7 sessões.</div>
+      </div>
+      <div class="phase pending">
+        <div class="n">FASE 5</div>
+        <div class="title">Pele &amp; validação</div>
+        <div class="state">○ pendente</div>
+        <div class="desc">Hooks + validators + E2E. 2–3 sessões.</div>
+      </div>
+    </div>
+    <p class="lede" style="margin-top: var(--s5); font-size: 0.95em;">Dependências mandam. Cada fase desbloqueia a próxima.</p>
+  </div>
+  <div class="slide-footer"><span>21 / 22</span><span>Status · roadmap</span></div>
+</section>
+
+<!-- 22 ENCERRAMENTO -->
+<section class="slide" data-act="Encerramento">
+  <div class="slide-inner">
+    <p class="eyebrow">encerramento</p>
+    <h1 class="slide-title">Não é mais uma skill.<br><span class="accent">É como reduzir ambiguidade a zero.</span></h1>
+    <ul class="doc-links">
+      <li><code>README.md</code><span class="desc">entrada rápida · estado atual · onde olhar</span></li>
+      <li><code>docs/design/00-vision.md</code><span class="desc">a visão completa · 6 layers · capability cards</span></li>
+      <li><code>docs/design/06-command-surface.md</code><span class="desc">os 12 comandos, locked. zero flags.</span></li>
+      <li><code>docs/design/02-phases.md</code><span class="desc">as 5 fases de implementação</span></li>
+      <li><code>docs/design/07-discipline.md</code><span class="desc">as 6 políticas universais</span></li>
+      <li><code>agents/planning-conductor.md</code><span class="desc">o prompt do super-agent</span></li>
+      <li><code>presets/kmp-mobile-firebase/</code><span class="desc">preset canônico em construção</span></li>
+    </ul>
+    <p class="hint" style="margin-top: var(--s5); font-family: var(--mono); color: var(--fg-dim); font-size: 0.9em;">
+      pressione <span class="key" style="display:inline-block;border:1px solid var(--rule);background:var(--bg-elev);padding:2px 10px;border-radius:4px;color:var(--fg);margin:0 4px;">Esc</span> para overview &nbsp;·&nbsp; <span class="key" style="display:inline-block;border:1px solid var(--rule);background:var(--bg-elev);padding:2px 10px;border-radius:4px;color:var(--fg);margin:0 4px;">Home</span> para voltar ao início
+    </p>
+  </div>
+  <div class="slide-footer"><span>22 / 22</span><span>fim · obrigado</span></div>
+</section>
+
+</main>
+
+<!-- Overview -->
+<div class="overview" id="overview" hidden>
+  <h2>overview — clique para ir</h2>
+  <div class="grid" id="overview-grid"></div>
+</div>
+
+<!-- Help -->
+<div class="help" id="help" hidden>
+  <div class="help-panel">
+    <h2>atalhos</h2>
+    <div class="row"><div class="keys"><kbd>→</kbd> <kbd>Space</kbd></div><div class="desc">próximo slide</div></div>
+    <div class="row"><div class="keys"><kbd>←</kbd></div><div class="desc">slide anterior</div></div>
+    <div class="row"><div class="keys"><kbd>Home</kbd></div><div class="desc">primeiro slide</div></div>
+    <div class="row"><div class="keys"><kbd>End</kbd></div><div class="desc">último slide</div></div>
+    <div class="row"><div class="keys"><kbd>Esc</kbd></div><div class="desc">overview / fechar</div></div>
+    <div class="row"><div class="keys"><kbd>?</kbd></div><div class="desc">este painel</div></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const slides = Array.from(document.querySelectorAll('.slide'));
+  const total = slides.length;
+  const progress = document.getElementById('progress');
+  const overview = document.getElementById('overview');
+  const overviewGrid = document.getElementById('overview-grid');
+  const help = document.getElementById('help');
+
+  let current = parseHash();
+
+  function parseHash() {
+    const n = parseInt(location.hash.replace('#', ''), 10);
+    if (!isNaN(n) && n >= 1 && n <= total) return n - 1;
+    return 0;
+  }
+
+  function show(idx) {
+    idx = Math.max(0, Math.min(total - 1, idx));
+    current = idx;
+    slides.forEach((s, i) => s.classList.toggle('active', i === idx));
+    progress.style.width = ((idx + 1) / total * 100) + '%';
+    const hash = '#' + (idx + 1);
+    if (location.hash !== hash) history.replaceState(null, '', hash);
+    updateOverviewCurrent();
+  }
+
+  function next() { show(current + 1); }
+  function prev() { show(current - 1); }
+
+  function toggleOverview() {
+    if (overview.hasAttribute('hidden')) {
+      buildOverview();
+      overview.removeAttribute('hidden');
+      help.setAttribute('hidden', '');
+    } else {
+      overview.setAttribute('hidden', '');
+    }
+  }
+
+  function toggleHelp() {
+    if (help.hasAttribute('hidden')) {
+      help.removeAttribute('hidden');
+      overview.setAttribute('hidden', '');
+    } else {
+      help.setAttribute('hidden', '');
+    }
+  }
+
+  function closeOverlays() {
+    overview.setAttribute('hidden', '');
+    help.setAttribute('hidden', '');
+  }
+
+  function buildOverview() {
+    if (overviewGrid.children.length === total) {
+      updateOverviewCurrent();
+      return;
+    }
+    overviewGrid.innerHTML = '';
+    slides.forEach((s, i) => {
+      const title = s.querySelector('.slide-title, .hero h1');
+      const act = s.dataset.act || '';
+      const btn = document.createElement('button');
+      btn.className = 'mini';
+      btn.innerHTML =
+        '<span class="n">' + String(i + 1).padStart(2, '0') + ' / ' + total + '</span>' +
+        '<div class="t">' + (title ? title.textContent.replace(/\s+/g, ' ').trim() : '(slide)') + '</div>' +
+        '<div class="a">' + act + '</div>';
+      btn.addEventListener('click', () => {
+        show(i);
+        overview.setAttribute('hidden', '');
+      });
+      overviewGrid.appendChild(btn);
+    });
+    updateOverviewCurrent();
+  }
+
+  function updateOverviewCurrent() {
+    Array.from(overviewGrid.children).forEach((c, i) => {
+      c.classList.toggle('current', i === current);
+    });
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    switch (e.key) {
+      case 'ArrowRight':
+      case 'PageDown':
+      case ' ':
+        if (!overview.hasAttribute('hidden') || !help.hasAttribute('hidden')) return;
+        e.preventDefault(); next(); break;
+      case 'ArrowLeft':
+      case 'PageUp':
+        if (!overview.hasAttribute('hidden') || !help.hasAttribute('hidden')) return;
+        e.preventDefault(); prev(); break;
+      case 'Home':
+        e.preventDefault(); show(0); break;
+      case 'End':
+        e.preventDefault(); show(total - 1); break;
+      case 'Escape':
+        e.preventDefault();
+        if (!help.hasAttribute('hidden')) { closeOverlays(); break; }
+        toggleOverview();
+        break;
+      case '?':
+        e.preventDefault(); toggleHelp(); break;
+    }
+  });
+
+  // Touch: tap right half → next, left half → previous
+  let touchStartX = null;
+  document.addEventListener('touchstart', (e) => {
+    if (!overview.hasAttribute('hidden') || !help.hasAttribute('hidden')) return;
+    touchStartX = e.touches[0].clientX;
+  }, { passive: true });
+  document.addEventListener('touchend', (e) => {
+    if (touchStartX === null) return;
+    const dx = e.changedTouches[0].clientX - touchStartX;
+    if (Math.abs(dx) < 30) {
+      // tap
+      const x = e.changedTouches[0].clientX;
+      if (x > window.innerWidth / 2) next(); else prev();
+    } else {
+      if (dx < 0) next(); else prev();
+    }
+    touchStartX = null;
+  }, { passive: true });
+
+  // Click outside overlay panel closes it
+  overview.addEventListener('click', (e) => {
+    if (e.target === overview) overview.setAttribute('hidden', '');
+  });
+  help.addEventListener('click', (e) => {
+    if (e.target === help) help.setAttribute('hidden', '');
+  });
+
+  window.addEventListener('hashchange', () => {
+    const idx = parseHash();
+    if (idx !== current) show(idx);
+  });
+
+  show(current);
+})();
+</script>
+</body>
+</html>
