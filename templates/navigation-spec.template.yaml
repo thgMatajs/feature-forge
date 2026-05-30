@@ -1,0 +1,133 @@
+# navigation-spec.yaml — Wave B · contract-planner-agent (artefato 3 de 6).
+# --------------------------------------------------------------------
+# Contrato de toda aresta de navegação do feature. Consumido por:
+#   - navigation-3 skill (Android) — gera AppRoute sealed interface + RouteEntry
+#   - SwiftUI NavigationStack (iOS) — espelha route_key como tipo Swift nativo
+#   - React Router v7 (web, quando aplicável) — mirror das transitions
+#   - validate_screen_analysis.py — cross-check ui-state-spec ↔ navigation-spec
+#
+# Regras absolutas:
+#   1. Fonte de verdade dos transitions: ui-state-spec.yaml. Walk de cada
+#      `transitions_out` por screen. Inventar transition é hard validator fail.
+#   2. Card `nav3` ativo ⇒ route_key DEVE ser tipo Kotlin @Serializable
+#      implementando AppRoute (sealed interface em shared:core/navigation).
+#   3. back_behavior fora da taxonomy estrita ⇒ validator fail.
+#   4. Toda transition unresolved em ui-state-spec → needs_elicitation: true
+#      + entry em needs_elicitation[] com Q-CP-{NN}.
+#   5. Labels SEMPRE i18n key — NUNCA literal hardcoded.
+
+# ---- Cabeçalho canônico ---------------------------------------------------
+schema_version: 1
+feature_slug: "{{feature_slug}}"
+generated_by: "contract-planner-agent"
+generated_at: "{{generated_at_iso8601}}"
+# Refs upstream.
+prd_ref: "{{feature_prd_relative_path}}"
+intake_ref: "{{feature_intake_relative_path}}"
+screen_analysis_ref: "{{screen_analysis_relative_path}}"
+ui_state_spec_ref: "{{ui_state_spec_relative_path}}"
+
+# ---- nav_graph ------------------------------------------------------------
+nav_graph:
+
+  # --- routes ------------------------------------------------------------
+  # Lista de rotas do feature. `id` é o screen_id canônico (mesmo de
+  # ui-state-spec.screens[].name). `route_key` é o nome do tipo serializável
+  # (Kotlin sealed interface AppRoute member).
+  routes:
+    - id: "{{screen_id}}"                             # ex.: "bonsai_list" — casa com ui-state-spec.screens[].name
+      route_key: "{{AppRouteMemberName}}"             # ex.: "AppRoute.BonsaiList" — card nav3 exige @Serializable
+      params: []                                      # vazio quando rota não recebe parâmetros
+      conditional: false                              # false | objeto { gate, on_fail }
+      parent: null                                    # id de rota pai (rotas aninhadas); null = top-level
+      deep_link_pattern: null                         # string opcional — duplica info que vai em deep_links abaixo
+      return_result:                                  # contrato quando a rota retorna valor para a origem
+        emits: false                                  # true quando esta rota emite resultado ao caller
+        result_shape: null                            # ex.: "{ bonsaiId: String, mode: 'created'|'edited' }"
+        consumer_routes: []                           # route ids que consomem o resultado
+      source: "{{ui_state_spec | prd | inferred}}"
+      needs_elicitation: false
+      open_question: null
+
+    # Exemplo de rota com params + auth gate (referência para o agent):
+    # - id: "bonsai_form"
+    #   route_key: "AppRoute.BonsaiForm"
+    #   params:
+    #     - name: "bonsaiId"
+    #       type: "String"
+    #       nullable: true                            # null ⇒ create, non-null ⇒ edit
+    #   conditional:
+    #     gate: "auth-required"
+    #     on_fail: "redirect-to-login"
+    #   parent: null
+    #   deep_link_pattern: null
+    #   return_result:
+    #     emits: true
+    #     result_shape: "{ bonsaiId: String, mode: 'created'|'edited' }"
+    #     consumer_routes: ["bonsai_list"]
+    #   source: "ui_state_spec"
+    #   needs_elicitation: false
+    #   open_question: null
+
+  # --- transitions -------------------------------------------------------
+  # Uma entry POR aresta de navegação. Origem: ui-state-spec.screens[].interactions
+  # + ui-state-spec.screens[].transitions_out.
+  transitions:
+    - id: "T-{{NNN}}"                                 # sequencial T-001, T-002, ...
+      source_screen: "{{screen_id}}"                  # casa com routes[].id e ui-state-spec
+      trigger:
+        kind: "{{button_system_event_deep_link_back}}"   # taxonomy estrita
+        label: "{{human_readable_label}}"                # texto do screenshot (sem hardcode em código)
+        i18n_key: "{{feature.slug.screen.element}}"      # casa com inventory.i18n.yaml ou proposed
+      target_screen: "{{target_screen_id}}"           # casa com routes[].id
+      params_passed: {}                               # ex.: { bonsaiId: null } — null marca create-mode
+      back_behavior: "pop"                            # taxonomy: pop | replace | clear-stack | dismiss-dialog | dismiss-sheet | noop
+      analytics_event: "{{event_name_or_null}}"       # casa com analytics-spec.events[].name
+      preconditions: []                               # ex.: ["form.valid == true"]
+      source: "{{ui_state_spec:screen:interaction | prd:UC-N | inferred}}"
+      needs_elicitation: false
+      open_question: null
+
+  # --- deep_links --------------------------------------------------------
+  # Padrões de deep-link mencionados no PRD (push, links externos, share).
+  # Vazio quando PRD não menciona nenhum.
+  deep_links: []
+  # Exemplo de shape:
+  # deep_links:
+  #   - pattern: "bonsai/{id}"
+  #     target_screen: "bonsai_detail"
+  #     params:
+  #       id: "bonsaiId"
+  #     requires_auth: true
+  #     analytics_event: "bonsai_deep_link_open"
+  #     source: "prd:UC-5"
+  #     needs_elicitation: false
+  #     open_question: null
+
+# ---- card_contributions ---------------------------------------------------
+# Slots reservados para active workflow cards injetarem constraints.
+# `nav3:constraint:route-key-shape` ativa ⇒ route_key DEVE ser Kotlin
+# @Serializable sealed interface AppRoute. Validator cross-check.
+card_contributions:
+  applied: []                                         # ex.: ["nav3:constraint:route-key-shape"]
+  pending: []                                         # cards que declararam extension-point ainda não absorvido
+
+# ---- needs_elicitation ---------------------------------------------------
+# Gaps que impedem fechar uma route ou transition. Cada entry referencia
+# open-question id (Q-CP-{NN}) em open-questions.yaml.
+needs_elicitation: []
+# Exemplo de shape:
+# needs_elicitation:
+#   - id: "Q-CP-{NN}"
+#     phase_lock: "TASK-{{feature_slug}}-nav"
+#     blocking: true
+#     topic: "{{route_or_transition_id}}"
+#     why: "ui-state-spec marca transition X como inferred"
+
+# ---- totals --------------------------------------------------------------
+totals:
+  routes_count: 0
+  transitions_count: 0
+  deep_links_count: 0
+  conditional_routes_count: 0
+  needs_elicitation_count: 0

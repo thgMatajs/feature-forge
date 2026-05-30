@@ -1,0 +1,205 @@
+# ui-state-spec.yaml — Wave B · screen-analysis-agent (companion machine-readable de screen-analysis.md).
+# --------------------------------------------------------------------
+# Consumido por:
+#   - task-contract-writer (Wave C) — drilla matriz UX em tarefas TASK-{slug}-ui
+#   - contract-planner-agent (Wave B paralelo) — walk de transitions p/ navigation-spec
+#   - validate_screen_analysis.py — cross-check ui-state-spec ↔ navigation-spec
+#
+# Regras absolutas:
+#   1. Toda screen declara TODOS os 7 base states (idle | loading | processed |
+#      empty | error | no-internet | feature-specific). Estado sem evidência →
+#      confirmed: false + needs-elicitation: true + open-question id.
+#   2. Toda referência de componente usa `ref` que casa com id em
+#      inventory/design-system.yaml. NUNCA componente com status deprecated/legacy
+#      como first-class — flagar em new-components-needed.
+#   3. Toda transition cita source. `inferred` SEMPRE pareado com needs-elicitation.
+#   4. feature-specific states vêm do PRD/intake. Inventar é hard validator fail.
+
+# ---- Cabeçalho canônico (alinhado com Batch 1) ----------------------------
+schema_version: 1
+feature_slug: "{{feature_slug}}"                # ex.: "lembrete-rega"
+generated_by: "screen-analysis-agent"
+generated_at: "{{generated_at_iso8601}}"        # ex.: 2026-05-28T14:33:11Z
+# Refs upstream (Wave A) e sibling (Wave B) — usar paths relativos ao feature dir.
+prd_ref: "{{feature_prd_relative_path}}"
+intake_ref: "{{feature_intake_relative_path}}"
+screen_analysis_ref: "{{screen_analysis_relative_path}}"
+# Fingerprint do source-pack (mesma chave usada em screen-analysis.md front-matter).
+source_pack_fingerprint: "{{source_pack_fingerprint}}"
+
+# ---- screens ---------------------------------------------------------------
+# Lista de telas que o feature introduz ou toca. Uma entry por tela.
+# O `name` (lowercase, snake-case) é o screen_id usado como cross-ref em:
+#   - navigation-spec.transitions.source_screen / target_screen
+#   - bdd.scenarios.tags (@source:screen-state:{name}:{state})
+#   - analytics-spec.test_ids.groups (via screen)
+screens:
+  - name: "{{screen_id}}"                       # ex.: "list" — snake_case; serve de screen_id global
+    route_key: "{{RouteKeyName}}"               # ex.: "LembreteList" — casa com AppRoute sealed interface
+    file:
+      android: "{{ScreenFileName}}.kt"          # ex.: "LembreteListScreen.kt" — folder layout de conventions.yaml
+      ios: "{{ScreenFileName}}View.swift"       # ex.: "LembreteListScreenView.swift"
+      web: "{{ScreenFileName}}.tsx"             # opcional — só quando feature toca web
+
+    # --- states ----------------------------------------------------------
+    # Mapeia 1:1 com sealed class StateUI<T> em commonMain (architecture_kmp.md):
+    #   idle | loading (Processing) | processed | empty | error | no-internet |
+    #   feature-specific (nome livre vindo do PRD).
+    # Toda state DEVE existir como chave aqui. Sem evidência → confirmed: false.
+    states:
+      idle:
+        trigger: "{{when_state_is_entered}}"            # ex.: "screen-opens-cold"
+        displays: []                                    # lista de inventory ids visíveis nesse state
+        side_effects: []                                # ex.: ["analytics:screen_view", "toast:welcome"]
+        transitions_from: []                            # origens externas: ["app-launch", "deep-link:lembrete"]
+        transitions_to: []                              # destinos internos: ["loading"]
+        confirmed: false                                # true só se visível em screenshot OU nomeado em PRD/intake
+        source: "{{screenshot:filename | prd:UC-N | intake:section | inferred}}"
+        needs_elicitation: false                        # true ⇒ open_question obrigatório
+        open_question: null                             # Q-{NNN} quando needs_elicitation: true
+
+      loading:
+        trigger: ""                                     # ex.: "fetch in flight"
+        displays: []
+        side_effects: []
+        transitions_from: []
+        transitions_to: []                              # ex.: ["processed", "empty", "error"]
+        confirmed: false
+        source: ""
+        needs_elicitation: false
+        open_question: null
+
+      processed:
+        trigger: ""
+        displays: []
+        side_effects: []
+        transitions_from: []
+        transitions_to: []
+        confirmed: false
+        source: ""
+        needs_elicitation: false
+        open_question: null
+
+      empty:
+        trigger: ""                                     # ex.: "fetch returned empty list"
+        displays: []                                    # ex.: ["MeoFeedbackState"]
+        side_effects: []
+        transitions_from: []
+        transitions_to: []
+        confirmed: false
+        source: ""
+        needs_elicitation: false
+        open_question: null
+
+      error:
+        trigger: ""                                     # ex.: "fetch failed with NetworkError"
+        displays: []
+        side_effects: []                                # ex.: ["analytics:fetch_error", "snackbar:retry"]
+        transitions_from: []
+        transitions_to: []
+        confirmed: false
+        source: ""
+        needs_elicitation: false
+        open_question: null
+
+      no_internet:
+        trigger: ""                                     # ex.: "NetworkMonitor reports offline"
+        displays: []
+        side_effects: []
+        transitions_from: []
+        transitions_to: []
+        confirmed: false
+        source: ""
+        needs_elicitation: false
+        open_question: null
+
+      # --- feature-specific states ---------------------------------------
+      # Estados nomeados pelo PRD/intake (ex.: pending-sync, awaiting-permission).
+      # Adicionar como chave snake_case sob `feature_specific:`; NUNCA inventar.
+      feature_specific: {}
+      # Exemplo de shape esperado quando preenchido:
+      # feature_specific:
+      #   pending_sync:
+      #     trigger: "outbox queue has item not flushed"
+      #     displays: ["MeoCard"]
+      #     side_effects: ["analytics:sync_pending"]
+      #     transitions_from: ["processed"]
+      #     transitions_to: ["processed"]
+      #     confirmed: true
+      #     source: "prd:UC-3 + data-contract:outbox"
+      #     needs_elicitation: false
+      #     open_question: null
+
+    # --- components ------------------------------------------------------
+    # Componentes que aparecem na tela. `ref` casa com inventory/design-system.yaml id.
+    # status: nunca registrar deprecated/legacy como first-class — flagar em new_components_needed.
+    components:
+      - ref: "{{inventory_component_id}}"             # ex.: "meo-card"
+        name: "{{ComponentName}}"                     # ex.: "MeoCard" — nome canônico do inventário
+        instances: 1                                  # quantas instâncias na tela
+        states_bound: []                              # ex.: ["processed", "pending_sync"]
+        match_confidence: 0.0                         # 0.95+ exato | 0.70–0.94 semântico | <0.70 não casa
+        status: "{{beta_stable_legacy_deprecated}}"   # mirrorra inventory; legacy/deprecated ⇒ flagar
+        ui_detail: false                              # true quando algum cell do UX Matrix não resolveu
+        open_questions: []                            # lista de Q-{NNN} ids que ainda alimentam esse componente
+
+    # --- interactions ---------------------------------------------------
+    # Cada ação interativa na tela: tap, swipe, long-press, focus.
+    # `navigates_to` referencia route_key — quando o caminho não é navegação
+    # (toast, dialog inline), usar `triggers_state` em vez de `navigates_to`.
+    interactions:
+      - on: "{{action_label}}"                        # ex.: "tap:MeoFab"
+        navigates_to: "{{TargetRouteKey_or_null}}"    # casa com navigation-spec route_id
+        triggers_state: "{{state_name_or_null}}"      # destino interno (sem mudar route)
+        starts_in_state: "{{state_name}}"             # estado em que o destino inicia
+        source: "{{screenshot:filename | prd:UC-N | inferred}}"
+        needs_elicitation: false
+        open_question: null
+
+    # --- transitions IN / OUT (resumo navegacional cru) -----------------
+    # Snapshot p/ contract-planner-agent montar navigation-spec.yaml.
+    # Detalhes finos de trigger/back-behavior são responsabilidade da navigation-spec.
+    transitions_in:
+      - from: "{{origin_route_or_event}}"             # ex.: "LembreteList" ou "deep-link:lembrete/{id}"
+        source: "{{source_tag}}"
+    transitions_out:
+      - on: "{{action_label}}"                        # ex.: "tap:save"
+        to: "{{TargetRouteKey}}"                      # casa com navigation-spec.routes.id
+        starts_in_state: "{{state_name}}"
+        source: "{{source_tag}}"
+        needs_elicitation: false
+        open_question: null
+
+# ---- cross_screen ---------------------------------------------------------
+# Componentes reaproveitados entre telas e padrões transversais.
+cross_screen:
+  shared_components:
+    # Cada item: id do inventário → lista de screen_ids que usam.
+    # Ex.: meo-snackbar: ["list", "create", "detail"]
+    {}
+  patterns: []                                        # ex.: ["host-content-components-split"]
+
+# ---- new_components_needed ------------------------------------------------
+# Componentes detectados em screenshot que NÃO casam com inventory non-deprecated.
+# Cada entry traz rationale + closest existing inventory ids descartados.
+new_components_needed: []
+# Exemplo de shape:
+# new_components_needed:
+#   - proposed_name: "MeoTimerRing"
+#     rationale: "Radial countdown sem equivalente no inventory."
+#     closest_existing: ["meo-card", "meo-feedback-state"]
+#     screens: ["timer"]
+#     open_question: "Q-{NNN}"
+
+# ---- needs_elicitation ----------------------------------------------------
+# Consolidado de Q-{NNN} ids adicionados por este agent (mirror do que vai
+# para open-questions.yaml com phase_lock: TASK-{slug}-ui).
+needs_elicitation: []
+# Exemplo de shape:
+# needs_elicitation:
+#   - id: "Q-{NNN}"
+#     phase_lock: "TASK-{{feature_slug}}-ui"
+#     blocking: true
+#     topic: "{{state_or_transition_or_component}}"
+#     screen: "{{screen_id}}"
+#     why: "{{contract_reason}}"

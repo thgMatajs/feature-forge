@@ -1,0 +1,249 @@
+# data-contract-spec.yaml — Wave B · contract-planner-agent (artefato 4 de 6).
+# --------------------------------------------------------------------
+# Define shapes de entidade, origens de dados, persistência e conflict-resolution.
+# Consumido por:
+#   - tech-spec-agent (Wave C) — deriva Repository / UseCase / Mapper / DTO
+#   - firestore-security-rules-auditor (quando card firestore-security-rules ativo)
+#   - validate_data_contract.py (validator dedicado)
+#   - validate_backend_e2e.py (quando alguma entity tem data_origins.api.exists: true)
+#
+# Este template é AGNÓSTICO de backend. Detalhes específicos (coleções Firestore,
+# endpoints REST, tabelas Room, prefs DataStore) NÃO vivem inline — são injetados
+# via extension-points (sub-blocos `firestore_collections`, `rest_endpoints`,
+# `local_tables`, `local_prefs`, `realtime_streams`) preenchidos por cards
+# ativos (firestore-persistence, rest-api-contract, room-database, datastore-prefs,
+# firestore-realtime). O template mantém os anchors mesmo quando o card não
+# está ativo — sub-bloco fica vazio (`{}` ou `[]`).
+#
+# Regras absolutas:
+#   1. NUNCA inventar campo. PRD silencioso ⇒ marcar field needs_elicitation: true.
+#      Exceção: PRD delega explicitamente ("standard timestamps", "soft delete") —
+#      aí usar conventions do projeto.
+#   2. persistence_strategy DEVE casar com cards ativos no workflow-config —
+#      validator cross-checks.
+#   3. Sub-blocos de provider (firestore_collections, rest_endpoints, local_tables,
+#      local_prefs, realtime_streams) são preenchidos APENAS pelos cards
+#      correspondentes via merge-keys. Manter anchors placeholders.
+#   4. ANY entity com data_origins.api.exists: true ⇒ backend_e2e block é
+#      obrigatório (validator falha em ausência).
+#   5. pii_classification dirige security-review gate downstream.
+
+# ---- Cabeçalho canônico ---------------------------------------------------
+schema_version: 1
+feature_slug: "{{feature_slug}}"
+generated_by: "contract-planner-agent"
+generated_at: "{{generated_at_iso8601}}"
+prd_ref: "{{feature_prd_relative_path}}"
+intake_ref: "{{feature_intake_relative_path}}"
+screen_analysis_ref: "{{screen_analysis_relative_path}}"
+ui_state_spec_ref: "{{ui_state_spec_relative_path}}"
+
+# ---- persistence_strategy ------------------------------------------------
+# Estratégia macro de persistência para esta feature. Drive escolha de cards
+# e cross-checks downstream. Valores aceitos:
+#   firebase-firestore | rest-api | mixed | local-only | none
+# `mixed` = feature toca server-side via mais de um provider (ex.: REST para
+# escritas + Firestore para realtime stream). Justificar em `notes`.
+persistence_strategy: "{{firebase_firestore_or_rest_api_or_mixed_or_local_only_or_none}}"
+
+# ---- entities -------------------------------------------------------------
+# Uma entrada por entidade de domínio. Nome (PascalCase) puro — sem sufixo
+# DTO/Entity/Response (architecture_kmp.md nomenclatura: domain model "puro").
+# Cross-ref: analytics-spec params podem referenciar entity_name; test-strategy
+# fakes podem referenciar entity_name.
+entities:
+  - name: "{{EntityName}}"                            # ex.: "Bonsai" — domain model puro
+    summary: ""                                       # 1 linha, role da entidade no feature
+    source: "{{prd:DataModel | intake:scope | inferred}}"
+
+    # --- fields --------------------------------------------------------
+    # Tipos da linguagem-compartilhada (Kotlin commonMain). NUNCA java.time —
+    # usar kotlinx.datetime (architecture_kmp.md anti-pattern).
+    fields:
+      - name: "{{fieldName}}"                         # camelCase em Kotlin
+        type: "{{Kotlin_or_kotlinx_type}}"            # ex.: "String", "Int", "kotlinx.datetime.LocalDate", "List<Photo>"
+        nullable: false
+        validations: []                               # ex.: ["non-empty", "max-length:80", "uuid-v4", "matches:userSession.id"]
+        default: null                                 # ex.: "Instant.fromEpochSeconds(0)" — quando PRD/conventions definem
+        source: "{{prd:DataModel | inferred}}"
+        needs_elicitation: false
+        open_question: null
+
+    # --- data_origins --------------------------------------------------
+    # Onde a entidade vive. api (remote) e local (persistência on-device)
+    # são independentes; ambos podem coexistir (persistence: both).
+    # Detalhes específicos do provider (path Firestore, URL REST, schema
+    # Room, chave DataStore) NÃO vivem aqui — vão nos sub-blocos populados
+    # pelos cards (firestore_collections, rest_endpoints, local_tables,
+    # local_prefs).
+    data_origins:
+      api:
+        exists: false                                 # true ⇒ backend_e2e block obrigatório
+        provider: "{{firestore_or_rest_or_graphql_or_other}}"   # casa com persistence_strategy
+        ref: "{{anchor_para_sub_bloco_do_provider}}"  # ex.: "firestore_collections[0]" | "rest_endpoints[bonsais-list]"
+        operations: []                                # subset de [read, create, update, delete, list, query]
+        idempotency_key: null                         # nome do field idempotente (writes), quando aplicável
+      local:
+        exists: false
+        store: "{{room_or_datastore_or_secure}}"      # de inventory.conventions.local-store
+        ref: "{{anchor_para_sub_bloco_local}}"        # ex.: "local_tables[bonsai]" | "local_prefs[user-prefs]"
+        ttl_seconds: null                             # null = sem expiração local
+
+    # --- persistence ---------------------------------------------------
+    # Estratégia macro POR ENTITY. Drive Repository/UseCase shape em tech-spec.
+    persistence: "{{server_only_local_only_both_none}}"
+
+    # --- conflict_strategy ---------------------------------------------
+    # Pull de memory L2 patterns. Valores aceitos:
+    #   last-write-wins-server | last-write-wins-client | merge-by-field |
+    #   crdt | manual-prompt
+    # Sem match em L2 ⇒ needs_elicitation: true + propor opções.
+    conflict_strategy: "{{strategy_or_needs_elicitation}}"
+
+    # --- cache_strategy ------------------------------------------------
+    cache_strategy:
+      pattern: "{{cache_pattern}}"                    # ex.: "stale-while-revalidate" | "cache-then-network" | "network-only"
+      ttl_seconds: null                               # quando pattern usa TTL
+      source: "{{memory_L2_id_or_needs_elicitation}}"
+
+    # --- security ------------------------------------------------------
+    # pii_classification: none | low | medium | high — dirige security-review gate.
+    pii_classification: "{{none_low_medium_high}}"
+    access_control:
+      read: []                                        # ex.: ["owner", "admin"]
+      write: []                                       # ex.: ["owner"]
+      delete: []
+      source: "{{prd | l2_decisions | inferred}}"
+
+# ---- operations -----------------------------------------------------------
+# Mapa lógico de operações CRUD por entity, agnóstico de provider.
+# Cada operation referencia (via `provider_ref`) o sub-bloco específico do
+# card ativo que descreve detalhes (path Firestore, endpoint REST, etc).
+operations: []
+# Exemplo de shape:
+# operations:
+#   - entity: "Bonsai"
+#     verb: "create"                                  # create | read | update | delete | list | query
+#     bdd_ref: "SC-001"
+#     provider_ref: "rest_endpoints[create-bonsai]"   # ou "firestore_collections[bonsais].operations[create]"
+#     idempotent: true
+
+# ---- mappers --------------------------------------------------------------
+# Regras de mapeamento entre camadas para cada entity. tech-spec-agent gera
+# o código Kotlin a partir desse contrato.
+mappers: []
+# Exemplo de shape:
+# mappers:
+#   - entity: "Bonsai"
+#     dto_response: "BonsaiResponse"                  # nomenclatura: {Entity}Response
+#     dto_request: "BonsaiRequest"
+#     room_entity: "BonsaiEntity"                     # {Entity}Entity quando Room
+#     direction: "dto_to_domain | domain_to_dto | bidirectional"
+#     null_handling:
+#       - field: "species"
+#         on_null: "default-empty-string"             # default-empty-string | drop | propagate-null | fallback-value
+#         fallback_value: ""
+#     transformations:
+#       - field: "acquiredAt"
+#         rule: "epoch-millis-to-localdate"
+#     defaults_applied: []                            # campos que recebem default fixo durante o mapping
+
+# ---- firestore_collections (extension-point card firestore-persistence) ---
+# PRESERVAR ESTE ANCHOR mesmo quando card não está ativo — vira `[]`.
+# Card `firestore-persistence` injeta via merge-keys o bloco completo
+# (doc-shape, operations, queries, batch-writes, cross-references).
+# Ver `cards/firestore-persistence/templates/firestore-persistence-data-contract.yaml`
+# para schema do fragmento.
+firestore_collections: []
+
+# ---- rest_endpoints (extension-point card rest-api-contract) -------------
+# PRESERVAR ESTE ANCHOR mesmo quando card não está ativo — vira `[]`.
+# Card `rest-api-contract` injeta via merge-keys o bloco completo
+# (method, path, auth, request/response, pagination, status-mapping,
+# idempotency, bdd-refs). Ver
+# `cards/rest-api-contract/templates/rest-endpoints-data-contract.yaml`.
+rest_endpoints: []
+
+# ---- local_tables (extension-point card room-database) -------------------
+# PRESERVAR ESTE ANCHOR mesmo quando card não está ativo — vira `[]`.
+# Card `room-database` injeta schema das tabelas Room (entities, DAOs,
+# migrations). Tipicamente coexiste com rest_endpoints/firestore_collections
+# quando feature usa cache local.
+local_tables: []
+
+# ---- local_prefs (extension-point card datastore-prefs) ------------------
+# PRESERVAR ESTE ANCHOR mesmo quando card não está ativo — vira `[]`.
+# Card `datastore-prefs` injeta chaves DataStore (preferences/proto).
+local_prefs: []
+
+# ---- realtime_streams (extension-point card firestore-realtime ou futuro
+# websocket-realtime / sse-realtime — capability label `realtime-stream`) --
+# PRESERVAR ESTE ANCHOR mesmo quando nenhum card realtime está ativo.
+# Card injeta streams (snapshot listeners Firestore, WebSocket subscriptions,
+# SSE channels) com lifecycle, scope e bdd-refs.
+realtime_streams: []
+
+# ---- security_rules_refs (extension-point card firestore-security-rules) -
+# Lista de arquivos/anchors de rules que cobrem cada operação por entity.
+# Card `firestore-security-rules` preenche; outro backend deixa vazio.
+# REST com rules em backend (não cliente) — não popular aqui.
+security_rules_refs: []
+# Exemplo:
+# security_rules_refs:
+#   - entity: "Bonsai"
+#     file: "firestore.rules"
+#     anchors: ["bonsais.read", "bonsais.write"]
+
+# ---- backend_e2e ---------------------------------------------------------
+# MANDATÓRIO quando QUALQUER entity tem data_origins.api.exists: true.
+# validate_backend_e2e.py enforça. Mirror parcial em test-strategy.yaml.
+# Provider determina ferramentas e CLI commands (Firestore emulator,
+# mock REST server, contract tests). Cards específicos preenchem `cli_commands`.
+backend_e2e:
+  enabled: false                                      # true quando qualquer entity tem api.exists: true
+  provider: "{{firestore_emulator_or_mock_rest_server_or_contract_tests_or_none}}"
+  emulator_required: false                            # true quando provider exige emulator local (ex.: Firestore)
+  scenarios: []
+  # Exemplo de scenarios:
+  # scenarios:
+  #   - id: "BE2E-001"
+  #     entity: "Bonsai"
+  #     flow: "create -> read -> update -> delete"
+  #     cli_commands:
+  #       setup: "./scripts/firebase-emulator.sh"     # ou "npm run mock-server:start"
+  #       teardown: "firebase emulators:exec --only firestore 'true'"
+  #     preconditions: ["emulator-up", "auth-emulator-up"]
+  #     covered_by_test_ids: []                       # cross-ref test-strategy
+
+# ---- card_contributions ---------------------------------------------------
+# Listagem explícita dos cards que contribuíram fragments para este artefato.
+# Conductor preenche `applied` ao mergear; `pending` lista cards detectados
+# mas com fragmento ausente/inválido.
+card_contributions:
+  applied: []                                         # ex.: ["firestore-persistence:section:firestore_collections", "rest-api-contract:section:rest_endpoints"]
+  pending: []
+
+# ---- needs_elicitation ---------------------------------------------------
+needs_elicitation: []
+# Exemplo de shape:
+# needs_elicitation:
+#   - id: "Q-CP-{NN}"
+#     phase_lock: "TASK-{{feature_slug}}-data"
+#     blocking: true
+#     topic: "{{entity:field_or_strategy}}"
+#     why: "PRD silent on conflict-strategy; L2 has no matching pattern"
+#     proposed_options: []                            # quando agent propõe opções p/ resolver
+
+# ---- totals --------------------------------------------------------------
+totals:
+  entities_count: 0
+  fields_count: 0
+  operations_count: 0
+  mappers_count: 0
+  firestore_collections_count: 0
+  rest_endpoints_count: 0
+  local_tables_count: 0
+  local_prefs_count: 0
+  realtime_streams_count: 0
+  backend_e2e_scenarios_count: 0
+  needs_elicitation_count: 0

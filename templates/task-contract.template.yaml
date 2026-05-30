@@ -1,0 +1,181 @@
+# tasks/TASK-NNNN.yaml — Wave D · task-contract-writer (1 por task).
+# --------------------------------------------------------------------
+# Contrato detalhado de UMA task. Define a CERCA do que pode/não pode ser
+# tocado e o que precisa ser verdade pra task ser considerada "done".
+# Consumido por:
+#   - execution-conductor (Plan Mode) — lê allowed_files e validations
+#   - implement-task / sprint-executor — apply mode
+#   - pre-commit-reviewer — confere allowed_files + evidence
+#   - readiness-reviewer — Phase 5 hard-gates check
+#
+# Regras absolutas (anti-invented-behavior):
+#   1. `allowed_files` é a CERCA. Caminhos concretos derivados de
+#      paths.feature-roots + conventions.folder-layout. Globs apenas vindos
+#      de card contributions (extension-point after:Allowed Files).
+#   2. `scope_out` é EXPLÍCITO — lista o que NÃO entra. Anti-scope-creep.
+#   3. `validations.commands` vêm de inventory.conventions.test-pattern OU
+#      cards. NUNCA inventar (`./gradlew test` sem source = falha).
+#   4. `gates` copiam workflow.hard-gates verbatim.
+#   5. `bdd_scenarios_covered` referencia SC-NNN reais de bdd.json — toda
+#      scenario do feature aparece em ≥ 1 task.
+#   6. `evidence_required` é fixo nos 4 campos canônicos.
+#   7. `phase_lock` casa com open-questions.yaml entries que bloqueiam esta
+#      task — execution-conductor halta no apply quando phase_lock matches
+#      um blocking question.
+
+# ---- Cabeçalho canônico ---------------------------------------------------
+schema_version: 1
+task_id: "TASK-{{NNNN}}"                            # zero-padded, único no feature
+title: "{{task_title_human_readable}}"
+feature_slug: "{{feature_slug}}"
+generated_by: "task-contract-writer"
+generated_at: "{{generated_at_iso8601}}"
+
+# ---- Refs upstream --------------------------------------------------------
+tech_spec_ref: "{{tech_spec_relative_path}}"
+tech_spec_section: "{{section_anchor}}"             # ex.: "§3.1 ViewModels"
+task_breakdown_ref: "{{task_breakdown_relative_path}}"
+bdd_ref: "{{bdd_relative_path}}"
+ui_state_spec_ref: "{{ui_state_spec_relative_path}}"
+data_contract_ref: "{{data_contract_relative_path}}"
+analytics_spec_ref: "{{analytics_spec_relative_path}}"
+test_strategy_ref: "{{test_strategy_relative_path}}"
+
+# ---- Classificação --------------------------------------------------------
+type: "shared-domain"                               # setup | shared-data | shared-domain | shared-presentation | android-ui | ios-ui | web-ui | tests | qa
+layer: "domain"                                     # setup | data | domain | presentation | ui | tests | qa
+estimated_complexity: "M"                           # S | M | L (estrutural — NUNCA tempo)
+
+# ---- Dependency graph (espelhado em task-breakdown) -----------------------
+depends_on: []                                      # ids TASK-NNNN que precisam estar done antes
+blocks: []                                          # inverso
+conflicts_with: []                                  # tasks que mutam files overlapando — não rodar concorrente
+
+# ---- Scope ----------------------------------------------------------------
+# Inclusão E exclusão explícitas. scope_out é tão importante quanto scope_in
+# pra prevenir invented behavior em apply mode.
+scope_in: []                                        # ex.: ["Criar domain model {{EntityName}}", "Criar Get{{EntityName}}sUseCase"]
+scope_out: []                                       # ex.: ["UI changes (vão em TASK-{{NNNN}})", "DTO/mappers (vão em TASK-{{NNNN}})"]
+
+# ---- Allowed files (CERCA) -----------------------------------------------
+# Caminhos concretos derivados de paths.feature-roots + conventions.
+# Card contributions ANEXAM globs aqui via after:Allowed Files.
+allowed_files: []
+# Exemplo de shape (uma task shared-domain):
+# allowed_files:
+#   - "shared/feature/{{feature_slug}}/src/commonMain/kotlin/.../domain/model/{{EntityName}}.kt"
+#   - "shared/feature/{{feature_slug}}/src/commonMain/kotlin/.../domain/usecase/Get{{EntityName}}sUseCase.kt"
+#   - "shared/feature/{{feature_slug}}/src/commonTest/kotlin/.../domain/usecase/Get{{EntityName}}sUseCaseTest.kt"
+
+# Card contributions append-only — extension-point: after:Allowed Files
+# ex.: koin-annotations injeta "shared/feature/{{feature_slug}}/src/commonMain/kotlin/**/*Module.kt"
+allowed_files_card_contributions: []
+
+# ---- Forbidden files -----------------------------------------------------
+# Files explicitamente proibidos. Ex.: outra task já owna esse arquivo, ou
+# este arquivo NÃO deve ser editado nesta camada (regra de scope).
+forbidden_files: []
+# Exemplo:
+# forbidden_files:
+#   - "composeApp/**/*"                             # task shared-domain não toca UI Android
+#   - "iosApp/**/*"                                 # idem iOS
+
+# ---- BDD scenarios cobertos pela task ------------------------------------
+# Cada scenario deve estar em ≥ 1 task — readiness-reviewer Phase 3 audita.
+bdd_scenarios_covered: []                           # ex.: ["SC-002", "SC-003", "MAN-04"]
+
+# ---- Validation steps ----------------------------------------------------
+# Comandos que devem passar pra task ser considerada done. NUNCA inventar.
+validation_steps:
+  commands: []                                      # ex.: ["./gradlew :shared:feature:{{slug}}:testAndroidHostTest"]
+  must_pass:                                        # validators Python — derivados de hard-gates
+    - "validate_task_contract.py"
+    - "validate_feature_package.py"
+    - "check_files_in_allowed_files.py"
+  card_contribution_commands: []                    # extension-point: after:Validations (ex.: firestore rules validator)
+
+# ---- Gates (verbatim copy de workflow.hard-gates) ------------------------
+gates:
+  - "readiness-must-be-ready"
+  - "no-files-outside-allowed-files"
+  - "validations-must-pass"
+  - "completion-evidence-required"
+  - "no-invented-behavior"
+
+# ---- Expected artifacts --------------------------------------------------
+# Arquivos/folders que devem existir após a task. Cross-check com allowed_files.
+expected_artifacts: []
+# Exemplo:
+# expected_artifacts:
+#   - "shared/feature/{{feature_slug}}/src/commonMain/kotlin/.../domain/model/{{EntityName}}.kt"
+#   - "shared/feature/{{feature_slug}}/src/commonTest/kotlin/.../domain/usecase/Get{{EntityName}}sUseCaseTest.kt"
+
+# ---- Review --------------------------------------------------------------
+review:
+  required: true
+  blocking: true                                    # mirrora workflow.pre-commit-review.blocking
+
+# ---- Review checklist (auditável pelo pre-commit-reviewer) ---------------
+review_checklist: []
+# Exemplo:
+# review_checklist:
+#   - "Domain model não importa Data/Presentation (architecture_kmp.md §camadas)"
+#   - "UseCase signatures alinhadas com Flow vs suspend rule (kotlin-idioms.md)"
+#   - "Testes cobrem mandatory_five aplicáveis a esta layer"
+
+# ---- Evidence required (4 campos canônicos, fixos) ----------------------
+# Schema fixo — pre-commit-reviewer rejeita evidence file sem esses campos.
+evidence_required:
+  - "tests_passed"                                  # nomes/contadores dos testes verdes
+  - "files_touched"                                 # subset de allowed_files
+  - "validators_passed"                             # validator outputs (pass per validator)
+  - "manual_verification_notes"                     # notas de smoke / build / device
+
+# ---- Build/lint evidence ------------------------------------------------
+# Cross-platform — citar o que builda quando.
+build_evidence_required:
+  android: ""                                       # ex.: "./gradlew :composeApp:assembleDebug"
+  ios: ""                                           # ex.: "xcodebuild -scheme iosApp build"
+  shared: ""                                        # ex.: "./gradlew :shared:assemble"
+  web: ""                                           # ex.: "cd webApp && npm run build"
+
+# ---- Phase lock ----------------------------------------------------------
+# Quando open-questions.yaml tem entry com phase_lock matching, essa task
+# halta no apply mode até o question ser resolvido.
+phase_lock: "{{task_id_or_null}}"                   # default: null. Quando set, casa com OQ entry.
+
+# ---- Out of scope findings (preenchido em apply mode) -------------------
+# Lista vazia no contrato. Ao apply, qualquer descoberta fora do scope_in
+# vira finding aqui — NUNCA muta scope_in/allowed_files no meio do caminho.
+out_of_scope_findings: []
+# Shape de cada finding:
+# - id: "FND-{{NNN}}"
+#   discovered_at: "{{iso8601}}"
+#   description: ""
+#   proposed_action: "split-new-task | defer | dismiss"
+
+# ---- References ---------------------------------------------------------
+references:
+  bdd_scenarios: []                                 # ex.: ["SC-002"]
+  data_contract_entities: []                        # ex.: ["{{EntityName}}"]
+  ui_state_spec_screens: []                         # ex.: ["{{screen_id}}"]
+  ui_state_spec_states: []                          # ex.: ["{{screen_id}}.error"]
+  navigation_spec_routes: []                        # ex.: ["AppRoute.{{ConceptRoute}}"]
+  analytics_events: []                              # ex.: ["{{feature_event_name}}"]
+  card_contributions: []
+  # Exemplo:
+  # card_contributions:
+  #   - card: "koin-annotations"
+  #     contribution: "**/*Module.kt added to allowed_files"
+  #   - card: "kmp-shared"
+  #     contribution: "test framework binding (kotlin-test)"
+
+# ---- Needs elicitation (gaps no contrato) -------------------------------
+needs_elicitation: []
+# Exemplo:
+# needs_elicitation:
+#   - id: "Q-TC-{{NN}}"
+#     phase_lock: "{{task_id}}"
+#     blocking: true
+#     topic: "Validator command for category 'qa' missing"
+#     why: "test-strategy.yaml backend_e2e.cli.run is empty"

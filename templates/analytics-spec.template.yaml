@@ -1,0 +1,134 @@
+# analytics-spec.yaml — Wave B · contract-planner-agent (artefato 5 de 6).
+# --------------------------------------------------------------------
+# Contrato de observabilidade. Consumido por:
+#   - .claude/rules/observability.md enforcement (grep pre-commit)
+#   - tech-spec-agent — gera contracts em shared:core/observability/
+#   - implementação Android/iOS — testTag(...) e accessibilityIdentifier(...)
+#   - Crashlytics integration — bind *_error events a exception classes
+#
+# Naming rules (strict — observability.md):
+#   - events:    <feature>_<verb>_<outcome>   ex.: bonsai_create_success
+#   - params:    snake_case, sem prefixo      ex.: duration_ms, error_code
+#   - test_ids:  <feature>_<screen>_<element>[_<modifier>]
+#
+# Regras absolutas:
+#   1. Todo event traceia para BDD scenario OU screen state. Sem orphan events.
+#   2. Todo *_error event TEM crashlytics block (validator falha sem).
+#   3. NUNCA hardcode IDs em código de feature — só nos contract files canônicos.
+#   4. Renomear event existente sem migration ticket ⇒ métricas históricas
+#      quebram. Sinalizar via needs_elicitation.
+
+# ---- Cabeçalho canônico ---------------------------------------------------
+schema_version: 1
+feature_slug: "{{feature_slug}}"
+generated_by: "contract-planner-agent"
+generated_at: "{{generated_at_iso8601}}"
+prd_ref: "{{feature_prd_relative_path}}"
+intake_ref: "{{feature_intake_relative_path}}"
+screen_analysis_ref: "{{screen_analysis_relative_path}}"
+ui_state_spec_ref: "{{ui_state_spec_relative_path}}"
+bdd_ref: "{{bdd_relative_path}}"
+
+# ---- feature_prefix ------------------------------------------------------
+# Prefixo curto usado em todos os event names e test_ids. Casa com slug da
+# feature OU short-name registrado em workflow-config.
+feature_prefix: "{{feature_short_name}}"              # ex.: "bonsai"
+
+# ---- contract_source -----------------------------------------------------
+# Paths canônicos onde events/test_ids vão materializar em código.
+# Single source of truth — observability.md exige.
+contract_source:
+  events_file: "shared/core/observability/{{FeaturePrefixPascal}}Analytics.kt"
+  test_ids_file: "shared/core/observability/{{FeaturePrefixPascal}}TestIds.kt"
+  conventions_file: "shared/core/observability/ObservabilityConventions.kt"
+
+# ---- events --------------------------------------------------------------
+# Cada evento de analytics emitido pela feature. Orphan events (sem trace)
+# são hard validator fail.
+events:
+  - name: "{{feature_prefix_verb_outcome}}"           # ex.: "bonsai_create_attempt"
+    trigger: ""                                       # 1 linha — qual ação/state transition dispara
+    user_meaningful: true                             # false para technical/debug events
+    severity: "info"                                  # info | warning | error
+    source_scenario: "{{SC_NNN_or_null}}"             # casa com bdd.json scenario id
+    source_screen_state: "{{screen_id:state_or_null}}"  # casa com ui-state-spec — exclusivo c/ source_scenario
+    test_ids_coverage: []                             # list de test_id names que cobrem dispatch desse event
+
+    params: []
+    # Exemplo de shape de params:
+    # params:
+    #   - name: "has_species"                         # snake_case, sem prefixo de feature
+    #     type: "Boolean"                             # Boolean | String | Long | Int | Double | Enum
+    #     required: true
+    #     enum: []                                    # quando type=Enum, valores aceitos
+    #     entity_ref: null                            # cross-ref data-contract entity quando aplicável
+    #     pii_classification: "none"                  # none | low | medium | high — guarda PII em telemetria
+
+    # crashlytics block — MANDATÓRIO quando name termina em "_error".
+    # NULL para events não-error.
+    crashlytics: null
+    # Exemplo p/ *_error event:
+    # crashlytics:
+    #   enabled: true
+    #   exception_class: "Firebase{{FeaturePrefixPascal}}AnalyticsException"
+    #   shared_path: "shared/feature/{{feature_slug}}/.../analytics/Firebase{{FeaturePrefixPascal}}AnalyticsException.kt"
+    #   required_fields: ["error_code", "cause_type"]
+
+    needs_elicitation: false
+    open_question: null
+
+# ---- test_ids ------------------------------------------------------------
+# Organizado por grupo (geralmente 1 grupo por screen). `value` é o literal
+# que vira testTag(Android) / accessibilityIdentifier(iOS via SKIE).
+test_ids:
+  groups:
+    - group: "{{ScreenNamePascal}}"                   # ex.: "BonsaiForm" — casa com ui-state-spec screen_id
+      screen: "{{screen_id}}"                         # mesma screen_id de ui-state-spec
+      ids: []
+      # Exemplo de shape de ids:
+      # ids:
+      #   - name: "FIELD_NAME"                        # CONSTANT_CASE em Kotlin
+      #     value: "{{feature_prefix_screen_element}}"  # ex.: "bonsai_form_field_name"
+      #     element_kind: "input"                     # input | button | label | container | snackbar | dialog | ...
+      #     component_ref: "{{inventory_component_id}}"  # ex.: "meo-text-field" — casa com design-system
+      #     state_scope: []                           # estados em que o elemento aparece (ex.: ["idle", "error"])
+      #     source: "screenshot:form.png | prd:UC-N"
+      #     needs_elicitation: false
+      #     open_question: null
+
+# ---- crashlytics_binding -------------------------------------------------
+# Política global da feature p/ Crashlytics. Observability.md exige paridade
+# Android↔iOS via classe compartilhada em shared/feature/.../analytics/.
+crashlytics_binding:
+  rule: "Every *_error event MUST call recordException(Firebase{{FeaturePrefixPascal}}AnalyticsException(errorCode, causeType))."
+  shared_exception_class: "Firebase{{FeaturePrefixPascal}}AnalyticsException"
+  shared_exception_path: "shared/feature/{{feature_slug}}/.../analytics/Firebase{{FeaturePrefixPascal}}AnalyticsException.kt"
+  parity: "android_ios"                               # android_ios | android_only | ios_only — observability.md exige paridade total
+
+# ---- card_contributions --------------------------------------------------
+# Cards podem injetar rules. Ex.: `crashlytics:rule:error-event-binding`
+# torna o crashlytics block obrigatório em todo *_error event (já é regra
+# por default; card eleva a hard-fail no validator).
+card_contributions:
+  applied: []                                         # ex.: ["crashlytics:rule:error-event-binding"]
+  pending: []
+
+# ---- needs_elicitation ---------------------------------------------------
+needs_elicitation: []
+# Exemplo de shape:
+# needs_elicitation:
+#   - id: "Q-CP-{NN}"
+#     phase_lock: "TASK-{{feature_slug}}-analytics"
+#     blocking: false
+#     topic: "{{event_or_test_id}}"
+#     why: "PRD silent on outcome event for retry flow"
+
+# ---- totals --------------------------------------------------------------
+totals:
+  events_count: 0
+  events_error_count: 0
+  events_with_crashlytics: 0
+  test_ids_count: 0
+  test_id_groups_count: 0
+  orphan_events: 0                                    # MUST ser 0 — orphan é hard fail
+  needs_elicitation_count: 0

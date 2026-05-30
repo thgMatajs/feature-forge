@@ -1,0 +1,120 @@
+# task-breakdown.yaml — Wave D · task-contract-writer (artefato 12 do feature package).
+# --------------------------------------------------------------------
+# Visão geral de tasks. Decompõe o tech-spec em unidades atômicas e ordenadas.
+# Consumido por:
+#   - readiness-reviewer (Wave E) — confere goal-backward (BDD → TASK → test)
+#   - planning-conductor — gera plan-feature-handoff.json
+#   - execution-conductor / implement-task — itera por TASK-NNNN.yaml na ordem
+#
+# Regras absolutas:
+#   1. NUNCA inventar task. Cada task espelha uma camada/screen/coleção
+#      derivada do tech-spec — Phase 1 (Identify task categories) é o mapping fixo.
+#   2. `depends_on` / `blocks` SEMPRE consistentes — Phase 5 self-check trava ciclo.
+#   3. `type` ∈ {setup, shared-data, shared-domain, shared-presentation,
+#      android-ui, ios-ui, web-ui, tests, qa} — emit `{platform}-ui` apenas
+#      quando plataforma está em workflow-config.platforms.active.
+#   4. `estimated_complexity` é estrutural (S/M/L) — NUNCA tempo.
+#   5. Toda BDD scenario aparece em ≥ 1 task; toda screen state em ≥ 1
+#      `{platform}-ui` task; toda entity em ≥ 1 `shared-data` task.
+
+# ---- Cabeçalho canônico ---------------------------------------------------
+schema_version: 1
+feature_slug: "{{feature_slug}}"
+generated_by: "task-contract-writer"
+generated_at: "{{generated_at_iso8601}}"
+
+# ---- Refs upstream --------------------------------------------------------
+intake_ref: "{{feature_intake_relative_path}}"
+prd_ref: "{{feature_prd_relative_path}}"
+screen_analysis_ref: "{{screen_analysis_relative_path}}"
+ui_state_spec_ref: "{{ui_state_spec_relative_path}}"
+bdd_ref: "{{bdd_relative_path}}"
+navigation_spec_ref: "{{navigation_spec_relative_path}}"
+data_contract_ref: "{{data_contract_relative_path}}"
+analytics_spec_ref: "{{analytics_spec_relative_path}}"
+test_strategy_ref: "{{test_strategy_relative_path}}"
+tech_spec_ref: "{{tech_spec_relative_path}}"
+
+# ---- Escopo da feature ----------------------------------------------------
+platforms_active: []                                # ex.: ["android", "ios"] | ["android", "ios", "web"]
+ordering: "dependency-driven"                       # v1: único valor aceito
+
+# ---- tasks ---------------------------------------------------------------
+# Resumo de cada TASK-NNNN. Detalhes vivem em tasks/TASK-NNNN.yaml — este
+# arquivo é overview consumido por readiness-reviewer + handoff.
+tasks:
+  - id: "TASK-{{NNNN}}"                             # zero-padded sequential, começa em 0001
+    title: "{{task_title_human_readable}}"
+    type: "setup"                                   # ver enumeração no header
+    layer: "setup"                                  # setup | data | domain | presentation | ui | tests | qa
+    depends_on: []                                  # ids de TASK-NNNN que precisam terminar antes
+    blocks: []                                      # inverso de depends_on (consistência garantida no self-check)
+    estimated_complexity: "S"                       # S | M | L (estrutural)
+    scope_summary: ""                               # 1 linha — o quê esta task entrega
+    allowed_files_summary: []                       # ex.: ["shared/feature/{{slug}}/src/commonMain/.../di/**"]
+    validation_summary: []                          # ex.: ["./gradlew :shared:feature:{{slug}}:compileCommonMainKotlinMetadata"]
+    expected_artifacts: []                          # arquivos/folders criados/modificados
+    bdd_scenarios_covered: []                       # ex.: ["SC-001", "SC-002"]
+    references:
+      tech_spec_section: "{{section_number_or_anchor}}"   # ex.: "§3.1 ViewModels"
+      screen_ids: []                                # ex.: ["{{screen_id}}"] quando layer=ui
+      entity_names: []                              # ex.: ["{{EntityName}}"] quando layer=data
+      cards_used: []                                # ex.: ["koin-annotations"]
+
+# ---- dependency_graph ----------------------------------------------------
+# Visão programática do DAG. Computado pelo agent depois do array tasks[].
+# Usado por execution-conductor para parallel scheduling.
+dependency_graph:
+  edges: []                                         # ex.: [{from: "TASK-0001", to: "TASK-0002"}]
+  acyclic: true                                     # self-check trava se false
+  topological_order: []                             # ex.: ["TASK-0001", "TASK-0002", "TASK-0003"]
+
+# ---- critical_path -------------------------------------------------------
+# Maior cadeia de dependências — define limite mínimo de turnaround sequencial.
+critical_path: []                                   # ex.: ["TASK-0001", "TASK-0002", "TASK-0004", "TASK-0007"]
+
+# ---- parallelizable ------------------------------------------------------
+# Grupos de tasks no mesmo nível do DAG sem overlap em allowed_files.
+parallelizable: []
+# Exemplo de shape:
+# parallelizable:
+#   - ["TASK-0004", "TASK-0005"]                    # android-ui e ios-ui após shared-presentation pronto
+#   - ["TASK-0006", "TASK-0007"]
+
+# ---- coverage_check ------------------------------------------------------
+# Cross-references obrigatórias — Phase 5 self-check usa esse bloco.
+coverage_check:
+  bdd_scenarios_total: 0                            # casa com bdd.json totals.scenarios_count
+  bdd_scenarios_covered: 0                          # devem ser iguais
+  screens_total: 0                                  # casa com ui-state-spec totals.screens_count
+  screens_covered: 0
+  entities_total: 0                                 # casa com data-contract totals.entities_count
+  entities_covered: 0
+  events_total: 0                                   # casa com analytics-spec totals.events_count
+  events_covered: 0
+
+# ---- notes ---------------------------------------------------------------
+# Decisões não-óbvias do agent (ex.: split via memory L2 pattern). Sem prosa
+# longa — bullets curtos referenciando memory.L2 ou feature-slug precedente.
+notes: []
+# Exemplo:
+# notes:
+#   - "Split shared-domain em 2 tasks per memory L2 pattern from bonsai-form."
+#   - "TASK-0006 separada de TASK-0005 devido a allowed_files overlap em mappers."
+
+# ---- needs_elicitation ---------------------------------------------------
+needs_elicitation: []
+# Exemplo:
+# needs_elicitation:
+#   - id: "Q-TBW-{NN}"
+#     phase_lock: "task-breakdown"
+#     blocking: true
+#     topic: "Validator command missing for category 'qa' (backend-e2e)"
+#     why: "test-strategy.yaml backend_e2e.cli.run is empty — cannot derive command"
+
+# ---- totals --------------------------------------------------------------
+totals:
+  tasks_count: 0
+  parallelizable_groups: 0
+  critical_path_length: 0
+  needs_elicitation_count: 0

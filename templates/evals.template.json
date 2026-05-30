@@ -1,0 +1,178 @@
+{
+  "_template_description": "evals/evals.json — Wave pós-implementação · retrospective-agent. Resultado pós-feature: tasks completas, gates passados, fingerprints de propostas, métricas de coverage/parity. Consumido por: forge evolve (apresenta proposed-evolutions pro usuário), memory-distiller (input para L2 promotion), retrospective.md (mesma fonte). Chaves '_*' são guias para o agent e devem ser removidas no output final.",
+
+  "_template_location": "Template canônico vive em templates/evals.template.json (single file, convenção do diretório templates/). Quando o engine renderiza para o feature package, o conteúdo é gravado em {features_root}/{feature_slug}/evals/evals.json (subpasta), conforme docs/design/05-filesystem-layout.md. Não mover o template — é o engine que materializa a subpasta no destino.",
+
+  "_template_rules": [
+    "snake_case em todas as chaves.",
+    "completed_at marca disparo do retrospective-agent (não primeiro commit).",
+    "tasks_completed[] espelha task-breakdown.tasks[] com mesmo task_id; cada entry carrega gates_passed/gates_violated.",
+    "proposed_evolutions_queue[] referencia P-NNN appended em .claude/proposed-evolutions.yaml — NUNCA inline o conteúdo.",
+    "Fingerprints sha256 sobre canonical-form per docs/design/07-discipline.md §4: chaves ordenadas {type, name, description-normalized, provenance-set}, NFC + casefold + strip-whitespace.",
+    "evals.metrics inclui parity android/ios/web e event coverage — derivados de test-strategy + analytics-spec totals."
+  ],
+
+  "schema_version": 1,
+  "feature_slug": "{{feature_slug}}",
+  "generated_by": "retrospective-agent",
+  "generated_at": "{{generated_at_iso8601}}",
+  "completed_at": "{{iso8601_utc_when_last_task_verified}}",
+
+  "_refs_description": "Refs de artefatos upstream — permite re-validar evals contra inputs originais.",
+  "refs": {
+    "feature_package_root": "{{features_root}}/{{feature_slug}}",
+    "plan_feature_handoff_ref": "{{features_root}}/{{feature_slug}}/plan-feature-handoff.json",
+    "retrospective_md_ref": "{{features_root}}/{{feature_slug}}/retrospective.md",
+    "rationale_trace_ref": ".claude/memory/L1/{{feature_slug}}/rationale-trace.yaml",
+    "dispatch_log_ref": ".claude/memory/L1/{{feature_slug}}/dispatch-log.jsonl",
+    "history_jsonl_ref": ".claude/memory/L1/{{feature_slug}}/history.jsonl",
+    "verify_log_ref": ".claude/memory/L1/{{feature_slug}}/verify-log.jsonl",
+    "proposed_evolutions_ref": ".claude/proposed-evolutions.yaml",
+    "rejected_evolutions_ref": ".claude/rejected-evolutions.yaml",
+    "l2_project_ref": ".claude/memory/L2-project.yaml"
+  },
+
+  "tasks_completed": [
+    {
+      "_description": "Espelho de plan-feature-handoff.tasks_summary[]. duration vem de history.jsonl (task start→done). gates_passed/violated derivados de pre-commit-reviewer outputs em reviews/. evidence_files lista os 4 canonical evidence outputs.",
+      "task_id": "TASK-{{NNNN}}",
+      "title": "{{task_title_human_readable}}",
+      "type": "{{setup|shared-data|shared-domain|shared-presentation|android-ui|ios-ui|web-ui|tests|qa}}",
+      "completed_at": "{{iso8601_utc}}",
+      "duration_seconds": 0,
+      "retry_count": 0,
+      "gates_passed": [
+        "readiness-must-be-ready",
+        "no-files-outside-allowed-files",
+        "validations-must-pass",
+        "completion-evidence-required",
+        "no-invented-behavior"
+      ],
+      "gates_violated": [],
+      "files_touched_count": 0,
+      "files_touched_within_allowed_files": true,
+      "tests_added_count": 0,
+      "tests_passed_count": 0,
+      "validators_passed": [],
+      "evidence_files": [
+        "{{features_root}}/{{feature_slug}}/completion-evidence/TASK-{{NNNN}}/evidence.yaml"
+      ],
+      "out_of_scope_findings": []
+    }
+  ],
+
+  "retrospective_insights": {
+    "_description": "Insights mineradados em retrospective-agent Phase 1-2. Não duplica retrospective.md prose — referencia counters. patterns_within_feature são candidatos a promoção L2 (Phase 3 cross-feature check).",
+    "time_in_plan_seconds": 0,
+    "time_in_implement_seconds": 0,
+    "sub_agent_invocations": 0,
+    "sub_agent_retries_total": 0,
+    "validators_first_try_pass": 0,
+    "validators_required_retry": 0,
+    "patterns_within_feature": [],
+    "patterns_cross_feature_reinforced": [],
+    "patterns_cross_feature_new_at_threshold": [],
+    "patterns_decay_signals": [],
+    "fnds_detected_in_feature": []
+  },
+
+  "proposed_evolutions_queue": [
+    {
+      "_description": "Referência (NÃO cópia) a entries appended em .claude/proposed-evolutions.yaml. fingerprint sha256 canonical-form per 07-discipline.md §4. provenance_features lista slugs onde proposta apareceu. status inicial = 'queued'; muta via forge evolve.",
+      "id": "P-{{NNN}}",
+      "type": "{{l1-to-l2-promotion|template-patch|agent-prompt-addition|new-card-suggestion|question-elimination|convention-refinement}}",
+      "name": "{{proposal_name_short}}",
+      "summary": "{{one_line_summary}}",
+      "confidence": 0.0,
+      "provenance_features": [],
+      "fingerprint": "{{sha256_hex_canonical_form}}",
+      "status": "queued",
+      "queued_at": "{{iso8601_utc}}"
+    }
+  ],
+
+  "proposed_evolutions_skipped_rejected_fingerprint": [
+    {
+      "_description": "Candidatos que bateram em .claude/rejected-evolutions.yaml — NÃO foram propostos (user já recusou). Apenas fingerprint + summary curta (privacy — o user já disse não, não re-surfacear).",
+      "fingerprint": "{{sha256_hex}}",
+      "candidate_summary": "{{short_summary}}",
+      "skipped_at": "{{iso8601_utc}}"
+    }
+  ],
+
+  "l2_distill_candidates": [
+    {
+      "_description": "Candidatos a destilação L2 (alimenta memory-distiller quando L2 passa de max-size-mb). Não é proposta — é signal pro distiller comprimir entries similares. confidence ≥ 0.85 + occurrence_count ≥ 3 são fortes candidatos.",
+      "candidate_id": "L2D-{{NNN}}",
+      "candidate_type": "{{pattern|finding|convention-refinement|question-elimination}}",
+      "name": "{{candidate_name}}",
+      "occurrence_count": 0,
+      "feature_slugs": [],
+      "confidence": 0.0,
+      "related_proposal_id": "P-{{NNN}}"
+    }
+  ],
+
+  "metrics": {
+    "_description": "Métricas quantitativas pro feature. Coverage derivado de test-strategy.totals + bdd.json.totals. Parity = paridade de cobertura entre plataformas (android/ios/web). Event coverage = % de analytics-spec.events com test em test-strategy.per_event.",
+    "coverage": {
+      "bdd_scenarios_total": 0,
+      "bdd_scenarios_with_test": 0,
+      "bdd_scenarios_coverage_pct": 0.0,
+      "screens_total": 0,
+      "screens_with_ui_test": 0,
+      "entities_total": 0,
+      "entities_with_repository_test": 0,
+      "events_total": 0,
+      "events_with_dispatch_test": 0,
+      "mandatory_five_coverage": {
+        "happy_path": false,
+        "null_empty_input": false,
+        "network_failure": false,
+        "loading_guard": false,
+        "unknown_value": false
+      }
+    },
+    "parity": {
+      "_description": "Paridade entre plataformas — required_platforms vem de test-strategy.parity.required_platforms. Para cada plataforma exigida, % de ViewModel actions / states com test simétrico.",
+      "required_platforms": [],
+      "android_coverage_pct": 0.0,
+      "ios_coverage_pct": 0.0,
+      "web_coverage_pct": 0.0,
+      "symmetric": false
+    },
+    "build_evidence": {
+      "android_build_success": false,
+      "android_build_command": "",
+      "ios_build_success": false,
+      "ios_build_command": "",
+      "shared_build_success": false,
+      "shared_build_command": "",
+      "web_build_success": false,
+      "web_build_command": ""
+    },
+    "validators_summary": {
+      "total_runs": 0,
+      "first_try_pass_rate": 0.0,
+      "retries_total": 0
+    }
+  },
+
+  "status": {
+    "_description": "Estado final. 'done' = retrospective concluído + proposals queued. 'partial' = retrospective rodou mas com FAIL em validação do proposed-evolutions.yaml (re-write necessário).",
+    "feature_state": "done",
+    "retrospective_completed": true,
+    "evals_validation": "pass"
+  },
+
+  "totals": {
+    "_description": "Counters agregados — sanity check vs plan-feature-handoff.totals.",
+    "tasks_count": 0,
+    "tasks_completed_count": 0,
+    "gates_violated_total": 0,
+    "proposals_appended_count": 0,
+    "proposals_skipped_count": 0,
+    "fnds_detected_count": 0,
+    "patterns_promotion_candidates_count": 0
+  }
+}

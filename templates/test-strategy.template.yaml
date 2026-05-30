@@ -1,0 +1,206 @@
+# test-strategy.yaml — Wave B · contract-planner-agent (artefato 6 de 6).
+# --------------------------------------------------------------------
+# Plano de testes completo. Consumido por:
+#   - android-testing, ios-testing, kmp-testing, e2e-testing skills
+#   - sprint-executor — gera testes a partir desse contrato
+#   - validate_screen_analysis.py — cross-check de cobertura por state
+#
+# Regras absolutas (.claude/rules/testing.md):
+#   1. SEMPRE incluir mandatory_five — happy_path, null_empty_input,
+#      network_failure, loading_guard, unknown_value.
+#   2. Toda confirmed state em ui-state-spec gera ≥1 per_state scenario.
+#   3. Cobertura SIMÉTRICA — se ViewModel tem N actions similares, todas
+#      precisam loading→success + loading→error.
+#   4. Card `kmp:constraint:shared-test-tasks` ativo ⇒ usar testAndroidHostTest
+#      no shared (NUNCA testDebugUnitTest).
+#   5. backend_e2e block mirrora data-contract-spec.backend_e2e quando enabled.
+
+# ---- Cabeçalho canônico ---------------------------------------------------
+schema_version: 1
+feature_slug: "{{feature_slug}}"
+generated_by: "contract-planner-agent"
+generated_at: "{{generated_at_iso8601}}"
+prd_ref: "{{feature_prd_relative_path}}"
+intake_ref: "{{feature_intake_relative_path}}"
+screen_analysis_ref: "{{screen_analysis_relative_path}}"
+ui_state_spec_ref: "{{ui_state_spec_relative_path}}"
+bdd_ref: "{{bdd_relative_path}}"
+data_contract_ref: "{{data_contract_relative_path}}"
+analytics_ref: "{{analytics_relative_path}}"
+
+# ---- required_scenarios --------------------------------------------------
+required_scenarios:
+
+  # --- mandatory_five (.claude/rules/testing.md) -----------------------
+  # IDs reservados MAN-01..MAN-05. Sempre presentes. layer indica camada
+  # primária de assert (validators podem exigir múltiplas camadas).
+  mandatory_five:
+    - id: "MAN-01"
+      kind: "happy_path"
+      layer: "viewmodel"                              # viewmodel | usecase | repository | mapper | ui
+      bdd_scenario_ref: "{{SC_NNN_or_null}}"          # cross-ref bdd.json scenario id
+      assertions: []                                  # ex.: ["state-processed", "domain-mapped-correctly"]
+    - id: "MAN-02"
+      kind: "null_empty_input"
+      layer: "viewmodel"
+      bdd_scenario_ref: "{{SC_NNN_or_null}}"
+      assertions: []                                  # ex.: ["state-empty", "no-crash-on-null"]
+    - id: "MAN-03"
+      kind: "network_failure"
+      layer: "repository"
+      bdd_scenario_ref: "{{SC_NNN_or_null}}"
+      assertions: []                                  # ex.: ["state-error", "loading-cleared"]
+    - id: "MAN-04"
+      kind: "loading_guard"
+      layer: "viewmodel"
+      bdd_scenario_ref: "{{SC_NNN_or_null}}"
+      assertions: []                                  # ex.: ["no-double-dispatch", "single-repository-call"]
+    - id: "MAN-05"
+      kind: "unknown_value"
+      layer: "mapper"
+      bdd_scenario_ref: "{{SC_NNN_or_null}}"
+      assertions: []                                  # ex.: ["fallback-applied", "no-crash"]
+
+  # --- per_state -------------------------------------------------------
+  # Um teste por confirmed state em ui-state-spec.screens[].states.
+  # needs-elicitation states NÃO entram aqui — vão em open-questions.
+  per_state: []
+  # Exemplo de shape:
+  # per_state:
+  #   - id: "STATE-001"
+  #     screen: "{{screen_id}}"                       # casa com ui-state-spec.screens[].name
+  #     state: "{{state_name}}"                       # ex.: "error" | "pending_sync"
+  #     layer: "viewmodel"
+  #     bdd_scenario_ref: "{{SC_NNN}}"
+  #     assertions: ["shows-error-snackbar", "no-submit-dispatched"]
+  #     test_ids_used: []                             # cross-ref analytics-spec test_ids[].name
+
+  # --- per_event -------------------------------------------------------
+  # Cobertura por analytics event — garante dispatch verificável.
+  per_event: []
+  # Exemplo:
+  # per_event:
+  #   - id: "EVT-001"
+  #     event_name: "{{feature_prefix_verb_outcome}}"   # casa com analytics-spec.events[].name
+  #     layer: "viewmodel"                              # onde o trigger acontece
+  #     assertions: ["event-emitted-once", "params-match-contract"]
+
+# ---- coverage_matrix -----------------------------------------------------
+# Frameworks e regras por plataforma. Os valores vêm de
+# inventory.conventions.test-pattern + active cards.
+coverage_matrix:
+
+  shared:
+    framework: "kotlin.test"                          # kotlin.test | kotest
+    flow_testing: "turbine"
+    coroutines: "kotlinx-coroutines-test"
+    dispatcher_injection: true                        # MUST true — injetar CoroutineDispatcher (architecture_kmp.md)
+    fakes_preferred_over_mocks: true                  # testing.md — fakes para I/O boundaries
+    rules:
+      - "Always assertIs<T>() — never `as` cast (testing.md)."
+      - "cancelAndConsumeRemainingEvents() at end of every test {} (turbine rule)."
+      - "Trigger actions inside test {} block — emissions before are lost."
+      - "Test full transition Idle -> Loading -> Success — never skip intermediates."
+      - "Dispatchers.setMain(UnconfinedTestDispatcher()) in setup; resetMain() in teardown."
+
+  android:
+    framework: "androidx.compose.ui.test"
+    rules:
+      - "assertIsDisplayed() — never assertExists()."
+      - "Use testTag from {{FeaturePrefixPascal}}TestIds — never hardcoded literals."
+      - "Compose test runs with createComposeRule()."
+
+  ios:
+    framework: "swift-testing"                        # swift-testing | xctest
+    rules:
+      - "accessibilityIdentifier({{FeaturePrefixPascal}}TestIds.shared.X) via SKIE."
+      - "Use Swift Testing `#expect` macros — never legacy XCTAssert when swift-testing is default."
+
+  web:                                                # remover bloco quando feature não toca web
+    framework: "vitest + @testing-library/react"
+    rules:
+      - "data-testid only — never getByText for stable selectors."
+      - "@JsExport-derived types only — never `any`."
+
+# ---- fakes ---------------------------------------------------------------
+# Decisão fakes vs mocks por boundary I/O. Default: fake. Mock só quando
+# explicitamente justificado (ex.: lib third-party sem interface fake-friendly).
+fakes: []
+# Exemplo de shape:
+# fakes:
+#   - boundary: "{{EntityName}}Repository"            # cross-ref data-contract.entities[].name
+#     kind: "fake"                                    # fake | mock | spy
+#     location: "shared/feature/{{feature_slug}}/src/commonTest/.../fakes/Fake{{EntityName}}Repository.kt"
+#     reuse_across_features: false                    # true quando fake é cross-feature (extrair p/ shared:core)
+#     justification: ""                               # required quando kind != fake
+
+# ---- backend_e2e ---------------------------------------------------------
+# Mirror de data-contract-spec.backend_e2e. Mantido aqui p/ test runners
+# consumirem sem precisar carregar data-contract. Bloco AGNÓSTICO de backend:
+# `provider` aceita os valores abaixo conforme o card ativo. Cards específicos
+# (firestore-persistence, rest-api-contract, etc.) preenchem `cli` via
+# extension-points.
+#
+# Accepted values para provider:
+#   firestore-emulator    — provider preenchido por firestore-persistence
+#                           (requer Firebase CLI + emulator-up)
+#   mock-server-rest      — provider preenchido por rest-api-contract
+#                           (ex.: MockWebServer, Prism, WireMock)
+#   contract-tests        — testes de contrato (Pact, OpenAPI-validator) sem
+#                           subir backend real; preenchido por rest-api-contract
+#                           ou graphql-client (v1.1)
+#   none                  — feature sem chamadas server-side (local-only ou
+#                           realtime-only); bloco fica desabilitado
+#
+# `scenarios_covered:` continua agnóstico — referencia BDD scenario ids.
+backend_e2e:
+  enabled: false                                      # casa com data-contract.backend_e2e.enabled
+  provider: "{{firestore_emulator_or_mock_server_rest_or_contract_tests_or_none}}"
+  cli:
+    setup: ""                                         # ex.: "./scripts/firebase-emulator.sh" | "npm run mock-server:start"
+    run: ""                                           # ex.: "firebase emulators:exec --only firestore,auth 'npm run test:e2e'" | "npm run test:e2e"
+    teardown: ""                                      # ex.: "npm run mock-server:stop"
+  gates:
+    - "All scenarios from data-contract-spec.backend_e2e.scenarios MUST have ≥1 test."
+  scenarios_covered: []                               # ids BE2E-NNN de data-contract.backend_e2e.scenarios — agnóstico (BDD refs)
+
+# ---- parity --------------------------------------------------------------
+# Garantia de paridade de cobertura entre plataformas onde feature roda.
+parity:
+  required_platforms: []                              # ex.: ["android", "ios"] | ["android", "ios", "web"]
+  symmetric_coverage_rule: "If ViewModel has N similar actions, ALL platforms test loading->success + loading->error."
+
+# ---- frameworks_from_inventory -------------------------------------------
+# Resolução automática do conductor a partir de inventory.conventions.
+# O valor de `test_pattern` é extraído de `inventory/conventions.yaml`
+# (gerado por `forge reconfigure`) e propagado para coverage_matrix acima.
+# Validators garantem que frameworks listados em coverage_matrix.* casem
+# com este pattern — nunca inventar framework não-presente no inventory.
+frameworks_from_inventory:
+  test_pattern: "{{value_of_inventory_conventions_test_pattern}}"
+  source: "inventory/conventions.yaml"
+
+# ---- card_contributions --------------------------------------------------
+card_contributions:
+  applied: []                                         # ex.: ["kmp:constraint:shared-test-tasks"]
+  pending: []
+
+# ---- needs_elicitation ---------------------------------------------------
+needs_elicitation: []
+# Exemplo de shape:
+# needs_elicitation:
+#   - id: "Q-CP-{NN}"
+#     phase_lock: "TASK-{{feature_slug}}-tests"
+#     blocking: false
+#     topic: "{{coverage_gap_topic}}"
+#     why: "ui-state-spec marks state X as needs-elicitation — cannot plan per_state test yet"
+
+# ---- totals --------------------------------------------------------------
+totals:
+  mandatory_count: 5                                  # sempre 5
+  per_state_count: 0
+  per_event_count: 0
+  backend_e2e_count: 0
+  fakes_count: 0
+  total_scenarios: 0
+  needs_elicitation_count: 0

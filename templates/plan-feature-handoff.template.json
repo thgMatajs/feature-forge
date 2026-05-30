@@ -1,0 +1,243 @@
+{
+  "_template_description": "plan-feature-handoff.json — Wave E · planning-conductor (artefato 15 / handoff aggregator do feature package). Passe de bastão pro execution-conductor (`forge implement`). Consumido por: execution-conductor (lê entry_point e itera task list), readiness gate (refuses to start se readiness != ready), retrospective-agent (Phase 1 mining cross-checks artifact fingerprints). Chaves '_*' são guias para o agent e devem ser removidas no output final.",
+
+  "_template_rules": [
+    "snake_case em todas as chaves (alinhado com bdd.json + Wave B YAMLs).",
+    "Fingerprints sha256 sobre canonical-form per docs/design/07-discipline.md §4 — chaves ordenadas, NFC + casefold, sem whitespace insignificante.",
+    "readiness DEVE ser 'ready' — qualquer outro valor faz execution-conductor recusar.",
+    "tasks_summary[] espelha task-breakdown.tasks[] com mesmo task_id sequencial.",
+    "entry_point é a primeira TASK do critical_path (geralmente TASK-0001).",
+    "validator_list é a sequência que execution-conductor roda antes de apply (cross-check no commit).",
+    "completion_criteria define quando o feature inteiro está done — consumido por retrospective-agent."
+  ],
+
+  "schema_version": 1,
+  "feature_slug": "{{feature_slug}}",
+  "generated_by": "planning-conductor",
+  "generated_at": "{{generated_at_iso8601}}",
+
+  "feature": {
+    "_description": "Metadata da feature. human_name vem do PRD §1. platforms_active vem de workflow-config.platforms.active.",
+    "human_name": "{{feature_human_name}}",
+    "objective_short": "{{feature_objective_one_line}}",
+    "platforms_active": [],
+    "backend_provider": "{{backend_provider}}",
+    "ticket_ref": "{{jira_or_github_or_null}}"
+  },
+
+  "artifacts": {
+    "_description": "Inventory completo dos artefatos do feature package. fingerprint sha256 canonical-form por arquivo — permite execution-conductor detectar drift entre plan e apply.",
+    "feature_intake": {
+      "path": "{{features_root}}/{{feature_slug}}/feature-intake.md",
+      "fingerprint": "{{sha256_hex}}"
+    },
+    "feature_prd": {
+      "path": "{{features_root}}/{{feature_slug}}/feature-prd.md",
+      "fingerprint": "{{sha256_hex}}"
+    },
+    "screen_analysis": {
+      "path": "{{features_root}}/{{feature_slug}}/screen-analysis.md",
+      "fingerprint": "{{sha256_hex}}"
+    },
+    "ui_state_spec": {
+      "path": "{{features_root}}/{{feature_slug}}/ui-state-spec.yaml",
+      "fingerprint": "{{sha256_hex}}"
+    },
+    "bdd_md": {
+      "path": "{{features_root}}/{{feature_slug}}/bdd.md",
+      "fingerprint": "{{sha256_hex}}"
+    },
+    "bdd_json": {
+      "path": "{{features_root}}/{{feature_slug}}/bdd.json",
+      "fingerprint": "{{sha256_hex}}"
+    },
+    "navigation_spec": {
+      "path": "{{features_root}}/{{feature_slug}}/navigation-spec.yaml",
+      "fingerprint": "{{sha256_hex}}"
+    },
+    "data_contract_spec": {
+      "path": "{{features_root}}/{{feature_slug}}/data-contract-spec.yaml",
+      "fingerprint": "{{sha256_hex}}"
+    },
+    "analytics_spec": {
+      "path": "{{features_root}}/{{feature_slug}}/analytics-spec.yaml",
+      "fingerprint": "{{sha256_hex}}"
+    },
+    "test_strategy": {
+      "path": "{{features_root}}/{{feature_slug}}/test-strategy.yaml",
+      "fingerprint": "{{sha256_hex}}"
+    },
+    "tech_spec": {
+      "path": "{{features_root}}/{{feature_slug}}/tech-spec.md",
+      "fingerprint": "{{sha256_hex}}"
+    },
+    "task_breakdown": {
+      "path": "{{features_root}}/{{feature_slug}}/task-breakdown.yaml",
+      "fingerprint": "{{sha256_hex}}"
+    },
+    "implementation_readiness_review": {
+      "path": "{{features_root}}/{{feature_slug}}/implementation-readiness-review.md",
+      "fingerprint": "{{sha256_hex}}"
+    },
+    "open_questions": {
+      "path": "{{features_root}}/{{feature_slug}}/open-questions.yaml",
+      "fingerprint": "{{sha256_hex}}"
+    }
+  },
+
+  "inventory_snapshots_in_use": {
+    "_description": "Fingerprints dos inventories no momento do plan. execution-conductor compara no apply pra detectar quando inventory mudou (gate: re-run forge reconfigure ou aceitar drift).",
+    "conventions": {
+      "path": ".claude/inventory/conventions.yaml",
+      "fingerprint": "{{sha256_hex}}"
+    },
+    "design_system": {
+      "path": ".claude/inventory/design-system.yaml",
+      "fingerprint": "{{sha256_hex}}"
+    },
+    "i18n": {
+      "path": ".claude/inventory/i18n.yaml",
+      "fingerprint": "{{sha256_hex}}"
+    },
+    "workflow_config": {
+      "path": ".claude/workflow-config.yaml",
+      "fingerprint": "{{sha256_hex}}"
+    },
+    "memory_l2": {
+      "path": ".claude/memory/L2-project.yaml",
+      "fingerprint": "{{sha256_hex}}"
+    }
+  },
+
+  "cards_active": [
+    {
+      "_description": "Lista de cards ativos no momento do plan, com fingerprint pra detectar card upgrade entre plan e apply.",
+      "name": "{{card_name}}",
+      "version": "{{semver}}",
+      "fingerprint": "{{sha256_hex}}"
+    }
+  ],
+
+  "tasks_summary": [
+    {
+      "_description": "Espelho de task-breakdown.tasks[] — mesmo ordering, mesmo task_id. execution-conductor itera por esse array. paths apontam pro contract YAML detalhado.",
+      "task_id": "TASK-{{NNNN}}",
+      "title": "{{task_title_human_readable}}",
+      "type": "{{setup|shared-data|shared-domain|shared-presentation|android-ui|ios-ui|web-ui|tests|qa}}",
+      "layer": "{{setup|data|domain|presentation|ui|tests|qa}}",
+      "depends_on": [],
+      "blocks": [],
+      "estimated_complexity": "{{S|M|L}}",
+      "contract_path": "{{features_root}}/{{feature_slug}}/tasks/TASK-{{NNNN}}.yaml",
+      "contract_fingerprint": "{{sha256_hex}}",
+      "bdd_scenarios_covered": []
+    }
+  ],
+
+  "entry_point": {
+    "_description": "Primeira TASK que execution-conductor abre. Sempre TASK do critical_path sem depends_on — geralmente TASK-0001 (setup).",
+    "task_id": "TASK-0001",
+    "rationale": "first task on critical_path with empty depends_on"
+  },
+
+  "dependency_graph": {
+    "_description": "Espelha task-breakdown.dependency_graph. Permite execution-conductor schedule parallel sem reler o breakdown.",
+    "edges": [],
+    "topological_order": [],
+    "parallelizable_groups": [],
+    "critical_path": []
+  },
+
+  "implementation_contract_summary": {
+    "_description": "Resumo do contrato de implementação que vale pra TODAS as tasks. Detalhes específicos vivem em cada TASK-NNNN.yaml.",
+    "hard_gates": [
+      "readiness-must-be-ready",
+      "no-files-outside-allowed-files",
+      "validations-must-pass",
+      "completion-evidence-required",
+      "no-invented-behavior"
+    ],
+    "pre_commit_review": {
+      "enabled": true,
+      "blocking": true
+    },
+    "evidence_required_per_task": [
+      "tests_passed",
+      "files_touched",
+      "validators_passed",
+      "manual_verification_notes"
+    ],
+    "retry_budget_on_validator_fail": 3
+  },
+
+  "readiness": {
+    "_description": "Status final do readiness-reviewer. DEVE ser 'ready' aqui. partial/blocked = handoff inválido, conductor refuses to emit.",
+    "status": "ready",
+    "verdict_source": "{{features_root}}/{{feature_slug}}/implementation-readiness-review.md",
+    "artifacts_checked": 0,
+    "validator_failures": 0,
+    "goal_backward_broken_chains": 0,
+    "blocking_open_questions": 0,
+    "discipline_violations": 0
+  },
+
+  "open_issues": {
+    "_description": "Issues conhecidos que NÃO bloqueiam apply. blocking_count DEVE ser 0 (senão readiness != ready). phase_locked entries dizem quais TASKs podem parar no apply até resolver.",
+    "blocking_count": 0,
+    "phase_locked": [
+      {
+        "id": "Q-CP-{{NN}}",
+        "phase_lock": "TASK-{{NNNN}}",
+        "topic": "{{topic}}"
+      }
+    ],
+    "non_blocking": [
+      {
+        "id": "Q-{{NN}}",
+        "topic": "{{topic}}",
+        "proposed_default": "{{default}}"
+      }
+    ]
+  },
+
+  "validator_list": {
+    "_description": "Sequência de validators que execution-conductor roda ANTES de qualquer apply. Mirrora readiness-reviewer Phase 2.",
+    "pre_apply": [
+      "python3 .claude/scripts/validate_feature_package.py {{feature_slug}}",
+      "python3 .claude/scripts/validate_readiness.py {{feature_slug}}",
+      "python3 .claude/scripts/validate_task_contract.py {{feature_slug}}/tasks/TASK-*.yaml"
+    ],
+    "per_task_commit": [
+      "python3 .claude/scripts/check_files_in_allowed_files.py",
+      "python3 .claude/scripts/validate_task_evidence.py"
+    ]
+  },
+
+  "completion_criteria": {
+    "_description": "Quando o feature inteiro está done. Consumido por retrospective-agent — só dispara depois que todos esses estão true.",
+    "all_tasks_done": true,
+    "all_validators_green": true,
+    "all_bdd_scenarios_covered_by_test": true,
+    "no_blocking_open_questions": true,
+    "build_evidence": {
+      "android": "{{required_command_or_null}}",
+      "ios": "{{required_command_or_null}}",
+      "shared": "{{required_command_or_null}}",
+      "web": "{{required_command_or_null}}"
+    }
+  },
+
+  "rationale_trace_ref": ".claude/memory/L1/{{feature_slug}}/rationale-trace.yaml",
+  "dispatch_log_ref": ".claude/memory/L1/{{feature_slug}}/dispatch-log.jsonl",
+
+  "totals": {
+    "_description": "Counters agregados — espelho dos outros artefatos pra sanity check no execution-conductor.",
+    "artifacts_count": 0,
+    "tasks_count": 0,
+    "bdd_scenarios_count": 0,
+    "screens_count": 0,
+    "entities_count": 0,
+    "analytics_events_count": 0,
+    "cards_active_count": 0
+  }
+}

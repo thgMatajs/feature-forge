@@ -1,0 +1,110 @@
+{
+  "_template_description": "bdd.json — Wave B · contract-planner-agent (artefato 2 de 6). Versão machine-readable do bdd.md. Mesmos scenario IDs, mesma estrutura. Consumido por validators e test scaffolders. JSON puro não permite comentários inline; chaves '_*' são guias para o agent e devem ser removidas no output final.",
+  "_template_rules": [
+    "Toda scenario tem source: {type, ref} — type ∈ user-story|mandatory-rule|screen-state",
+    "Tags incluem priority (must|should|could) e categoria (happy-path, loading-guard, etc.)",
+    "Steps separados em given[], when[], then[] — strings literais sem keyword prefix",
+    "Cenário sem assertion comprovável → needs-elicitation: true + entry em needs-elicitation[]",
+    "Scenario IDs no padrão SC-NNN sequenciais, alinhados com bdd.md",
+    "Mandatory five reservam IDs MAN-01..MAN-05 (ou aliasing via tags)"
+  ],
+
+  "schema_version": 1,
+  "feature_slug": "{{feature_slug}}",
+  "prd_ref": "{{feature_prd_relative_path}}",
+  "screen_analysis_ref": "{{screen_analysis_relative_path}}",
+  "generated_by": "contract-planner-agent",
+  "generated_at": "{{generated_at_iso8601}}",
+
+  "feature": {
+    "_description": "Nome humano do feature (vem do PRD §1) e descrição curta (vem do PRD §1 / intake).",
+    "name": "{{feature_human_name}}",
+    "description": "{{feature_objective_short_paragraph}}"
+  },
+
+  "background": {
+    "_description": "Steps compartilhados por ≥2 scenarios. null ou array vazio se não houver background. Cada item é string literal sem keyword prefix.",
+    "steps": [
+      "{{shared_given_step_1}}",
+      "{{shared_given_step_2_optional}}"
+    ]
+  },
+
+  "scenarios": [
+    {
+      "_description": "EXEMPLO de scenario preenchido — é placeholder, não real. O agent deve REMOVER este objeto antes do output final, mantendo apenas scenarios reais derivados de PRD/screen-analysis/mandatory-rules.",
+      "id": "EXAMPLE-001",
+      "name": "Usuário cria um item com dados válidos",
+      "source": {
+        "type": "user-story",
+        "ref": "US-01"
+      },
+      "priority": "must",
+      "tags": [
+        "happy-path",
+        "@source:user-story:US-01"
+      ],
+      "given": [
+        "the user is on the \"Create\" screen",
+        "all required fields are visible"
+      ],
+      "when": [
+        "the user fills \"name\" with \"Ficus Retusa\"",
+        "the user taps \"Save\""
+      ],
+      "then": [
+        "the entity is persisted",
+        "the user is navigated to \"Detail\"",
+        "analytics event \"feature_create_success\" is emitted"
+      ],
+      "needs_elicitation": false
+    },
+
+    {
+      "_description": "Scenario real — preencher um objeto deste shape para cada user story, cada mandatory-rule e cada screen-state confirmado/inferred-needs-confirmation.",
+      "id": "SC-{{NNN}}",
+      "name": "{{scenario_title_human_readable}}",
+      "source": {
+        "type": "{{user_story_or_mandatory_rule_or_screen_state}}",
+        "ref": "{{US_NN_or_rule_id_or_screen:state}}"
+      },
+      "priority": "{{must_should_could}}",
+      "tags": [
+        "{{category_tag}}",
+        "@source:{{type}}:{{ref}}"
+      ],
+      "given": [
+        "{{given_step_1}}",
+        "{{given_step_2_optional}}"
+      ],
+      "when": [
+        "{{when_step_1}}",
+        "{{when_step_2_optional}}"
+      ],
+      "then": [
+        "{{then_step_1}}",
+        "{{then_step_2_optional}}"
+      ],
+      "needs_elicitation": false
+    }
+  ],
+
+  "needs_elicitation": [
+    {
+      "_description": "Lista de gaps que impedem assertions completas. Cada entry referencia open-question id (Q-CP-NN) em open-questions.md/yaml e os scenario IDs que ficam bloqueados até resolução.",
+      "topic": "{{ambiguity_topic}}",
+      "reason": "{{why_cannot_resolve_from_inputs}}",
+      "blocks_scenario_ids": ["SC-{{NNN}}"],
+      "open_question_ref": "Q-CP-{{NN}}"
+    }
+  ],
+
+  "totals": {
+    "_description": "Contadores agregados para o conductor consolidar no return JSON.",
+    "scenarios_count": 0,
+    "user_story_scenarios": 0,
+    "mandatory_rule_scenarios": 0,
+    "per_state_scenarios": 0,
+    "needs_elicitation_count": 0
+  }
+}
