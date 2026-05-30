@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual envs
+venv/
+.venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# feature-forge — runtime artifacts (never committed)
+*.bak
+.init-checkpoint.yaml
+.reconfigure-draft.yaml
+.evolve-checkpoint.yaml
+graph.db
+graph.db-journal
+graph.db-wal
+
+# Build / dist
+build/
+dist/
+*.egg
+
+# Local-only project state (when forge runs inside another project)
+.claude/graph.db
+.claude/memory/L1/*
+!.claude/memory/L1/archived/

@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "feature-forge"
+version = "1.0.0"
+description = "Conversational, mentor-driven feature lifecycle skill for Android + iOS + KMP projects."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "feature-forge maintainers" },
+]
+keywords = ["kmp", "android", "ios", "feature", "workflow", "agent"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.1",
+]
+
+[project.scripts]
+# Optional install path. `bin/forge` Bash dispatcher remains the canonical
+# entrypoint — this is here so `pip install -e .` also wires a `forge` shim.
+forge = "engine.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["engine*"]
+exclude = ["tests*", "examples*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+markers = [
+    "integration: integration tests exercising multiple modules end-to-end (may need MeoBonsai fixture)",
+    "e2e: end-to-end tests that subprocess the CLI (slow — skip on rapid CI lanes)",
+]
