@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# feature-forge — bash dispatcher
+#
+# Tiny shim: resolves FORGE_HOME, exports env, and execs the Python engine
+# in-place so signals (Ctrl+C, SIGTERM) propagate cleanly to the child.
+#
+# Anything more than this belongs in engine/cli.py. Keep this file boring.
+
+set -euo pipefail
+
+# Resolve the canonical FORGE_HOME (the directory containing bin/ and engine/).
+# Follow symlinks so users can symlink `forge` into ~/.local/bin freely.
+SCRIPT_SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SCRIPT_SOURCE" ]; do
+  SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+  SCRIPT_SOURCE="$(readlink "$SCRIPT_SOURCE")"
+  [[ "$SCRIPT_SOURCE" != /* ]] && SCRIPT_SOURCE="$SCRIPT_DIR/$SCRIPT_SOURCE"
+done
+FORGE_HOME="$(cd -P "$(dirname "$SCRIPT_SOURCE")/.." && pwd)"
+
+export FORGE_HOME
+export FORGE_VERSION="1.0.0"
+export PYTHONPATH="${FORGE_HOME}${PYTHONPATH:+:${PYTHONPATH}}"
+
+PYTHON="${FORGE_PYTHON:-python3}"
+
+# exec so Ctrl+C goes straight to the engine (decision 27: pause vs abort).
+exec "$PYTHON" -m engine.cli "$@"
