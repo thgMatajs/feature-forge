@@ -1,0 +1,68 @@
+# feature-forge — PR ingest workflow template
+# Copied by `forge init --ci` into .github/workflows/feature-forge-pr-ingest.yml
+# Runs forge verify and doctor against PR scope, comments results back.
+name: feature-forge PR ingest
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'docs/feature-implementation-workflow/**'
+      - '.claude/**'
+      - 'src/**'
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install forge
+        # IMPORTANTE: substituir <TBD-user> pelo owner real do repo canonical feature-forge
+        # antes de habilitar este workflow num projeto. Sem clone, o binary `forge`
+        # não existe no runner e os steps seguintes falham silenciosamente.
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/<TBD-user>/feature-forge.git "${HOME}/feature-forge"
+          export FORGE_HOME="${HOME}/feature-forge"
+          export PATH="${FORGE_HOME}/bin:${PATH}"
+          echo "FORGE_HOME=${FORGE_HOME}" >> "${GITHUB_ENV}"
+          echo "${FORGE_HOME}/bin" >> "${GITHUB_PATH}"
+          pip install pyyaml
+          forge --version
+
+      - name: Forge verify (scope inferred)
+        run: |
+          BRANCH="${GITHUB_HEAD_REF:-main}"
+          SLUG=$(echo "$BRANCH" | sed -E 's|^feature/||;s|/.*$||')
+          forge ingest --event ci-pr-ingest \
+            --feature-slug "$SLUG" \
+            --pr-number "${{ github.event.pull_request.number }}"
+
+      - name: Forge doctor (quick)
+        run: forge ingest --event pre-push --project-root "$(pwd)"
+        continue-on-error: true
+
+      - name: Comment results on PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.existsSync('.claude/.ci-report.md')
+              ? fs.readFileSync('.claude/.ci-report.md', 'utf8')
+              : 'feature-forge: no report generated';
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: report
+            });

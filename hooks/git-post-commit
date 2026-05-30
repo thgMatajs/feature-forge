@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# feature-forge — git post-commit hook
+# Installed by `forge init` into .git/hooks/post-commit. Records the commit
+# in the SQLite graph (feature_commits / task_commits) so doctor and
+# progress reports can correlate code activity with features.
+#
+# Contract:
+#   - Always exits 0
+#   - Skips silently on non-forge projects (no .claude/ dir)
+#
+# Env:
+#   FORGE_BIN — override forge binary path (default: "forge")
+set -euo pipefail
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+if [[ ! -d "$PROJECT_ROOT/.claude" ]]; then
+    exit 0
+fi
+
+FORGE_BIN="${FORGE_BIN:-forge}"
+COMMIT_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
+BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+# Initial commit não tem parent — `diff-tree` falha. Detecta e usa `ls-tree`.
+if git rev-parse HEAD^ >/dev/null 2>&1; then
+    FILES_TOUCHED="$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null | wc -l | tr -d ' ' || echo 0)"
+else
+    FILES_TOUCHED="$(git ls-tree -r --name-only HEAD 2>/dev/null | wc -l | tr -d ' ' || echo 0)"
+fi
+
+[[ -z "$COMMIT_SHA" ]] && exit 0
+
+"$FORGE_BIN" ingest --event post-commit \
+    --sha "$COMMIT_SHA" \
+    --branch "$BRANCH" \
+    --files-touched "$FILES_TOUCHED" \
+    --project-root "$PROJECT_ROOT" >/dev/null 2>&1 || true
+exit 0

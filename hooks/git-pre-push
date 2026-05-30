@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# feature-forge — git pre-push hook
+# Installed by `forge init` into .git/hooks/pre-push. Runs a quick doctor
+# pass through `forge ingest --event pre-push`. Warnings surface on stderr,
+# but the push always proceeds — hooks must never block git.
+#
+# Contract:
+#   - Always exits 0
+#   - Skips silently on non-forge projects (no .claude/ dir)
+#   - Forward-compat: engine may not yet route this event (silent ignore)
+#
+# Env:
+#   FORGE_BIN — override forge binary path (default: "forge")
+set -euo pipefail
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+if [[ ! -d "$PROJECT_ROOT/.claude" ]]; then
+    exit 0
+fi
+
+FORGE_BIN="${FORGE_BIN:-forge}"
+if ! "$FORGE_BIN" ingest --event pre-push \
+    --project-root "$PROJECT_ROOT" >/dev/null 2>&1; then
+    echo "feature-forge: pre-push checks reported issues — push will proceed" >&2
+fi
+exit 0

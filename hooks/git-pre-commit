@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# feature-forge — git pre-commit hook
+# Installed by `forge init` into .git/hooks/pre-commit. Delegates to the
+# canonical pre-commit-feature-forge.sh hook so the same logic runs from
+# either git or Claude Code.
+#
+# Contract:
+#   - Always exits 0
+#   - No-op when the delegate is missing or not executable
+set -euo pipefail
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+HOOK="$PROJECT_ROOT/.claude/hooks/pre-commit-feature-forge.sh"
+
+if [[ -x "$HOOK" ]]; then
+    exec "$HOOK" "$@"
+fi
+exit 0
