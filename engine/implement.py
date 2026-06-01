@@ -732,41 +732,15 @@ def run(argv: list[str]) -> int:
         )
         return 3
 
-    # Cinematic header + auto-resume detection.
-    state = read_l1_status(slug, project_root)
-    if state and state.status == "implementing":
-        renderer.write("")
-        renderer.write(
-            renderer.dim(
-                f"Detectei implementação em andamento — continuando em {task.task_id}."
-            )
-        )
-    else:
-        if state is None:
-            state = L1State(
-                feature_slug=slug,
-                status="implementing",
-                last_action_at="",
-                last_action_kind="implement-started",
-                phase_lock=lock_id,
-            )
-        else:
-            state.status = "implementing"
-            state.last_action_kind = "implement-started"
-        write_l1_status(state, project_root)
-
-    renderer.write("")
-    renderer.write(
-        renderer.box(
-            f"feature-forge · implement · {slug}",
-            [
-                "Plan Mode antes de tudo. Sem improviso.",
-                f"Próxima task: {task.task_id}",
-            ],
-            width=72,
-        )
-    )
-
+    # CR-01 (review): `try:` opens IMMEDIATELY after acquire_phase_lock
+    # returns True. The cinematic header + auto-resume block below touches
+    # disk (read_l1_status, write_l1_status, renderer.box) and any of those
+    # calls can raise OSError / JSONDecodeError / MemoryError before the
+    # original try opened. The previous shape left ~50 lines of
+    # side-effecting code outside the finally — a leaked lock there forced
+    # the user to run `forge undo` to recover. Everything between acquire
+    # and the function return now lives under the same finally guard.
+    #
     # `lock_released` tracks explicit releases inside the critical region so
     # the `finally` block doesn't double-call release. The flag exists because
     # release_phase_lock is idempotent on missing lock but writes status.json
@@ -774,6 +748,41 @@ def run(argv: list[str]) -> int:
     # contract explicit: each path documents WHY it releases.
     lock_released = False
     try:
+        # Cinematic header + auto-resume detection.
+        state = read_l1_status(slug, project_root)
+        if state and state.status == "implementing":
+            renderer.write("")
+            renderer.write(
+                renderer.dim(
+                    f"Detectei implementação em andamento — continuando em {task.task_id}."
+                )
+            )
+        else:
+            if state is None:
+                state = L1State(
+                    feature_slug=slug,
+                    status="implementing",
+                    last_action_at="",
+                    last_action_kind="implement-started",
+                    phase_lock=lock_id,
+                )
+            else:
+                state.status = "implementing"
+                state.last_action_kind = "implement-started"
+            write_l1_status(state, project_root)
+
+        renderer.write("")
+        renderer.write(
+            renderer.box(
+                f"feature-forge · implement · {slug}",
+                [
+                    "Plan Mode antes de tudo. Sem improviso.",
+                    f"Próxima task: {task.task_id}",
+                ],
+                width=72,
+            )
+        )
+
         _print_plan_mode(task, project_root)
 
         confirmed = question.confirm(

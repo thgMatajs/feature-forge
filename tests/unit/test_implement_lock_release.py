@@ -137,6 +137,77 @@ def test_phase_lock_released_on_prompt_aborted(
     assert current_phase_lock(slug, tmp_forge_project) is None
 
 
+def test_phase_lock_released_when_read_l1_status_raises_after_acquire(
+    tmp_forge_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """CR-01: cinematic-header code between acquire and try: must be guarded.
+
+    Bug CR-01 (PR #1, review-fix): the C2 fix narrowed the leak but didn't
+    close it. Between ``acquire_phase_lock`` (line ~726) and ``try:`` (line
+    ~776), there are roughly fifty lines of side-effecting work —
+    ``read_l1_status``, ``write_l1_status``, ``renderer.box``, etc. — any
+    of which can raise OSError/JSONDecodeError. Without the try block
+    wrapping these too, the lock leaks on those exception paths.
+
+    This test forces ``read_l1_status`` to raise the moment after the lock
+    is acquired. With the bug present, the lock survives the function
+    return. With the fix (try: moved to right after acquire), the
+    ``finally`` clause releases it.
+    """
+    slug = "lembrete-rega"
+    _seed_ready_feature(tmp_forge_project, slug)
+    monkeypatch.chdir(tmp_forge_project)
+
+    # Sentinel — confirm clean starting state.
+    assert current_phase_lock(slug, tmp_forge_project) is None
+
+    # Capture the real read_l1_status so we can let early lookups through
+    # (the function calls it before acquire too, e.g. in readiness checks).
+    # We only want to blow up the FIRST call AFTER acquire_phase_lock
+    # returns True. Easiest approach: count acquire_phase_lock calls and
+    # arm the boom after it succeeds.
+    real_read = __import__(
+        "engine.memory.l1", fromlist=["read_l1_status"]
+    ).read_l1_status
+    real_acquire = __import__(
+        "engine.memory.l1", fromlist=["acquire_phase_lock"]
+    ).acquire_phase_lock
+
+    armed = {"value": False}
+
+    def boom_read(slug_arg, root_arg):
+        if armed["value"]:
+            raise OSError("simulated disk failure mid-cinematic-header")
+        return real_read(slug_arg, root_arg)
+
+    def arming_acquire(slug_arg, root_arg, lock_id_arg):
+        result = real_acquire(slug_arg, root_arg, lock_id_arg)
+        if result:
+            armed["value"] = True
+        return result
+
+    monkeypatch.setattr(implement, "read_l1_status", boom_read)
+    monkeypatch.setattr(implement, "acquire_phase_lock", arming_acquire)
+    # Stub UI prompts so the run is autonomous if it ever gets that far.
+    monkeypatch.setattr(
+        "engine.ui.question.confirm", lambda *a, **kw: False, raising=False
+    )
+    monkeypatch.setattr(
+        "engine.ui.question.ask", lambda *a, **kw: "abort", raising=False
+    )
+
+    with pytest.raises(OSError, match="simulated disk failure"):
+        implement.run([slug])
+
+    # The critical assertion — without CR-01 fix, the lock stays set to
+    # "TASK-001" because the OSError fires BEFORE the try block opens.
+    assert current_phase_lock(slug, tmp_forge_project) is None, (
+        "Phase lock leaked — cinematic-header code between acquire and "
+        "try: raised, and the try/finally didn't cover it"
+    )
+
+
 def test_phase_lock_released_on_happy_path(
     tmp_forge_project: Path,
     monkeypatch: pytest.MonkeyPatch,
