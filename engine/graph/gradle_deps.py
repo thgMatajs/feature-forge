@@ -38,10 +38,12 @@ _DEP_SCOPES = (
 
 _RE_PROJECT_DEP = re.compile(
     r"""
-    \b(?P<scope>%s)\s*\(\s*       # scope keyword
+    \b(?P<scope>%s)
+    (?:\s*\(\s*|\s+)              # Kotlin DSL `scope(` OR Groovy DSL `scope `
     project\s*\(\s*               # project() wrapper
     ['"]:(?P<target>[\w:\-]+)['"]  # ":target:module"
-    \s*\)\s*\)
+    \s*\)
+    \s*\)?                        # Kotlin DSL closes the outer call; Groovy omits it
     """ % "|".join(_DEP_SCOPES),
     re.VERBOSE | re.MULTILINE,
 )
@@ -158,7 +160,7 @@ def find_smallest_common_ancestor(
                 continue
             in_degree[target] = in_degree.get(target, 0) + 1
 
-    return max(candidates, key=lambda c: (in_degree.get(c, 0), -ord(c[0]) if c else 0, c))
+    return max(candidates, key=lambda c: (in_degree.get(c, 0), c))
 
 
 def infer_suggested_target(
