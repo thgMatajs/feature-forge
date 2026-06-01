@@ -169,6 +169,10 @@ def parse_typescript_file(path: Path) -> TypeScriptFileInfo:
 
     for match in _RE_ARROW_DECL.finditer(text):
         name = match.group("name")
+        # Dedup early — a same-named `function` declaration above wins.
+        # This skips the body extraction + hashing + tokenization cost.
+        if ("function", name) in seen_names:
+            continue
         line_no = text.count("\n", 0, match.start()) + 1
         is_export = bool(match.group("export"))
         is_async = bool(match.group("async"))
@@ -181,9 +185,6 @@ def parse_typescript_file(path: Path) -> TypeScriptFileInfo:
         if body_text is not None:
             tokens = extract_body_tokens(body_text, language="typescript")
             tokens_json2 = tokens_to_json(tokens) if tokens else None
-
-        if ("function", name) in seen_names:
-            continue
 
         symbols.append(
             TypeScriptSymbol(
