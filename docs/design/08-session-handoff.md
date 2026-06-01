@@ -3,8 +3,8 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-01 (v1.1.0 — reuse-intelligence + non-product feature track)
-**Estado:** v1.0 fechada em 2026-05-29; v1.1.0 ship em 2026-06-01 (Gap 1 bugfix + Gap 2 refactor + Gap 8 blocked-on-external + Gap 18 reuse-intelligence expansion). Próximo: dogfooding em MeoBonsai + abordar Gaps 3/4/5/13/14 pra v1.2.
+**Última atualização:** 2026-06-01 (v1.1.0 estável + Claude Code rules system instalado)
+**Estado:** v1.1.0 estável; rules system ativo (CLAUDE.md + 12 rules + 4 hooks + 36 integration tests). Próximo: dogfooding via primeira feature pós-rules em MeoBonsai.
 
 ---
 
@@ -101,6 +101,13 @@ restantes ficam pra v1.2+ ou v2/Phase 6:
 - **MCP polling para external-dep resolution (Gap 8)** stubbed — v1.1 ship
   manual unblock via `forge reconfigure → external-deps`. Auto-polling via
   Jira/Linear webhook fica pra v1.2+.
+
+**Rules system v1 (2026-06-01) — limites reconhecidos:**
+
+- Per-tool-use Mandamento 0 detection é manual (depende de orchestrator obedecer regra textual). Hook bloqueante de main-vs-subagent depende de Claude Code expor distinção no hook protocol — anotado em `04-pending.md`.
+- `forge audit-rules` (comando futuro pra verificar conformidade em git log) ainda não existe — anotado em `04-pending.md` pra v1.2+.
+- Bloqueios opt-in (test-count regression, validator-cascade fail) estão documentados em `.claude/rules/doc-sync.md` mas comentados no script; ativar quando emergir necessidade real.
+- Stats atualizadas (2026-06-01 pós rules): 420 passed, 12 skipped no full lane (rapid lane: 367). 1 failure pré-existente em `test_build_full_creates_meta_schema_version` (schema_version drift, não causado pelo rules system — gap em `04-pending.md`).
 
 ## Fase 4 — completa (resumo)
 

@@ -39,6 +39,18 @@ Backend-agnostic — qualquer combinação:
 - **Navigation**: Nav3 (Android) + NavigationStack (iOS)
 - **DI**: Koin Annotations (KMP/Android) + factory functions (iOS/Web)
 
+## Manutenção via Claude Code
+
+Este repo tem rules system ativo (`CLAUDE.md` + `.claude/rules/` + 4 hooks) que disciplina toda sessão Claude Code mantendo o projeto. Orchestrator-mantenedor delega 100% das mudanças via `Agent` tool (`gsd-executor` / `gsd-code-reviewer` / `gsd-code-fixer`). Hooks: SessionStart injeta orientação, PreToolUse audita load-bearing edits, PostToolUse lembra doc-sync, git pre-commit hard-blocks edits em `docs/design/01-decisions.md` sem "Revisita decisão" no CHANGELOG.
+
+Após clonar:
+
+```bash
+bash .claude/bootstrap.sh
+```
+
+Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
+
 ## Arquitetura
 
 6 layers (ver `docs/design/00-vision.md` pra detalhe):
@@ -62,10 +74,10 @@ Backend-agnostic — qualquer combinação:
 | Preset | kmp-mobile (8 stack cards + 4 backend-candidates) |
 | Validators Python | 14 (+ 2 helpers) — inclui `check_no_behavior_change` para refactor |
 | Hooks | 9 + 1 reuse incremental (`post-edit-detect-duplications.sh`) |
-| Tests | 367 passing (unit + integration + commands smoke + validators + reuse intelligence) |
-| LOC total | ~50.700 |
+| Tests | ~403 passing (rapid lane 367 + 36 integration do Claude Code rules system) |
+| LOC total | ~52.200 |
 | Engine LOC | ~21.900 (Python) |
-| Files total | ~379 |
+| Files total | ~400 |
 | Decisões locked | 27 + 7 direcionais (Fase 3.5) |
 | Subtypes feature | 5 (product / refactor / bugfix / spike / chore) |
 | Reuse finding categories | 6 (consolidate-within / promote-to-shared / redundant-platform / near-duplicate / kmp-migration / consolidate-ts) |

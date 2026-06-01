@@ -5,6 +5,17 @@ Todas as mudanças notáveis no feature-forge.
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added (Claude Code rules system)
+
+- `CLAUDE.md` root + `.claude/rules/*.md` (12 operational rules) — Mandamento 0 (orchestrator-mantenedor com delegação total via Agent tool) + 6 mandamentos (decisões locked, verde antes de pronto, reuso, escopo, voz mentor calmo, doc-sync) + workflow por verbo + map dos 10 superpowers skills ativos.
+- `.claude/hooks/*.sh` (4 hooks): `session-start-orientation.sh` (injeta Mandamento 0 + estado), `pre-tool-use-load-bearing.sh` (warn + audit em load-bearing edits), `post-edit-doc-drift.sh` (lembrete doc-sync once-per-file-per-session), `pre-commit-feature-forge.sh` (HARD BLOCK em `01-decisions.md` sem ceremony "Revisita decisão" + SOFT WARN em código vivo sem doc-sync).
+- `.claude/settings.json` registrando os 3 hooks Claude Code (SessionStart, PreToolUse, PostToolUse).
+- `.claude/bootstrap.sh` (idempotent one-time setup — symlinks `.git/hooks/`).
+- `tests/integration/test_claude_rules_system.py` — 36 testes (marker `integration`).
+- `docs/superpowers/specs/2026-06-01-claude-md-design.md` (brainstorm) + `docs/superpowers/plans/2026-06-01-claude-md-rules-system.md` (plan executável).
+
 ## [1.1.0] — 2026-06-01
 
 ### Adicionado

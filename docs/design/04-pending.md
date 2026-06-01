@@ -1288,6 +1288,15 @@ detecta o backlog acumulado.
   variantes comuns. DSL Kotlin avançado ou `includeBuild` exigem extensão
   futura.
 
+### Gaps pós-rules-system (2026-06-01)
+
+Itens emergidos durante a instalação do Claude Code rules system (CLAUDE.md
++ `.claude/rules/` + 4 hooks + 36 integration tests). Não bloqueiam o
+rules system v1, mas merecem cobertura futura.
+
+- **forge audit-rules** — comando que audita git log + `.claude/state/load-bearing-edits.jsonl` pra verificar conformidade com Mandamento 0 (orchestrator não escreveu direto) + ceremony de "Revisita decisão N" + doc-sync per commit. Mencionado em `.claude/rules/README.md` §Auditoria. Target v1.2+.
+- **test_build_full_creates_meta_schema_version** — teste assume `meta.schema_version == "1"` mas `engine/utils/sqlite_io.py:20` declara `SCHEMA_VERSION = "2"` desde commit `65c358c` (reuse-intelligence schema bump). Fix: atualizar test pra ler `sqlite_io.SCHEMA_VERSION` em vez de hardcoded "1". Pré-existente, não causado pelo rules system. Quick fix; pode ser próximo item de manutenção.
+
 ### Resumo da fila pós-stress-test (cumulativo)
 
 Total: 18 gaps mapeados a partir de 20 cenários analisados (3 rounds).
