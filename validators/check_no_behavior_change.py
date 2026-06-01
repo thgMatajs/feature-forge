@@ -109,7 +109,10 @@ def _git_changed_files(project_root: Path) -> list[str]:
 
 def _looks_like_test_file(path: str) -> bool:
     """True when the path is a functional test by heuristic match."""
-    posix_path = path.replace("\\", "/")
+    # Prepend `/` so segment patterns like `"/test/"` match root-level
+    # folders (`test/MockData.kt` → `/test/MockData.kt`). Strip any existing
+    # leading slash first to avoid `//test/`.
+    posix_path = "/" + path.replace("\\", "/").lstrip("/")
     if any(seg in posix_path for seg in _TEST_PATH_SEGMENTS):
         return True
     return any(posix_path.endswith(suffix) for suffix in _TEST_FILENAME_SUFFIXES)
