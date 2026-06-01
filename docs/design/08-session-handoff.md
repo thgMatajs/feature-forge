@@ -3,8 +3,8 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-05-29 (Fase 5 completa — v1 done)
-**Estado:** Fase 1+2+3+3.5+4+5 completas. v1 entregue end-to-end. Próximo: commit inicial + dogfooding.
+**Última atualização:** 2026-06-01 (v1.1.0 — reuse-intelligence + non-product feature track)
+**Estado:** v1.0 fechada em 2026-05-29; v1.1.0 ship em 2026-06-01 (Gap 1 bugfix + Gap 2 refactor + Gap 8 blocked-on-external + Gap 18 reuse-intelligence expansion). Próximo: dogfooding em MeoBonsai + abordar Gaps 3/4/5/13/14 pra v1.2.
 
 ---
 
@@ -28,7 +28,8 @@ Depois siga as instruções. Estou na Fase {N}.
 ## Estado atual (anchors)
 
 ```
-~245 arquivos · ~28,000 linhas · 27 decisões locked + 7 decisões direcionais (Fase 3.5)
+~379 arquivos · ~50,700 linhas · 27 decisões locked + 7 direcionais (Fase 3.5)
+v1.1.0 release: 367 tests passing · 17 graph queries · 16 proposal kinds
 ```
 
 | Categoria | Status |
@@ -39,19 +40,27 @@ Depois siga as instruções. Estou na Fase {N}.
 | Phase 3.5 — refactor backend-agnostic + REST coverage | ✅ 100% |
 | Phase 4 Wave 1 — foundation (bin + cli + utils + ui + persona) | ✅ 100% (16 arquivos, ~1440 LOC) |
 | Phase 4 Wave 2 — state + integration (cards + memory + graph + inventory + mcp + vision) | ✅ 100% (28 arquivos, ~5400 LOC) |
-| Phase 4 Wave 3 — commands handlers (13 módulos) | ✅ 100% (13 arquivos, ~6040 LOC). **Nota:** `forge implement` é stub manual em v1 — Apply Mode automatizado, Pre-commit Review e Atomic Commit ficam pra v2/Phase 6. |
+| Phase 4 Wave 3 — commands handlers (13 módulos) | ✅ 100% (13 arquivos, ~6040 LOC). **Nota:** `forge implement` é stub manual em v1 — Apply Mode automatizado fica pra v2/Phase 6. |
 | **Phase 4 total** | ✅ **57 arquivos, ~12880 LOC** |
 | Phase 5 Wave A — hooks (8 .sh + 1 CI yml) | ✅ ~277 LOC |
 | Phase 5 Wave B — validators Python (13 + 2 helpers) | ✅ 2622 LOC |
 | Phase 5 Wave C — pytest suite (unit + integration + e2e) | ✅ ~3460 LOC, 258 passing |
 | Phase 5 Cleanup — hooks install no init + 3 handlers ingest + validator tests | ✅ +838 LOC |
 | **Phase 5 total** | ✅ **72 arquivos, ~6600 LOC, 258 tests passing** |
-| **🎉 feature-forge v1 completa** | ✅ **~370 arquivos, ~28 mil LOC, 5 fases + cleanup** |
+| **🎉 feature-forge v1.0 completa** | ✅ **~370 arquivos, ~28K LOC, 5 fases + cleanup** (2026-05-29) |
+| v1.1 — Gap 1 (bugfix subtype) | ✅ shipped 2026-05-30 — `_VALID_SUBTYPES + ['bugfix']`, ticket-pattern detection, Wave B conditional, template intake-bugfix |
+| v1.1 — Gap 2 (refactor subtype + non-product track) | ✅ shipped 2026-05-30 — `_VALID_SUBTYPES + ['refactor', 'spike', 'chore']` (refactor only completo), `non-product/{slug}/`, `check_no_behavior_change` validator, template intake-refactor |
+| v1.1 — Gap 8 (blocked-on-external state) | ✅ shipped 2026-05-30 — L1 status enum, manual unblock via reconfigure |
+| v1.1 — Gap 18 (reuse intelligence expansion) | ✅ shipped 2026-06-01 — 6 detection categories, schema v2, parser overhaul, gradle modules+deps, init Step 11.5+11.6, evolve dispatch, doctor check, incremental hook, forge plan integration. **+12.360 LOC, 55 arquivos, 20 unit tests novos.** |
+| **🎉 feature-forge v1.1.0 completa** | ✅ **~379 arquivos, ~50.7K LOC, 367 tests passing** (2026-06-01) |
 
-## Conhecidos limites v1
+## Conhecidos limites v1.1 (atualizado)
 
-A v1 entregue inclui o pipeline completo de planning + verify + memory + graph,
-mas alguns gaps deliberados ficam pra v2/Phase 6:
+A v1.1 entregue inclui o pipeline completo de planning + verify + memory + graph
++ reuse-intelligence + non-product feature track (refactor/bugfix). Limites
+restantes ficam pra v1.2+ ou v2/Phase 6:
+
+**v1.0 herdados (ainda válidos):**
 
 - **`forge implement` não automatiza Apply Mode** — em v1 é um **stub manual**:
   `forge implement` renderiza Plan Mode (contract + allowed_files + gates) e
@@ -63,14 +72,35 @@ mas alguns gaps deliberados ficam pra v2/Phase 6:
   de provider de ticketing (Jira, Linear, GitHub Issues) sai com `provider=none`
   no `workflow-config.yaml` por default. Para configurar pós-init, use
   `forge reconfigure → ticketing`.
-- **9 kinds de `apply_proposal_to_l2` ficam em fall-through** — `engine/memory/distiller.py`
-  reconhece os kinds principais (`pattern-promotion`, `naming-convention`,
-  `decision-frozen`) mas faz fall-through silencioso pros 9 kinds restantes
-  (`tooling-update`, `card-version-bump`, etc.). Será fixado quando esses kinds
-  emergirem de uso real — sub-agent C deve cobrir.
-- **LLM/sub-agent hookup real** — `plan.py`/`implement.py` v1 narram fluxo +
+- **3 kinds de `apply_proposal_to_l2` ainda em fall-through** — `engine/memory/distiller.py`
+  resolveu 6 kinds reuse-intelligence em v1.1, mas `tooling-update`,
+  `card-version-bump` e `template-update` (entre outros retrospective kinds)
+  continuam raise NotImplementedError até emergirem de uso real.
+- **LLM/sub-agent hookup real** — `plan.py`/`implement.py` narram fluxo +
   renderam templates. Integração real com Anthropic API dentro do `forge`
   requer hooks + Claude integration (já documentado em §Out-of-scope abaixo).
+
+**v1.1 novos (decisões deliberadas, não bugs):**
+
+- **`kmp-migration-candidate` confidence é shallow** — token Jaccard sintático,
+  não AST semântico. Pode flagar Swift function com nome igual a Kotlin shared
+  mas semântica diferente. Mitigação: confidence 0.50–0.75 (manual review
+  obrigatório), apply NUNCA auto-runs, rejection veto persiste.
+- **Incremental detection hook wiring é manual** — `forge init` Step 11.6
+  escreve `.claude/hooks/post-edit-detect-duplications.sh`, mas a referência
+  em `.claude/settings.local.json` é **opt-in por design** — não modificamos
+  settings.local.json automaticamente pra não surpreender o usuário.
+- **Gradle dependency parsing** cobre `implementation(project(...))` e
+  variantes comuns (`api`, `compileOnly`, `testImplementation`, etc.).
+  `includeBuild`, DSL Kotlin avançado, ou versionCatalogs podem precisar
+  extensão futura. Fallback: heurística estática (`:shared:core` como
+  ancestor padrão pra cross-shared dups).
+- **Spike + chore subtypes stubbed** — `_VALID_SUBTYPES` aceita `spike` e
+  `chore`, mas só `refactor` tem flow completo (Gap 2 ship). Spike + chore
+  caem no fluxo product por default; será implementado quando emergir.
+- **MCP polling para external-dep resolution (Gap 8)** stubbed — v1.1 ship
+  manual unblock via `forge reconfigure → external-deps`. Auto-polling via
+  Jira/Linear webhook fica pra v1.2+.
 
 ## Fase 4 — completa (resumo)
 
