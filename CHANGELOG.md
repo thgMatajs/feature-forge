@@ -7,6 +7,12 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-06-01
+
+### Released
+
+- Released as **v1.1.0** — `engine/__version__` e `pyproject.toml` alinhados em `1.1.0` (commit `7286fa0`, C4). `forge --version` agora reporta `forge 1.1.0`.
+
 ### Added (Claude Code rules system)
 
 - `CLAUDE.md` root + `.claude/rules/*.md` (12 operational rules) — Mandamento 0 (orchestrator-mantenedor com delegação total via Agent tool) + 6 mandamentos (decisões locked, verde antes de pronto, reuso, escopo, voz mentor calmo, doc-sync) + workflow por verbo + map dos 10 superpowers skills ativos.
@@ -15,12 +21,6 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 - `.claude/bootstrap.sh` (idempotent one-time setup — symlinks `.git/hooks/`).
 - `tests/integration/test_claude_rules_system.py` — 36 testes (marker `integration`).
 - `docs/superpowers/specs/2026-06-01-claude-md-design.md` (brainstorm) + `docs/superpowers/plans/2026-06-01-claude-md-rules-system.md` (plan executável).
-
-### Changed
-
-- polish(claude-rules): corrige smoke checklist execution — hooks PreToolUse/PostToolUse confirmados em subagent context via doc oficial + side-effect persistente; veredito anterior estava furado por capturar só stderr. Veredito final: 4/5 (Check #3 corrigido pra PASS via audit log; Check #2 permanece FAIL por entrega inconsistente do PostToolUse). Gap de observabilidade anotado em `docs/design/04-pending.md`.
-
-## [1.1.0] — 2026-06-01
 
 ### Adicionado
 
@@ -82,20 +82,49 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   - `engine/graph/incremental.py`: `detect_after_update` para hook entrypoint
 - **Q11 backward-compat**: filtro `f.module = 'shared'` → `LIKE 'shared:%'`
   para multi-módulo shared.
-- **Tests**: 20 unit tests em `tests/unit/test_reuse_intelligence.py`,
+- **Tests iniciais**: 20 unit tests em `tests/unit/test_reuse_intelligence.py`,
   cobrindo body extraction, gradle parsing, parser fields, detection completo,
-  apply + status.json. **367 tests passam, 0 regressões**.
+  apply + status.json.
 - **Schema docs**: `docs/schemas/graph.md` + `docs/schemas/proposed-evolutions.md`
   ganham seção "Reuse Intelligence (schema v2)".
 
-### Mudado
+### Fixed (PR #1 bloqueadores — 2026-06-01)
 
+Round final de hardening da v1.1.0: critical (C1–C4), alta (A1, A2, A5, A6, A9, A12), review (CR-01, CR-02, MD-01, HG-01, HG-02, HG-03). Conjunto coberto por 38 novos regression tests; nenhum locked decision foi revisitado.
+
+- **C1 + A1 — Phase lock atomic** (`engine/memory/l1.py`, commit `0b96212`): `acquire_phase_lock` fazia read-then-write em `status.json` — sob N processos racing, múltiplos passavam o check e o último writer ganhava. Sentinela `.phase-lock` via `os.open(O_CREAT | O_EXCL)` é agora o gate atômico; `status.json` continua espelhando o lock id pra read APIs. Regressão coberta com `multiprocessing.Barrier` (16 workers, um único vencedor).
+- **C2 — Implement lock release em qualquer exception path** (`engine/implement.py`, commit `f0776ab`): o `try/except` da critical section só capturava `PromptAbortedError`. Qualquer outra exceção (RuntimeError, OSError, KeyError) escapava com o lock retido, forçando `forge undo` pra recuperar. Flag `lock_released` + `finally` backstop garantem release em qualquer caminho — auditável em `history.jsonl`.
+- **C3 — `_reset_domain_tables` atomic + FK pragma restore** (`engine/graph/builder.py`, commit `c84779a`): rodava `PRAGMA foreign_keys = OFF` → DELETEs → `PRAGMA = ON`. Se um DELETE raise no meio, o pragma final nunca executava e a conexão silenciosamente vazava `foreign_keys=OFF` pra toda transação subsequente. `try/finally` dentro de `with conn:` garante rollback + pragma sempre restaurado.
+- **C4 — Version bump 1.0.0 → 1.1.0** (`engine/__init__.py` + `pyproject.toml`, commit `7286fa0`): engine e pyproject reportavam `1.0.0` apesar do release v1.1.0 já cobrir reuse-intelligence schema v2 + 17 graph queries + Claude Code rules system. `forge --version` e `import engine.__version__` agora batem com CHANGELOG.md e session-handoff.
+- **A2 — `forge plan` retorna 130 em deferred wave** (`engine/plan.py`, commit `f9e5b48`): `_run_waves_for_subtype` retornava `0` quando uma wave setava `WaveResult.deferred=True`. Caller `run` então pulava o guard `if rc != 0` e marcava a feature como `planned`, destruindo silentemente o estado pausado. Contract do docstring (`0=ok, 130=paused, other=hard gate`) restaurado.
+- **A5 — Swift triple-quoted strings no brace counter** (`engine/graph/_body_text.py`, commit `426b278`): brace counter só entrava em triple-quote mode pra Kotlin. Body Swift com `"""` literal contendo `"` ímpar flipava `in_string_double` parity, e o próximo `}` era parseado como código — popping o scope da função prematuramente. Trigger estendido pra `{kotlin, swift}`.
+- **A6 — Groovy DSL parens opcionais** (`engine/graph/gradle_deps.py`, commit `56fefae`): regex só cobria forma Kotlin DSL `implementation(project(":x"))` com outer parens. Groovy DSL `implementation project(":x")` (sem parens) silentemente caía fora da dependency closure. Parens externos agora opcionais, whitespace separator aceito.
+- **A9 — Tie-breaker determinístico em `find_smallest_common_ancestor`** (`engine/graph/gradle_deps.py`, commit `56fefae`): tie-breaker usava `-ord(c[0])` (inspeciona só primeiro char) — produzia ordem inconsistente com o docstring que promete lexicográfico. Trocado por `key=(in_degree, c)` puro lex.
+- **A12 — Root-level `test/` folder reconhecido** (`validators/check_no_behavior_change.py`, commit `a8c5ac4`): heurística `_looks_like_test_file` comparava contra segments tipo `/test/` (leading + trailing slash); paths root-level `test/MockData.kt` caíam no suffix check e eram misclassificados como production code, enfraquecendo o refactor gate. `/` prepended antes do segment match.
+- **CR-01 — Implement `try/finally` cobre full critical section** (`engine/implement.py`, commit `0029c59`): C2 fechou o leak parcialmente; CR-01 estende o `try` pra cobrir o cinematic header completo (`read_l1_status`, `current_subtype`, etc.) — qualquer raise antes do dispatch também passa pelo release path agora.
+- **CR-02 + MD-01 — Lex-smallest tie-breaker + Groovy closure regression** (`engine/graph/gradle_deps.py`, commit `13559e2`): docstring de `find_smallest_common_ancestor` prometia "lex-smallest among ties" mas a implementação ainda preferia ordem instável quando `in_degree` empatava. Tie-breaker `min(candidates)` puro + regression test cobrindo Groovy DSL com trailing config closure.
+- **HG-01 — `_reset_domain_tables` asserta no open transaction** (`engine/graph/builder.py`, commit `3b7dcd3`): `PRAGMA foreign_keys` é no-op dentro de transação (SQLite contract). Adicionado `assert conn.in_transaction is False` no entry pra capturar uso indevido cedo, em vez de pragma silenciosamente ignorado.
+- **HG-02 + HG-03 — `current_phase_lock` consulta sentinela; retry reentrant** (`engine/memory/l1.py`, commit `65b8904`): HG-02 — `current_phase_lock` lia `status.json.phase_lock`, mas o sentinela `.phase-lock` é o gate autoritativo após C1/A1. Read agora consulta sentinela primeiro, `status.json` como espelho. HG-03 — branch reentrant de `acquire_phase_lock` lia sentinela exatamente uma vez; se o read race com o writer que ainda não fez fsync, retornava empty e a reentrância falhava. Retry curto com backoff quando sentinela existe mas vazio.
+
+### Changed
+
+- **Doc-sync claude-rules**: corrige smoke checklist execution — hooks PreToolUse/PostToolUse confirmados em subagent context via doc oficial + side-effect persistente; veredito anterior estava furado por capturar só stderr. Veredito final: 4/5 (Check #3 corrigido pra PASS via audit log; Check #2 permanece FAIL por entrega inconsistente do PostToolUse). Gap de observabilidade anotado em `docs/design/04-pending.md`.
 - `_VALID_KINDS` do `engine/memory/distiller.py` ganha 6 entries reuse-related.
 - `engine/graph/queries.py` Q11 (`find_reusable_helpers`) suporta multi-módulo
   shared via `LIKE 'shared:%'`.
 
+### Refactored
+
+- **TS arrow dedup hoisted to loop start** (`engine/graph/_ts_parser.py`, commit `9680ea8`): pure refactor, behavior unchanged. Duplicate check sentava após body extraction + hashing + tokenization — uma função same-named sombreada por arrow posterior pagava custo full só pra ser descartada. Mover dedup pro topo do loop pula trabalho desperdiçado. Test counts inalterados (31 tests em `tests/unit/test_graph_parsers.py` + `test_reuse_intelligence.py`).
+
+### Tests
+
+- **+38 regression tests** cobrindo os bloqueadores + review findings — `test_memory_l1_phase_lock_atomic.py` (multiprocessing race), `test_implement_lock_release.py` (exception paths), `test_builder_reset_tables.py` (mid-stream failure), `test_plan_deferred_exit_code.py` (rc=130 contract), `test_plan_deferred_state_persisted.py` (MD-02), `test_body_text_swift_triple_quote.py` (A5), `test_gradle_deps_regressions.py` (A6 + A9), `test_check_no_behavior_change_paths.py` (A12), entre outros.
+- **Total: 458 tests passing** (vs baseline original v1.1.0 = 367; +91 incluindo as 38 do round bloqueadores + 36 integration do rules system + 17 reuse-intelligence extras).
+
 ### Conhecidos limites v1.1
 
+- **Pre-existing**: `tests/integration/test_graph_build_meobonsai.py::test_build_full_creates_meta_schema_version` assertava `meta.schema_version == "1"`, mas `engine/utils/sqlite_io.py:20` declara `SCHEMA_VERSION = "2"` desde o bump da reuse-intelligence schema. Falha não bloqueia rapid lane nem o ship v1.1.0; fix pequeno (ler `sqlite_io.SCHEMA_VERSION` em vez de hardcoded) agendado pra v1.1.1.
 - `kmp-migration-candidate` confidence é shallow (token Jaccard, não AST).
   False positives possíveis — apply NUNCA auto-runs; usuário revisa.
 - Hook script `.claude/hooks/post-edit-detect-duplications.sh` é escrito

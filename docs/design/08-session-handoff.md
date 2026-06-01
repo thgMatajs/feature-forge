@@ -3,8 +3,8 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-01 (v1.1.0 estável + smoke checklist corrigido + hooks subagent confirmados)
-**Estado:** v1.1.0 estável; rules system validado via smoke (4/5 — gap menor de observabilidade de hooks em subagent anotado em pending). Próximo: dogfooding em MeoBonsai.
+**Última atualização:** 2026-06-01 (v1.1.0 — bloqueadores PR #1 resolvidos)
+**Estado:** v1.1.0 released; PR #1 ready for merge after final review pass. 14 commits de hardening (C1–C4 critical + A1/A2/A5/A6/A9/A12 alta + review fixes CR-01/CR-02/MD-01/HG-01..03) aplicados sobre o branch `feat/reuse-intelligence-complete`. Próximo: dogfooding em MeoBonsai pós-merge.
 
 ---
 
@@ -29,7 +29,7 @@ Depois siga as instruções. Estou na Fase {N}.
 
 ```
 ~379 arquivos · ~50,700 linhas · 27 decisões locked + 7 direcionais (Fase 3.5)
-v1.1.0 release: 367 tests passing · 17 graph queries · 16 proposal kinds
+v1.1.0 release: 458 tests passing (rapid lane) · 17 graph queries · 16 proposal kinds
 ```
 
 | Categoria | Status |
@@ -52,7 +52,8 @@ v1.1.0 release: 367 tests passing · 17 graph queries · 16 proposal kinds
 | v1.1 — Gap 2 (refactor subtype + non-product track) | ✅ shipped 2026-05-30 — `_VALID_SUBTYPES + ['refactor', 'spike', 'chore']` (refactor only completo), `non-product/{slug}/`, `check_no_behavior_change` validator, template intake-refactor |
 | v1.1 — Gap 8 (blocked-on-external state) | ✅ shipped 2026-05-30 — L1 status enum, manual unblock via reconfigure |
 | v1.1 — Gap 18 (reuse intelligence expansion) | ✅ shipped 2026-06-01 — 6 detection categories, schema v2, parser overhaul, gradle modules+deps, init Step 11.5+11.6, evolve dispatch, doctor check, incremental hook, forge plan integration. **+12.360 LOC, 55 arquivos, 20 unit tests novos.** |
-| **🎉 feature-forge v1.1.0 completa** | ✅ **~379 arquivos, ~50.7K LOC, 367 tests passing** (2026-06-01) |
+| **🎉 feature-forge v1.1.0 completa** | ✅ **~379 arquivos, ~50.7K LOC, 458 tests passing (rapid lane)** (2026-06-01) |
+| v1.1.0 — PR #1 bloqueadores resolvidos | ✅ shipped 2026-06-01 — 14 commits cobrindo C1–C4 (phase lock atomic O_EXCL, implement try/finally, `_reset_domain_tables` atomic, version bump 1.1.0) + A1/A2/A5/A6/A9/A12 (Swift `"""` brace counter, Groovy DSL parens, tie-breaker determinístico, root-level `test/` recognition, `forge plan` rc=130 em deferred) + review fixes (CR-01/CR-02/MD-01/HG-01/HG-02/HG-03). **+38 regression tests, total 458 (baseline 367 + 53)**. Detalhe em `CHANGELOG.md`. |
 
 ## Conhecidos limites v1.1 (atualizado)
 
@@ -107,7 +108,10 @@ restantes ficam pra v1.2+ ou v2/Phase 6:
 - Per-tool-use Mandamento 0 detection é manual (depende de orchestrator obedecer regra textual). Hook bloqueante de main-vs-subagent depende de Claude Code expor distinção no hook protocol — anotado em `04-pending.md`.
 - `forge audit-rules` (comando futuro pra verificar conformidade em git log) ainda não existe — anotado em `04-pending.md` pra v1.2+.
 - Bloqueios opt-in (test-count regression, validator-cascade fail) estão documentados em `.claude/rules/doc-sync.md` mas comentados no script; ativar quando emergir necessidade real.
-- Stats atualizadas (2026-06-01 pós rules): 420 passed, 12 skipped no full lane (rapid lane: 367). 1 failure pré-existente em `test_build_full_creates_meta_schema_version` (schema_version drift, não causado pelo rules system — gap em `04-pending.md`).
+
+**Pré-existente em v1.1.0 (não bloqueia ship, fix agendado pra v1.1.1):**
+
+- **`tests/integration/test_graph_build_meobonsai.py::test_build_full_creates_meta_schema_version`** assertava `meta.schema_version == "1"`, mas `engine/utils/sqlite_io.py:20` declara `SCHEMA_VERSION = "2"` desde o bump da reuse-intelligence schema (v1.1.0 Gap 18). Falha **não bloqueia** rapid lane (458 passing), `forge verify`, nem o ship v1.1.0 — só atinge a integration lane. Surfaced 2026-06-01 durante verification final do PR #1. Fix pequeno: ler `sqlite_io.SCHEMA_VERSION` em vez de hardcoded `"1"`. Gap completo em `docs/design/04-pending.md § Gaps pós-rules-system`.
 
 ## Fase 4 — completa (resumo)
 
