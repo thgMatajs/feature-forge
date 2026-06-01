@@ -194,16 +194,17 @@ def _show_snapshot(config: dict[str, Any]) -> None:
 
 def _choose_categories() -> list[str]:
     options = {
-        "cards":       "add/remove/upgrade/lock/inspect",
-        "paths":       "feature-roots, tests-roots",
-        "conventions": "DI, navigation, folder layout, naming",
-        "backend":     "ticketing, external-docs",
-        "persona":     "comportamento do mentor",
-        "memory":      "L2 distill manual, retention",
-        "hooks":       "regenerar",
-        "inventory":   "re-extrair DS/i18n/conventions",
-        "graph":       "rebuild full",
-        "cleanup-bak": "remover .bak overdue",
+        "cards":          "add/remove/upgrade/lock/inspect",
+        "paths":          "feature-roots, tests-roots",
+        "conventions":    "DI, navigation, folder layout, naming",
+        "backend":        "ticketing, external-docs",
+        "persona":        "comportamento do mentor",
+        "memory":         "L2 distill manual, retention",
+        "hooks":          "regenerar",
+        "inventory":      "re-extrair DS/i18n/conventions",
+        "graph":          "rebuild full",
+        "cleanup-bak":    "remover .bak overdue",
+        "external-deps":  "marcar dep externa como resolvida",
     }
     return question.ask_multi(
         "O que mudar? (multi-select, vazio = sair sem mudar)",
@@ -553,6 +554,21 @@ def _handle_graph(
         "green",
     ))
 
+    # Refresh reuse-intelligence proposals against the new graph state.
+    try:
+        from engine.graph.duplicates import queue_proposals_from_table
+
+        n_queued = queue_proposals_from_table(project_root)
+        if n_queued:
+            renderer.write(renderer.colored(
+                f"  ✓ {n_queued} reuse proposal(s) (re)queued — `forge evolve`",
+                "green",
+            ))
+    except Exception as exc:  # never fail reconfigure for a scan hiccup
+        renderer.write(
+            f"  ⚠ reuse scan errored: {type(exc).__name__}: {exc}"
+        )
+
 
 def _handle_cleanup_bak(
     project_root: Path, current: dict[str, Any], working: dict[str, Any]
@@ -601,17 +617,207 @@ def _handle_cleanup_bak(
     renderer.write(renderer.colored(f"  ✓ {len(overdue)} .bak removidos", "green"))
 
 
+def _handle_external_deps(
+    project_root: Path, current: dict[str, Any], working: dict[str, Any]
+) -> None:
+    """Discipline §9 — mark an external dependency as resolved.
+
+    Distinct from other reconfigure categories: this writes directly to
+    `tasks/TASK-NNNN.yaml` files (not to workflow-config.yaml) and updates
+    the per-feature `status.json`. The stage-and-diff flow doesn't apply
+    here — diff of "resolved-at: null → timestamp" is binary, user already
+    confirmed in the inner prompt.
+
+    Reads `working` only to honor cleanup.bak-retention-days for backups.
+    """
+    del current, working  # not used; write-now semantics
+
+    from engine.memory.l1 import (
+        append_history,
+        blocking_deps,
+        is_blocked,
+        list_active_features,
+        read_l1_status,
+        write_l1_status,
+    )
+
+    # 1. Discover blocked features + tickets.
+    candidates: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    for slug in list_active_features(project_root):
+        deps = blocking_deps(slug, project_root)
+        if not deps:
+            continue
+        # Group by ticket → list of (slug, dep dict)
+        for d in deps:
+            ticket = str(d.get("ticket") or "?")
+            candidates.setdefault(ticket, []).append((slug, d))
+
+    if not candidates:
+        renderer.write("")
+        renderer.write("Sem deps externas abertas em features ativas.")
+        renderer.write(renderer.dim("Nada pra fazer aqui."))
+        return
+
+    # 2. Render the catalog.
+    renderer.write("")
+    renderer.write(renderer.section_header("external dependencies abertas"))
+    ticket_options: dict[str, str] = {}
+    for ticket, entries in sorted(candidates.items()):
+        slugs_str = " · ".join(sorted({slug for slug, _ in entries}))
+        integration = entries[0][1].get("integration", "manual")
+        n = len(entries)
+        suffix = "" if n == 1 else f" ({n} tasks)"
+        ticket_options[ticket] = (
+            f"{integration} · afeta: {slugs_str}{suffix}"
+        )
+    ticket_options["cancelar"] = "voltar sem mudar nada"
+
+    chosen = question.ask(
+        "Qual ticket marcar como resolvido?",
+        ticket_options,
+    )
+    if chosen == "cancelar":
+        renderer.write(renderer.dim("Cancelado — nada gravado."))
+        return
+
+    entries = candidates.get(chosen, [])
+    if not entries:
+        renderer.write(
+            renderer.colored(
+                f"✋ {chosen} não bateu em nenhuma entry — abortando.",
+                "yellow",
+            )
+        )
+        return
+
+    # 3. Confirm.
+    affected_summary = "\n".join(
+        f"  · {slug}/tasks/{d.get('task', '?')}.yaml"
+        f".depends_on_external[ticket={chosen}].resolved-at"
+        for slug, d in entries
+    )
+    renderer.write("")
+    renderer.write(f"Vai marcar {chosen} como resolvido em {len(entries)} entry(ies):")
+    renderer.write(affected_summary)
+    renderer.write("")
+    if not question.confirm("Aplicar agora?", default=True):
+        renderer.write(renderer.dim("Cancelado — nada gravado."))
+        return
+
+    # 4. Apply atomically: backup + write per task file.
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    affected_slugs: set[str] = set()
+    files_updated: list[Path] = []
+    rollback_log: list[tuple[Path, Path]] = []  # (target, backup)
+
+    try:
+        # Group by file path to minimize re-reads.
+        by_file: dict[Path, list[dict[str, Any]]] = {}
+        for slug, dep in entries:
+            from engine.memory.l1 import _feature_tasks_dir as _ft_dir
+
+            tasks_dir = _ft_dir(slug, project_root)
+            if tasks_dir is None:
+                continue
+            task_id = dep.get("task", "?")
+            task_path = tasks_dir / f"{task_id}.yaml"
+            if not task_path.is_file():
+                continue
+            by_file.setdefault(task_path, []).append(dep)
+            affected_slugs.add(slug)
+
+        for task_path, deps_to_update in by_file.items():
+            data = read_yaml(task_path) or {}
+            if not isinstance(data, dict):
+                continue
+            ext_list = (
+                data.get("depends_on_external")
+                or data.get("depends-on-external")
+                or []
+            )
+            if not isinstance(ext_list, list):
+                continue
+            mutated = False
+            for entry in ext_list:
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("ticket") != chosen:
+                    continue
+                already = entry.get("resolved-at") or entry.get("resolved_at")
+                if already:
+                    continue
+                entry["resolved-at"] = now_iso
+                mutated = True
+            if not mutated:
+                continue
+            data["depends_on_external"] = ext_list
+            backup = backup_file(task_path)
+            if backup is not None:
+                rollback_log.append((task_path, backup))
+            write_yaml(task_path, data, atomic=True)
+            files_updated.append(task_path)
+            renderer.write(
+                renderer.colored(
+                    f"  ✓ {task_path.relative_to(project_root)}",
+                    "green",
+                )
+            )
+
+        # 5. Re-evaluate feature state for each affected slug.
+        for slug in sorted(affected_slugs):
+            st = read_l1_status(slug, project_root)
+            if st is None:
+                continue
+            still_blocked = is_blocked(slug, project_root)
+            if st.status == "blocked-on-external" and not still_blocked:
+                st.status = "implementing"
+                st.last_action_kind = "blocked-external-cleared"
+                write_l1_status(st, project_root)
+                renderer.write(
+                    renderer.colored(
+                        f"  ↻ {slug} state: blocked-on-external → implementing",
+                        "green",
+                    )
+                )
+            append_history(
+                slug,
+                project_root,
+                {
+                    "event": "external-dep-marked-resolved",
+                    "ticket": chosen,
+                    "files-updated": len(by_file),
+                },
+            )
+    except Exception as exc:
+        # Rollback any partial write.
+        renderer.write(renderer.colored(f"falha — rolling back: {exc}", "red"))
+        for target, backup in rollback_log:
+            try:
+                if backup.is_file():
+                    shutil.copy2(backup, target)
+            except OSError:
+                pass
+        raise
+
+    if not files_updated:
+        renderer.write(renderer.colored(
+            f"Nenhuma entry foi modificada (todas já tinham resolved-at).",
+            "yellow",
+        ))
+
+
 _CATEGORY_HANDLERS = {
-    "cards":       _handle_cards,
-    "paths":       _handle_paths,
-    "conventions": _handle_conventions,
-    "backend":     _handle_backend,
-    "persona":     _handle_persona,
-    "memory":      _handle_memory,
-    "hooks":       _handle_hooks,
-    "inventory":   _handle_inventory,
-    "graph":       _handle_graph,
-    "cleanup-bak": _handle_cleanup_bak,
+    "cards":         _handle_cards,
+    "paths":         _handle_paths,
+    "conventions":   _handle_conventions,
+    "backend":       _handle_backend,
+    "persona":       _handle_persona,
+    "memory":        _handle_memory,
+    "hooks":         _handle_hooks,
+    "inventory":     _handle_inventory,
+    "graph":         _handle_graph,
+    "cleanup-bak":   _handle_cleanup_bak,
+    "external-deps": _handle_external_deps,
 }
 
 

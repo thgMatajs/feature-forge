@@ -200,3 +200,51 @@ because clock skew is real.
   `docs/schemas/memory.md`
 - `.claude/memory/history.jsonl` — every apply / reject / defer appends a
   line here for audit
+
+---
+
+## Reuse Intelligence proposal types (schema v2)
+
+Six new `type` values queued automatically by `engine/graph/duplicates.py`
+during `forge init` Step 11.5 and on graph rebuild via `forge reconfigure`.
+
+| `type`                                  | Triggered when                                                                 | Confidence | Apply path                                                  |
+|-----------------------------------------|--------------------------------------------------------------------------------|------------|-------------------------------------------------------------|
+| `consolidate-duplicate-helper`          | Same Kotlin extension in ≥2 files of one Gradle module                         | 0.95       | Refactor intake stub in `non-product/refactor-{slug}/`     |
+| `promote-to-shared-helper`              | Same Kotlin extension across ≥2 sibling modules                                | 0.85       | idem; target = smallest-common-ancestor module             |
+| `remove-redundant-platform-helper`      | Android Kotlin identical to shared `commonMain` Kotlin                         | 0.90       | idem; suggested target = keep shared, drop Android         |
+| `review-near-duplicate-helper`          | Same signature, different `body_hash` (drift)                                  | 0.40       | idem; manual review demanded — never auto-apply             |
+| `kmp-migration-candidate`               | Swift extension `(receiver, name)` matches Kotlin shared with token similarity ≥0.4 | 0.50–0.75  | idem; suggested target = SKIE call into shared              |
+| `consolidate-ts-helper`                 | Same TypeScript top-level helper duplicated in one module                      | 0.95       | idem; target = `util/` of the module                       |
+
+All six share these conventions:
+
+- `source.trigger = "init-scan"` (or `"reconfigure"` during a rebuild).
+- `proposed-change.operation = "refactor-plan"` — apply writes a feature-intake
+  stub at `docs/feature-implementation-workflow/non-product/refactor-{slug}/`
+  using `templates/feature-intake-refactor.template.md` and writes the L1
+  `status.json` with `subtype=refactor`.
+- `proposed-change.payload` carries the full detection payload (category,
+  receiver_type, symbol_name, canonical_signature, body_hash, modifiers,
+  similarity_score, locations, suggested_target).
+- `fingerprint` is a 64-char SHA-256 over category-specific fields. Stable
+  across rebuilds — same logical group keeps the same proposal entry
+  (idempotent re-queue).
+- `provenance.feature-slugs = ["__init-scan__"]` — sentinel slug indicating
+  the proposal came from a graph scan rather than a feature retrospective.
+
+### Apply / reject mechanics
+
+`apply_proposal_to_l2` dispatches the six kinds to
+`engine.graph.reuse_apply.apply_reuse_intelligence_proposal(project_root, proposal)`
+which:
+1. Computes the kebab-case slug `refactor-{receiver}-{name}`.
+2. Renders `templates/feature-intake-refactor.template.md` with the payload.
+3. Writes the intake at the non-product directory.
+4. Writes the L1 status via `engine.memory.l1.write_l1_status` with
+   `subtype="refactor"` — `forge plan {slug}` recognises this and skips Wave A
+   discovery.
+
+Reject path uses the standard rejected-evolutions veto — the SHA-256
+fingerprint goes into `.claude/rejected-evolutions.yaml` and the proposal
+never resurfaces.

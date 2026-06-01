@@ -132,6 +132,7 @@ def run(argv: list[str]) -> int:
                 _check_inventory(project_root),
                 _check_memory_l1(project_root),
                 _check_graph(project_root),
+                _check_reuse_findings(project_root),
                 _check_hooks(project_root, config),
                 _check_mcps(config),
                 _check_i18n(project_root, config),
@@ -409,6 +410,63 @@ def _check_graph(project_root: Path) -> _CategoryReport:
     except sqlite3.Error as exc:
         checks.append(_Check("sqlite open", _STATUS_FAIL, str(exc)))
     return _CategoryReport("Graph health", checks)
+
+
+def _check_reuse_findings(project_root: Path) -> _CategoryReport:
+    """Surface reuse-intelligence findings queued for `forge evolve`.
+
+    Aggregated by proposal kind. WARN when anything pending, OK otherwise.
+    Graph-missing → SKIP (the graph check already covered that).
+    """
+    checks: list[_Check] = []
+    path = graph_db_path(project_root)
+    if not path.exists():
+        checks.append(
+            _Check(
+                "reuse findings",
+                _STATUS_SKIP,
+                "graph não construído",
+            )
+        )
+        return _CategoryReport("Reuse intelligence", checks)
+    try:
+        conn = sqlite3.connect(str(path))
+        try:
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(reuse_findings)").fetchall()}
+            if not cols:
+                checks.append(
+                    _Check(
+                        "reuse_findings",
+                        _STATUS_SKIP,
+                        "tabela ausente — schema antigo",
+                        "rode `forge reconfigure` → rebuild graph",
+                    )
+                )
+                return _CategoryReport("Reuse intelligence", checks)
+            rows = conn.execute(
+                "SELECT category, COUNT(*) AS n FROM reuse_findings GROUP BY category"
+            ).fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        checks.append(_Check("sqlite open", _STATUS_FAIL, str(exc)))
+        return _CategoryReport("Reuse intelligence", checks)
+
+    by_category: dict[str, int] = {row[0]: row[1] for row in rows if row[0]}
+    total = sum(by_category.values())
+    if total == 0:
+        checks.append(_Check("findings", _STATUS_OK, "nenhuma duplicação pendente"))
+        return _CategoryReport("Reuse intelligence", checks)
+    summary = ", ".join(f"{cat}={n}" for cat, n in sorted(by_category.items()))
+    checks.append(
+        _Check(
+            "findings",
+            _STATUS_WARN,
+            f"{total} pendente(s): {summary}",
+            "rode `forge evolve` para revisar",
+        )
+    )
+    return _CategoryReport("Reuse intelligence", checks)
 
 
 def _check_hooks(project_root: Path, config: dict) -> _CategoryReport:

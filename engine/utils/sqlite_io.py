@@ -17,7 +17,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterable, Iterator, Sequence
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
 
 # Full DDL — kept in sync with docs/schemas/graph.md.
 # Adding a table here without updating the schema doc is a documentation bug.
@@ -27,12 +27,14 @@ CREATE TABLE IF NOT EXISTS files (
   path            TEXT NOT NULL UNIQUE,
   language        TEXT,
   module          TEXT,
+  source_set      TEXT,
   lines           INTEGER,
   last_modified   TEXT,
   sha256          TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_files_module   ON files(module);
-CREATE INDEX IF NOT EXISTS idx_files_language ON files(language);
+CREATE INDEX IF NOT EXISTS idx_files_module     ON files(module);
+CREATE INDEX IF NOT EXISTS idx_files_language   ON files(language);
+CREATE INDEX IF NOT EXISTS idx_files_source_set ON files(source_set);
 
 CREATE TABLE IF NOT EXISTS symbols (
   id              INTEGER PRIMARY KEY,
@@ -42,11 +44,17 @@ CREATE TABLE IF NOT EXISTS symbols (
   signature       TEXT,
   line_start      INTEGER,
   line_end        INTEGER,
-  visibility      TEXT
+  visibility      TEXT,
+  receiver_type   TEXT,
+  body_hash       TEXT,
+  body_tokens     TEXT,
+  modifiers       TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
-CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_id);
-CREATE INDEX IF NOT EXISTS idx_symbols_kind ON symbols(kind);
+CREATE INDEX IF NOT EXISTS idx_symbols_name          ON symbols(name);
+CREATE INDEX IF NOT EXISTS idx_symbols_file          ON symbols(file_id);
+CREATE INDEX IF NOT EXISTS idx_symbols_kind          ON symbols(kind);
+CREATE INDEX IF NOT EXISTS idx_symbols_receiver_type ON symbols(receiver_type);
+CREATE INDEX IF NOT EXISTS idx_symbols_body_hash     ON symbols(body_hash);
 
 CREATE TABLE IF NOT EXISTS imports (
   from_file_id    INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
@@ -156,6 +164,45 @@ CREATE TABLE IF NOT EXISTS task_commits (
   timestamp            TEXT,
   PRIMARY KEY (task_id, commit_sha)
 );
+
+CREATE TABLE IF NOT EXISTS module_deps (
+  from_module TEXT NOT NULL,
+  to_module   TEXT NOT NULL,
+  scope       TEXT,
+  PRIMARY KEY (from_module, to_module, scope)
+);
+CREATE INDEX IF NOT EXISTS idx_module_deps_from ON module_deps(from_module);
+CREATE INDEX IF NOT EXISTS idx_module_deps_to   ON module_deps(to_module);
+
+CREATE TABLE IF NOT EXISTS reuse_findings (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  category            TEXT NOT NULL,
+  group_id            TEXT NOT NULL UNIQUE,
+  symbol_name         TEXT NOT NULL,
+  receiver_type       TEXT,
+  canonical_signature TEXT,
+  body_hash           TEXT,
+  primary_language    TEXT NOT NULL,
+  modifiers           TEXT,
+  suggested_target    TEXT,
+  confidence          REAL NOT NULL,
+  similarity_score    REAL,
+  detected_at         TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_reuse_findings_category ON reuse_findings(category);
+CREATE INDEX IF NOT EXISTS idx_reuse_findings_group    ON reuse_findings(group_id);
+
+CREATE TABLE IF NOT EXISTS reuse_finding_locations (
+  finding_id  INTEGER NOT NULL REFERENCES reuse_findings(id) ON DELETE CASCADE,
+  file_id     INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+  module      TEXT NOT NULL,
+  source_set  TEXT,
+  line_start  INTEGER NOT NULL,
+  language    TEXT NOT NULL,
+  body_hash   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_reuse_finding_locations_finding ON reuse_finding_locations(finding_id);
+CREATE INDEX IF NOT EXISTS idx_reuse_finding_locations_file    ON reuse_finding_locations(file_id);
 
 CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,

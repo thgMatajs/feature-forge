@@ -88,6 +88,13 @@ _VALID_KINDS = {
     "new-card-suggestion",
     "question-elimination",
     "convention-refinement",
+    # Reuse-intelligence proposals (engine/graph/duplicates.py).
+    "consolidate-duplicate-helper",
+    "promote-to-shared-helper",
+    "remove-redundant-platform-helper",
+    "review-near-duplicate-helper",
+    "kmp-migration-candidate",
+    "consolidate-ts-helper",
 }
 
 
@@ -499,6 +506,23 @@ def apply_proposal_to_l2(
 
     if proposal.kind == "forget-l1":
         _apply_forget_l1(project_root, proposal)
+        remove_from_queue(project_root, proposal.id)
+        return
+
+    if proposal.kind in {
+        "consolidate-duplicate-helper",
+        "promote-to-shared-helper",
+        "remove-redundant-platform-helper",
+        "review-near-duplicate-helper",
+        "kmp-migration-candidate",
+        "consolidate-ts-helper",
+    }:
+        # Reuse-intelligence proposals don't mutate L2 — they materialize a
+        # feature-intake stub under non-product/ that the refactor flow picks
+        # up via `forge plan refactor-...`.
+        from engine.graph.reuse_apply import apply_reuse_intelligence_proposal
+
+        apply_reuse_intelligence_proposal(project_root, proposal)
         remove_from_queue(project_root, proposal.id)
         return
 

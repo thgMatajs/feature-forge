@@ -17,6 +17,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
+from engine.graph.gradle_deps import (
+    parse_module_dependencies,
+    persist_module_dependencies,
+)
+from engine.graph.gradle_modules import (
+    infer_module_and_source_set,
+    load_gradle_modules,
+)
 from engine.graph.parser_kotlin import KotlinFileInfo, parse_kotlin_file
 from engine.graph.parser_swift import SwiftFileInfo, parse_swift_file
 from engine.graph.parser_typescript import TypeScriptFileInfo, parse_typescript_file
@@ -76,6 +84,7 @@ def build_full(
     conn = open_db(target_db, create=True)
     try:
         _ensure_imports_to_file_id_column(conn)
+        _ensure_reuse_intelligence_columns(conn)
         _reset_domain_tables(conn)
         files_by_ext = discover_source_files(project_root)
         total_files = sum(len(paths) for paths in files_by_ext.values())
@@ -85,11 +94,17 @@ def build_full(
         edges_created = 0
 
         with transaction(conn):
+            gradle_modules = load_gradle_modules(project_root)
+            module_dep_rows = parse_module_dependencies(project_root, gradle_modules)
+            persist_module_dependencies(conn, module_dep_rows)
+
             for ext in sorted(files_by_ext):
                 for file_path in sorted(files_by_ext[ext]):
                     if progress_cb is not None:
                         progress_cb("parsing", files_scanned + 1, total_files)
-                    stats = _ingest_file(conn, project_root, file_path, ext)
+                    stats = _ingest_file(
+                        conn, project_root, file_path, ext, gradle_modules
+                    )
                     files_scanned += 1
                     symbols_extracted += stats["symbols"]
                     edges_created += stats["edges"]
@@ -100,6 +115,10 @@ def build_full(
             _populate_routes(conn)
             _populate_tests(conn)
             _resolve_import_targets(conn)
+
+            from engine.graph.duplicates import detect_all_reuse_findings
+            detect_all_reuse_findings(conn, gradle_modules, module_dep_rows)
+
             set_meta(conn, "last_full_rebuild_at", datetime.now(timezone.utc).isoformat())
 
         duration_ms = int((time.perf_counter() - start) * 1000)
@@ -284,8 +303,16 @@ def _glob_match(rel_path: str, pattern: str) -> bool:
 
 
 def _reset_domain_tables(conn: sqlite3.Connection) -> None:
-    """Wipe all domain tables (keep schema + meta intact)."""
+    """Wipe all domain tables (keep schema + meta intact).
+
+    Reuse-intelligence tables (`module_deps`, `reuse_findings`,
+    `reuse_finding_locations`) are also cleared — they're re-derived during the
+    post-passes from settings.gradle, build.gradle and symbol contents.
+    """
     tables_to_clear = [
+        "reuse_finding_locations",
+        "reuse_findings",
+        "module_deps",
         "ds_usage",
         "ds_components",
         "i18n_usage",
@@ -309,11 +336,12 @@ def _ingest_file(
     project_root: Path,
     file_path: Path,
     ext: str,
+    gradle_modules: Optional[dict[str, str]] = None,
 ) -> dict:
     """Insert file row + parsed contents. Returns per-file stats."""
     language = _LANGUAGE_EXTENSIONS[ext]
     rel = _relpath(project_root, file_path)
-    module = _infer_module(rel)
+    module, source_set = infer_module_and_source_set(rel, gradle_modules or {})
 
     try:
         raw = file_path.read_bytes()
@@ -326,14 +354,15 @@ def _ingest_file(
         file_path.stat().st_mtime, tz=timezone.utc
     ).isoformat()
 
-    cursor = conn.execute(
-        "INSERT INTO files(path, language, module, lines, last_modified, sha256) "
-        "VALUES(?, ?, ?, ?, ?, ?) "
+    conn.execute(
+        "INSERT INTO files(path, language, module, source_set, lines, last_modified, sha256) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(path) DO UPDATE SET "
         "  language=excluded.language, module=excluded.module, "
+        "  source_set=excluded.source_set, "
         "  lines=excluded.lines, last_modified=excluded.last_modified, "
         "  sha256=excluded.sha256",
-        (rel, language, module, line_count, last_modified, sha256),
+        (rel, language, module, source_set, line_count, last_modified, sha256),
     )
     file_id = conn.execute("SELECT id FROM files WHERE path = ?", (rel,)).fetchone()["id"]
 
@@ -367,9 +396,23 @@ def _persist_kotlin(conn: sqlite3.Connection, file_id: int, info: KotlinFileInfo
     name_to_symbol_id: dict[str, int] = {}
     for symbol in info.symbols:
         cur = conn.execute(
-            "INSERT INTO symbols(file_id, name, kind, signature, line_start, line_end, visibility) "
-            "VALUES(?, ?, ?, ?, ?, ?, ?)",
-            (file_id, symbol.name, symbol.kind, None, symbol.line, symbol.line, "public"),
+            "INSERT INTO symbols("
+            "  file_id, name, kind, signature, line_start, line_end, visibility, "
+            "  receiver_type, body_hash, body_tokens, modifiers"
+            ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                file_id,
+                symbol.name,
+                symbol.kind,
+                symbol.signature,
+                symbol.line,
+                symbol.line,
+                symbol.visibility,
+                symbol.receiver_type,
+                symbol.body_hash,
+                symbol.body_tokens,
+                " ".join(symbol.modifiers) if symbol.modifiers else None,
+            ),
         )
         if cur.lastrowid is not None:
             name_to_symbol_id[symbol.name] = cur.lastrowid
@@ -412,12 +455,27 @@ def _persist_swift(conn: sqlite3.Connection, file_id: int, info: SwiftFileInfo) 
     # Swift não consome lastrowid — podemos executemany em symbols e imports.
     edges = 0
     symbol_rows = [
-        (file_id, s.name, s.kind, None, s.line, s.line, "public") for s in info.symbols
+        (
+            file_id,
+            s.name,
+            s.kind,
+            s.signature,
+            s.line,
+            s.line,
+            s.visibility,
+            s.receiver_type,
+            s.body_hash,
+            s.body_tokens,
+            " ".join(s.modifiers) if s.modifiers else None,
+        )
+        for s in info.symbols
     ]
     if symbol_rows:
         conn.executemany(
-            "INSERT INTO symbols(file_id, name, kind, signature, line_start, line_end, visibility) "
-            "VALUES(?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO symbols("
+            "  file_id, name, kind, signature, line_start, line_end, visibility, "
+            "  receiver_type, body_hash, body_tokens, modifiers"
+            ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             symbol_rows,
         )
 
@@ -437,16 +495,32 @@ def _persist_typescript(conn: sqlite3.Connection, file_id: int, info: TypeScript
     # TS também sem lastrowid — batch tudo via executemany.
     edges = 0
     symbol_rows = [
-        (file_id, s.name, s.kind, None, s.line, s.line, "public") for s in info.symbols
+        (
+            file_id,
+            s.name,
+            s.kind,
+            s.signature,
+            s.line,
+            s.line,
+            s.visibility,
+            None,
+            s.body_hash,
+            s.body_tokens,
+            " ".join(s.modifiers) if s.modifiers else None,
+        )
+        for s in info.symbols
     ]
     component_rows = [
-        (file_id, comp, "react_component", None, 0, 0, "public") for comp in info.components
+        (file_id, comp, "react_component", None, 0, 0, "public", None, None, None, None)
+        for comp in info.components
     ]
     all_symbol_rows = symbol_rows + component_rows
     if all_symbol_rows:
         conn.executemany(
-            "INSERT INTO symbols(file_id, name, kind, signature, line_start, line_end, visibility) "
-            "VALUES(?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO symbols("
+            "  file_id, name, kind, signature, line_start, line_end, visibility, "
+            "  receiver_type, body_hash, body_tokens, modifiers"
+            ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             all_symbol_rows,
         )
 
@@ -642,6 +716,89 @@ def _ensure_imports_to_file_id_column(conn: sqlite3.Connection) -> None:
     if "to_file_id" not in names:
         conn.execute("ALTER TABLE imports ADD COLUMN to_file_id INTEGER REFERENCES files(id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_imports_to_file ON imports(to_file_id)")
+
+
+def _ensure_reuse_intelligence_columns(conn: sqlite3.Connection) -> None:
+    """Migration: add reuse-intelligence columns and tables for legacy DBs (schema v2).
+
+    Adds:
+      - files.source_set
+      - symbols.{receiver_type, body_hash, body_tokens, modifiers}
+      - module_deps, reuse_findings, reuse_finding_locations tables (+ indexes)
+    """
+    files_cols = {c["name"] for c in conn.execute("PRAGMA table_info(files)").fetchall()}
+    if "source_set" not in files_cols:
+        conn.execute("ALTER TABLE files ADD COLUMN source_set TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_files_source_set ON files(source_set)")
+
+    symbols_cols = {c["name"] for c in conn.execute("PRAGMA table_info(symbols)").fetchall()}
+    if "receiver_type" not in symbols_cols:
+        conn.execute("ALTER TABLE symbols ADD COLUMN receiver_type TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_symbols_receiver_type ON symbols(receiver_type)")
+    if "body_hash" not in symbols_cols:
+        conn.execute("ALTER TABLE symbols ADD COLUMN body_hash TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_symbols_body_hash ON symbols(body_hash)")
+    if "body_tokens" not in symbols_cols:
+        conn.execute("ALTER TABLE symbols ADD COLUMN body_tokens TEXT")
+    if "modifiers" not in symbols_cols:
+        conn.execute("ALTER TABLE symbols ADD COLUMN modifiers TEXT")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS module_deps (
+          from_module TEXT NOT NULL,
+          to_module   TEXT NOT NULL,
+          scope       TEXT,
+          PRIMARY KEY (from_module, to_module, scope)
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_module_deps_from ON module_deps(from_module)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_module_deps_to   ON module_deps(to_module)")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS reuse_findings (
+          id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+          category            TEXT NOT NULL,
+          group_id            TEXT NOT NULL UNIQUE,
+          symbol_name         TEXT NOT NULL,
+          receiver_type       TEXT,
+          canonical_signature TEXT,
+          body_hash           TEXT,
+          primary_language    TEXT NOT NULL,
+          modifiers           TEXT,
+          suggested_target    TEXT,
+          confidence          REAL NOT NULL,
+          similarity_score    REAL,
+          detected_at         TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_reuse_findings_category ON reuse_findings(category)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_reuse_findings_group    ON reuse_findings(group_id)")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS reuse_finding_locations (
+          finding_id  INTEGER NOT NULL REFERENCES reuse_findings(id) ON DELETE CASCADE,
+          file_id     INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+          module      TEXT NOT NULL,
+          source_set  TEXT,
+          line_start  INTEGER NOT NULL,
+          language    TEXT NOT NULL,
+          body_hash   TEXT
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_reuse_finding_locations_finding "
+        "ON reuse_finding_locations(finding_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_reuse_finding_locations_file "
+        "ON reuse_finding_locations(file_id)"
+    )
 
 
 _FEATURE_DIR_RE = re.compile(r"(?:^|/)(?:feature|features)/([a-zA-Z0-9_\-]+)/")
