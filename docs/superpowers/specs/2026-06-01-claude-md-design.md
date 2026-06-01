@@ -263,7 +263,7 @@ Cada arquivo tem propósito único e tamanho-alvo. Não duplica `docs/design/*` 
 ### 5.8 `superpowers.md` (~80 linhas)
 
 - Tabela detalhada das 10 skills (versão expandida da do CLAUDE.md root).
-- **Skills NÃO ativadas (deliberadamente):** worktrees, finishing-branch, writing-skills. Razão: single-maintainer hoje; entram via `forge evolve` se padrão emergir.
+- **Skills NÃO ativadas (deliberadamente):** using-git-worktrees, finishing-a-development-branch, writing-skills, using-superpowers. Razão: single-maintainer hoje (worktrees/finishing-branch), projeto é skill (writing-skills), meta-skill auto-invocada (using-superpowers); entram via `forge evolve` se padrão emergir.
 - **Decision 22 reforço:** skills são recurso humano + Claude Code, nenhum runtime import.
 
 ### 5.9 `doc-sync.md` (~60 linhas)

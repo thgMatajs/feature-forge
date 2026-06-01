@@ -20,6 +20,7 @@ if [[ -z "$INPUT" ]]; then
     exit 0
 fi
 
+# Note: bash here-strings (<<<) are re-readable from the same var; we parse $INPUT twice below for different fields.
 # Extract file_path com python (mais robusto que jq pra ambientes variados)
 FILE_PATH=$(python3 -c "
 import json, sys
