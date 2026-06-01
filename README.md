@@ -2,19 +2,19 @@
 
 A standalone CLI skill that orchestrates end-to-end planning + implementation of mobile features across Android, iOS, KMP, and Web. Backend-agnostic (Firebase, REST, GraphQL, local-only).
 
-> **State:** v1 entregue (2026-05-29). ~370 arquivos, ~28K LOC. Pronto pra commit inicial + dogfooding.
+> **State:** v1.1.0 entregue (2026-06-01). ~379 arquivos, ~50.7K LOC. Reuse-intelligence pipeline + non-product feature track (bugfix/refactor) + blocked-on-external state.
 
 ## What it is
 
 Skill CLI-first com 12 comandos canônicos (zero flags — toda parametrização via menu interativo) que dirige o ciclo completo de feature mobile:
 
-1. **`forge init`** — bootstrap em qualquer projeto KMP/mobile (greenfield ou brownfield)
-2. **`forge plan {feature-slug}`** — 5 waves (intake/PRD → screen+contracts → tech-spec → tasks → readiness) com 16 templates
+1. **`forge init`** — bootstrap em qualquer projeto KMP/mobile (greenfield ou brownfield). Step 11.5 escaneia o codebase atrás de duplicações já existentes (6 categorias de finding).
+2. **`forge plan {feature-slug}`** — 5 waves (intake/PRD → screen+contracts → tech-spec → tasks → readiness) com 16 templates. Subtypes: product / refactor / bugfix / spike / chore (cada um com waves específicas).
 3. **`forge implement {feature-slug}`** — execução task-by-task com gates de scope + atomic commits
-4. **`forge verify`** — cascade de 13 validators com 3-caminhos discipline
-5. **`forge doctor`** — health check em 11 categorias
-6. **`forge reconfigure`** — single entrypoint pra TODA mutação post-init (cards, paths, conventions, etc)
-7. Outros: `status`, `evolve`, `undo`, `graph`, `memory`, `raw`
+4. **`forge verify`** — cascade de 14 validators com 3-caminhos discipline (inclui `check_no_behavior_change` para refactor)
+5. **`forge doctor`** — health check em 12 categorias (inclui reuse-intelligence findings agregados)
+6. **`forge reconfigure`** — single entrypoint pra TODA mutação post-init (cards, paths, conventions, graph rebuild que re-queue reuse proposals)
+7. Outros: `status`, `evolve` (review proposals — 16 kinds), `undo`, `graph` (Q1-Q17), `memory`, `raw`
 
 ## Identity
 
@@ -44,27 +44,31 @@ Backend-agnostic — qualquer combinação:
 6 layers (ver `docs/design/00-vision.md` pra detalhe):
 
 1. **Cards** — unidades atômicas de composição (20 cards canônicos v1)
-2. **Templates** — esqueletos dos 16 artefatos por feature
+2. **Templates** — esqueletos dos 18 artefatos por feature (16 produto + bugfix-intake + refactor-intake)
 3. **Memory** — L1 per-feature (WIP) + L2 project (committed) + L3 read-only (auto-memory)
-4. **Graph** — SQLite com 10 queries canônicas (similar features, blast-radius, orphans, etc)
+4. **Graph** — SQLite com 17 queries canônicas (Q1–Q10 estruturais, Q11 reusable-helpers, Q12–Q17 reuse-intelligence: duplicates within/cross-module, KMP-migration, near-duplicates, redundant-platform, TS-helpers)
 5. **Inventory** — DS components + i18n + conventions extraídos do projeto
-6. **Engine Python** — Bash dispatcher + 13 commands + foundation + state + integrations
+6. **Engine Python** — Bash dispatcher + 13 commands + foundation + state + integrations + reuse-intelligence pipeline (parsers, body-hash, gradle modules/deps, detection, apply)
 
 ## Stats
 
 | Categoria | Conteúdo |
 |---|---|
-| Schemas | 9 schemas + capability-labels catalog |
+| Schemas | 9 schemas + capability-labels catalog + schema v2 (reuse_findings, module_deps) |
 | Agent prompts | 10 (planning-conductor + 9 sub-agents) |
-| UX roteiros | 7 (init, plan, implement, verify, doctor, reconfigure, evolve) |
-| Templates canônicos | 16 (intake → PRD → screen → bdd → contracts → tech-spec → tasks → readiness → handoff → evals) |
+| UX roteiros | 7 (init, plan, implement, verify, doctor, reconfigure, evolve) — todos cobrem subtypes + reuse intelligence |
+| Templates canônicos | 18 (16 produto + feature-intake-bugfix + feature-intake-refactor) |
 | Cards canônicos | 20 (8 stack + 6 Firebase + 6 REST) |
 | Preset | kmp-mobile (8 stack cards + 4 backend-candidates) |
-| Validators Python | 13 (+ 2 helpers) |
-| Hooks | 9 (5 Claude Code + 3 git + 1 GitHub Actions) |
-| Tests | 266 passing (unit + integration + 13 commands smoke + validators) |
-| LOC total | ~28.000 |
+| Validators Python | 14 (+ 2 helpers) — inclui `check_no_behavior_change` para refactor |
+| Hooks | 9 + 1 reuse incremental (`post-edit-detect-duplications.sh`) |
+| Tests | 367 passing (unit + integration + commands smoke + validators + reuse intelligence) |
+| LOC total | ~50.700 |
+| Engine LOC | ~21.900 (Python) |
+| Files total | ~379 |
 | Decisões locked | 27 + 7 direcionais (Fase 3.5) |
+| Subtypes feature | 5 (product / refactor / bugfix / spike / chore) |
+| Reuse finding categories | 6 (consolidate-within / promote-to-shared / redundant-platform / near-duplicate / kmp-migration / consolidate-ts) |
 
 ## Instalação
 
@@ -75,11 +79,15 @@ export FORGE_HOME=~/Documents/feature-forge
 export PATH="$FORGE_HOME/bin:$PATH"
 
 # Verifica
-forge --version  # → forge 1.0.0
+forge --version  # → forge 1.1.0
 
-# Init num projeto novo
+# Init num projeto novo (Step 11.5 já escaneia duplicações existentes)
 cd ~/code/my-project
 forge init  # → interactive, sem flags
+
+# Revisar reuse-intelligence findings
+forge evolve     # 6 kinds: consolidate / promote / kmp-migration / etc
+forge graph      # opções 12–17 ou "r" (combined view)
 ```
 
 Requer Python 3.11+ + PyYAML (única dep externa).
@@ -89,40 +97,61 @@ Requer Python 3.11+ + PyYAML (única dep externa).
 ```
 ~/Documents/feature-forge/              canonical source (this repo)
   bin/forge                             Bash dispatcher
-  engine/                               Python engine (~12.880 LOC)
-  docs/                                 design + schemas + UX roteiros
+  engine/                               Python engine (~21.900 LOC)
+    graph/                              parsers (Kotlin/Swift/TS) + builder +
+                                        gradle_modules + gradle_deps +
+                                        _body_text + duplicates + reuse_apply +
+                                        incremental + queries (Q1–Q17)
+    memory/                             L1/L2/L3 + distiller (16 proposal kinds)
+    cards/  inventory/  ui/  persona/   utils/ (sqlite_io + template_render)
+  docs/                                 design + schemas + UX roteiros + lifecycle
   agents/                               agent prompts (10 prompts)
-  templates/                            16 canonical templates
+  templates/                            18 canonical templates (16 + bugfix + refactor)
   cards/                                20 canonical cards
   presets/kmp-mobile/                   canonical preset v1
-  validators/                           13 validators + helpers
-  hooks/                                9 hooks (Claude Code + git + CI)
-  tests/                                266 passing tests
+  validators/                           14 validators + helpers
+  hooks/                                9 hooks + reuse incremental script
+  tests/                                367 passing tests
 
 [per project install via `forge init`]
-{project}/.claude/skills/feature-forge/   snapshot copy
+{project}/.claude/
+  workflow-config.yaml                  installed config
+  graph.db                              codebase graph (schema v2)
+  proposed-evolutions.yaml              reuse + retrospective proposals
+  hooks/post-edit-detect-duplications.sh    opt-in incremental detect
 ```
 
-## Command surface (12 + 1 hidden)
+## Command surface (12 + 2 hidden)
 
 12 comandos user-facing — zero flags — toda parametrização via prompts interativos (Decision 9 + 10 locked).
 
 ```
 forge init           bootstrap workflow num projeto (greenfield/brownfield)
-forge plan           plan feature (waves A-E)
+                     · Step 11.5 escaneia codebase pra reuse opportunities
+forge plan           plan feature (waves A-E, subtype-aware)
+                     · subtypes: product / refactor / bugfix / spike / chore
+                     · `forge plan refactor-{slug}` lê L1 status e pula Wave A
 forge implement      execute task-by-task
-forge verify         validator cascade
+forge verify         validator cascade (14 validators)
+                     · check_no_behavior_change gate quando subtype=refactor
 forge status         read-only board
-forge doctor         health check
+forge doctor         health check (12 categorias)
+                     · inclui reuse-intelligence findings agregados
 forge reconfigure    single mutation entrypoint
-forge graph          query graph (Q1-Q10)
+                     · graph rebuild re-queue reuse proposals automaticamente
+forge graph          query graph (Q1-Q17, "r" combined view)
+                     · Q12-Q17: 6 reuse-intelligence queries
 forge memory         inspect L1/L2/L3
-forge evolve         review propostas (single-by-single)
+forge evolve         review propostas (single-by-single) — 16 kinds
+                     · 10 retrospective + 6 reuse-intelligence
 forge undo           reverter última ação
 forge raw            escape hatch (verify-card, edit-config, debug)
 ```
 
-`forge ingest` (hidden) — invocado por hooks, nunca tipado pelo usuário.
+Hidden entrypoints (invocados por hooks, nunca tipados pelo usuário):
+
+- `forge ingest --event <type> [payload]` — graph/memory/inventory updater
+- `forge graph detect-incremental <file>` — post-edit reuse detection
 
 ## Documentação
 
@@ -131,23 +160,36 @@ Start here:
 - **`docs/design/08-session-handoff.md`** — TL;DR completo + estado por fase + limites v1
 - `docs/design/00-vision.md` — arquitetura (6 layers, capability cards)
 - `docs/design/01-decisions.md` — 27 decisões locked
-- `docs/design/06-command-surface.md` — 12 comandos canônicos
-- `docs/design/07-discipline.md` — 7 disciplinas universais
+- `docs/design/06-command-surface.md` — 12 comandos canônicos + 2 hidden
+- `docs/design/07-discipline.md` — 7 disciplinas universais (§8 non-product, §9 external-deps)
+- `docs/design/04-pending.md` — 18 Gaps inventoriados (Gap 1+2+8+18 shipped em v1.1.0)
+- `docs/schemas/graph.md` — schema v2 com reuse_findings + module_deps + Q1-Q17
+- `docs/schemas/proposed-evolutions.md` — 16 proposal kinds (10 retrospective + 6 reuse-intelligence)
 - `docs/schemas/capability-labels.md` — catálogo canônico de capabilities
-- `docs/ux/forge-init-roteiro.md` — UX cinemática do init
-- `agents/planning-conductor.md` — super-agent prompt
+- `docs/lifecycle/memory-and-graph.md` — dataflow reuse-intelligence + idempotência
+- `docs/ux/forge-init-roteiro.md` — UX cinemática do init (Cenas 5.5+5.6 reuse scan)
+- `docs/ux/forge-evolve-roteiro.md` — Cenas 15-20 para os 6 reuse kinds
+- `agents/planning-conductor.md` — super-agent prompt (subtypes + waves)
 - `presets/kmp-mobile/README.md` — preset base v1
-- `CHANGELOG.md` — release notes detalhadas
+- `CHANGELOG.md` — release notes v1.0.0 + v1.1.0
 
-## Conhecidos limites v1
+## Conhecidos limites v1.1
 
-Documentados em `docs/design/08-session-handoff.md § Conhecidos limites v1`:
+Documentados em `docs/design/08-session-handoff.md § Conhecidos limites v1` + `CHANGELOG.md § Conhecidos limites v1.1`:
 
+**v1.0 herdados:**
 - **`forge implement` é stub manual** — Apply Mode automatizado é Phase 6
 - **`forge init` Cena 7 (Jira/ticketing)** não prompted — use `forge reconfigure` pós-init
-- **9 kinds de `apply_proposal_to_l2`** em fall-through (raise NotImplementedError documentado)
+- **3 kinds de `apply_proposal_to_l2`** ainda em fall-through (retrospective kinds — reduzido de 9 para 3 com os 6 reuse-intelligence kinds implementados)
 - **LLM/sub-agent hookup real** — `plan.py`/`implement.py` narram fluxo + renderizam templates; integração Anthropic API é Phase 6
 - **Tree-sitter / AST real** — regex parsers v1 por design
+
+**v1.1 novos:**
+- **`kmp-migration-candidate` confidence é shallow** — token Jaccard, não AST semântico. False positives possíveis; apply NUNCA auto-runs.
+- **Incremental hook wiring é manual** — script é escrito em `.claude/hooks/`, mas referência em `.claude/settings.local.json` é opt-in por design.
+- **Gradle dependency parsing** cobre `implementation(project(...))` e variantes comuns; `includeBuild` ou DSL Kotlin avançado podem precisar extensão.
+- **Spike + chore subtypes** stubbed (refactor + bugfix shipados completos).
+- **MCP polling para external-dep resolution** stubbed — Gap 8 ship manual unblock; auto-polling fica pra v1.2+.
 
 ## Origin
 
