@@ -431,45 +431,118 @@ def list_archived_features(project_root: Path) -> list[str]:
 # ── phase_lock ───────────────────────────────────────────────────────────────
 
 
+def _phase_lock_path(feature_slug: str, project_root: Path) -> Path:
+    """Filesystem path of the atomic phase-lock sentinel file."""
+    return _l1_dir(project_root, feature_slug) / _PHASE_LOCK_FILE
+
+
 def acquire_phase_lock(
     feature_slug: str,
     project_root: Path,
     lock_id: str,
 ) -> bool:
-    """Try to set `phase_lock = lock_id` on status.json. Reentrant for same id.
+    """Try to set `phase_lock = lock_id`. Atomic across processes. Reentrant.
+
+    Uses ``os.open(O_CREAT | O_EXCL)`` on a per-feature sentinel file to win
+    the race deterministically — exactly one process succeeds when N race
+    on the same tick. status.json is mirrored AFTER the atomic gate so
+    read APIs (`current_phase_lock`) keep working unchanged.
 
     Returns True on success, False when another lock id is already active.
-    Creates a minimal status.json if absent (state `planning` by default).
+    Same lock_id is reentrant (returns True without rewriting state).
+
+    Orphan locks survive process crashes — recovery is via ``forge undo``
+    per Decision 27. We do not auto-clean stale sentinels here because the
+    "is this lock stale?" question requires user judgment.
     """
     if not lock_id:
         raise MemoryError("lock_id must be non-empty")
 
+    lock_path = _phase_lock_path(feature_slug, project_root)
+    ensure_dir(lock_path.parent)
+
+    # Atomic gate — first writer wins via O_CREAT | O_EXCL. All other
+    # racers see FileExistsError and fall through to the reentrant check.
+    try:
+        fd = os.open(
+            str(lock_path),
+            os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+            0o644,
+        )
+    except FileExistsError:
+        # Sentinel already exists — read it. Same id → reentrant True.
+        try:
+            existing = lock_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            existing = ""
+        if existing == lock_id:
+            # Re-stamp status.json so the human-readable mirror stays fresh.
+            _mirror_phase_lock_to_status(feature_slug, project_root, lock_id)
+            return True
+        return False
+
+    # We won. Write the id, then mirror to status.json. If the mirror step
+    # raises, unlink the sentinel so the caller can retry — otherwise we'd
+    # leak a sentinel pointing at a status that disagrees.
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(lock_id)
+            fh.flush()
+            os.fsync(fh.fileno())
+        _mirror_phase_lock_to_status(feature_slug, project_root, lock_id)
+    except Exception:
+        try:
+            lock_path.unlink()
+        except OSError:
+            pass
+        raise
+    return True
+
+
+def _mirror_phase_lock_to_status(
+    feature_slug: str, project_root: Path, lock_id: Optional[str]
+) -> None:
+    """Sync the atomic sentinel value into status.json's ``phase_lock`` field.
+
+    Called after every successful acquire / release so read APIs that
+    consume status.json keep returning consistent data. The atomic gate
+    above guarantees only one writer reaches this function at a time per
+    feature, so the read-modify-write here is safe.
+    """
     state = read_l1_status(feature_slug, project_root)
     if state is None:
         state = L1State(
             feature_slug=feature_slug,
             status="planning",
             last_action_at=_utc_now_iso(),
-            last_action_kind="phase-lock-acquired",
+            last_action_kind=(
+                "phase-lock-acquired" if lock_id else "phase-lock-released"
+            ),
             phase_lock=lock_id,
         )
         write_l1_status(state, project_root)
-        return True
-
-    if state.phase_lock and state.phase_lock != lock_id:
-        return False
+        return
 
     state.phase_lock = lock_id
-    state.last_action_kind = "phase-lock-acquired"
+    state.last_action_kind = (
+        "phase-lock-acquired" if lock_id else "phase-lock-released"
+    )
     state.last_action_at = _utc_now_iso()
     write_l1_status(state, project_root)
-    return True
 
 
 def release_phase_lock(feature_slug: str, project_root: Path) -> None:
-    """Clear `phase_lock` on status.json. No-op if no lock or no status.json."""
+    """Clear `phase_lock` on status.json + remove sentinel. No-op when absent."""
+    lock_path = _phase_lock_path(feature_slug, project_root)
+    sentinel_existed = lock_path.exists()
+    if sentinel_existed:
+        try:
+            lock_path.unlink()
+        except OSError:
+            pass
+
     state = read_l1_status(feature_slug, project_root)
-    if state is None or state.phase_lock is None:
+    if state is None or (state.phase_lock is None and not sentinel_existed):
         return
     state.phase_lock = None
     state.last_action_kind = "phase-lock-released"
