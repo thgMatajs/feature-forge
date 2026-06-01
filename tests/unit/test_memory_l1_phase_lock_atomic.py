@@ -129,3 +129,100 @@ def test_acquire_other_id_blocked_then_unblocked_after_release(tmp_path: Path):
     assert l1.acquire_phase_lock(slug, tmp_path, "lock-B") is False
     l1.release_phase_lock(slug, tmp_path)
     assert l1.acquire_phase_lock(slug, tmp_path, "lock-B") is True
+
+
+# ── HG-02 — sentinel is the source of truth (status.json is a mirror) ─────
+
+
+def test_current_phase_lock_reads_sentinel_when_status_lags(tmp_path: Path):
+    """HG-02: ``current_phase_lock`` must consult the sentinel first.
+
+    The atomic gate that protects the lock is the O_EXCL sentinel file,
+    not status.json. status.json is a human-readable mirror written AFTER
+    the sentinel — so there's a window where the sentinel exists and
+    status.json doesn't yet reflect the holder. Readers must consult the
+    sentinel first or they'll race the mirror write and report stale
+    ``None`` while a real lock is in flight.
+
+    Repro: write a sentinel directly, leave status.json alone (or absent),
+    and confirm ``current_phase_lock`` reports the sentinel value.
+    """
+    slug = "lag"
+    sentinel = l1._phase_lock_path(slug, tmp_path)
+    sentinel.parent.mkdir(parents=True, exist_ok=True)
+    sentinel.write_text("test_lock", encoding="utf-8")
+    # status.json deliberately not written.
+
+    result = l1.current_phase_lock(slug, tmp_path)
+    assert result == "test_lock", (
+        "current_phase_lock must consult the sentinel — status.json is "
+        "the lagging mirror, not the source of truth."
+    )
+
+
+# ── HG-03 — reentrant empty-read race ─────────────────────────────────────
+
+
+def test_acquire_phase_lock_reentrant_handles_empty_sentinel_window(
+    tmp_path: Path,
+):
+    """HG-03: an empty sentinel must trigger a retry, not a false ``False``.
+
+    The atomic gate is a two-step write: (a) ``os.open(O_EXCL)`` returns a
+    fd, (b) ``fh.write(lock_id)`` actually places content. A racing
+    same-process call between those two steps reads an empty sentinel.
+    Before the fix it returned ``False`` (treating empty as "foreign
+    lock"), even when the eventual write would have been by the same
+    lock_id.
+
+    Repro: pre-create an empty sentinel (winner mid-write), then schedule
+    a background thread to fill it with our lock_id 30ms later. The
+    acquire call from the main thread must retry through that window and
+    eventually observe its own id → return True.
+    """
+    import threading
+    import time as _time
+
+    slug = "empty_window"
+    sentinel = l1._phase_lock_path(slug, tmp_path)
+    sentinel.parent.mkdir(parents=True, exist_ok=True)
+    # Pre-create EMPTY sentinel — simulates "winner has the fd but hasn't
+    # written content yet".
+    sentinel.touch()
+    assert sentinel.exists()
+    assert sentinel.read_text(encoding="utf-8") == ""
+
+    def delayed_write():
+        _time.sleep(0.030)
+        sentinel.write_text("same-lock-id", encoding="utf-8")
+
+    timer = threading.Timer(0.0, delayed_write)
+    timer.start()
+    try:
+        # Acquire with SAME lock_id. Without the retry, we read empty,
+        # treat as foreign, and return False. With the retry, we re-read
+        # 20ms later, see our own id, and return True.
+        result = l1.acquire_phase_lock(slug, tmp_path, "same-lock-id")
+    finally:
+        timer.join(timeout=2.0)
+
+    assert result is True, (
+        "Reentrant acquire must retry through the empty-sentinel window — "
+        "an empty read mid-write is NOT a foreign lock signal."
+    )
+
+
+def test_acquire_phase_lock_truly_foreign_still_returns_false(tmp_path: Path):
+    """Regression guard: after retries exhaust on a truly foreign lock, False.
+
+    The retry must not flip foreign-lock denial into spurious acquires —
+    when the sentinel really does hold a different id, the final answer
+    is still False.
+    """
+    slug = "foreign"
+    sentinel = l1._phase_lock_path(slug, tmp_path)
+    sentinel.parent.mkdir(parents=True, exist_ok=True)
+    sentinel.write_text("someone-else", encoding="utf-8")
+
+    result = l1.acquire_phase_lock(slug, tmp_path, "me")
+    assert result is False

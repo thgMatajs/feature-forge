@@ -14,6 +14,7 @@ import json
 import os
 import shutil
 import sys
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -471,10 +472,22 @@ def acquire_phase_lock(
         )
     except FileExistsError:
         # Sentinel already exists — read it. Same id → reentrant True.
-        try:
-            existing = lock_path.read_text(encoding="utf-8").strip()
-        except OSError:
-            existing = ""
+        # HG-03 (review): the atomic gate is two steps — ``os.open(O_EXCL)``
+        # returns the fd; ``fh.write(lock_id)`` then places the content.
+        # A racing reentrant caller can land between those steps and read
+        # an empty sentinel. Treating empty as "foreign lock → False"
+        # produced spurious denials. Retry up to 3 times with 20ms backoff
+        # to let the winner finish its write; only after the window
+        # exhausts do we treat empty as a genuinely foreign holder.
+        existing = ""
+        for _ in range(3):
+            try:
+                existing = lock_path.read_text(encoding="utf-8").strip()
+            except OSError:
+                existing = ""
+            if existing:
+                break
+            time.sleep(0.020)
         if existing == lock_id:
             # Re-stamp status.json so the human-readable mirror stays fresh.
             _mirror_phase_lock_to_status(feature_slug, project_root, lock_id)
@@ -551,7 +564,27 @@ def release_phase_lock(feature_slug: str, project_root: Path) -> None:
 
 
 def current_phase_lock(feature_slug: str, project_root: Path) -> Optional[str]:
-    """Return current `phase_lock` value (or None when absent / no status)."""
+    """Return current `phase_lock` value (or None when absent).
+
+    HG-02 (review): the O_EXCL sentinel file is the authoritative gate.
+    status.json is the human-readable MIRROR written by
+    ``_mirror_phase_lock_to_status`` AFTER the sentinel — there is a
+    window where the sentinel exists and status.json hasn't caught up.
+    Readers must consult the sentinel first to avoid reporting a stale
+    ``None`` while a real lock is in flight.
+    """
+    lock_path = _phase_lock_path(feature_slug, project_root)
+    if lock_path.exists():
+        try:
+            sentinel_value = lock_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            sentinel_value = ""
+        if sentinel_value:
+            return sentinel_value
+        # Empty sentinel — winner is mid-write. Fall through to status.json
+        # which may hold the previous holder's value; better than returning
+        # None and signaling "no lock" when a write race is in flight.
+
     state = read_l1_status(feature_slug, project_root)
     return state.phase_lock if state else None
 
