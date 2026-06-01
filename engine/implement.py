@@ -767,6 +767,12 @@ def run(argv: list[str]) -> int:
         )
     )
 
+    # `lock_released` tracks explicit releases inside the critical region so
+    # the `finally` block doesn't double-call release. The flag exists because
+    # release_phase_lock is idempotent on missing lock but writes status.json
+    # on every call — skipping the double-write keeps history clean and the
+    # contract explicit: each path documents WHY it releases.
+    lock_released = False
     try:
         _print_plan_mode(task, project_root)
 
@@ -789,6 +795,7 @@ def run(argv: list[str]) -> int:
             )
             # Plano rejeitado — libera lock pra próxima invocação não travar.
             release_phase_lock(slug, project_root)
+            lock_released = True
             return 0
 
         append_history(
@@ -811,9 +818,16 @@ def run(argv: list[str]) -> int:
         ):
             _prompt_out_of_scope_paths(slug, project_root, feature_path, task)
 
+        # Apply Mode handoff entregue — libera lock antes do retorno (próxima
+        # invocação `forge implement` precisa adquirir lock pra nova TASK).
+        release_phase_lock(slug, project_root)
+        lock_released = True
+        return 0
+
     except PromptAbortedError:
         # Pause — keep state, release lock so other commands can run.
         release_phase_lock(slug, project_root)
+        lock_released = True
         append_history(
             slug,
             project_root,
@@ -826,11 +840,13 @@ def run(argv: list[str]) -> int:
             )
         )
         return 130
-
-    # Apply Mode handoff entregue — libera lock antes do retorno (próxima
-    # invocação `forge implement` precisa adquirir lock pra nova TASK).
-    release_phase_lock(slug, project_root)
-    return 0
+    finally:
+        # Backstop — any exception path that fell through without an explicit
+        # release lands here. Without this, an unhandled RuntimeError /
+        # OSError / etc. between acquire_phase_lock above and any return
+        # below leaks the lock and forces the user to run `forge undo`.
+        if not lock_released:
+            release_phase_lock(slug, project_root)
 
 
 __all__ = ["run"]
