@@ -44,7 +44,7 @@ if ! is_live_code "$REL_PATH"; then
 fi
 
 # Check se já avisou nesta sessão
-ALREADY_WARNED=$(python3 -c "
+ALREADY_WARNED=$(WARNED="$WARNED" TARGET="$REL_PATH" python3 -c "
 import json, sys, os
 path = os.environ.get('WARNED', '')
 target = os.environ.get('TARGET', '')
@@ -60,14 +60,14 @@ try:
         print('no')
 except Exception:
     print('no')
-" WARNED="$WARNED" TARGET="$REL_PATH")
+")
 
 if [[ "$ALREADY_WARNED" == "yes" ]]; then
     exit 0
 fi
 
 # Append to warned + pending
-python3 -c "
+WARNED="$WARNED" PENDING="$PENDING" TARGET="$REL_PATH" python3 -c "
 import json, os, sys
 warned_path = os.environ['WARNED']
 pending_path = os.environ['PENDING']
@@ -85,7 +85,7 @@ for p in (warned_path, pending_path):
         data.setdefault('files', []).append(target)
     with open(p, 'w') as f:
         json.dump(data, f, indent=2)
-" WARNED="$WARNED" PENDING="$PENDING" TARGET="$REL_PATH"
+"
 
 cat <<EOF >&2
 
