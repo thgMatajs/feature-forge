@@ -1,0 +1,21 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "command": ".claude/hooks/session-start-orientation.sh"
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "command": ".claude/hooks/pre-tool-use-load-bearing.sh"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "command": ".claude/hooks/post-edit-doc-drift.sh"
+      }
+    ]
+  }
+}
