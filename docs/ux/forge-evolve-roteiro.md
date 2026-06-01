@@ -687,3 +687,182 @@ forge plan <slug>          começar feature nova usando as novidades
 forge memory L2            inspecionar L2 pós-evolve
 forge undo                 desfazer a última proposta aplicada
 ```
+
+---
+
+## Cenas 15–20 — Reuse intelligence proposals (Gap 18 expandido)
+
+Propostas geradas pelo init-time reuse scan
+(`engine/graph/duplicates.queue_proposals_from_table`) chegam ao evolve com
+6 tipos distintos, todos com mesmo apply path: **escrever feature-intake
+stub em `non-product/refactor-{slug}/` + L1 status com subtype=refactor**,
+e delegar o refactor real para `forge plan refactor-{slug}` (Gap 2 flow).
+
+### Cena 15 — Apply de `consolidate-duplicate-helper`
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ P-0001 · CONSOLIDATE DUPLICATE HELPER                  confidence 0.95 │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Mesma extensão `Modifier.onFocusBlur(action)` duplicada em 2 arquivos do │
+│ mesmo módulo `androidApp:feature:auth`. Body byte-equivalent.           │
+│                                                                         │
+│ Locations:                                                              │
+│   · androidApp/feature/auth/.../LoginComponents.kt:84                   │
+│   · androidApp/feature/auth/.../RegisterComponents.kt:122               │
+│                                                                         │
+│ Suggested target:                                                       │
+│   androidApp/feature/auth/src/main/kotlin/.../util/                     │
+│                                                                         │
+│ a) Aplicar  · b) Rejeitar  · c) Adiar  · v) Ver detalhe                │
+└─────────────────────────────────────────────────────────────────────────┘
+> a
+
+  ✓ feature-intake.md gerado em
+    docs/feature-implementation-workflow/non-product/
+      refactor-modifier-on-focus-blur/feature-intake.md
+  ✓ L1 status.json criado com subtype=refactor
+  ✓ Próximo: forge plan refactor-modifier-on-focus-blur
+```
+
+### Cena 16 — Apply de `promote-to-shared-helper`
+
+Mesma estrutura, mas o suggested_target vem do **Gradle dependency
+closure** (smallest-common-ancestor):
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ P-0002 · PROMOTE TO SHARED HELPER                      confidence 0.85 │
+├─────────────────────────────────────────────────────────────────────────┤
+│ `FirebaseAnalytics.logEventSafely` idêntico em 3 módulos siblings:      │
+│   · shared:feature:auth                                                 │
+│   · shared:feature:home                                                 │
+│   · shared:feature:bonsai                                               │
+│                                                                         │
+│ Smallest-common-ancestor (via build.gradle deps closure):               │
+│   shared:core                                                           │
+│                                                                         │
+│ Suggested target:                                                       │
+│   shared/core/src/commonMain/kotlin/.../util/                           │
+│                                                                         │
+│ a) Aplicar  · b) Rejeitar  · c) Adiar  · v) Ver detalhe                │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Cena 17 — Apply de `remove-redundant-platform-helper`
+
+Quando uma extensão Kotlin Android é byte-equivalent a uma versão
+shared:commonMain — o Android é redundante:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ P-0003 · REMOVE REDUNDANT PLATFORM HELPER              confidence 0.90 │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Android-side `String.toLocalDateOrNull()` é idêntico ao shared.         │
+│   · shared:core / commonMain (canonical)                                │
+│   · androidApp:feature:bonsai / main (redundant)                        │
+│                                                                         │
+│ Suggested action:                                                       │
+│   keep: shared:core · remove: androidApp:feature:bonsai                │
+│                                                                         │
+│ a) Aplicar  · b) Rejeitar  · c) Adiar  · v) Ver detalhe                │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Cena 18 — `review-near-duplicate-helper` (NÃO auto-apply)
+
+Confidence baixa (0.40) — assinatura igual, body_hash DIFERENTE. Pode ser
+drift acidental OU divergência intencional. **Apply NUNCA é automático**;
+intake stub abre com migration plan "MANUAL — decide first".
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ P-0004 · REVIEW NEAR-DUPLICATE HELPER                  confidence 0.40 │
+│                                          ⚠ needs human review          │
+├─────────────────────────────────────────────────────────────────────────┤
+│ `Modifier.onFocusBlur(action)` aparece em 2 arquivos com mesma          │
+│ assinatura mas IMPLEMENTAÇÕES DIFERENTES (body_hash divergente).        │
+│                                                                         │
+│ Locations + body hashes:                                                │
+│   · LoginComponents.kt:84    body_hash=3a7f...                         │
+│     (composed { var hadFocus by remember { ... } } — stateful)          │
+│   · RegisterComponents.kt:122 body_hash=9b21...                        │
+│     (passthrough sem composed — provavelmente bug)                      │
+│                                                                         │
+│ Suggested:                                                              │
+│   manual review — bodies divergem                                       │
+│                                                                         │
+│ Mentor calmo: pode ser bug em uma das implementações OU intencional.    │
+│ Decida ANTES de consolidar. Se merge automático: risco de quebrar.      │
+│                                                                         │
+│ a) Aplicar (abre intake p/ manual review)  · b) Rejeitar  · c) Adiar    │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Cena 19 — `kmp-migration-candidate` (cross-language)
+
+Swift extension cuja `(receiver, name)` mirror Kotlin shared+commonMain.
+Confidence escala com **token Jaccard similarity** (não AST):
+
+| Jaccard | Confidence |
+|---|---|
+| ≥ 0.80 | 0.75 |
+| 0.60–0.80 | 0.60 |
+| 0.40–0.60 | 0.50 |
+| < 0.40 | dropped (não vira finding) |
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ P-0005 · KMP MIGRATION CANDIDATE                        confidence 0.60 │
+│                            ⚠ token similarity 0.67, manual verify      │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Swift `extension Species { var displayName: String }` no iosApp/        │
+│ mirror de Kotlin `fun Species.displayName(): String` no shared:core.    │
+│                                                                         │
+│ Locations:                                                              │
+│   · shared/core/src/commonMain/.../SpeciesExtension.kt:18  (kotlin)     │
+│   · iosApp/Shared/Extensions/SpeciesExtension.swift:12     (swift)      │
+│                                                                         │
+│ Suggested:                                                              │
+│   replace Swift extension with SKIE call to shared Kotlin               │
+│                                                                         │
+│ Mentor calmo: similarity é sintática (tokens), não semântica. Verifique │
+│ que o Kotlin retorna mesma string e que SKIE exporta sem caveat.        │
+│                                                                         │
+│ a) Aplicar (abre intake p/ manual verify)  · b) Rejeitar  · c) Adiar    │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Cena 20 — `consolidate-ts-helper`
+
+Análogo a `consolidate-duplicate-helper` mas para TypeScript top-level
+functions (sem receiver_type):
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ P-0006 · CONSOLIDATE TS HELPER                          confidence 0.95 │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Função `formatDateBR(date: Date): string` duplicada em 2 arquivos do    │
+│ módulo webApp. Body byte-equivalent.                                    │
+│                                                                         │
+│ Locations:                                                              │
+│   · webApp/src/features/dashboard/dateFormat.ts:8                       │
+│   · webApp/src/features/profile/helpers.ts:14                           │
+│                                                                         │
+│ Suggested target:                                                       │
+│   webApp/util/                                                          │
+│                                                                         │
+│ a) Aplicar  · b) Rejeitar  · c) Adiar                                  │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Edge cases dos 6 tipos novos
+
+| Situação | Comportamento |
+|---|---|
+| Usuário rejeita uma vez (`b`) | Fingerprint SHA-256 vai pra rejected-evolutions.yaml. Re-run `forge init` ou `forge reconfigure` NÃO re-propõe (rejection veto). |
+| Mesmo grupo cresce (4º arquivo idêntico) | Fingerprint é group identity (não membership). Proposal entry stays; payload refreshes com locations atualizadas no próximo rebuild. |
+| Apply em proposta `near-duplicate` | Intake abre com migration plan explicitamente "MANUAL — bodies diverged. Decide first." Nunca consolida automaticamente. |
+| `kmp-migration-candidate` com similarity 0.40 | Confidence 0.50, intake destaca o score e pede manual verify de semântica. |
+| `forge plan refactor-{slug}` depois de apply | plan.py lê L1 status.json, detecta subtype=refactor, pula Wave A discovery e entra direto no fluxo Gap 2 (refactor track). |
+| Rejection muda de ideia | `forge memory` → "unreject" (futuro). v1.1 não tem ainda — workaround: editar `rejected-evolutions.yaml` à mão. |

@@ -1196,6 +1196,98 @@ input dado o mesmo estado de repo).
 - [ ] Smoke test: rodar `forge plan` numa feature de teste e verificar
       que `existing-helpers.yaml` é escrito após Wave B
 
+**Expansão 2026-06-01 — init-time + incremental + 6 categorias** ✅
+
+A solução original cobria APENAS o momento de planejar uma feature
+(prefetch de helpers via Q11 antes de tech-spec). Não cobria **duplicações
+já existentes no codebase** nem **edits que introduzem novas duplicações**.
+
+Expansão completa shipada em 2026-06-01 — feature-forge agora "nasce com
+inteligência": primeira vez que vê o projeto (`forge init` Step 11.5), já
+detecta o backlog acumulado.
+
+- [x] **6 categorias de finding** (`engine/graph/duplicates.py`):
+  - `duplicate-within-module` (Kotlin extension repetida em 1 módulo, conf 0.95)
+  - `duplicate-cross-module` (sibling modules → smallest-common-ancestor
+    via parsed Gradle dependency closure, conf 0.85)
+  - `redundant-platform-specific` (Android Kotlin idêntico a
+    `commonMain` shared, conf 0.90)
+  - `near-duplicate` (mesma signature, body_hash diferente — drift signal,
+    conf 0.40, manual review demanded)
+  - `kmp-migration-candidate` (Swift extension ↔ Kotlin shared com token
+    Jaccard ≥0.4, conf 0.50–0.75 escalando com similarity)
+  - `duplicate-ts-helper` (TypeScript top-level duplicado num módulo,
+    conf 0.95)
+- [x] **Schema v2** (`engine/utils/sqlite_io.py`): colunas
+  `files.source_set` + `symbols.{receiver_type, body_hash, body_tokens,
+  modifiers}`, tabelas `module_deps` + `reuse_findings` +
+  `reuse_finding_locations`.
+- [x] **Parser overhaul** (Kotlin / Swift / TS): visibility agora
+  persistida (era hardcoded "public"), signature normalizada, body
+  extraction brace-aware em `engine/graph/_body_text.py`, body_hash
+  (SHA-1[:16]) + body_tokens (JSON) para Jaccard cross-language. Swift
+  two-pass captura receiver de `extension Type { func ... }`.
+- [x] **Module inference** (`engine/graph/gradle_modules.py` +
+  `gradle_deps.py`): settings.gradle parsing com longest-prefix match
+  (suporta `:shared:feature:auth`, `:androidApp:feature:bonsai`, etc.) +
+  build.gradle parsing → transitive closure → smallest-common-ancestor
+  para `duplicate-cross-module` target inference.
+- [x] **Q11 backward-compat**: filtro `f.module = 'shared'` → `LIKE
+  'shared:%'` para multi-módulo shared.
+- [x] **Q12–Q17 queries** (`engine/graph/queries.py`) + opções 12–17 no
+  menu `forge graph` + `r` (combined view).
+- [x] **Init Step 11.5** (`engine/init.py`):
+  `queue_proposals_from_table` após graph build → 6 novos `kind` em
+  `proposed-evolutions.yaml` reviewable via `forge evolve`.
+- [x] **Init Step 11.6** (`engine/init.py`): escreve
+  `.claude/hooks/post-edit-detect-duplications.sh` (opt-in via
+  `.claude/settings.local.json`).
+- [x] **Apply integration com Gap 2** (`engine/graph/reuse_apply.py`):
+  6 novos `kind` no `_VALID_KINDS` do distiller. Apply renderiza
+  `templates/feature-intake-refactor.template.md` + escreve L1
+  `status.json` com `subtype="refactor"` → `forge plan {slug}` detecta e
+  pula Wave A discovery (Gap 2 integration nativa).
+- [x] **Reconfigure rebuild hook**: `_handle_graph` re-queue após
+  rebuild — idempotente por fingerprint.
+- [x] **Doctor** (`engine/doctor.py`): `_check_reuse_findings`
+  aggregated por categoria.
+- [x] **Incremental detection** (`engine/graph/incremental.py`):
+  `detect_after_update` re-parsa arquivos editados, roda mini-detection
+  e retorna findings novos. Subcomando `forge graph detect-incremental
+  <file>` non-interactive para hook entrypoint.
+- [x] **Tests**: 20 unit tests novos em
+  `tests/unit/test_reuse_intelligence.py` (body extraction, gradle
+  parsing, parser fields, end-to-end pipeline, apply + status.json).
+  **367 passed / 0 regressões.**
+- [x] **Smoke test MeoBonsai**: detecta
+  `FirebaseAnalytics.logEventSafely` como `duplicate-cross-module`
+  através de `:shared:feature:home/auth/bonsai`, suggested target via
+  closure = `:shared:resources/.../util/` (493 files, 3528 symbols,
+  10.3s).
+- [x] **Schema docs**: `docs/schemas/graph.md` +
+  `docs/schemas/proposed-evolutions.md` ganham seção "Reuse Intelligence
+  (schema v2)".
+
+**Princípios preservados**:
+- Discipline §4 (deterministic context) — apply NUNCA mexe em código
+  diretamente; só materializa intake stub e delega refactor flow.
+- Discipline §5 (rejection veto) — fingerprints SHA-256 64-char
+  compatíveis com `rejected-evolutions.yaml`. Rejeitar uma vez
+  persiste.
+- Decision 9 + 10 (12 verbos, zero flags) — `forge graph detect-incremental`
+  é subcomando (positional argv), não flag.
+
+**Conhecidos limites v1.1**:
+- `kmp-migration-candidate` confidence é shallow (token Jaccard, não AST
+  semântico). False positives possíveis — confidence baixa força revisão
+  manual; rejection veto persiste decisão.
+- Hook script é escrito no init, mas wiring em
+  `.claude/settings.local.json` é manual (opt-in por design — não queremos
+  surpreender o usuário).
+- Gradle dependency parsing cobre `implementation(project(...))` e
+  variantes comuns. DSL Kotlin avançado ou `includeBuild` exigem extensão
+  futura.
+
 ### Resumo da fila pós-stress-test (cumulativo)
 
 Total: 18 gaps mapeados a partir de 20 cenários analisados (3 rounds).

@@ -837,6 +837,44 @@ após rollback.
 
 ---
 
+## Graph rebuild + reuse intelligence re-queue
+
+Quando o usuário escolhe `[ ] graph` → "rebuild full" no menu de reconfigure,
+o engine executa duas operações em sequência:
+
+```
+[0:42] Rebuilding graph…
+        parsing: 1247/1247
+        ✓ 1247 files · 5892 symbols · 14103 edges · 8214ms
+
+[0:51] ✓ 3 reuse proposal(s) (re)queued — `forge evolve`
+```
+
+A segunda linha vem de `engine/graph/duplicates.queue_proposals_from_table`:
+ao rebuildar o graph, qualquer mudança no codebase (extensions adicionadas,
+movidas ou removidas) reflete na detecção. Fingerprints SHA-256 são **group
+identity** (não membership), então:
+
+- Mesmo grupo cresceu (4ª duplicação aparece): payload da proposta refresca
+  com locations atualizadas; entry NÃO duplica.
+- Grupo encolheu (alguém já consolidou): proposta antiga não some
+  automaticamente — usuário aplica/rejeita normalmente.
+- Grupo desaparece (consolidação completa): proposta vira stale → será
+  removida no próximo evolve scan (Cena 13 evolve roteiro).
+- Rejeição persiste: fingerprint na `rejected-evolutions.yaml` impede
+  re-proposta. Mentor calmo: rejeitar uma vez é pra sempre.
+
+Quando o codebase está limpo:
+
+```
+[0:42] Rebuilding graph…
+        ✓ 1247 files · 5892 symbols · 14103 edges · 8214ms
+```
+
+(sem linha de re-queue — silêncio é o sinal de OK.)
+
+---
+
 ## Init vs reconfigure (cheat sheet)
 
 | Aspecto | init | reconfigure |

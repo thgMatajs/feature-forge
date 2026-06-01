@@ -394,5 +394,67 @@ Deferred to keep v1 lean:
    opened/merged updates feature state + posts summary. Slow but
    non-blocking (< 30s).
 
+---
+
+## Reuse intelligence dataflow (Gap 18 expandido)
+
+`reuse_findings` é o 5º artifact materializado dessa pipeline. Diferente
+dos outros, ele é **derived state** — não recebe input direto do hook,
+é re-computado a partir do graph (`symbols`, `files`, `module_deps`) toda
+vez que o graph muda.
+
+```
+source files  ──build_full──>  symbols + files +  ──detect_all_*──>  reuse_findings
+(.kt/.swift/                   module_deps           (6 queries)      + locations
+ .ts/.tsx)
+                                                                            │
+                                                                            │ queue_proposals
+                                                                            ▼
+                                                              proposed-evolutions.yaml
+                                                                            │
+                                                                            │ forge evolve apply
+                                                                            ▼
+                                              non-product/refactor-{slug}/feature-intake.md
+                                                + L1 status.json subtype=refactor
+                                                                            │
+                                                                            │ forge plan refactor-{slug}
+                                                                            ▼
+                                                       refactor Wave A→E (Gap 2 flow)
+```
+
+**6 trigger points alimentam essa pipeline:**
+
+| Trigger | O quê alimenta | Latency |
+|---|---|---|
+| `forge init` Step 11.5 | Inicial — todo o backlog do projeto vira findings | depende do tamanho (~10s em MeoBonsai 8k LOC) |
+| `forge reconfigure` → graph rebuild | Refresh — qualquer mudança no codebase reflete | mesma do rebuild |
+| Post-edit hook (`.claude/hooks/post-edit-detect-duplications.sh`) | Incremental — só pra arquivo editado, surface inline | < 200ms |
+| `apply_proposal_to_l2(reuse-kind)` | Out — escreve intake + L1 status (NÃO mexe em código) | < 50ms |
+| `apply_proposal_to_l2(reject)` | Out — fingerprint vai pra rejected-evolutions; futuros scans skipam | < 50ms |
+| `forge plan refactor-{slug}` | Out — lê L1 status subtype=refactor, dispatcha Gap 2 flow | Wave A skipada |
+
+**Idempotência por fingerprint SHA-256:**
+
+```
+fingerprint = sha256(category | receiver_type | name | signature | body_hash | <category-specific extras>)
+```
+
+Mesmo grupo (e.g., 3 duplicações de `FirebaseAnalytics.logEventSafely` em
+3 módulos) tem fingerprint estável across rebuilds. Adicionar 4ª duplicação
+NÃO muda fingerprint — payload da proposta refresca, entry NÃO duplica.
+
+Categorias e suas regras de fingerprint estão em
+`docs/schemas/graph.md § Reuse Intelligence (schema v2)`.
+
+**Disciplina §4 (deterministic context) preservada:** apply nunca toca em
+código. Materializa intake stub + L1 status, e delega refactor real para o
+fluxo Gap 2 (`forge plan refactor-{slug}` → Wave A→E refactor track).
+
+**Disciplina §5 (rejection veto) preservada:** rejeitar uma proposta
+persiste o fingerprint em `rejected-evolutions.yaml`. Re-rodar `forge init`
+ou `forge reconfigure` NÃO re-propõe o mesmo grupo.
+
+---
+
 All call the same entry point `forge ingest --event <X>`. Changing what each
 event does = changing 1 Python file, not 9 hooks.

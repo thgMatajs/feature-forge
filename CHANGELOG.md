@@ -5,6 +5,91 @@ Todas as mudanças notáveis no feature-forge.
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
+## [1.1.0] — 2026-06-01
+
+### Adicionado
+
+#### Stress-test 2026-05-29 — 4 Gaps shipped
+
+- **Gap 1 — Bugfix subtype** (hotfix urgency fast-path): `subtype="bugfix"` no
+  `_VALID_SUBTYPES`, keyword + ticket-pattern detection (`IN-/PD-/BUG-`),
+  Wave B conditional sub-question (`A·C·D·E` logic-only OR `A·B·C·D·E`
+  UI-observable), template `feature-intake-bugfix.template.md`.
+- **Gap 2 — Non-product feature track** (refactor only; spike + chore stubbed):
+  `subtype=refactor|spike|chore`, filesystem layout `non-product/{slug}/`,
+  template `feature-intake-refactor.template.md`, validator
+  `check_no_behavior_change` gateando Wave E.
+- **Gap 8 — `blocked-on-external` state** (orthogonal to subtype): state
+  enum value, manual unblock via `forge reconfigure → external-deps`,
+  preservado em retomadas.
+- **Gap 18 — Reuse intelligence** (expansão completa): detecção init-time +
+  incremental + 6 categorias (within-module, cross-module, redundant-platform,
+  near-duplicate, kmp-migration, ts-helper) + integração com `forge plan`
+  refactor subtype.
+
+#### Reuse intelligence (Gap 18 expandido)
+
+- **6 detection categories** em `engine/graph/duplicates.py`:
+  - `duplicate-within-module` (Kotlin extension repetida em 1 módulo, conf 0.95)
+  - `duplicate-cross-module` (sibling modules → smallest-common-ancestor via
+    Gradle dependency closure, conf 0.85)
+  - `redundant-platform-specific` (Android Kotlin idêntico a shared commonMain, conf 0.90)
+  - `near-duplicate` (mesma assinatura, body_hash diferente — drift signal, conf 0.40)
+  - `kmp-migration-candidate` (Swift ↔ Kotlin shared com Jaccard ≥0.4, conf 0.50–0.75)
+  - `duplicate-ts-helper` (TypeScript top-level duplicado, conf 0.95)
+- **Schema v2 — colunas + tabelas**:
+  - `files.source_set` (commonMain / androidMain / iosMain / …)
+  - `symbols.{receiver_type, body_hash, body_tokens, modifiers}`
+  - `module_deps` (Gradle dependency graph parsed de cada `build.gradle(.kts)`)
+  - `reuse_findings` + `reuse_finding_locations` (materialized detection output)
+- **Parser overhaul** (Kotlin / Swift / TypeScript):
+  - visibility agora persistida (era hardcoded "public")
+  - signature normalizada (param names dropped, generics simplified)
+  - body extraction brace-aware em `engine/graph/_body_text.py`
+  - body_hash (SHA-1[:16]) + body_tokens (JSON) para Jaccard cross-language
+  - Swift two-pass captura receiver de `extension Type { func ... }`
+- **Module inference** (settings.gradle + build.gradle parsing):
+  - `engine/graph/gradle_modules.py`: longest-prefix match para multi-módulo
+    (KMP `:shared:feature:auth` ou Android `:androidApp:feature:bonsai`)
+  - `engine/graph/gradle_deps.py`: transitive closure + smallest-common-ancestor
+- **Apply flow** (`engine/graph/reuse_apply.py`):
+  - 6 novos kinds em `_VALID_KINDS` do distiller
+  - `apply_proposal_to_l2` dispatcha para `apply_reuse_intelligence_proposal`
+  - Renderiza `templates/feature-intake-refactor.template.md` com payload
+  - Escreve L1 `status.json` com `subtype="refactor"` → `forge plan {slug}`
+    detecta automaticamente e pula Wave A discovery (Gap 2 integration)
+- **Engine wiring**:
+  - `engine/init.py` Step 11.5: `queue_proposals_from_table` após graph build
+  - `engine/init.py` Step 11.6: escreve `.claude/hooks/post-edit-detect-duplications.sh`
+  - `engine/reconfigure.py`: re-queue após rebuild
+  - `engine/doctor.py`: `_check_reuse_findings` agregado por categoria
+  - `engine/graph_cli.py`: opções 12–17 + `r` (combined) + `forge graph detect-incremental <file>` non-interactive
+  - `engine/graph/incremental.py`: `detect_after_update` para hook entrypoint
+- **Q11 backward-compat**: filtro `f.module = 'shared'` → `LIKE 'shared:%'`
+  para multi-módulo shared.
+- **Tests**: 20 unit tests em `tests/unit/test_reuse_intelligence.py`,
+  cobrindo body extraction, gradle parsing, parser fields, detection completo,
+  apply + status.json. **367 tests passam, 0 regressões**.
+- **Schema docs**: `docs/schemas/graph.md` + `docs/schemas/proposed-evolutions.md`
+  ganham seção "Reuse Intelligence (schema v2)".
+
+### Mudado
+
+- `_VALID_KINDS` do `engine/memory/distiller.py` ganha 6 entries reuse-related.
+- `engine/graph/queries.py` Q11 (`find_reusable_helpers`) suporta multi-módulo
+  shared via `LIKE 'shared:%'`.
+
+### Conhecidos limites v1.1
+
+- `kmp-migration-candidate` confidence é shallow (token Jaccard, não AST).
+  False positives possíveis — apply NUNCA auto-runs; usuário revisa.
+- Hook script `.claude/hooks/post-edit-detect-duplications.sh` é escrito
+  no init, mas wiring em `.claude/settings.local.json` é manual (opt-in).
+- Gradle dependency parsing cobre `implementation(project(...))` e
+  variantes comuns. DSL Kotlin avançado ou `includeBuild` pode falhar.
+
+[1.1.0]: https://github.com/thgMatajs/feature-forge/releases/tag/v1.1.0
+
 ## [1.0.0] — 2026-05-29
 
 ### Adicionado

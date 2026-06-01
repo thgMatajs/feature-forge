@@ -159,6 +159,75 @@ to reassure.
 
 ---
 
+## Cena 5.5 — Reuse intelligence scan (48–50s)
+
+Logo após o graph build, ainda dentro do mesmo step cinemático, o init varre
+o graph recém-construído atrás de oportunidades de reuso já presentes no
+codebase. **Brownfield** quase sempre tem helpers duplicados em features que
+nasceram em momentos diferentes — surfaçar isso aqui é o que faz o forge
+"nascer com inteligência" no primeiro contato com o projeto.
+
+```
+[0:19] 🔍 Scanning for reuse opportunities…
+       ├ Same-module duplications                ✓
+       ├ Cross-module duplications               ✓
+       ├ Redundant platform-specific             ✓
+       ├ Near-duplicates (signature match, body diff) ✓
+       ├ KMP-migration candidates (Swift ↔ Kotlin shared) ✓
+       └ TypeScript duplicate helpers            ✓
+
+       3 reuse-intelligence proposal(s) queued — `forge evolve` to review.
+```
+
+**Quando há findings:**
+
+- Cada finding vira proposta em `.claude/proposed-evolutions.yaml` com
+  fingerprint estável (SHA-256). Idempotente — re-rodar init não duplica.
+- 6 categorias possíveis, descritas em
+  `docs/schemas/proposed-evolutions.md § Reuse Intelligence`.
+- User revisa via `forge evolve` (não automático). Confidence < 0.50
+  sempre exige review manual.
+
+**Quando NÃO há findings:**
+
+```
+[0:19] 🔍 Scanning for reuse opportunities…
+       ✓ no reuse opportunities detected
+```
+
+Mentor calmo: zero findings é um sinal positivo — projeto já está
+internamente consistente OU é pequeno demais pra duplicar.
+
+---
+
+## Cena 5.6 — Incremental detection hook (50–51s)
+
+Escreve `.claude/hooks/post-edit-detect-duplications.sh` que pode ser
+referenciado em `.claude/settings.local.json` para detection inline durante
+edits. **Wiring é opt-in** — não modificamos settings.local.json
+automaticamente para não surpreender.
+
+```
+[0:20] · hook em .claude/hooks/post-edit-detect-duplications.sh
+        (referencie em settings.local.json pra detection inline)
+```
+
+Quando ativado, edits que introduzem duplicações novas aparecem inline no
+terminal:
+
+```
+⚠ 1 reuse-intelligence finding(s) touching edited files:
+  · [duplicate-cross-module] FirebaseAnalytics.logEventSafely (conf=0.85)
+      → shared/core/.../util/
+      shared/feature/auth/.../AuthAnalytics.kt:42
+      shared/feature/bonsai/.../BonsaiAnalytics.kt:51
+  Run `forge evolve` to review proposals.
+```
+
+Não bloqueia o edit — informa apenas.
+
+---
+
 ## Cena 6 — Confirmação + perguntas grupadas (48–60s)
 
 Now the skill **shows what it understood** and asks only what it can't detect.

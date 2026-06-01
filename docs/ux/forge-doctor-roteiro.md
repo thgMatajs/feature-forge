@@ -167,6 +167,29 @@ nada). Mas a presença é destacada porque outros comandos vão respeitar.
                                                 ✓ passing
 ```
 
+### 3.5.1 — Reuse intelligence (6.2–6.4s)
+
+Agregação dos `reuse_findings` materializados pelo init scan + rebuilds.
+Categorias com counts > 0 viram WARN; tudo zerado é OK. SKIP quando o
+graph ainda não foi construído.
+
+```
+[0:06] 🔍 Reuse intelligence
+       ├ findings                                ⚠ 4 pending — `forge evolve`
+       │   duplicate-cross-module: 1
+       │   kmp-migration-candidate: 2
+       │   near-duplicate: 1
+       │                                                ─────────
+       │                                                ⚠ warn
+```
+
+Quando zerado:
+
+```
+[0:06] 🔍 Reuse intelligence
+       └ findings                                ✓ nenhuma duplicação pendente
+```
+
 ### 3.6 — Hooks (6.2–6.7s)
 
 ```
