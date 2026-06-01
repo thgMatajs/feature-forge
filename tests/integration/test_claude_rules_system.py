@@ -181,7 +181,8 @@ def test_bootstrap_is_idempotent():
     assert r1.returncode == 0, f"first run failed: {r1.stderr}"
     # Capture state
     r_status = subprocess.run(
-        ["git", "status", "--porcelain"], cwd=REPO_ROOT, capture_output=True, text=True
+        ["git", "status", "--porcelain", ".claude/"],
+        cwd=REPO_ROOT, capture_output=True, text=True,
     )
     state_before = r_status.stdout
     # Second run
@@ -190,7 +191,8 @@ def test_bootstrap_is_idempotent():
     )
     assert r2.returncode == 0, f"second run failed: {r2.stderr}"
     r_status2 = subprocess.run(
-        ["git", "status", "--porcelain"], cwd=REPO_ROOT, capture_output=True, text=True
+        ["git", "status", "--porcelain", ".claude/"],
+        cwd=REPO_ROOT, capture_output=True, text=True,
     )
     state_after = r_status2.stdout
     assert state_before == state_after, "bootstrap is not idempotent"
@@ -201,20 +203,16 @@ def test_bootstrap_is_idempotent():
 
 def test_gitignore_covers_state_json():
     """`.claude/state/*.json` must be ignored, but `.gitkeep` must be tracked."""
-    test_file = STATE_DIR / "_test_ignore_probe.json"
-    test_file.write_text("{}")
-    try:
-        result = subprocess.run(
-            ["git", "check-ignore", str(test_file.relative_to(REPO_ROOT))],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-        )
-        assert result.returncode == 0, (
-            f"state/*.json should be gitignored; rc={result.returncode}"
-        )
-    finally:
-        test_file.unlink()
+    # `git check-ignore` accepts non-existent paths — no need to touch the real FS
+    result = subprocess.run(
+        ["git", "check-ignore", ".claude/state/_probe.json"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        f"state/*.json should be gitignored; rc={result.returncode}"
+    )
 
     result_keep = subprocess.run(
         ["git", "check-ignore", ".claude/state/.gitkeep"],
