@@ -67,6 +67,267 @@ shot. Mentor calmo doesn't force the user through a wizard.
 
 ---
 
+## Cena 2.5 — Subtype detection (4.5–6s, conditional)
+
+Inserida entre Cena 2 (source-inquiry) e Cena 3 (context load) quando o
+conductor identifica keywords de não-produto na resposta livre do usuário.
+Discipline §8 — non-product feature track.
+
+### Caso happy path — refactor detectado e confirmado
+
+```
+[0:04] Vi a palavra "mover" e "sem mudança visual" no que você descreveu.
+       Isso parece um refactor — comportamento inalterado por design,
+       sem PRD natural, sem screen-analysis, sem analytics nova.
+       
+       Confirma?  [sim / não, é feature de produto]
+       
+       > sim
+       
+[0:05] Beleza. Vou seguir como subtype=refactor:
+         • Pulo Wave B (sem screen-analysis, sem contracts behaviorais)
+         • feature-intake.md usa variante stripped
+         • tech-spec.md renderiza só §2 (antes/depois) + layers tocados + §14
+         • Wave E adiciona `check_no_behavior_change` no cascade
+       
+       Persistido em status.json.subtype + hypothesis.yaml.subtype.
+```
+
+Conductor escreve `subtype: refactor` em **dois lugares simultâneos**:
+`.claude/memory/L1/{slug}/status.json` (campo `subtype`) e
+`.claude/memory/L1/{slug}/hypothesis.yaml` (campo `subtype`). Resume reads
+from disk; live introspection in later phases is forbidden
+(deterministic-context discipline).
+
+### Caso edge — user denied refactor inference
+
+```
+[0:04] Vi "renomear" no que você descreveu. Isso parece refactor — confirma?
+       
+       > não, é feature nova de verdade
+       
+[0:05] Beleza. Trato como subtype=product (default). Waves A-E completas.
+       
+       (Persistido em status.json.subtype = "product")
+```
+
+Mentor calmo aceita o no sem moralizar. O default é a fallback segura.
+
+### Caso happy path — bugfix detectado e confirmado (Gap 1)
+
+```
+[0:04] Vi o ticket IN-37234 e "validação quebrada" no que você descreveu.
+       Isso parece bugfix — um bug com repro conhecido pra corrigir, não
+       feature nova.
+       
+       Confirma?  [sim / não, é feature de produto]
+       
+       > sim
+       
+[0:05] Beleza. Vou seguir como subtype=bugfix:
+         • feature-intake.md usa variante bugfix (repro + expected/actual
+           + root-cause + regression risk)
+         • feature-prd.md skipada (bugfix não tem PRD — fix de comportamento
+           correto)
+         • Wave B é conditional — pergunto a seguir se envolve UI/comportamento
+           observável
+         • tech-spec.md focado (§1 + §2 antes/depois + layers tocadas + §13)
+         • Wave D default = 1 task (atomic commit); split se precisar
+         • Retrospective rodará 5-whys depois do implement (discipline §8)
+       
+       Persistido em status.json.subtype + hypothesis.yaml.subtype.
+       
+[0:06] Esse bug envolve mudança de UI ou de comportamento observável?
+       (sim → Wave B roda; não → logic-only, Wave B skipada)
+       
+       > não, é só lógica de validação no shared
+       
+[0:07] Beleza. wave_b_required=false persistido em hypothesis.yaml.
+       Wave B será pulada — sem screen-analysis, sem contracts behaviorais.
+```
+
+Conductor escreve `subtype: bugfix` em `status.json` + `hypothesis.yaml`,
+e `wave_b_required: false` em `hypothesis.yaml`. Mentor calmo respeita a
+distinção: a sub-pergunta da Wave B é a ÚNICA decisão extra do bugfix —
+não inventa drill-downs adicionais sobre escopo, urgência, ou plataforma.
+
+### Caso edge — P0 / hotfix em produção (Gap 1)
+
+User chegou com pressão real de produção. Mentor calmo respeita o tempo
+sem sacrificar disciplina.
+
+```
+[0:03] De onde vem essa feature?
+       
+       > P0 em produção — usuários não conseguem salvar bonsai com nome
+       > vazio crashes o app, fix pra entrar no hotfix de hoje à noite
+       
+[0:04] Entendi que é P0 — vou cortar tudo que dá sem inventar nada.
+       
+       Isso parece bugfix (crash de produção com repro conhecida).
+       Confirma?  [sim / não, é feature de produto]
+       
+       > sim
+       
+[0:05] Beleza. Subtype=bugfix com Wave B conditional.
+       Pelo seu enunciado o bug é de fluxo (user faz X, app crasha) —
+       isso conta como comportamento observável. Confirma?
+       
+       > sim, é fluxo de salvar
+       
+[0:06] wave_b_required=true. Wave B vai rodar — preciso modelar o estado
+       de erro que falta antes de propor o fix. Isso evita o fix introduzir
+       regressão em outro estado já modelado.
+       
+       Vou cortar:
+         • screenshots: só captura, sem vision pesado (você já sabe o bug)
+         • elicitação Wave B: foco apenas no estado faltante
+         • tech-spec: §1 + §2 + 1 layer + §13 + §14 (sem §§ 8-12)
+         • 1 task default
+       
+       Sem invenção. Sem pressa. Vamos seguir.
+```
+
+Mentor calmo é firme: não pula Wave B quando o bug touched UI. A
+"pressa" do usuário é respondida com pipeline compacto + voz acolhedora,
+não com skip de disciplina. P0 não é desculpa pra fix sem contrato
+modelado.
+
+### Caso edge — descrição vaga ("algo quebrou")
+
+User reporta bug sem repro. Conductor drilla pra concretizar antes de
+gerar intake.
+
+```
+[0:03] De onde vem essa feature?
+       
+       > tem um bug, algo não está funcionando direito no formulário
+       
+[0:04] Soa como bugfix mas com pouca concretização. Antes de eu rotear
+       como bugfix, preciso saber:
+       
+         1) O que exatamente está quebrado? (resultado errado, crash,
+            UI travada, validação faltando, etc.)
+         2) Como reproduzir? (steps que levam ao bug — sem repro, sub-agents
+            inventam, e eu não invento.)
+         3) Qual o comportamento esperado vs o atual?
+       
+       Sem essas 3 respostas, eu não consigo abrir Wave A — bug sem repro
+       não é planável. Pode me dar?
+       
+       > o usuário disse que não consegue criar bonsai
+       
+[0:05] Ainda vago. "Não consegue criar" pode ser:
+         • Botão de submit não responde (UI/comportamento — bugfix com Wave B)
+         • Submit funciona mas dado não persiste (data layer — bugfix logic-only)
+         • Submit dá erro mas mensagem incompreensível (UX — bugfix com Wave B)
+         • Submit funciona mas só pra alguns usuários (permission — pode
+           virar feature de auth)
+       
+       Caminhos:
+         1) Você acessa o user / ticket / log e me traz o repro concreto
+         2) Marca como open-question bloqueante e a feature fica em
+            readiness=partial até descobrir
+         3) Aborta — sem repro melhor não planejar
+       
+       Mentor calmo é firme: não invento bug shape.
+       
+       O que você prefere?
+```
+
+Discipline §1 (3-caminhos) preservada. Mentor calmo nunca rotea como
+bugfix sem repro — disciplina §8 documenta que repro é mandatory pro
+bugfix subtype.
+
+### Caso edge — spike/chore detectado (stub em v1.0)
+
+```
+[0:04] Vi "spike" no que você descreveu. Confirma que é uma investigação
+       técnica, não feature de produto?
+       
+       > sim
+       
+[0:05] 🛑 Subtype 'spike' ainda não tem implementação completa em v1.0.
+       
+       v1.0 ship `refactor` por completo. `spike` está programado pra
+       v1.1+ — sem improviso aqui.
+       
+       Três caminhos:
+       
+         1) Tratar como feature padrão (subtype=product)
+            Você terá Waves B/C completas — sub-agentes vão pedir
+            contexto que pode parecer artificial pro caso. Faz sentido
+            quando o spike tem dimensão de comportamento real
+            (ex.: spike com flag rollout).
+       
+         2) Pausar e esperar v1.1+
+            Marco status como deferred — quando v1.1+ chegar o subtype
+            completo, retomamos daqui.
+       
+         3) Abortar
+            Sai do forge plan, faz o trabalho fora do pipeline. Não viola
+            disciplina; só não fica trackeado.
+       
+       O que você quer?
+       
+       > 2
+       
+[0:06] Pausado. Estado salvo em .claude/memory/L1/{slug}/status.json
+       
+       Pra retomar: forge plan {slug} (quando v1.1+ landar).
+```
+
+3-caminhos discipline §1 preservada. Mentor calmo é firme: não inventa
+spike por v1.0.
+
+### Edge case — vague answer ("não sei se é refactor")
+
+```
+[0:04] Vi "extrair helper" no que você descreveu — parece refactor. Confirma?
+       
+       > não tenho certeza
+       
+[0:05] Tudo bem. Vou propor o caminho mais comum em apps similares:
+       
+         Refactor (subtype=refactor). Motivo: "extrair helper" é
+         arquitetural — sem mudança user-facing.
+       
+       Riscos: se durante o intake você perceber que o helper já tem
+       comportamento novo embutido (uma validação que o helper anterior
+       não fazia), aí volta a ser feature de produto. O attestation no
+       feature-intake.md cobre esse re-check.
+       
+       Vai com refactor ou prefere product (caminho mais cauteloso, com
+       Wave B completa)?
+       
+       > vai com refactor
+```
+
+Drill-down propõe default + alternativa concreta, nunca "me explica
+melhor". Anti-pattern explicit: never interrogate.
+
+### Note operacional
+
+- Cena 2.5 NÃO existe quando user diz "criar tela de X", "adicionar feature
+  Y" — keyword inference falha silentemente, default product, Cena 3 já
+  carrega contexto. Cena 2.5 só renderiza quando há sinal de não-produto.
+- Cena 2.5 é a **única vez** que conductor toca o tópico subtype durante
+  o flow — depois disso o subtype vive no `status.json` e influencia
+  silenciosamente cada Wave.
+- **Bugfix tem uma sub-pergunta extra** (Wave B conditional) que é
+  feita imediatamente após a confirmação do subtype. É a única
+  decisão extra no codebase que depende de um sub-question além do
+  subtype em si. A resposta vive em `hypothesis.yaml.wave_b_required`
+  e a Cena 12 (Wave B dispatch) consulta antes de rodar.
+- Ticket pattern (`IN-NNNNN`, `PD-NNNN`, etc.) detectado em Cena 2 sobe
+  a confidence do bugfix detection — conductor pergunta com viés
+  "isso parece bugfix" em vez de "isso parece product".
+- `forge plan {slug}` em retomada (auto-resume) lê o subtype gravado e
+  não re-pergunta. Subtype só re-decide via `forge undo` → "reset
+  subtype" (não documentado no roteiro principal — uso raro).
+
+---
+
 ## Cena 3 — Context load (silent, 4.5–8s)
 
 Phase 1 of planning-conductor. Nothing shown to the user except a single
@@ -349,6 +610,150 @@ remaining-ambiguity: 0
 default with rationale + alternatives. User can accept the proposal or pick
 another. The point is to collapse "depende" into a concrete choice with
 traceable rationale.
+
+---
+
+## Cena 10.5 — External dependency detection (95s, conditional)
+
+Discipline §9 — Cena renderizada apenas quando Phase 2 ambiguity-map ou
+Phase 3 elicitation detecta sinal de dependência externa (backend
+endpoint pendente, asset de design não-aprovado, copy jurídico em
+revisão, etc.). Sem sinal → Cena pulada, Wave A começa direto.
+
+### Caso happy path — ticket externo concreto no Jira
+
+O ticket pai BONSAI-1284 cita "depende de BACKEND-1284 (endpoint
+/api/weather)". Conductor já viu isso na Cena 4 (Jira fetch).
+
+```
+[1:35] Detectei na descrição do ticket: "depende de BACKEND-1284
+       (endpoint /api/weather)".
+       
+       Confirma que essa feature espera essa dep externa? Sem a confirmação
+       eu não persisto nada — vague mention != ticket bloqueante.
+       
+       > sim
+       
+[1:36] Beleza. Qual integração?
+       
+         • jira       (BACKEND-1284 vive no mesmo workspace que BONSAI-1284)
+         • linear
+         • github-issues
+         • manual     (sem ticket id rastreável)
+       
+       > jira
+       
+[1:37] E qual escopo da feature realmente espera esse endpoint?
+       
+         • Toda a feature está bloqueada (sem dado, sem UI)
+         • Só a task de shared-data (UI pode renderizar empty enquanto isso)
+         • Só uma UI específica (lista de previsões precisa do endpoint)
+       
+       > só a task de shared-data
+       
+[1:38] Anotado:
+         ticket:        BACKEND-1284
+         integration:   jira
+         description:   "Endpoint /api/weather pendente"
+         blocking:      true
+         escopo:        task de shared-data (Wave D vai marcar a TASK
+                        concreta com depends_on_external)
+       
+       Wave A segue agora; quando task-contract-writer rodar (Wave D),
+       eu passo essa dep no context pack. Nenhuma mudança no Wave B.
+```
+
+Conductor persiste em `.claude/memory/L1/{slug}/elicitation.yaml`:
+
+```yaml
+external-deps:
+  - task-hint: shared-data
+    ticket: BACKEND-1284
+    integration: jira
+    description: "Endpoint /api/weather pendente"
+    blocking: true
+    captured-at: 2026-05-30T14:37:00Z
+```
+
+### Caso edge — user menciona dep externa vagamente
+
+```
+[1:35] Quando você falou de "esperar o backend", quero confirmar:
+       a feature inteira espera alguma coisa externa, ou é só uma
+       parte?
+       
+       > é só o endpoint do weather que não está pronto
+       
+[1:36] Qual ticket cobre esse endpoint? Pode colar:
+         · BACKEND-NNNN (Jira)
+         · ENG-NNNN (Linear)
+         · #NNNN (GitHub issue)
+         · "não tenho ticket"  (eu marco como manual, mas a resolução
+                                fica 100% no seu controle — sem
+                                MCP polling)
+       
+       > BACKEND-1284
+       
+[1:37] [drill-down igual ao caso happy: integração + escopo]
+```
+
+Mentor calmo nunca aceita "espera o backend" sem ticket id. Sem id, a
+dependência fica como `integration: manual` mas o conductor explicita
+que `forge implement` só destrava com `forge reconfigure` manual — não
+há nada pra MCP poller observar.
+
+### Caso edge — dep externa resolvida durante planning
+
+Cenário real: user inicia planning antes de saber, durante a sessão
+descobre que o endpoint subiu há 2h.
+
+```
+[1:35] Tinha visto "espera BACKEND-1284" no ticket. Antes de eu marcar:
+       o endpoint /api/weather já existe em homolog?
+       
+       > acabou de subir, vamos sem bloqueio
+       
+[1:36] Beleza. Sem dep externa persistida — task-contract-writer
+       não recebe nada em external-deps. Wave A segue normal.
+       
+       Se mudar de ideia depois, `forge reconfigure` adiciona dep externa
+       a uma task done — mas isso é raro e antinatural.
+```
+
+Default seguro: na dúvida, NÃO persiste. Adicionar depois é mais barato
+que remover depois (porque remover invalida o gate de blocked-on-external
+no histórico).
+
+### Caso edge — múltiplas deps externas no mesmo ticket
+
+```
+[1:35] O ticket BONSAI-1284 cita 3 deps externas:
+         · BACKEND-1284 (/api/weather)
+         · BACKEND-1285 (/api/forecast)
+         · DESIGN-44    (banner empty-state)
+       
+       Pra cada uma vou perguntar separadamente (integração + escopo).
+       Concorda?
+       
+       > sim
+```
+
+Drill-down repete o flow por dep. Tasks afetadas por mais de uma dep
+recebem múltiplas entries em `depends_on_external`. `forge implement`
+recusa a task até **todas** as `blocking: true` estarem resolvidas.
+
+### Note operacional
+
+- Cena 10.5 NÃO existe pra a maioria das features (backend já tem
+  todos os endpoints, design pronto, sem dep externa). Trigger é
+  conservador: só roda quando o conductor tem sinal concreto.
+- A captura aqui não escreve `depends_on_external` no task-contract
+  diretamente — escreve em `elicitation.yaml.external-deps[]` e
+  task-contract-writer (Wave D) é quem materializa no
+  `tasks/TASK-NNNN.yaml` quando consegue mapear o `task-hint` (categoria
+  ou TASK id) pro arquivo concreto.
+- Resume: `forge plan {slug}` em retomada lê `elicitation.yaml`
+  e não re-pergunta — as deps capturadas persistem.
 
 ---
 

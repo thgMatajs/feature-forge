@@ -47,7 +47,19 @@ _VALID_STATES = {
     "deferred",
     "aborted",
     "paused",
+    # Discipline §9 — engine-driven block when ≥1 task carries an unresolved
+    # blocking external dep. Sibling of `deferred` (human-driven pause). Set
+    # by `engine.implement` on first refusal; cleared by `engine.reconfigure`
+    # when the ticket is marked resolved.
+    "blocked-on-external",
 }
+
+# Discipline §8 (Non-product feature track) — subtype enum. Default is
+# "product" for forward compatibility with status.json files written by
+# pre-Gap-2 engines. "bugfix" added by Gap 1 (2026-05-30) — shipped
+# fully (Wave B conditional, focused tech-spec, 5-whys retrospective).
+_VALID_SUBTYPES = {"product", "refactor", "bugfix", "spike", "chore"}
+_DEFAULT_SUBTYPE = "product"
 
 
 # ── Dataclass ────────────────────────────────────────────────────────────────
@@ -59,6 +71,11 @@ class L1State:
 
     `raw` carries any extra fields present on disk (forward compatibility) so a
     write-back round-trip preserves unknown keys.
+
+    `subtype` is the discipline §8 dimension that classifies the feature track
+    (product | refactor | spike | chore). Defaults to "product" — read paths
+    treat a missing field on disk as "product" so older status.json files keep
+    working unchanged.
     """
 
     feature_slug: str
@@ -66,6 +83,7 @@ class L1State:
     last_action_at: str
     last_action_kind: str
     phase_lock: Optional[str] = None
+    subtype: str = _DEFAULT_SUBTYPE
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -183,12 +201,18 @@ def read_l1_status(feature_slug: str, project_root: Path) -> Optional[L1State]:
     if not isinstance(data, dict):
         raise MemoryError(f"status.json must be a JSON object at {path}")
 
+    # subtype is additive — missing field falls back to "product" for
+    # status.json files written by pre-Gap-2 engines (discipline §8).
+    raw_subtype = data.get("subtype")
+    subtype = raw_subtype if raw_subtype in _VALID_SUBTYPES else _DEFAULT_SUBTYPE
+
     return L1State(
         feature_slug=str(data.get("feature-slug", feature_slug)),
         status=str(data.get("state", data.get("status", "not-started"))),
         last_action_at=str(data.get("last-action-at") or data.get("last_action_at") or ""),
         last_action_kind=str(data.get("last-action") or data.get("last_action_kind") or ""),
         phase_lock=data.get("phase-lock") or data.get("phase_lock"),
+        subtype=subtype,
         raw=data,
     )
 
@@ -203,6 +227,11 @@ def write_l1_status(state: L1State, project_root: Path) -> None:
         raise MemoryError(
             f"invalid status '{state.status}'; must be one of {sorted(_VALID_STATES)}"
         )
+    if state.subtype not in _VALID_SUBTYPES:
+        raise MemoryError(
+            f"invalid subtype '{state.subtype}'; must be one of {sorted(_VALID_SUBTYPES)} "
+            "(discipline §8 — non-product feature track)"
+        )
     if not state.last_action_at:
         state.last_action_at = _utc_now_iso()
 
@@ -212,6 +241,7 @@ def write_l1_status(state: L1State, project_root: Path) -> None:
             "schema-version": payload.get("schema-version", 1),
             "feature-slug": state.feature_slug,
             "state": state.status,
+            "subtype": state.subtype,
             "last-action": state.last_action_kind,
             "last-action-at": state.last_action_at,
             "phase-lock": state.phase_lock,
@@ -453,6 +483,161 @@ def current_phase_lock(feature_slug: str, project_root: Path) -> Optional[str]:
     return state.phase_lock if state else None
 
 
+# ── External dependencies (discipline §9 — Gap 8) ────────────────────────────
+
+
+def _feature_tasks_dir(feature_slug: str, project_root: Path) -> Optional[Path]:
+    """Best-effort resolver for `features/{slug}/tasks/` honoring subtype.
+
+    Mirrors `engine.plan._feature_path` decision logic but lives here to keep
+    l1.py free of circular imports (l1 ↔ plan would loop on subtype init).
+    Returns None when the directory doesn't exist on disk (caller treats as
+    "no tasks emitted yet" — same semantics as empty list).
+    """
+    subtype = current_subtype(feature_slug, project_root)
+    base = project_root / "docs" / "feature-implementation-workflow"
+    parent = base / ("non-product" if subtype != "product" else "features")
+    candidate = parent / feature_slug / "tasks"
+    if candidate.is_dir():
+        return candidate
+    # Fallback: product folder even when subtype isn't product (legacy or
+    # mid-migration state).
+    fallback = base / "features" / feature_slug / "tasks"
+    if fallback.is_dir():
+        return fallback
+    return None
+
+
+def blocking_deps(
+    feature_slug: str, project_root: Path
+) -> list[dict[str, Any]]:
+    """Return the list of unresolved blocking external deps across all tasks.
+
+    Walks `tasks/TASK-*.yaml`, parses `depends_on_external`, and collects
+    every entry where `blocking: true` and `resolved-at` is None. Each
+    dictionary in the output contains:
+      - task: TASK-NNNN id (derived from filename)
+      - ticket: ticket identifier (string)
+      - integration: jira | linear | github-issues | manual
+      - description: free-form
+      - blocking: True (guaranteed for entries we return)
+      - declared-at: ISO 8601 string if present
+      - resolved-at: None (guaranteed for entries we return)
+
+    Returns [] when:
+      - feature has no tasks/ directory
+      - no task carries `depends_on_external`
+      - every entry has `resolved-at` filled in
+
+    Read-only; never writes. Used by `engine.implement` to decide refusal,
+    by `engine.status` for the board, and by `engine.reconfigure` to list
+    candidates for "marcar como resolvida".
+    """
+    tasks_dir = _feature_tasks_dir(feature_slug, project_root)
+    if tasks_dir is None:
+        return []
+
+    from engine.utils.yaml_io import read_yaml_or_default
+
+    out: list[dict[str, Any]] = []
+    for path in sorted(tasks_dir.glob("TASK-*.yaml")):
+        data = read_yaml_or_default(path, {}) or {}
+        if not isinstance(data, dict):
+            continue
+        # Accept both snake_case (template canonical) and kebab-case
+        # (alternative dialect — defensive).
+        deps = data.get("depends_on_external") or data.get("depends-on-external")
+        if not isinstance(deps, list):
+            continue
+        task_id = str(data.get("task_id") or data.get("task-id") or path.stem)
+        for entry in deps:
+            if not isinstance(entry, dict):
+                continue
+            blocking = entry.get("blocking", True)
+            resolved = entry.get("resolved-at") or entry.get("resolved_at")
+            if not blocking:
+                continue
+            if resolved:
+                continue
+            out.append(
+                {
+                    "task": task_id,
+                    "ticket": str(entry.get("ticket") or ""),
+                    "integration": str(entry.get("integration") or "manual"),
+                    "description": str(entry.get("description") or ""),
+                    "blocking": True,
+                    "declared-at": entry.get("declared-at")
+                    or entry.get("declared_at"),
+                    "resolved-at": None,
+                }
+            )
+    return out
+
+
+def is_blocked(feature_slug: str, project_root: Path) -> bool:
+    """True when the feature has ≥ 1 unresolved blocking external dep.
+
+    Thin convenience wrapper over `blocking_deps`. Used by `engine.implement`
+    refusal path and `engine.status` board rendering. Decision is
+    recomputable from disk on every call — no cached state.
+    """
+    return bool(blocking_deps(feature_slug, project_root))
+
+
+def list_blocked_features(project_root: Path) -> list[str]:
+    """Sorted list of feature slugs with at least one unresolved blocking dep.
+
+    Convenience for `engine.status` board section "blocked on external"
+    and `engine.reconfigure` external-deps menu. Walks every active L1
+    feature; archived/done features are skipped (their L1 dir is gone).
+    """
+    out: list[str] = []
+    for slug in list_active_features(project_root):
+        if is_blocked(slug, project_root):
+            out.append(slug)
+    return out
+
+
+# ── subtype (discipline §8) ──────────────────────────────────────────────────
+
+
+def current_subtype(feature_slug: str, project_root: Path) -> str:
+    """Return the subtype for this feature (discipline §8).
+
+    Defaults to "product" when status.json is absent or the field is missing —
+    the same forward-compat behavior `read_l1_status` already implements.
+    """
+    state = read_l1_status(feature_slug, project_root)
+    return state.subtype if state else _DEFAULT_SUBTYPE
+
+
+def set_subtype(feature_slug: str, project_root: Path, subtype: str) -> None:
+    """Persist `subtype` on status.json. Creates a minimal status if absent.
+
+    Raises MemoryError when `subtype` is not in {product, refactor, spike,
+    chore}.
+    """
+    if subtype not in _VALID_SUBTYPES:
+        raise MemoryError(
+            f"invalid subtype '{subtype}'; must be one of {sorted(_VALID_SUBTYPES)} "
+            "(discipline §8 — non-product feature track; 'bugfix' added Gap 1)"
+        )
+    state = read_l1_status(feature_slug, project_root)
+    if state is None:
+        state = L1State(
+            feature_slug=feature_slug,
+            status="planning",
+            last_action_at=_utc_now_iso(),
+            last_action_kind="subtype-set",
+            subtype=subtype,
+        )
+    else:
+        state.subtype = subtype
+        state.last_action_kind = "subtype-set"
+        state.last_action_at = _utc_now_iso()
+    write_l1_status(state, project_root)
+
+
 # ── verify-log.jsonl (bonus — symmetry with history) ─────────────────────────
 
 
@@ -546,9 +731,14 @@ __all__ = [
     "archive_feature",
     "list_active_features",
     "list_archived_features",
+    "list_blocked_features",
     "acquire_phase_lock",
     "release_phase_lock",
     "current_phase_lock",
+    "current_subtype",
+    "set_subtype",
+    "is_blocked",
+    "blocking_deps",
     "append_verify_log",
 ]
 

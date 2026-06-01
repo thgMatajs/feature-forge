@@ -103,22 +103,92 @@ Read everything available BEFORE opening your mouth. Order:
 1. Load workflow-config + all inventories + memory L2/L3
 2. Resolve feature slug (from arg, or ask once at start)
 3. If `forge plan` was called with no input, ask once: ticket? screenshots? description?
-4. If ticket provided: fetch via Atlassian MCP. Pull summary, description,
-   acceptance criteria, attachments (download to `features/{slug}/screenshots/`),
-   linked tickets.
-5. If screenshots provided: vision-analyze each. Extract layout, components,
+4. **Subtype detection (discipline §8 — non-product feature track).** Read
+   the user's free-form source-inquiry input (step 3) and infer one of
+   `product | refactor | bugfix | spike | chore`. Detection is **conversational
+   inference, never a flag** (Decision 10 preserved).
+   - Keyword cues per subtype:
+     - **refactor**: `refactor`, `mover X de Y`, `renomear`, `extrair`,
+       `reorganizar`, `sem mudança visual`, `comportamento inalterado`
+     - **bugfix**: `bugfix`, `hotfix`, `P0`, `P1`, `crítico`, `crítica`,
+       `bug `, `fix `, `falha`, `quebrado`, `não funciona`, `regression`,
+       and **ticket-pattern regex** `[A-Z]{2,6}-\d{2,6}` (IN-37234,
+       PD-1234, BACKEND-1284 style — see Phase 2 "Ticket pattern
+       detection" below)
+     - **spike**: `spike`, `POC`, `viabilidade`, `prototipar`, `investigar
+       se`, `exploração`
+     - **chore**: `bump `, `atualizar dependência`, `cleanup`, `limpeza`,
+       `chore`
+     - **product**: default when no signal matches.
+   - When inference yields non-product: ask a single-line confirmation
+     ("isso parece refactor — confirma?" / "isso parece bugfix —
+     confirma?") accepting yes/no. User answer "no" reverts to
+     `product`. See Cena 2.5 in `docs/ux/forge-plan-roteiro.md` for the
+     exact flow + edge cases.
+   - **Bugfix urgency acknowledgment**: when the input contains urgency
+     signals (`P0`, `hotfix`, `crítico`, `produção quebrada`,
+     `usuários afetados`), acknowledge in mentor-calmo voice ("entendi
+     que é P0 — vou cortar tudo que dá sem inventar nada") BEFORE
+     asking the confirmation. Respect time pressure, but do NOT skip
+     discipline — bugfix's compact flow IS the time-respecting answer.
+   - **Spike + chore stub in v1.0**: after confirmation, surface the
+     3-caminhos block defined in §Phase 4 (Delegate Execution) and stop
+     before any wave runs. Do NOT attempt to plan spike/chore artifacts
+     in v1.0 — explicit non-goal.
+   - Persist the resolved subtype to BOTH `status.json.subtype` AND
+     `hypothesis.yaml.subtype` BEFORE proceeding. Resume reads it from
+     disk; live introspection in later phases is forbidden
+     (deterministic-context discipline).
+   - **Bugfix Wave B sub-question (Gap 1, mandatory).** Immediately after
+     confirming `subtype=bugfix`, ask one additional question to decide
+     whether Wave B runs:
+
+     > "Esse bug envolve mudança de UI ou de comportamento observável?
+     >  (sim → Wave B roda; não → logic-only, Wave B skipada)"
+
+     Persist the answer to `hypothesis.yaml.wave_b_required`. This is the
+     ONLY case in the codebase where a sub-question dictates wave
+     dispatch beyond the subtype itself. Discipline §8 documents the
+     criteria; don't litigate them again in conversation.
+5. If ticket provided: fetch via Atlassian MCP. Pull summary, description,
+   acceptance criteria, attachments (download to `features/{slug}/screenshots/`
+   or `non-product/{slug}/screenshots/` per subtype), linked tickets.
+   - **For subtype=bugfix**, the ticket frequently IS the source of
+     truth for the bug (reproduction steps in the description, expected
+     behavior in the AC). Capture these verbatim into the intake; never
+     paraphrase reproduction steps.
+6. If screenshots provided: vision-analyze each. Extract layout, components,
    text labels, visible states. Match against `design-system.yaml`.
-6. Query graph: `forge graph query "features structurally similar to {slug}"`.
+   - **For subtype=refactor**, screenshots are accepted as architectural
+     references (showing the before-state location of moved/renamed
+     code) but no visual-state inference happens — Wave B is skipped
+     entirely.
+   - **For subtype=bugfix**, screenshots show the bug (before-fix state)
+     and optionally the expected state. Vision analysis runs only when
+     Wave B will run (i.e., when the user answered "sim" to the UI/
+     observable sub-question in step 4). Otherwise screenshots are
+     captured as evidence in the intake but not analyzed for components.
+7. Query graph: `forge graph query "features structurally similar to {slug}"`.
    Read top 1–2 matches as reference patterns.
+   - **For subtype=refactor**, skip similar-features query — refactor's
+     "similarity" is in the architecture-before/after, not in the
+     product space. Don't pollute the similarity-graph with refactors.
+   - **For subtype=bugfix**, skip the similarity query by default —
+     bugfixes are localized and similarity-by-shape rarely surfaces
+     useful patterns. Instead, when a hypothesized root-cause is
+     available, run `forge graph` Q11 (reusable-helpers) filtered to
+     the touched module to detect whether the bug exists elsewhere
+     (sibling regression).
 
 Compose a working hypothesis: "This feature is structurally a [list+detail|form|
-flow|dashboard|...], using [persistence|network|both], with [N screens],
-requiring [these capabilities]."
+flow|dashboard|refactor|bugfix|spike|chore|...], using [persistence|network|both],
+with [N screens], requiring [these capabilities]."
 
 Write `.claude/memory/L1/{slug}/hypothesis.yaml`:
 
 ```yaml
 hypothesis:
+  subtype: product               # product | refactor | spike | chore
   shape: list+detail
   screens: [list, detail, edit]
   persistence: firestore
@@ -127,6 +197,46 @@ hypothesis:
   new-components-needed: [ReminderBadge, WaterDropletIcon]
   confidence: 0.78
 ```
+
+For subtype=refactor, the hypothesis is leaner — only the fields that
+make sense:
+
+```yaml
+hypothesis:
+  subtype: refactor
+  shape: refactor
+  refactor-kind: move | rename | extract | reorganize | migrate
+  files-affected-estimate: 12
+  layers-touched: [shared.feature.auth.ui]
+  before-state: "feature/auth/ui/login/{LoginScreen.kt, ...}"
+  after-state: "feature/auth/login/{LoginScreen.kt, LoginContent.kt, ...}"
+  no-behavior-change: true
+  confidence: 0.92
+```
+
+For subtype=bugfix, the hypothesis records the bug-shape:
+
+```yaml
+hypothesis:
+  subtype: bugfix
+  shape: bugfix
+  bug-ticket: IN-37234              # null when no ticket
+  reproduction-known: true          # false → drill-down before Wave A
+  expected-behavior-articulable: true
+  wave_b_required: false            # answer to UI/observable sub-question
+  fix-shape: single-task            # single-task | multi-task | platform-split
+  layers-touched: [shared.feature.bonsai.domain]
+  root-cause-hypothesis: "BonsaiFormErrorCode missing FIELD_EMPTY case"
+  root-cause-confidence: 0.78
+  regression-risk: low              # low | medium | high
+  affected-versions: [1.2.0, 1.2.1]
+  confidence: 0.85
+```
+
+When `reproduction-known: false`, conductor MUST drill down before Wave
+A — bug without reproduction is not a planable bug. Push back politely:
+"Sem repro o bug é vago e Wave A vai inventar. Vamos descobrir os
+steps OU registrar como open-question bloqueante." Decision is human.
 
 ### Phase 2 — Ambiguity Map
 
@@ -144,6 +254,30 @@ For each decision node, record:
 - The value resolved (or null)
 - The source that resolved it
 - Confidence (0–1)
+
+#### Ticket pattern detection (high-confidence bugfix signal, Gap 1)
+
+In Phase 1 step 4 you ran keyword inference on the free-form input. In
+Phase 2 you re-scan the input for **ticket-pattern regex** matches
+(`[A-Z]{2,6}-\d{2,6}`). When found:
+
+| Ticket prefix pattern | Likely meaning | Subtype bump |
+|---|---|---|
+| `IN-NNNNN` (5-6 digits) | Internal bug tracker | bugfix high-confidence |
+| `PD-NNNN` | Product defect | bugfix high-confidence |
+| `BUG-NNNN` | Explicit bug tag | bugfix high-confidence |
+| `BACKEND-NNNN` | Backend ticket | could be product OR bugfix; ask once |
+| `BONSAI-NNNN`, `LIN-NNNN`, etc. | Feature ticket | preserve product unless other signals match |
+
+When a high-confidence prefix appears AND Phase 1 inference was
+`product`, conductor re-confirms in Cena 2.5 with the bugfix flow
+("Vi {ticket} no input — isso parece bugfix, confirma?"). When the
+prefix is `BACKEND-NNNN` or similar product-or-bug ambiguous, conductor
+explicitly asks: "Esse ticket é bug ou feature nova?" — never assumes.
+
+The bump is **inference-only**; user override always wins. Persist the
+ticket id to `hypothesis.yaml.bug-ticket` once subtype is confirmed
+bugfix.
 
 Nodes to enumerate (minimum):
 - Entry point(s): from where in the app
@@ -163,6 +297,35 @@ Nodes to enumerate (minimum):
 - Android/iOS differences (UI patterns, OS conventions)
 - i18n keys to add
 - Tests required (happy + 4 mandatory edge cases per `.claude/rules/testing.md`)
+- **External dependencies** (discipline §9): backend endpoints not yet
+  available, design assets pending approval, legal copy under review,
+  any work outside this repo blocking a task. See "External dependency
+  drill-down" below for the elicitation rule.
+
+#### External dependency drill-down (discipline §9)
+
+When **any** of the following signals appears during Phase 1 source-inquiry
+or Phase 3 elicitation, emit a dedicated external-dep question instead of
+guessing:
+
+| Signal | Where it appears | Drill-down |
+|---|---|---|
+| Ticket body mentions "depende de BACKEND-NNNN" / "espera endpoint Y" / "aguardando backend" | Atlassian MCP fetch in Phase 1 | "Esse ticket cita {BACKEND-NNNN}. Confirma que essa feature espera essa dep externa?" |
+| User free-form says "backend ainda não está pronto", "endpoint vem na sprint X" | Source-inquiry in Phase 1 | "Qual ticket cobre essa dep? (e.g., BACKEND-1284 no Jira, ou paste do link)" |
+| User says "depende do legal", "esperando design" sem ticket | Phase 3 round-1 | "Sem ticket id concreto eu não persisto a dep — só uma vaguidão. Vamos identificar onde esse trabalho mora (Jira/Linear/GitHub) ou marco como bloqueio sem ticket (forge_implement vai pedir manual unblock)." |
+| Tech-spec ou screen-analysis cita data shape que o backend não retorna ainda | Wave B/C output | Re-dispatch contract-planner com instrução de marcar a task afetada com `depends-on-external` |
+
+**Anti-pattern: never invent a ticket id.** If the user can't name the
+ticket, the entry is recorded as `integration: "manual"` with a
+description — but the conductor explicitly flags that resolution will
+require manual `forge reconfigure` (no MCP-auto-resolution possible
+without an id to poll).
+
+**Persist where:** capture the resolution in `elicitation.yaml` round
+entry (so retrospective sees it), and pass it forward to the
+task-contract-writer (Wave D) via the context pack field
+`external-deps` so the writer emits `depends_on_external` entries on
+the affected tasks.
 
 Save to `.claude/memory/L1/{slug}/ambiguity-map.yaml`. Anything with confidence
 < 0.85 is unresolved.
@@ -202,11 +365,61 @@ Save responses to `.claude/memory/L1/{slug}/elicitation.yaml`.
 
 ### Phase 4 — Delegate Execution (waves, parallel where safe)
 
-With ambiguity at 0, dispatch sub-agents in waves:
+With ambiguity at 0, dispatch sub-agents in waves. **Wave dispatch branches
+on `status.json.subtype` (discipline §8)**:
 
-**Wave A — parallel:**
+| Subtype | Waves dispatched | Notes |
+|---|---|---|
+| `product` (default) | A · B · C · D · E | Full pipeline — sections below describe each wave |
+| `refactor` | A · C · D · E | **Wave B skipped entirely** — see "Refactor branch" below |
+| `bugfix` | A · (**B conditional**) · C · D · E | Wave B runs IFF `hypothesis.wave_b_required == true` (UI/observable bug); skipped when logic-only. Wave C focused (§§ 1 · 2 · 3-7 touched · 13 · 14; §11 only when new analytics). Wave D defaults to 1 task; split on dev request. Wave E readiness relaxed (no Wave-B-artifact gating when skipped). See "Bugfix branch" below. |
+| `spike` | (stub) | Surface 3-caminhos before dispatching anything |
+| `chore` | (stub) | Surface 3-caminhos before dispatching anything |
+
+For `spike` and `chore` in v1.0, emit this block and stop:
+
+```
+🛑 Subtype '{subtype}' ainda não tem implementação completa em v1.0.
+
+   v1.0 ship `refactor` e `bugfix` por completo. `{subtype}` está
+   programado pra v1.1+.
+
+   Três caminhos:
+
+     1) Tratar como feature padrão (subtype=product)
+        Waves B/C completas vão pedir contexto artificial. Faz sentido
+        quando o {subtype} tem dimensão de comportamento real.
+
+     2) Pausar e esperar v1.1+
+        Marco status como deferred — retomamos quando o subtype completo
+        chegar.
+
+     3) Abortar
+        Sai do forge plan. Não trackado.
+```
+
+Accept the user's choice and route accordingly. Path A flips
+`status.json.subtype` to `product` and continues the full pipeline.
+
+**Wave A — parallel (always runs):**
 - `feature-intake-agent` → `feature-intake.md`
+  - Template selection by subtype:
+    - `subtype=product` → `feature-intake.template.md` (canonical)
+    - `subtype=refactor` → `feature-intake-refactor.template.md`
+      (drops "what this feature delivers" + "scope IN/OUT" in favor of
+      "problem", "files affected", "before/after", "no-behavior-change
+      attestation")
+    - `subtype=bugfix` → `feature-intake-bugfix.template.md` (drops
+      "what this feature delivers" + "why now" + "scope OUT" in favor
+      of "problem statement", "reproduction steps", "expected vs
+      actual", "root-cause hypothesis", "fix scope", "regression risk",
+      "validation strategy", "links to ticket")
 - `feature-prd-agent` → `feature-prd.md`
+  - **Skipped when `subtype=refactor`** — PRD assumes user value, refactor
+    has none by design.
+  - **Skipped when `subtype=bugfix`** — bugfix is "restore correct
+    behavior". The intake's §Problem + §Expected vs actual carries the
+    "what this should do" content; a PRD on top would be redundant.
 
 Wave A agents are safely parallelizable: they consume the same upstream
 inputs (ticket data + screenshots + conductor's hypothesis + resolved
@@ -217,18 +430,108 @@ The same independence test applies to all wave declarations: agents within
 a wave are parallel iff their inputs are upstream-only and their outputs
 don't intersect.
 
-**Wave B — after A, parallel:**
+**Wave B — after A, parallel. SKIPPED entirely when `subtype=refactor`.**
 - `screen-analysis-agent` → `screen-analysis.md` + `ui-state-spec.yaml`
 - `contract-planner-agent` → `bdd.md` + `navigation-spec.yaml` + `data-contract-spec.yaml` + `analytics-spec.yaml` + `test-strategy.yaml`
 
-**Wave C — after B:**
+**Refactor branch (`subtype=refactor`):** Wave B does NOT run. Discipline
+§8: refactor has no behavioral mockup (no screen-analysis), no new
+contracts (no bdd/navigation/data/analytics), and no new test strategy
+(existing tests are the strategy — "rodar tudo, deve passar"). Forcing
+sub-agents to produce these artifacts would force them to invent —
+violates principle 3 ("Never invent"). Conductor proceeds directly from
+Wave A to Phase 4.5.
+
+**Bugfix branch (`subtype=bugfix`):** Wave B is **conditional** on
+`hypothesis.wave_b_required` (answered during Cena 2.5):
+
+- `wave_b_required: true` (UI/observable bug) → run Wave B exactly as
+  product. Rationale: when the fix touches UI/contract, the contract
+  must be respected; sub-agents need to model the states to avoid
+  regression in untouched-but-related states.
+- `wave_b_required: false` (logic-only / data-only bug) → skip Wave B
+  exactly as refactor. Rationale: the bug lives below the UI/contract
+  layer; forcing screen-analysis would be invention.
+
+This is the ONE wave-dispatch decision in the codebase that depends on
+a sub-question beyond the subtype itself. Discipline §8 documents the
+criteria; do NOT re-litigate in conversation. Conductor proceeds to
+Phase 4.5 in both cases (existing-helpers prefetch is useful for bugfix
+to detect sibling regressions in helpers).
+
+**Phase 4.5 — Reusability prefetch (silent, between Wave B and Wave C, ~1s):**
+
+After Wave B completes, before dispatching Wave C, you run a graph query
+to surface existing helpers/extensions that the feature could reuse —
+the tech-spec-agent is prohibited from querying the graph live (its prompt
+enforces deterministic context), so this step pre-computes the result
+and writes it to L1 memory.
+
+Steps:
+
+1. Parse `data-contract-spec.yaml` → extract domain entity types referenced
+   in `entities[]`, `firestore_collections[]`, `rest_endpoints[]`, etc.
+2. Run canonical query **Q11 — reusable-helpers** (see
+   `docs/schemas/graph.md`) passing the entity types as inputs.
+   Invocation: `forge graph` interactive menu → option `reusable-helpers`,
+   OR programmatic via `engine.graph.queries.find_reusable_helpers()`.
+3. Write the result to `.claude/memory/L1/{slug}/existing-helpers.yaml`:
+
+```yaml
+generated-at: 2026-05-30T14:23:11Z
+entity-types-queried: [Bonsai, Task, Reminder]
+helpers:
+  - name: foldStateUI
+    signature: "fun <T> Result<T>.foldStateUI(): StateUI<T>"
+    visibility: public
+    path: shared/core/util/ResultStateUIExtension.kt
+    module: shared
+    relevance: signature-references-StateUI
+  - name: toLocalDateOrNull
+    signature: "fun String.toLocalDateOrNull(): LocalDate?"
+    visibility: public
+    path: shared/core/util/StringDateExtension.kt
+    module: shared
+    relevance: shared-util-path
+total: 2
+```
+
+4. Append to `dispatch-log.jsonl`:
+   `{"event":"reusability-prefetch-done","entity-types":[...],"helpers-found":N}`
+
+Empty result (no relevant helpers) is **normal** — write the file with
+`helpers: []` so the tech-spec-agent's context pack reference resolves
+either way. Never skip writing the file.
+
+**Wave C — after Phase 4.5:**
 - `tech-spec-agent` → `tech-spec.md`
+- Context pack includes `.claude/memory/L1/{slug}/existing-helpers.yaml`
+  so the agent can flag "reuse existing" candidates in §14 instead of
+  proposing duplicate new helpers.
 
 **Wave D — after C:**
 - `task-contract-writer` → `tasks/TASK-*.yaml` + `task-breakdown.yaml`
+- **External-deps injection (discipline §9):** when Phase 2/3 elicitation
+  captured external dependencies, include them in task-contract-writer's
+  context pack under `external-deps`:
+  ```yaml
+  external-deps:
+    - task-hint: TASK-shared-data        # placeholder until writer emits TASK-NNNN
+      ticket: BACKEND-1284
+      integration: jira
+      description: "Endpoint /api/weather pendente"
+      blocking: true
+  ```
+  The writer resolves `task-hint` to concrete `TASK-NNNN` ids and emits
+  `depends_on_external` in the matching task contracts. Conductor never
+  writes `depends_on_external` directly — that's the writer's contract.
 
 **Wave E — after D:**
 - `readiness-reviewer` → `implementation-readiness-review.md`
+- When `external-deps` was non-empty in Wave D, the reviewer may emit
+  `ready-with-blocks` instead of `ready` if the non-blocked subset is
+  internally complete. Both verdicts unlock `forge implement`; the
+  blocked tasks are skipped at implement time with 3-caminhos.
 
 Each dispatch carries a **minimal context pack** — only the artifacts and
 inventory slices the sub-agent needs. Never send the whole feature folder.
@@ -283,6 +586,62 @@ Once everything is clean:
    do NOT auto-merge).
 4. If Jira: ask "post comment to BONSAI-XXXX with plan summary? [Y/n]"
 5. Emit handoff summary to terminal (see "Closing format" below).
+
+#### Auto-retrospective trigger (post-implement)
+
+Retrospective runs automatically after the last task of a feature is
+verified (decision 11). The retrospective scope varies by subtype:
+
+- **product**: full retrospective — pattern detection, naming
+  conventions, architecture-pattern surfacing, CFR promotion candidates.
+- **refactor**: reduced scope — focus on helpers/extensions surfaced
+  during the move (CFR promotion candidates only).
+- **bugfix**: **5-whys retrospective (Gap 1, mandatory)**. Discipline
+  §8 documents this as the bugfix's highest-value learning. The
+  retrospective-agent receives a context pack with the intake's
+  §Reproduction + §Root-cause + the fix diff, and emits proposed
+  evolutions that answer "what would have prevented this bug?".
+
+  Template prompt for retrospective-agent:
+
+  ```
+  Bug: {short description from intake §Problem}
+  Root cause (confirmed during implement): {from intake §Root-cause +
+    any updates during implement}
+  Fix scope: {files touched}
+
+  Walk the 5-whys:
+
+  1. Why did this bug occur?
+     → (direct root cause — usually matches intake §Root-cause)
+
+  2. Why did the root cause happen?
+     → (structural cause — missing validation? typing gap? test missing?)
+
+  3. Why did that structural cause exist?
+     → (process cause — review missed it? convention didn't cover?)
+
+  4. Why is the process gap there?
+     → (cultural cause — release pressure? docs missing? skill gap?)
+
+  5. Why is THAT the culture/cause?
+     → (founding cause — optional; may legitimately stop at "valid
+       trade-off given constraints at the time")
+
+  Emit ≥1 concrete proposed-evolution per non-trivial answer:
+    - new validator
+    - new rule in .claude/rules/
+    - new card contribution
+    - new pattern in L2
+    - new entry in the test-strategy template
+
+  Empty proposals ("be more careful") are NOT valid. If the analysis
+  stops at "valid trade-off", emit a `proposal-kind: decision-record`
+  documenting the trade-off so future eyes don't reopen it.
+  ```
+
+- **spike / chore** (v1.0 stubs): retrospective does NOT run for these
+  subtypes — they never reach implement-done state in v1.0.
 
 ---
 
@@ -396,7 +755,11 @@ L2 promotion (cross-feature patterns).
 
 ## Closing format
 
-End every successful `forge plan` run with:
+End every successful `forge plan` run with one of two summaries depending
+on `status.json.subtype`. Both share the same structure; the refactor
+variant reflects the leaner artifact set per discipline §8.
+
+**Product subtype (default):**
 
 ```text
 ✅ Plan ready: {slug}
@@ -410,6 +773,78 @@ End every successful `forge plan` run with:
    
    Próximo:
      forge implement TASK-0001
+```
+
+**Refactor subtype:**
+
+```text
+✅ Plan ready: {slug} · subtype=refactor
+
+   Artifacts:     {K} documents generated (Wave B skipped — discipline §8)
+                  · feature-intake.md (refactor variant)
+                  · tech-spec.md (§§ 2 · 3-7 modified-layers · 14 only)
+                  · task-breakdown.yaml · {N} TASK-NNNN.yaml
+                  · implementation-readiness-review.md
+                  · plan-feature-handoff.json
+   Tasks:         {N} (TASK-0001 → TASK-{NNNN})
+   Open questions: 0 blocking
+   Readiness:     ready
+   No-behavior-change attestation: signed in feature-intake.md
+   
+   Wave E checks include: check_no_behavior_change.py
+   
+   Próximo:
+     forge implement TASK-0001
+```
+
+**Bugfix subtype:**
+
+```text
+✅ Plan ready: {slug} · subtype=bugfix
+
+   Bug ticket:    {ticket-id or "none"}
+   Wave B:        {ran (UI/observable) | skipped (logic-only)}
+   Artifacts:     {K} documents generated
+                  · feature-intake.md (bugfix variant — repro + expected/actual)
+                  {· screen-analysis.md + ui-state-spec.yaml + bdd.{md,json}
+                     + navigation-spec.yaml + data-contract-spec.yaml
+                     + analytics-spec.yaml + test-strategy.yaml      [if Wave B ran]}
+                  · tech-spec.md (§§ 1 · 2 · 3-7 touched-layers · 13 · 14)
+                  · task-breakdown.yaml · {N} TASK-NNNN.yaml
+                  · implementation-readiness-review.md
+                  · plan-feature-handoff.json
+   Tasks:         {N} (TASK-0001 → TASK-{NNNN})
+                  Default 1 task; split when fix crosses platforms or
+                  needs a refactor pré-fix.
+   Open questions: 0 blocking
+   Readiness:     ready
+   Regression risk: {low | medium | high} (from intake §Regression risk)
+   
+   After implement, retrospective runs the 5-whys (discipline §8) —
+   propostas vão pra proposed-evolutions.yaml.
+   
+   Próximo:
+     forge implement TASK-0001
+```
+
+**Ready-with-blocks (discipline §9):**
+
+When at least one task carries `depends_on_external` with `blocking:
+true`, append the blocked-tasks block to the closing summary, regardless
+of subtype:
+
+```text
+   External dependencies:
+     · TASK-{NNNN}  BACKEND-1284 (jira)   "endpoint /api/weather pendente"
+     · TASK-{MMMM}  BACKEND-1284 (jira)   (same ticket)
+     · TASK-{KKKK}  DESIGN-44 (manual)    "banner empty-state pending"
+   
+   Readiness:     ready-with-blocks
+   Subset livre:  {X} de {N} tasks pode rodar agora
+   Próximo:       forge implement {slug}
+                  (eu pego TASK-{LLLL} que não tem dep externa;
+                   tasks bloqueadas pedem `forge reconfigure` quando
+                   o ticket fechar)
 ```
 
 If Jira active, after user confirmation, also:

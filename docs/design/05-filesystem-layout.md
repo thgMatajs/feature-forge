@@ -387,61 +387,99 @@ What `forge plan` and `forge implement` produce per feature:
 ├── status.json                            overall workflow state
 ├── history.jsonl                          global event log
 │
-└── features/
-    └── {feature-slug}/                    one folder per feature
+├── features/                              subtype=product (default)
+│   └── {feature-slug}/                    one folder per product feature
+│       │
+│       ├── feature-intake.md              Wave A artifact
+│       ├── feature-prd.md                 Wave A artifact
+│       ├── screen-analysis.md             Wave B artifact
+│       ├── bdd.md                         Wave B artifact
+│       ├── bdd.json                       Wave B artifact (machine-readable)
+│       ├── ui-state-spec.yaml             Wave B artifact
+│       ├── navigation-spec.yaml           Wave B artifact
+│       ├── data-contract-spec.yaml        Wave B artifact
+│       ├── analytics-spec.yaml            Wave B artifact
+│       ├── test-strategy.yaml             Wave B artifact
+│       ├── tech-spec.md                   Wave C artifact
+│       ├── task-breakdown.yaml            Wave D artifact
+│       │
+│       ├── tasks/                         Wave D artifacts (per task)
+│       │   ├── TASK-0001.yaml
+│       │   ├── TASK-0002.yaml
+│       │   ├── TASK-0003.yaml
+│       │   └── ...
+│       │
+│       ├── open-questions.yaml            tracking unresolved
+│       ├── implementation-readiness-review.md   Wave E artifact
+│       ├── plan-feature-handoff.json      Wave E artifact
+│       ├── status.json                    feature-level state
+│       ├── history.jsonl                  feature event log
+│       │
+│       ├── checkpoints/                   resume points
+│       ├── findings/                      out-of-scope discoveries
+│       ├── screenshots/                   downloaded from Jira or user-provided
+│       ├── completion-evidence/           proof artifacts per task
+│       ├── reviews/                       pre-commit reviews per task
+│       ├── retrospective.md               written on feature-done
+│       │
+│       └── evals/
+│           └── evals.json                 evaluation results
+│
+└── non-product/                           subtype ∈ {refactor, spike, chore}
+    └── {feature-slug}/                    parallel to features/{slug}/
         │
-        ├── feature-intake.md              Wave A artifact
-        ├── feature-prd.md                 Wave A artifact
-        ├── screen-analysis.md             Wave B artifact
-        ├── bdd.md                         Wave B artifact
-        ├── bdd.json                       Wave B artifact (machine-readable)
-        ├── ui-state-spec.yaml             Wave B artifact
-        ├── navigation-spec.yaml           Wave B artifact
-        ├── data-contract-spec.yaml        Wave B artifact
-        ├── analytics-spec.yaml            Wave B artifact
-        ├── test-strategy.yaml             Wave B artifact
-        ├── tech-spec.md                   Wave C artifact
+        ├── feature-intake.md              Wave A — REFACTOR variant
+        │                                  (template: feature-intake-refactor.template.md)
+        ├── tech-spec.md                   Wave C — stripped (§§ 2, 3-7
+        │                                  modified-layers, 14 only)
         ├── task-breakdown.yaml            Wave D artifact
         │
-        ├── tasks/                         Wave D artifacts (per task)
-        │   ├── TASK-0001.yaml
-        │   ├── TASK-0002.yaml
-        │   ├── TASK-0003.yaml
-        │   └── ...
+        ├── tasks/                         Wave D artifacts
+        │   └── TASK-NNNN.yaml
         │
-        ├── open-questions.yaml            tracking unresolved
-        ├── implementation-readiness-review.md   Wave E artifact
-        ├── plan-feature-handoff.json      Wave E artifact
-        ├── status.json                    feature-level state
-        ├── history.jsonl                  feature event log
+        ├── open-questions.yaml
+        ├── implementation-readiness-review.md
+        ├── plan-feature-handoff.json
+        ├── status.json                    feature-level state (subtype field set)
+        ├── history.jsonl
         │
-        ├── checkpoints/                   resume points
-        │   ├── 2026-05-28T14-30-00.json
-        │   ├── 2026-05-28T16-15-00.json
-        │   └── ...
-        │
-        ├── findings/                      out-of-scope discoveries
-        │   ├── FND-001.yaml
-        │   └── ...
-        │
-        ├── screenshots/                   downloaded from Jira or user-provided
-        │   ├── mockup-list.png
-        │   ├── mockup-detail.png
-        │   └── mockup-edit.png
-        │
-        ├── completion-evidence/           proof artifacts per task
-        │   ├── TASK-0001-evidence.json
-        │   └── ...
-        │
-        ├── reviews/                       pre-commit reviews per task
-        │   ├── TASK-0001-review.md
-        │   └── ...
-        │
-        ├── retrospective.md               written on feature-done
-        │
-        └── evals/
-            └── evals.json                 evaluation results
+        ├── checkpoints/
+        ├── findings/
+        ├── completion-evidence/
+        ├── reviews/
+        └── retrospective.md               written on feature-done
 ```
+
+### Artifacts present per subtype
+
+Discipline §8 — non-product feature track. Refactor packages **lack**
+the entire Wave B output set because forcing those artifacts would force
+sub-agents to invent (no PRD natural, no screen-analysis without UI
+change, no contracts for unchanged behavior). Spike and chore are
+stubbed in v1.0; their package shape is reserved for v1.1+.
+
+| Artifact | product | refactor | spike (v1.1+) | chore (v1.1+) |
+|---|---|---|---|---|
+| `feature-intake.md` | ✓ canonical | ✓ refactor variant | (TBD) | (TBD) |
+| `feature-prd.md` | ✓ | absent | (TBD) | (TBD) |
+| `screen-analysis.md` | ✓ | **absent** | (TBD) | (TBD) |
+| `bdd.md` + `bdd.json` | ✓ | **absent** | (TBD) | (TBD) |
+| `ui-state-spec.yaml` | ✓ | **absent** | (TBD) | (TBD) |
+| `navigation-spec.yaml` | ✓ | **absent** | (TBD) | (TBD) |
+| `data-contract-spec.yaml` | ✓ | **absent** | (TBD) | (TBD) |
+| `analytics-spec.yaml` | ✓ | **absent** | (TBD) | (TBD) |
+| `test-strategy.yaml` | ✓ | **absent** | (TBD) | (TBD) |
+| `tech-spec.md` | ✓ (full §§ 1-14) | ✓ (§§ 2, 3-7 modified-only, 14) | (TBD) | (TBD) |
+| `task-breakdown.yaml` | ✓ | ✓ | (TBD) | (TBD) |
+| `tasks/TASK-NNNN.yaml` | ✓ | ✓ (with `validations: [check_no_behavior_change]`) | (TBD) | (TBD) |
+| `implementation-readiness-review.md` | ✓ | ✓ | (TBD) | (TBD) |
+| `plan-feature-handoff.json` | ✓ | ✓ | (TBD) | (TBD) |
+
+Wave dispatch routing: `engine/plan.py` reads `status.json.subtype` and
+chooses the wave sequence — `product` → A·B·C·D·E (`features/{slug}/`)
+vs `refactor` → A·C·D·E (`non-product/{slug}/`). See
+`docs/design/07-discipline.md §8` and `agents/planning-conductor.md
+§Phase 1 + §Phase 4` for the conductor-side flow.
 
 ### Feature lifecycle states
 

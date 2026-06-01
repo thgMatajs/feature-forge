@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from engine.memory.l1 import (
+    blocking_deps,
     list_active_features,
     list_archived_features,
     read_history,
@@ -85,24 +86,105 @@ def _render_project(project_root: Path, config: dict) -> None:
     renderer.write(renderer.box("project", body))
 
 
+_IN_FLIGHT_STATES = {"planning", "planned", "implementing", "verifying"}
+
+
 def _render_active_features(project_root: Path) -> None:
-    renderer.write("")
-    renderer.write(renderer.section_header("active features"))
+    """Render the feature board, partitioned by lifecycle state.
+
+    Discipline §9 — blocked-on-external is a sibling of deferred, surfaced
+    in its own section so dev sees "what to chase externally" at a glance.
+    """
     active = list_active_features(project_root)
-    if not active:
-        renderer.write("  (nenhum)")
-        return
+
+    # Bucket by state. A feature with no status.json shows as "unknown".
+    in_flight: list[tuple[str, Any]] = []
+    blocked: list[tuple[str, Any]] = []
+    deferred: list[tuple[str, Any]] = []
+    other: list[tuple[str, Any]] = []
     for slug in active:
-        state = read_l1_status(slug, project_root)
-        if state is None:
-            renderer.write(f"  · {slug}  (sem status.json)")
+        st = read_l1_status(slug, project_root)
+        if st is None:
+            other.append((slug, None))
             continue
-        delta = _humanize_delta(state.last_action_at)
-        line = (
-            f"  · {slug:<28} {state.status:<12} "
-            f"last: {state.last_action_kind or '—'}  ({delta})"
+        if st.status == "blocked-on-external":
+            blocked.append((slug, st))
+        elif st.status == "deferred":
+            deferred.append((slug, st))
+        elif st.status in _IN_FLIGHT_STATES:
+            in_flight.append((slug, st))
+        else:
+            other.append((slug, st))
+
+    renderer.write("")
+    renderer.write(renderer.section_header("in-flight features"))
+    if not in_flight:
+        renderer.write("  (nenhuma)")
+    else:
+        for slug, st in in_flight:
+            delta = _humanize_delta(st.last_action_at)
+            renderer.write(
+                f"  · {slug:<28} {st.status:<12} "
+                f"last: {st.last_action_kind or '—'}  ({delta})"
+            )
+
+    if blocked:
+        renderer.write("")
+        renderer.write(renderer.section_header("blocked on external"))
+        for slug, st in blocked:
+            deps = blocking_deps(slug, project_root)
+            ticket_summary = _format_blocked_summary(deps)
+            delta = _humanize_delta(st.last_action_at)
+            renderer.write(f"  · {slug:<28} {ticket_summary}  ({delta})")
+        renderer.write("")
+        renderer.write(
+            "  desbloqueio: forge reconfigure → external-deps → "
+            "marcar dep externa como resolvida"
         )
-        renderer.write(line)
+
+    if deferred:
+        renderer.write("")
+        renderer.write(renderer.section_header("deferred"))
+        for slug, st in deferred:
+            delta = _humanize_delta(st.last_action_at)
+            renderer.write(
+                f"  · {slug:<28} {st.last_action_kind or '—'}  ({delta})"
+            )
+
+    if other:
+        renderer.write("")
+        renderer.write(renderer.section_header("other states"))
+        for slug, st in other:
+            if st is None:
+                renderer.write(f"  · {slug}  (sem status.json)")
+                continue
+            delta = _humanize_delta(st.last_action_at)
+            renderer.write(
+                f"  · {slug:<28} {st.status:<12} "
+                f"last: {st.last_action_kind or '—'}  ({delta})"
+            )
+
+
+def _format_blocked_summary(deps: list[dict[str, Any]]) -> str:
+    """Compact single-line summary of unique tickets blocking a feature."""
+    if not deps:
+        return "(sem deps)"
+    # Group by ticket so the same ticket across N tasks shows once.
+    by_ticket: dict[str, dict[str, Any]] = {}
+    for d in deps:
+        ticket = str(d.get("ticket") or "?")
+        if ticket not in by_ticket:
+            by_ticket[ticket] = {
+                "integration": d.get("integration") or "manual",
+                "tasks": set(),
+            }
+        by_ticket[ticket]["tasks"].add(d.get("task") or "?")
+    parts: list[str] = []
+    for ticket, meta in by_ticket.items():
+        n = len(meta["tasks"])
+        suffix = "" if n == 1 else f" ({n} tasks)"
+        parts.append(f"{ticket} ({meta['integration']}){suffix}")
+    return " · ".join(parts)
 
 
 def _render_memory(project_root: Path, config: dict) -> None:

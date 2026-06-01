@@ -375,6 +375,7 @@ Deferred to keep v1 lean:
 | User-customizable webhooks | Power-user feature for later |
 | Memory L4 cross-project automation | Needs >1 project to test |
 | Time-series analytics over history | Useful but not blocking |
+| **MCP polling for external-dep resolution** (Gap 8 / discipline §9) | v1.0 ships manual unblock via `forge reconfigure`. v1.1+ will add `forge ingest --event external-dep-resolved` (hidden entrypoint) hooked into Jira/Linear webhooks. v1.0 keeps human-in-the-loop for the trust gate — a misfired webhook would lie to `forge implement` about safety to proceed. |
 
 ## Direct answer to "how is memory and graph fed?"
 

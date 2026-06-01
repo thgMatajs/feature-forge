@@ -97,3 +97,135 @@ def test_blast_radius_returns_dict_shape(tmp_path):
     _seed_db(db)
     result = queries.blast_radius(tmp_path, [Path("shared/auth/AuthVM.kt")], db_path=db)
     assert isinstance(result, dict)
+
+
+# ── Q11 — find_reusable_helpers ─────────────────────────────────────────────
+
+
+def _seed_reusable_helpers(db_path: Path) -> None:
+    """Seed with utility helpers in `shared` module for Q11 tests.
+
+    Mix of: util-path helper, extension referencing a domain entity, a
+    helper in a non-utility path that doesn't reference any entity (should
+    NOT be returned), a private helper (filtered out), and a class (filtered
+    by kind='fun').
+    """
+    conn = open_db(db_path, create=True)
+    try:
+        with transaction(conn):
+            conn.executemany(
+                "INSERT INTO files(path, language, module) VALUES (?, ?, ?)",
+                [
+                    ("shared/core/util/StringDateExtension.kt", "kotlin", "shared"),
+                    ("shared/feature/bonsai/util/BonsaiFormatter.kt", "kotlin", "shared"),
+                    ("shared/feature/bonsai/data/BonsaiRepositoryImpl.kt", "kotlin", "shared"),
+                    ("shared/core/util/ResultExtension.kt", "kotlin", "shared"),
+                    ("androidApp/feature/bonsai/BonsaiScreen.kt", "kotlin", "androidApp"),
+                ],
+            )
+            file_ids = {
+                row["path"]: row["id"]
+                for row in conn.execute("SELECT id, path FROM files").fetchall()
+            }
+            conn.executemany(
+                "INSERT INTO symbols(file_id, name, kind, signature, visibility, line_start) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                [
+                    # General-purpose stdlib helper in util path — should match
+                    (
+                        file_ids["shared/core/util/StringDateExtension.kt"],
+                        "toLocalDateOrNull",
+                        "fun",
+                        "fun String.toLocalDateOrNull(): LocalDate?",
+                        "public",
+                        10,
+                    ),
+                    # Extension referencing Bonsai entity — should match on entity
+                    (
+                        file_ids["shared/feature/bonsai/util/BonsaiFormatter.kt"],
+                        "formatDisplay",
+                        "fun",
+                        "fun Bonsai.formatDisplay(): String",
+                        "public",
+                        15,
+                    ),
+                    # Repository impl class — filtered by kind='fun'
+                    (
+                        file_ids["shared/feature/bonsai/data/BonsaiRepositoryImpl.kt"],
+                        "BonsaiRepositoryImpl",
+                        "class",
+                        "class BonsaiRepositoryImpl(...)",
+                        "public",
+                        5,
+                    ),
+                    # Public fun in util path — should match
+                    (
+                        file_ids["shared/core/util/ResultExtension.kt"],
+                        "foldStateUI",
+                        "fun",
+                        "fun <T> Result<T>.foldStateUI(): StateUI<T>",
+                        "public",
+                        20,
+                    ),
+                    # Private fun — filtered by visibility
+                    (
+                        file_ids["shared/core/util/ResultExtension.kt"],
+                        "internalHelper",
+                        "fun",
+                        "private fun helper(): Unit",
+                        "private",
+                        40,
+                    ),
+                    # androidApp module — filtered by module='shared'
+                    (
+                        file_ids["androidApp/feature/bonsai/BonsaiScreen.kt"],
+                        "renderBonsai",
+                        "fun",
+                        "fun renderBonsai(b: Bonsai): Unit",
+                        "public",
+                        30,
+                    ),
+                ],
+            )
+    finally:
+        conn.close()
+
+
+def test_find_reusable_helpers_matches_entity_types(tmp_path):
+    db = tmp_path / "g.db"
+    _seed_reusable_helpers(db)
+    rows = queries.find_reusable_helpers(tmp_path, ["Bonsai"], db_path=db)
+    names = [r["name"] for r in rows]
+    # Bonsai.formatDisplay extension matches signature; foldStateUI and
+    # toLocalDateOrNull match utility-path; BonsaiRepositoryImpl excluded
+    # (kind=class); renderBonsai excluded (module=androidApp).
+    assert "formatDisplay" in names
+    assert "BonsaiRepositoryImpl" not in names
+    assert "renderBonsai" not in names
+    # Relevance is the entity match when signature contains it
+    fmt = next(r for r in rows if r["name"] == "formatDisplay")
+    assert fmt["relevance"] == "signature-references-Bonsai"
+
+
+def test_find_reusable_helpers_filters_visibility_and_module(tmp_path):
+    db = tmp_path / "g.db"
+    _seed_reusable_helpers(db)
+    rows = queries.find_reusable_helpers(tmp_path, [], db_path=db)
+    # Private fun is excluded, androidApp module is excluded, classes excluded
+    names = [r["name"] for r in rows]
+    assert "internalHelper" not in names
+    assert "renderBonsai" not in names
+    assert "BonsaiRepositoryImpl" not in names
+    # Utility helpers all present even with empty entity list
+    assert "toLocalDateOrNull" in names
+    assert "foldStateUI" in names
+
+
+def test_find_reusable_helpers_empty_inputs_returns_empty(tmp_path):
+    """Empty entity types + empty path fragments → empty result (defensive)."""
+    db = tmp_path / "g.db"
+    _seed_reusable_helpers(db)
+    rows = queries.find_reusable_helpers(
+        tmp_path, [], util_path_fragments=[], db_path=db
+    )
+    assert rows == []
