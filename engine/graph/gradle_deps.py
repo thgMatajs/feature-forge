@@ -135,7 +135,8 @@ def find_smallest_common_ancestor(
     Selection rule when multiple ancestors qualify:
       1. Exclude modules in the input group themselves.
       2. Prefer modules with the highest in-degree (most "core-like").
-      3. Tie-breaker: lexicographic order.
+      3. Tie-breaker: lexicographically smallest name wins (matches the
+         function's literal name + CR-02 fix from PR #1 review).
     """
     if not modules_in_group:
         return None
@@ -160,7 +161,14 @@ def find_smallest_common_ancestor(
                 continue
             in_degree[target] = in_degree.get(target, 0) + 1
 
-    return max(candidates, key=lambda c: (in_degree.get(c, 0), c))
+    # CR-02 (review): `min(..., key=(-in_degree, c))` picks the highest
+    # in-degree first (because we negate) and breaks ties by the
+    # lexicographically SMALLEST name — matching the function's name and
+    # the docstring's "smallest" promise. The earlier
+    # `max(..., key=(in_degree, c))` shape silently inverted the tie:
+    # `max` on `c` picks the lex-LARGEST name, which is the opposite of
+    # what `find_smallest_common_ancestor` should return.
+    return min(candidates, key=lambda c: (-in_degree.get(c, 0), c))
 
 
 def infer_suggested_target(
