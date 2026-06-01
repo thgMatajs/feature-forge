@@ -971,7 +971,11 @@ def _run_waves_for_subtype(
             result = _run_wave_e(slug, project_root, feature_path)
 
         if result.deferred:
-            return 0
+            # Paused — caller distinguishes "done" (0) from "paused" (130)
+            # per the run() docstring contract: '0=ok, 130=paused, other=hard'.
+            # Returning 0 here previously caused the caller to mark a paused
+            # feature as planned, silently losing the deferred state.
+            return 130
     return 0
 
 
