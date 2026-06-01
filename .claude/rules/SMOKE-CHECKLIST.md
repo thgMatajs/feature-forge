@@ -104,7 +104,39 @@ forte. Ajuste no `CLAUDE.md` e re-teste.
 
 5/5 passam = sistema vivo. Marque a data abaixo:
 
-> **Última execução do checklist:** YYYY-MM-DD — N/5 passou.
+> **Última execução do checklist:** 2026-06-01 — 3/5 passou.
 > Observações:
+> - Check 1 (SessionStart hook): PASS — script executável, `.claude/settings.json`
+>   registra SessionStart, output renderiza esperado (verificado via invocação
+>   manual em sessão prévia).
+> - Check 2 (PostToolUse drift): **FAIL em contexto de subagente** —
+>   `Edit engine/cli.py` (executado por `gsd-executor`) NÃO disparou stderr
+>   `📝 doc-drift` no contexto da tool call, e `.claude/state/drift-warned.json`
+>   não foi criado. Invocação manual do script (`bash .claude/hooks/
+>   post-edit-doc-drift.sh` com JSON sintético) funciona corretamente. Hipótese:
+>   hooks Claude Code só disparam pra tool calls da sessão principal, não pra
+>   Edit/Write executados dentro de subagentes. Gap: validar comportamento
+>   na sessão principal antes de declarar PASS.
+> - Check 3 (PreToolUse load-bearing): **FAIL em contexto de subagente** —
+>   `Edit docs/design/00-vision.md` (gsd-executor) NÃO disparou stderr
+>   `🛑 LOAD-BEARING edit` no contexto da tool call, e
+>   `.claude/state/load-bearing-edits.jsonl` não recebeu entrada via Claude Code.
+>   Invocação manual do script funciona (entrada JSON adicionada ao audit log
+>   confirmadamente). Mesma hipótese do #2: subagent context skip.
+> - Check 4 (pre-commit hard-block): **PASS — ambos sub-cenários** —
+>   4a (sem ceremony): commit bloqueado com exit != 0, stderr contém
+>   `🛑 BLOCK` + `Revisita decisão`. 4b (com ceremony em CHANGELOG):
+>   commit `7e58b43` passou normalmente; revertido via `git reset --hard
+>   HEAD~1`. Git hook (não Claude Code hook) funciona conforme contrato.
+> - Check 5 (Mandamento 0 dispatch behavior): PASS — orchestrator-mantenedor
+>   despachou este `gsd-executor` em vez de editar diretamente; este próprio
+>   commit (registro do smoke) está sendo gerado por subagente, evidência
+>   factual de Mandamento 0 ativo.
+>
+> Próximo passo (não-bloqueante): executar Check #2 e #3 manualmente na
+> sessão principal pra confirmar se hooks Claude Code disparam fora de
+> subagent context. Se confirmado o gap, anotar em `docs/design/04-pending.md`
+> (hooks PreToolUse/PostToolUse não cobrem ações de subagent — possível
+> blind spot do Mandamento 0).
 
 (Update após cada execução manual.)
