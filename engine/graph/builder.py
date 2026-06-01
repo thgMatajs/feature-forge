@@ -325,10 +325,20 @@ def _reset_domain_tables(conn: sqlite3.Connection) -> None:
         "symbols",
         "files",
     ]
+    # PRAGMA foreign_keys must run outside a transaction (SQLite ignores it
+    # mid-transaction). The DELETEs themselves go inside an implicit
+    # transaction (`with conn:`) so a mid-stream failure rolls back the
+    # partial wipe. The `try/finally` guarantees the pragma is restored to
+    # ON even when a DELETE raises — otherwise the connection would leak
+    # ``foreign_keys = OFF`` into subsequent transactions, silently
+    # disabling FK enforcement for the rest of its life.
     conn.execute("PRAGMA foreign_keys = OFF")
-    for table in tables_to_clear:
-        conn.execute(f"DELETE FROM {table}")
-    conn.execute("PRAGMA foreign_keys = ON")
+    try:
+        with conn:
+            for table in tables_to_clear:
+                conn.execute(f"DELETE FROM {table}")
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
 
 
 def _ingest_file(
