@@ -3,8 +3,8 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-01 (v1.1.0 estável + Claude Code rules system instalado)
-**Estado:** v1.1.0 estável; rules system ativo (CLAUDE.md + 12 rules + 4 hooks + 36 integration tests). Próximo: dogfooding via primeira feature pós-rules em MeoBonsai.
+**Última atualização:** 2026-06-01 (v1.1.0 estável + smoke checklist corrigido + hooks subagent confirmados)
+**Estado:** v1.1.0 estável; rules system validado via smoke (4/5 — gap menor de observabilidade de hooks em subagent anotado em pending). Próximo: dogfooding em MeoBonsai.
 
 ---
 

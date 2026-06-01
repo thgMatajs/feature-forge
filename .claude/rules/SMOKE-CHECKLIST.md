@@ -104,39 +104,58 @@ forte. Ajuste no `CLAUDE.md` e re-teste.
 
 5/5 passam = sistema vivo. Marque a data abaixo:
 
-> **Última execução do checklist:** 2026-06-01 — 3/5 passou.
-> Observações:
-> - Check 1 (SessionStart hook): PASS — script executável, `.claude/settings.json`
->   registra SessionStart, output renderiza esperado (verificado via invocação
->   manual em sessão prévia).
-> - Check 2 (PostToolUse drift): **FAIL em contexto de subagente** —
->   `Edit engine/cli.py` (executado por `gsd-executor`) NÃO disparou stderr
->   `📝 doc-drift` no contexto da tool call, e `.claude/state/drift-warned.json`
->   não foi criado. Invocação manual do script (`bash .claude/hooks/
->   post-edit-doc-drift.sh` com JSON sintético) funciona corretamente. Hipótese:
->   hooks Claude Code só disparam pra tool calls da sessão principal, não pra
->   Edit/Write executados dentro de subagentes. Gap: validar comportamento
->   na sessão principal antes de declarar PASS.
-> - Check 3 (PreToolUse load-bearing): **FAIL em contexto de subagente** —
->   `Edit docs/design/00-vision.md` (gsd-executor) NÃO disparou stderr
->   `🛑 LOAD-BEARING edit` no contexto da tool call, e
->   `.claude/state/load-bearing-edits.jsonl` não recebeu entrada via Claude Code.
->   Invocação manual do script funciona (entrada JSON adicionada ao audit log
->   confirmadamente). Mesma hipótese do #2: subagent context skip.
-> - Check 4 (pre-commit hard-block): **PASS — ambos sub-cenários** —
->   4a (sem ceremony): commit bloqueado com exit != 0, stderr contém
->   `🛑 BLOCK` + `Revisita decisão`. 4b (com ceremony em CHANGELOG):
->   commit `7e58b43` passou normalmente; revertido via `git reset --hard
->   HEAD~1`. Git hook (não Claude Code hook) funciona conforme contrato.
-> - Check 5 (Mandamento 0 dispatch behavior): PASS — orchestrator-mantenedor
->   despachou este `gsd-executor` em vez de editar diretamente; este próprio
->   commit (registro do smoke) está sendo gerado por subagente, evidência
->   factual de Mandamento 0 ativo.
+> **Última execução do checklist:** 2026-06-01 — 4/5 passou (veredito corrigido).
 >
-> Próximo passo (não-bloqueante): executar Check #2 e #3 manualmente na
-> sessão principal pra confirmar se hooks Claude Code disparam fora de
-> subagent context. Se confirmado o gap, anotar em `docs/design/04-pending.md`
-> (hooks PreToolUse/PostToolUse não cobrem ações de subagent — possível
-> blind spot do Mandamento 0).
+> Smoke anterior (commit `a11e9c0`) registrou 3/5 capturando apenas stderr no
+> transcript do subagente. Investigação posterior — doc oficial
+> (code.claude.com/docs/en/hooks) + side-effect persistente no filesystem —
+> mostrou que o canal de observação estava errado: pra hooks executados em
+> subagent context, stderr do hook não aparece de forma confiável no
+> transcript, mas o side-effect em `.claude/state/*` é canal confiável.
+>
+> Observações por check:
+>
+> - **Check 1** (SessionStart hook): **PASS** — script executável,
+>   `.claude/settings.json` registra SessionStart, output renderiza esperado
+>   (verificado via invocação manual em sessão prévia).
+> - **Check 2** (PostToolUse drift em `engine/cli.py`): **FAIL** —
+>   Edit `engine/cli.py` em contexto de subagente não criou
+>   `.claude/state/drift-warned.json` nem produziu entrada no debug log
+>   instrumentado (`/tmp/cc-hook-debug.log` jamais existiu pós-Edit).
+>   Diagnóstico: PostToolUse não foi entregue ao hook script pra essa tool
+>   call específica. Doc oficial declara que hooks disparam em subagent
+>   context (campo `agent_id` no input JSON), mas observação concreta neste
+>   ambiente mostra delivery inconsistente — comportamento dependente do
+>   subagente / momento. PreToolUse ficou no mesmo barco neste check.
+>   Invocação manual do script (`bash .claude/hooks/post-edit-doc-drift.sh`
+>   com JSON sintético) funciona normalmente; o gap é no fan-out do Claude
+>   Code, não no hook em si.
+> - **Check 3** (PreToolUse load-bearing em `docs/design/00-vision.md`):
+>   **PASS** — veredito corrigido. Smoke anterior reportou FAIL por capturar
+>   só stderr; side-effect persistente prova o contrário:
+>   `.claude/state/load-bearing-edits.jsonl` contém entrada
+>   `{"ts":"2026-06-01T20:28:04Z","file":"docs/design/00-vision.md","tool":"Edit"}`
+>   gravada pelo próprio hook executando em subagent context. Ou seja:
+>   PreToolUse disparou, audit log foi escrito, mas stderr não bateu no
+>   transcript do subagente que rodou o smoke — daí a leitura errada.
+> - **Check 4** (pre-commit hard-block): **PASS — ambos sub-cenários** —
+>   4a (sem ceremony): commit bloqueado, stderr contém `🛑 BLOCK` + `Revisita
+>   decisão`. 4b (com ceremony em CHANGELOG): commit `7e58b43` passou
+>   normalmente; revertido via `git reset --hard HEAD~1`. Git hook (não
+>   Claude Code hook) funciona conforme contrato.
+> - **Check 5** (Mandamento 0 dispatch behavior): **PASS** —
+>   orchestrator-mantenedor segue despachando este `gsd-executor` em vez
+>   de editar diretamente. Este próprio registro está sendo gerado por
+>   subagente, evidência factual de Mandamento 0 ativo.
+>
+> Veredito final: **4/5 passou**. Check #2 permanece FAIL pela inconsistência
+> de entrega do PostToolUse em subagent context observada nesta execução.
+> Detalhe arquitetural anotado em `docs/design/04-pending.md` (seção "Hooks
+> Claude Code — observabilidade em subagente").
+>
+> Lição operacional: pra estes hooks, **side-effect persistente em
+> `.claude/state/*` é canal de audit mais confiável que stderr capture** —
+> stderr do hook pode não aparecer no transcript do subagente mesmo quando
+> o hook executou com sucesso.
 
 (Update após cada execução manual.)
