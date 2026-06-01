@@ -126,7 +126,7 @@ def extract_function_body(
             in_block_comment = True
             i += 2
             continue
-        if language == "kotlin" and ch == '"' and source[i:i + 3] == '"""':
+        if language in {"kotlin", "swift"} and ch == '"' and source[i:i + 3] == '"""':
             in_string_triple = True
             i += 3
             continue
