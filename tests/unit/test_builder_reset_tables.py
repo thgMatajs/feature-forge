@@ -92,3 +92,37 @@ def test_reset_domain_tables_restores_fk_pragma_on_error(tmp_path: Path):
         )
     finally:
         real_conn.close()
+
+
+def test_reset_domain_tables_refuses_open_transaction(tmp_path: Path):
+    """HG-01: callers must not invoke _reset_domain_tables inside an open tx.
+
+    Bug HG-01 (PR #1, review-fix): the function runs
+    ``PRAGMA foreign_keys = OFF`` outside a transaction (SQLite ignores the
+    pragma mid-transaction) AND opens an implicit transaction via
+    ``with conn:`` for the DELETE batch. If a caller wraps the call inside
+    its own outer transaction:
+
+      1. The PRAGMA is silently a no-op (FKs stay ON).
+      2. The inner ``with conn:`` rollback on error reverts the OUTER
+         transaction, corrupting state the caller still relied on.
+
+    Both failure modes are silent. The defensive assertion turns
+    contract violation into a loud crash at the boundary.
+    """
+    db_path = tmp_path / "graph.db"
+    conn = open_db(db_path, create=True)
+    try:
+        # Open an explicit outer transaction.
+        conn.execute("BEGIN")
+        assert conn.in_transaction, "sanity — BEGIN should leave conn in-tx"
+
+        with pytest.raises(AssertionError, match="open transaction"):
+            _reset_domain_tables(conn)
+    finally:
+        # Roll back the outer tx we opened so close() is clean.
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            pass
+        conn.close()

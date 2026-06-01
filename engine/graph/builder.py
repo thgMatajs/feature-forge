@@ -309,6 +309,23 @@ def _reset_domain_tables(conn: sqlite3.Connection) -> None:
     `reuse_finding_locations`) are also cleared — they're re-derived during the
     post-passes from settings.gradle, build.gradle and symbol contents.
     """
+    # HG-01 (review): refuse to run inside an outer transaction. Two reasons:
+    #   1. ``PRAGMA foreign_keys`` is silently ignored mid-transaction
+    #      (SQLite contract), so the OFF/ON toggle below becomes a no-op
+    #      and FK enforcement keeps running through the wipes — undermining
+    #      the whole purpose of this function.
+    #   2. The inner ``with conn:`` block below opens an implicit
+    #      transaction. If we are already inside an outer transaction, the
+    #      rollback path of that ``with`` block reverts the OUTER tx, not
+    #      a nested one — corrupting state the caller relied on.
+    # Loud assertion > silent corruption.
+    assert not conn.in_transaction, (
+        "_reset_domain_tables must run outside an open transaction "
+        "(PRAGMA foreign_keys is a no-op inside transactions; "
+        "the inner `with conn:` rollback would target the outer "
+        "transaction, corrupting state)."
+    )
+
     tables_to_clear = [
         "reuse_finding_locations",
         "reuse_findings",
