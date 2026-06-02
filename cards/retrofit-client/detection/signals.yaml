@@ -1,0 +1,37 @@
+# cards/retrofit-client/detection/signals.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Sinais de detecção do card retrofit-client.
+#
+# Os signals aqui espelham `card.yaml > detection.signals` adicionando `id`
+# + `rationale` por signal (campos não suportados no card.yaml — ficam aqui
+# como audit trail pra evolução).
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+signals:
+  - id:         retrofit-gradle-dep
+    type:       file-content
+    glob:       "**/build.gradle*"
+    contains:   "com.squareup.retrofit2:retrofit"
+    confidence: 0.5
+    rationale:  "Dependência declarada em build.gradle(.kts) é evidência forte de uso ativo."
+
+  - id:         retrofit-http-annotation
+    type:       file-content
+    glob:       "**/*.kt"
+    contains:   "@retrofit2.http"
+    confidence: 0.3
+    rationale:  "Anotações @GET/@POST/@PUT/@DELETE qualificadas com namespace retrofit2.http."
+
+  - id:         retrofit-import
+    type:       file-content
+    glob:       "**/*.kt"
+    contains:   "import retrofit2"
+    confidence: 0.2
+    rationale:  "Import direto de qualquer membro de retrofit2 — confidence menor (legado pode ter import só no DTO)."
+
+threshold: 0.6
+
+alternative-cards:
+  - ktor-client
