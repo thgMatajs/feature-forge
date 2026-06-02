@@ -379,6 +379,8 @@ added:
 #   reserved-promotions: [...]  ← promoção exige ADR no canon, não overlay
 ```
 
+**Nota sobre `target-platforms` em labels (vs cards):** capability labels podem declarar `target-platforms` pra disambiguar capabilities que só fazem sentido em algumas plataformas (ex.: `http-client` em mobile vs `web-fetch` em browser). Decisão deliberada — labels não têm signals (são abstrações), então plataforma não pode ser derivada como nos cards (Seção 2). Self-review 2026-06-02 confirmou que isso é load-bearing, não esquecimento.
+
 Loader de catálogo dentro do validator:
 
 ```python
