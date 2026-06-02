@@ -647,7 +647,18 @@ def blocking_deps(
 
     out: list[dict[str, Any]] = []
     for path in sorted(tasks_dir.glob("TASK-*.yaml")):
-        data = read_yaml_or_default(path, {}) or {}
+        try:
+            data = read_yaml_or_default(path, {}) or {}
+        except Exception as exc:  # noqa: BLE001 — best-effort: log + skip
+            # A single malformed task must not abort the whole scan
+            # (R2.3). Warn so the operator can clean up, but keep going.
+            try:
+                sys.stderr.write(
+                    f"forge: blocking_deps: skipping unreadable {path}: {exc}\n"
+                )
+            except Exception:  # pragma: no cover — stderr write itself failed
+                pass
+            continue
         if not isinstance(data, dict):
             continue
         # Accept both snake_case (template canonical) and kebab-case
