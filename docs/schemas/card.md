@@ -75,6 +75,22 @@ cards/{card-name}/
 Required files: `card.yaml`, `README.md`. Everything else is optional and
 declared via `card.yaml`.
 
+## Optional top-level `legacy-marker` (since v1.1)
+
+`legacy-marker: bool` é campo opcional top-level (default `false`) que sinaliza
+ao init que este card provê uma capability em forma legacy. Quando 2+ cards
+ativos proveem a mesma capability label e ao menos um carrega
+`legacy-marker: true`, init Step 7.5 surfaca prompt 3-caminhos antes de
+materializar o plan (manter legacy / migrar / coexistir).
+
+Política de versionamento: adição é aditiva, `schema-version` permanece `1`.
+Cards existentes (todos os 20 v1.1) seguem válidos sem mexer. Promoção a
+schema-version 2 só acontece em mudança breaking (remoção, mudança de tipo,
+novo required field).
+
+Validator (`validate_card_yaml.py`) aceita o campo intacto — quem age sobre
+o valor é o init Step 7.5.
+
 ## The `card.yaml` schema (full annotated)
 
 ```yaml
@@ -110,6 +126,16 @@ identity:
   created-at:  2026-05-15
   last-updated: 2026-05-28
   license:     MIT
+
+
+# ── LEGACY MARKER ─────────────────────────────────────────────────────────
+# Campo top-level opcional, aditivo ao schema v1 (não bumpa schema-version).
+# Quando true, sinaliza ao init Step 7.5 que este card provê uma capability
+# em forma legacy — caso 2+ cards proveem a mesma label e ao menos um tem
+# legacy-marker: true, o init dispara prompt 3-caminhos (manter legacy /
+# migrar pro moderno / coexistir explicitamente) antes de materializar o plan.
+# Default ausente = false.
+legacy-marker: false
 
 
 # ── CAPABILITIES ──────────────────────────────────────────────────────────
