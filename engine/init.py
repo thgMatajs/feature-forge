@@ -182,6 +182,105 @@ def _eval_detection_signals(
     return round(score, 3), matched
 
 
+@dataclass
+class OrphanSignal:
+    """Signal que casou em scan mas não em nenhum card (canon ∪ local).
+
+    Atributos:
+      - signal_id: identificador (do detection/signals.yaml ou inline derivado)
+      - source: arquivo onde o signal casou (relativo ao project_root)
+      - suggested_capability: label que a heurística infere
+      - is_reserved: True se suggested_capability ∈ canon.reserved
+        (Step 7.5 muda o caminho 1 de "criar local" pra "abrir ADR")
+      - hit_count: número de ocorrências (qualidade do signal)
+    """
+
+    signal_id: str
+    source: str
+    suggested_capability: str
+    is_reserved: bool = False
+    hit_count: int = 0
+
+
+def _check_orphan_signals(
+    project_root: Path,
+    canonical_cards: list["CardManifest"],
+    catalog,
+) -> list[OrphanSignal]:
+    """Detecta signals que bateram em scan mas não em card algum (canon ∪ local).
+
+    Heurística:
+      - Para cada card carregado, registra o set de signal contains/globs.
+      - Scan independente do project_root pega imports/anotações comuns que
+        sugerem capabilities ausentes (hilt-di, apollo-graphql, rxjava3).
+      - Cada miss vira um OrphanSignal com suggested_capability inferida
+        por lookup numa tabela `_ORPHAN_HEURISTICS` (best-effort, não exaustiva).
+      - Se suggested_capability ∈ catalog.reserved → marca is_reserved=True.
+
+    Conservador: se nenhuma heurística bate, retorna lista vazia (não inventa).
+    """
+    project = project_root.resolve()
+    matched_in_cards: set[str] = set()
+    for card in canonical_cards:
+        for sig in (card.detection or {}).get("signals") or []:
+            contains = (sig or {}).get("contains")
+            if isinstance(contains, str) and contains:
+                matched_in_cards.add(contains)
+
+    orphans: list[OrphanSignal] = []
+    for needle, suggested in _ORPHAN_HEURISTICS.items():
+        if needle in matched_in_cards:
+            continue
+        hits = _count_needle_hits(project, needle)
+        if hits == 0:
+            continue
+        is_reserved = suggested in catalog.reserved
+        orphans.append(
+            OrphanSignal(
+                signal_id=f"orphan:{needle}",
+                source=f"detected in {hits} file(s)",
+                suggested_capability=suggested,
+                is_reserved=is_reserved,
+                hit_count=hits,
+            )
+        )
+    return orphans
+
+
+# Heurística mínima — needle → suggested capability. Lista enxuta, foco em
+# casos comuns que motivam Gap 5. Expansão fica pra próximas waves.
+_ORPHAN_HEURISTICS: dict[str, str] = {
+    "@HiltAndroidApp":              "hilt-di",
+    "dagger.hilt.android":          "hilt-di",
+    "import com.apollographql":     "apollo-graphql-client",
+    "ApolloClient(":                "apollo-graphql-client",
+    "io.reactivex.rxjava3":         "rxjava3-streams",
+    "io.realm.kotlin":              "realm-local",
+}
+
+
+def _count_needle_hits(project_root: Path, needle: str, limit: int = 50) -> int:
+    """Conta arquivos .kt/.gradle* que contêm `needle`. Cap em `limit` pra
+    evitar varredura cara em monorepos grandes — qualquer valor >= 1 é
+    suficiente pra Step 7.5 surface.
+    """
+    count = 0
+    patterns = ("*.kt", "build.gradle", "build.gradle.kts", "settings.gradle*")
+    for pattern in patterns:
+        for path in project_root.rglob(pattern):
+            if any(part.startswith(".") for part in path.relative_to(project_root).parts):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            if needle in text:
+                count += 1
+                if count >= limit:
+                    return count
+    return count
+
+
 def _glob_any(project_root: Path, glob: str, needle: str | None) -> bool:
     """Best-effort glob walk with depth + count caps to keep init responsive."""
     if not glob:
