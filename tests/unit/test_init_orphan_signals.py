@@ -7,13 +7,17 @@ Parte 2 (Task 11): _surface_three_paths UX
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
+import yaml
 
 from engine.init import (
+    InitDecision,
     OrphanSignal,
     _check_orphan_signals,
     _count_needle_hits,
+    _surface_three_paths,
 )
 
 
@@ -112,3 +116,95 @@ def test_check_orphan_signals_empty_project_returns_no_orphans(tmp_path):
     catalog = _FakeCatalog(reserved={"hilt-di"})
     orphans = _check_orphan_signals(proj, canonical_cards=[], catalog=catalog)
     assert orphans == []
+
+
+# ── Parte 2 — _surface_three_paths UX ───────────────────────────────────────
+
+
+@pytest.fixture
+def hilt_orphan() -> OrphanSignal:
+    return OrphanSignal(
+        signal_id="orphan:@HiltAndroidApp",
+        source="detected in 3 file(s)",
+        suggested_capability="hilt-di",
+        is_reserved=True,
+        hit_count=3,
+    )
+
+
+@pytest.fixture
+def rx_orphan() -> OrphanSignal:
+    return OrphanSignal(
+        signal_id="orphan:io.reactivex.rxjava3",
+        source="detected in 12 file(s)",
+        suggested_capability="async-streams",
+        is_reserved=False,
+        hit_count=12,
+    )
+
+
+def test_three_paths_caminho_1_creates_local_for_non_reserved(rx_orphan, tmp_path):
+    """Caminho 1 (não-reservada): chama reconfigure card-local add inline."""
+    proj = tmp_path / "p"
+    (proj / ".claude").mkdir(parents=True)
+    with patch("engine.init.question.ask") as ask_mock, patch(
+        "engine.init._card_local_add_inline"
+    ) as add_mock:
+        ask_mock.return_value = "1"
+        decision = _surface_three_paths([rx_orphan], project_root=proj)
+    assert decision.choice == "create-local"
+    add_mock.assert_called_once()
+
+
+def test_three_paths_caminho_1_reserved_routes_to_adr(hilt_orphan, tmp_path):
+    """Caminho 1 com reservada: NÃO cria local, oferece abrir ADR."""
+    proj = tmp_path / "p"
+    (proj / ".claude").mkdir(parents=True)
+    with patch("engine.init.question.ask") as ask_mock:
+        ask_mock.return_value = "1"
+        decision = _surface_three_paths([hilt_orphan], project_root=proj)
+    assert decision.choice == "adr-required"
+    assert "hilt-di" in decision.note
+
+
+def test_three_paths_caminho_2_writes_ignored_signals_yaml(rx_orphan, tmp_path):
+    proj = tmp_path / "p"
+    (proj / ".claude" / "inventory").mkdir(parents=True)
+    with patch("engine.init.question.ask") as ask_mock:
+        ask_mock.return_value = "2"
+        decision = _surface_three_paths([rx_orphan], project_root=proj)
+    assert decision.choice == "ignore"
+    ignored_path = proj / ".claude" / "inventory" / "ignored-signals.yaml"
+    assert ignored_path.is_file()
+    parsed = yaml.safe_load(ignored_path.read_text(encoding="utf-8"))
+    assert parsed.get("schema-version") == 1
+    entries = parsed.get("ignored") or []
+    assert any(e.get("signal_id") == "orphan:io.reactivex.rxjava3" for e in entries)
+
+
+def test_three_paths_caminho_3_aborts_with_exit_8(rx_orphan, tmp_path):
+    proj = tmp_path / "p"
+    (proj / ".claude").mkdir(parents=True)
+    with patch("engine.init.question.ask") as ask_mock:
+        ask_mock.return_value = "3"
+        decision = _surface_three_paths([rx_orphan], project_root=proj)
+    assert decision.choice == "abort"
+    assert decision.exit_code == 8
+
+
+def test_three_paths_invalid_choice_reprompts_then_resolves(rx_orphan, tmp_path):
+    proj = tmp_path / "p"
+    (proj / ".claude" / "inventory").mkdir(parents=True)
+    with patch("engine.init.question.ask") as ask_mock:
+        # primeiro retorna escolha inválida, depois "2"
+        ask_mock.side_effect = ["bogus", "2"]
+        decision = _surface_three_paths([rx_orphan], project_root=proj)
+    assert decision.choice == "ignore"
+    assert ask_mock.call_count == 2
+
+
+def test_three_paths_empty_orphan_list_is_no_op(tmp_path):
+    proj = tmp_path / "p"
+    (proj / ".claude").mkdir(parents=True)
+    decision = _surface_three_paths([], project_root=proj)
+    assert decision.choice == "noop"
