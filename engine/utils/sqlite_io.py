@@ -234,6 +234,13 @@ def open_db(
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")
+    # synchronous=NORMAL: ~3x faster writes vs FULL during full graph rebuild
+    # (fsync per page → fsync per transaction). Trade-off: on power loss
+    # mid-transaction, SQLite still guarantees DB consistency via WAL/journal,
+    # but the *last* uncommitted transaction may be lost. Acceptable here
+    # porque o graph DB é um cache — `forge reconfigure` re-deriva
+    # deterministicamente a partir de settings.gradle + árvore de fontes.
+    # Revisitar se o graph passar a hospedar dado de caminho crítico.
     conn.execute("PRAGMA synchronous = NORMAL")
     conn.execute(f"PRAGMA busy_timeout = {int(busy_timeout_s * 1000)}")
     if create:
