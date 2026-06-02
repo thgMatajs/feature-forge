@@ -74,7 +74,7 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 | Preset | kmp-mobile (8 stack cards + 4 backend-candidates) |
 | Validators Python | 14 (+ 2 helpers) — inclui `check_no_behavior_change` para refactor |
 | Hooks | 9 + 1 reuse incremental (`post-edit-detect-duplications.sh`) |
-| Tests | 458 passing (rapid lane; +38 do round bloqueadores PR #1, +36 integration do Claude Code rules system, vs baseline original v1.1.0 = 367) |
+| Tests | 508 passing (unit + integration; +50 do round 2 do PR #1, +38 do round 1 bloqueadores, +36 integration do Claude Code rules system, vs baseline original v1.1.0 = 367) |
 | LOC total | ~52.200 |
 | Engine LOC | ~21.900 (Python) |
 | Files total | ~400 |
@@ -123,7 +123,7 @@ Requer Python 3.11+ + PyYAML (única dep externa).
   presets/kmp-mobile/                   canonical preset v1
   validators/                           14 validators + helpers
   hooks/                                9 hooks + reuse incremental script
-  tests/                                458 passing tests (rapid lane)
+  tests/                                508 passing tests (unit + integration)
 
 [per project install via `forge init`]
 {project}/.claude/

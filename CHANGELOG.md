@@ -7,6 +7,39 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed (PR #1 round 2 — 2026-06-02)
+
+- `_fingerprint` agora usa `\x00` (NUL) como separador em vez de `|`, fechando colisão com TS union types em body text (A7; `engine/graph/duplicates.py`).
+- `GROUP_CONCAT` agora usa `\x1F` como separador em vez de `,`, suportando paths com vírgulas em occurrence rows (A8; `engine/graph/duplicates.py`, `engine/graph/queries.py`).
+- `blocking_deps` sobrevive a `TASK-*.yaml` corrupto — per-file try/except + stderr warning (A10; `engine/memory/l1.py`).
+- `parser_kotlin` máscara strings/comments antes de `_RE_DECL.finditer`, eliminando false-positives dentro de raw strings `"""...fun fake() {...}"""` e block comments (A11; `engine/graph/parser_kotlin.py`).
+- `detect_after_update` / `update_file` / `update_batch` agora fecham `conn` em todo exit path (mesma classe que C2 lock leak; `engine/graph/incremental.py`).
+- RFC arrow regex tolera one-level nested parens (e.g., `({callback = (x) => x}) => <div/>`) e aceita JSX `<` como body start (`engine/graph/parser_typescript.py`). Aviso: comp count vai crescer em projetos consumidores com RFCs JSX-style.
+- `_resolve_subtype` em `check_no_behavior_change` propaga exceções inesperadas (incluindo `MemoryError`) em vez de silenciar tudo; só `FileNotFoundError, OSError, ValueError, KeyError, yaml.YAMLError` fall through pra default `"product"` (`validators/check_no_behavior_change.py`).
+
+### Changed
+
+- `engine.memory.l1.phase_lock_held` context manager substitui o flag pattern em `engine.implement.run` — release estrutural via `__exit__` em vez de `if not lock_released: release_phase_lock(...)`. NOT REENTRANT-SAFE — documentado em docstring + test (MD-03).
+- `parser_typescript._RE_RFC_ARROW`: body start lookahead expandido de `[\(\{]` para `[\(\{<]` (aceita JSX raw bodies). Subprodute: contagem de RFCs detectados vai crescer em codebases com `const X = () => <div/>`.
+
+### Performance
+
+- `list_reuse_findings` agora usa single JOIN em vez de N+1 query loop (A13; `engine/graph/queries.py`). 50 findings + 150 locations = 2 queries (era 51).
+
+### Tests
+
+- 24 novos regression tests pra round-2 fixes: fingerprint NUL, occurrence separator, blocking_deps corrupt YAML, parser_kotlin mask, incremental conn lifecycle, RFC arrow regex, phase_lock_held CM (+ reentrant contract), _resolve_subtype narrow except, A13 perf (query count instrumentation).
+- 12 cobertura mínima do master review: Q12-Q17 (6 query tests), `infer_suggested_target` 6 categorias (5 do plano + duplicate-ts-helper via IN-03), Kotlin raw-string brace regression, Swift `"""` + escapes.
+- Total: **508 tests passing** (unit + integration) — era 367 baseline original v1.1.0; cumulativo no PR #1.
+
+### Documentation
+
+- `engine/utils/sqlite_io.py` — comentário explicando trade-off de `synchronous=NORMAL` (3x faster writes, last-tx-may-be-lost on power loss, graph DB é cache recuperável via `forge reconfigure`).
+- `engine/reconfigure.py` — comentário sobre `kill -9` mid-loop deixar partial state cross-file; recovery é MANUAL via `.bak` files no disco (`forge undo` NÃO cobre esse path — gap em `docs/design/04-pending.md`).
+- `engine/doctor.py` — docstring de `_stamp_last_doctor_run` documenta last-write-wins em CI matrix; stamp é observabilidade informacional.
+- `engine/graph/_body_text.py` — `hash_body` docstring expandido com collision math (64 bits → birthday collision ~50% @ 2^32 ~4B symbols), alternativas BLAKE3-128 (2x DB) e SHA-1 full (2.5x DB).
+- `engine/memory/l1.py` — `phase_lock_held` docstring marca não-reentrante + nomeia callers atuais + aponta pra v1.1.1.
+
 ## [1.1.0] — 2026-06-01
 
 ### Released

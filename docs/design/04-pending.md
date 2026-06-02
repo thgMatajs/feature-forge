@@ -1300,6 +1300,15 @@ rules system v1, mas merecem cobertura futura.
 - **D6 phase lock context-manager refactor (review MD-03)** — surfaced 2026-06-01 durante review do round PR #1 bloqueador. O atual flag-pattern de release em `engine/implement.py` (var `lock_released` + `finally` backstop) é **correto** e tem regression test (`tests/unit/test_implement_lock_release.py`), mas é estruturalmente frágil: futuros contributors adicionando return paths novos dentro do `try` block podem esquecer de setar a flag e introduzir leak. Refactor proposto: encapsular o lock como context manager (`with acquire_phase_lock(...) as lock:`) — release vira invariant da própria abstração. Não-bloqueante; agendado pra v1.1.1.
 - **D1 swift `"""` test docstring cosmético (review LO-01)** — surfaced 2026-06-01. O test pin de A5 (`tests/unit/test_body_text_swift_triple_quote.py`) cobre o caso comportamental mas o docstring de uma das funções helper poderia ser mais explícito sobre por que Swift partilha o trigger de triple-quote com Kotlin. Pure cosmetic; sem impacto em comportamento ou cobertura. v1.1.1.
 
+### Gaps surfaced em PR #1 round 2 (2026-06-02)
+
+Itens emergidos durante o round 2 do PR #1 (30 commits aplicados sobre o que ficou do master review). Nenhum bloqueia merge; cobertura agendada pra v1.1.1+.
+
+- **plan.py `phase_lock_held` context manager migration deferred** — surfaced 2026-06-02 durante R2.7 (MD-03). O refactor do flag-pattern pra CM ficou só em `engine/implement.py`; `engine/plan.py` tem múltiplos deferred paths via `_persist_deferred` que precisam de brainstorm focado antes de migrar (não dá pra trivial drop-in — alguns paths espalham release ao longo de várias funções). Target v1.1.1.
+- **plan.py happy-path sentinel orphan** — surfaced 2026-06-02 durante R2-D13 análise. Linha ~1108 (`final_state`) seta `phase_lock = None` via `write_l1_status` mas **não remove o sentinel `.phase-lock` file**. Resultado: sentinel órfão no disco mesmo após happy path completar. Recovery atualmente manual: `rm .planning/<slug>/.phase-lock`. Fix: chamar `release_phase_lock` no happy path antes (ou junto da) migração CM acima. Target v1.1.1.
+- **A13 `IN`-clause >999 findings ceiling** (review IN-01, 2026-06-02) — `list_reuse_findings` colapsou N+1 → single JOIN usando `WHERE finding_id IN ({placeholders})`. SQLite default `SQLITE_MAX_VARIABLE_NUMBER=999` quebra se `len(finding_ids) > 999`. Chunking em batches de 500 quando relevante. Não atinge projeto conhecido hoje; target v1.1.2+.
+- **`forge undo` coverage para reconfigure-external-deps** (review WR-01, 2026-06-02) — `_undo_reconfigure` em `engine/undo.py` não enumera per-task `.bak` files criados pelo loop de external-deps em `engine/reconfigure.py:754` (per-task `.bak` em vez de single `.bak` no arquivo do submenu). Recovery atualmente manual via `.bak` direto no disco. Target v1.1.1.
+
 ### Resumo da fila pós-stress-test (cumulativo)
 
 Total: 18 gaps mapeados a partir de 20 cenários analisados (3 rounds).

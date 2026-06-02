@@ -3,8 +3,8 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-01 (v1.1.0 — bloqueadores PR #1 resolvidos)
-**Estado:** v1.1.0 released; PR #1 ready for merge after final review pass. 14 commits de hardening (C1–C4 critical + A1/A2/A5/A6/A9/A12 alta + review fixes CR-01/CR-02/MD-01/HG-01..03) aplicados sobre o branch `feat/reuse-intelligence-complete`. Próximo: dogfooding em MeoBonsai pós-merge.
+**Última atualização:** 2026-06-02 (v1.1.0 round 2 — 30 commits adicionais sobre PR #1)
+**Estado:** v1.1.0 round 2 pronto pra merge — 45 commits total no PR #1 (R1: 15, R2: 30), 508 tests passando (unit + integration). Round 2 fechou bugs não-inlinados do master review (A7/A8/A10/A11/A13 + incremental conn leak + RFC arrow nested parens + narrow except), aplicou MD-03 (phase_lock_held context manager em implement.py), e cobriu cobertura mínima (Q12–Q17 + infer_suggested_target 6 categorias + Kotlin raw-string + Swift `"""`). 1 falha pré-existente conhecida em `test_build_full_creates_meta_schema_version` (schema "1" vs "2", agendada pra v1.1.1).
 
 ---
 
@@ -29,7 +29,7 @@ Depois siga as instruções. Estou na Fase {N}.
 
 ```
 ~379 arquivos · ~50,700 linhas · 27 decisões locked + 7 direcionais (Fase 3.5)
-v1.1.0 release: 458 tests passing (rapid lane) · 17 graph queries · 16 proposal kinds
+v1.1.0 release: 508 tests passing (unit + integration, PR #1 R2 baseline) · 17 graph queries · 16 proposal kinds
 ```
 
 | Categoria | Status |
@@ -112,6 +112,12 @@ restantes ficam pra v1.2+ ou v2/Phase 6:
 **Pré-existente em v1.1.0 (não bloqueia ship, fix agendado pra v1.1.1):**
 
 - **`tests/integration/test_graph_build_meobonsai.py::test_build_full_creates_meta_schema_version`** assertava `meta.schema_version == "1"`, mas `engine/utils/sqlite_io.py:20` declara `SCHEMA_VERSION = "2"` desde o bump da reuse-intelligence schema (v1.1.0 Gap 18). Falha **não bloqueia** rapid lane (458 passing), `forge verify`, nem o ship v1.1.0 — só atinge a integration lane. Surfaced 2026-06-01 durante verification final do PR #1. Fix pequeno: ler `sqlite_io.SCHEMA_VERSION` em vez de hardcoded `"1"`. Gap completo em `docs/design/04-pending.md § Gaps pós-rules-system`.
+
+**Round 2 surfaced (2026-06-02) — não bloqueiam merge do PR #1, agendados pra v1.1.1+:**
+
+- **plan.py `phase_lock_held` CM migration deferred** — R2.7 (MD-03) migrou só `engine/implement.py` para `with phase_lock_held(...)`. `engine/plan.py` tem múltiplos deferred paths via `_persist_deferred` que precisam de brainstorm focado antes de migrar; happy path em `plan.py` (linha ~1108, `final_state`) seta `phase_lock=None` via `write_l1_status` mas **NÃO chama `release_phase_lock`**, deixando sentinel `.phase-lock` órfão no disco. Recovery manual: `rm .planning/<slug>/.phase-lock`. Fix proposto: chamar `release_phase_lock` no happy path antes da migração CM. Target v1.1.1.
+- **A13 `IN`-clause >999 findings ceiling** (review IN-01) — `list_reuse_findings` agora usa `WHERE finding_id IN ({placeholders})` que falha com SQLite default `SQLITE_MAX_VARIABLE_NUMBER=999` se `findings > 999`. Chunking em batches de 500 quando relevante. Não atinge nenhum projeto conhecido hoje; target v1.1.2+.
+- **`forge undo` coverage para reconfigure-external-deps** (review WR-01) — `_undo_reconfigure` em `engine/undo.py` não enumera per-task `.bak` files criados pelo loop de external-deps em `engine/reconfigure.py:754`. Recovery atualmente manual via `.bak` direto. Target v1.1.1.
 
 ## Fase 4 — completa (resumo)
 
