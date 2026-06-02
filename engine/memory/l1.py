@@ -714,8 +714,12 @@ def blocking_deps(
             # A single malformed task must not abort the whole scan
             # (R2.3). Warn so the operator can clean up, but keep going.
             try:
+                # R3.9: explicit "corrupt YAML — failed to parse" wording so
+                # operators (and the regression test) get a clear,
+                # searchable signal in stderr. Voice stays mentor-calm.
                 sys.stderr.write(
-                    f"forge: blocking_deps: skipping unreadable {path}: {exc}\n"
+                    f"forge: blocking_deps: corrupt YAML — failed to parse "
+                    f"{path}: {exc}\n"
                 )
             except Exception:  # pragma: no cover — stderr write itself failed
                 pass

@@ -8,6 +8,7 @@ See R2.3.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -93,10 +94,18 @@ def test_blocking_deps_survives_corrupt_yaml(
         f"corrupt task TASK-0002 should be skipped silently; got tickets={tickets}"
     )
 
-    # A warning should have been emitted to stderr mentioning the bad file.
+    # R3.9: warning must mention the bad file AND convey a meaningful
+    # "corrupt YAML" signal — not just an opaque mention of the task id.
+    # Operators (and downstream tooling) need to know WHY the file was
+    # skipped, otherwise the warning is just noise.
     captured = capsys.readouterr()
     combined = (captured.err or "") + (captured.out or "")
-    assert "TASK-0002" in combined, (
-        "expected a warning mentioning the corrupt file path on stderr/stdout; "
+    assert re.search(
+        r"TASK-0002.*(corrupt|failed|error|invalid|parse|unreadable)",
+        combined,
+        re.IGNORECASE | re.DOTALL,
+    ), (
+        "expected a meaningful corrupt-YAML warning mentioning TASK-0002 + "
+        "a corruption keyword (corrupt/failed/error/invalid/parse/unreadable); "
         f"got err={captured.err!r}, out={captured.out!r}"
     )
