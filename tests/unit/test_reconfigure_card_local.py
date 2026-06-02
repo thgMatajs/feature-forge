@@ -200,3 +200,65 @@ def test_append_history_legacy_kwargs_still_works(project):
     assert entry["action"] == "reconfigure-applied"
     assert entry["before-snapshot-sha"] == "aaa"
     assert entry["notes"] == "changed cards"
+
+
+# ── Adicionar (do skeleton) ─────────────────────────────────────────────────
+
+
+def test_card_local_add_happy_creates_skeleton(project):
+    """Adicionar happy: prompts respondidos, dir criado, validate roda."""
+    with patch.object(reconfigure.question, "ask") as ask_mock, patch.object(
+        reconfigure.question, "ask_text"
+    ) as ask_text_mock, patch.object(
+        reconfigure, "_append_history"
+    ) as hist_mock:
+        # ordem de prompts:
+        #   ask_text("Nome do card") → "hilt-di"
+        #   ask_text("Capability") → "di-framework"
+        #   ask("Adicionar label local?") → "yes"
+        #   ask_text("Conflicts-with") → "koin-annotations"
+        #   ask_text("Target platforms") → "android"
+        #   ask("Confirma 3-caminhos") → "create"
+        ask_text_mock.side_effect = [
+            "hilt-di",
+            "di-framework",
+            "koin-annotations",
+            "android",
+        ]
+        ask_mock.side_effect = ["yes", "create"]
+        reconfigure._card_local_add(project, working={})
+
+    card_dir = project / ".claude" / "cards" / "local" / "hilt-di"
+    assert card_dir.is_dir()
+    assert (card_dir / "card.yaml").is_file()
+    assert (card_dir / "README.md").is_file()
+    assert (card_dir / "detection" / "signals.yaml").is_file()
+    parsed = yaml.safe_load((card_dir / "card.yaml").read_text(encoding="utf-8"))
+    assert parsed["identity"]["name"] == "hilt-di"
+    assert parsed["provides"] == ["di-framework"]
+    assert parsed["conflicts-with"] == ["koin-annotations"]
+    assert parsed.get("legacy-marker", False) is False
+    hist_mock.assert_called_once()
+
+
+def test_card_local_add_name_collision_aborts(project):
+    """Se nome já existe (canon OU local), prompt repete ou aborta."""
+    _write_local_card(project, "existing")
+    with patch.object(reconfigure.question, "ask") as ask_mock, patch.object(
+        reconfigure.question, "ask_text"
+    ) as ask_text_mock:
+        ask_text_mock.side_effect = ["existing"]
+        ask_mock.side_effect = ["abort"]
+        reconfigure._card_local_add(project, working={})
+    # nenhum card novo criado
+    assert len(list((project / ".claude" / "cards" / "local").iterdir())) == 1
+
+
+def test_card_local_add_cancel_at_confirmation(project):
+    with patch.object(reconfigure.question, "ask") as ask_mock, patch.object(
+        reconfigure.question, "ask_text"
+    ) as ask_text_mock:
+        ask_text_mock.side_effect = ["xyz", "some-cap", "", "android"]
+        ask_mock.side_effect = ["yes", "cancel"]
+        reconfigure._card_local_add(project, working={})
+    assert not (project / ".claude" / "cards" / "local" / "xyz").exists()

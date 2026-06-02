@@ -19,12 +19,15 @@ from __future__ import annotations
 
 import json
 import os
+import re as _re
 import shutil
 import sys
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 from engine.cards.loader import CardError, CardManifest, load_all_cards, load_card
 from engine.cards.resolver import resolve
@@ -473,13 +476,225 @@ def _card_local_list(project_root: Path) -> None:
     renderer.write(renderer.box(f"Cards locais ({len(entries)})", lines))
 
 
+_LOCAL_CARD_NAME_RE = _re.compile(r"^[a-z][a-z0-9-]{0,39}$")
+
+
+def _today_iso() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
+
+
 def _card_local_add(project_root: Path, working: dict[str, Any]) -> None:
-    """Criar card local do skeleton — expansão completa em Task 9."""
+    """Cria card local do skeleton via prompts mentor-calmo.
+
+    Skeleton minimal (espelha schema canon):
+      .claude/cards/local/<name>/
+      ├── card.yaml           (preenchido pelos prompts)
+      ├── README.md           (skeleton placeholder)
+      └── detection/signals.yaml  (vazio com comentário pra preencher depois)
+
+    Subdirs opcionais (templates/, validators/, agent-contributions/) NÃO
+    são criados como stubs — emergem sob demanda quando o time adiciona
+    conteúdo (rationale em spec §5.3).
+    """
     del working
-    renderer.write(
-        "Adicionar card local: implementação completa em Task 9 do plano Gap 5."
+    local_root = _card_local_root(project_root)
+    local_root.mkdir(parents=True, exist_ok=True)
+
+    # Existing names (canon + local) para detectar colisão.
+    snapshot_root = project_root / ".claude" / "cards"
+    existing_canon = {
+        d.name
+        for d in snapshot_root.iterdir()
+        if d.is_dir() and not d.name.startswith(".") and d.name != "local"
+    } if snapshot_root.is_dir() else set()
+    existing_local = {
+        d.name
+        for d in local_root.iterdir()
+        if d.is_dir() and not d.name.startswith(".")
+    }
+    taken = existing_canon | existing_local
+
+    name = question.ask_text(
+        "Nome do card local (kebab-case, [a-z][a-z0-9-]{0,39}, sem espaços):"
+    ).strip()
+    if not _LOCAL_CARD_NAME_RE.match(name or ""):
+        renderer.write(
+            renderer.colored(
+                f"Nome inválido: {name!r}. Cancelado.", "red"
+            )
+        )
+        return
+    if name in taken:
+        renderer.write(
+            renderer.colored(
+                f"Nome `{name}` já existe ({'canon' if name in existing_canon else 'local'}).",
+                "yellow",
+            )
+        )
+        choice = question.ask(
+            "Três caminhos:",
+            {
+                "rename": "1. fornecer outro nome",
+                "abort":  "2. abortar adicionar",
+                "list":   "3. listar cards existentes",
+            },
+            default="abort",
+        )
+        # Política simplificada: qualquer escolha != continuação encerra aqui.
+        # Re-prompt completo é gap declarado pra v1.2 (anota em pending).
+        if choice == "list":
+            _card_local_list(project_root)
+        return
+
+    capability = question.ask_text(
+        "Qual capability este card provê?\n"
+        "  Veja catálogo ativo em docs/schemas/capability-labels.md\n"
+        "  Reservadas (não-disponíveis aqui) exigem ADR pra promoção.\n"
+        "Label:"
+    ).strip()
+    if not capability:
+        renderer.write(renderer.colored("Capability obrigatória. Cancelado.", "red"))
+        return
+
+    add_to_overlay = question.ask(
+        f"'{capability}' será gravada no card. Confirma?",
+        {"yes": "1. sim, adicionar", "no": "2. cancelar"},
+        default="yes",
     )
-    renderer.write(f"  → diretório alvo: {_card_local_root(project_root)}")
+    if add_to_overlay != "yes":
+        renderer.write("Cancelado.")
+        return
+
+    conflicts_raw = question.ask_text(
+        "Conflicts-with (lista de cards canon/local separados por vírgula, "
+        "vazio se nenhum):"
+    ).strip()
+    conflicts = [c.strip() for c in conflicts_raw.split(",") if c.strip()]
+
+    platforms_raw = question.ask_text(
+        "Target platforms (android,ios,kmp,web — múltiplos separados por vírgula):"
+    ).strip()
+    # Platforms é metadata informativa pro README do skeleton; não vai pro YAML
+    # (cards não declaram target-platforms — semântica derivada de signals).
+    platforms = [p.strip() for p in platforms_raw.split(",") if p.strip()] or ["android"]
+
+    summary_lines = [
+        f"name:           {name}",
+        f"provides:       [{capability}]",
+        f"conflicts-with: {conflicts or '[]'}",
+        f"target:         {platforms}",
+        "legacy-marker:  false",
+    ]
+    renderer.write(renderer.box("Vou criar card local com", summary_lines))
+
+    confirm = question.ask(
+        "Três caminhos:",
+        {
+            "create": "1. criar e abrir card.yaml para preenchimento de signals",
+            "stub":   "2. criar com signals.yaml vazio (preencher depois)",
+            "cancel": "3. cancelar e voltar ao menu",
+        },
+        default="create",
+    )
+    if confirm == "cancel":
+        renderer.write("Cancelado.")
+        return
+
+    # Materializa skeleton.
+    card_dir = local_root / name
+    card_dir.mkdir(parents=True, exist_ok=True)
+    detection_dir = card_dir / "detection"
+    detection_dir.mkdir(parents=True, exist_ok=True)
+
+    card_data = {
+        "schema-version": 1,
+        "identity": {
+            "name":         name,
+            "version":      "0.1.0",
+            "description":  f"Local card {name} — {capability} (overlay).",
+            "category":     "kmp",
+            "maturity":     "experimental",
+            "maintainer":   "team-local",
+            "created-at":   _today_iso(),
+            "last-updated": _today_iso(),
+        },
+        "legacy-marker": False,
+        "provides":      [capability],
+        "requires":      [],
+        "conflicts-with": conflicts,
+        "contributes": {
+            "config-defaults": {},
+        },
+        "detection": {
+            "signals":   [],
+            "threshold": 0.6,
+        },
+        "documentation": {
+            "readme": "README.md",
+        },
+    }
+    (card_dir / "card.yaml").write_text(
+        yaml.safe_dump(card_data, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+
+    (card_dir / "README.md").write_text(
+        f"# {name}\n\n"
+        f"Card local (overlay) provido pelo time deste projeto. Provê "
+        f"`{capability}` para as plataformas: {', '.join(platforms)}.\n\n"
+        f"## Detection\n\n"
+        f"Signals ainda não preenchidos — edite `detection/signals.yaml` e "
+        f"replique os matches em `card.yaml > detection.signals`.\n\n"
+        f"## Promoção ao canon\n\n"
+        f"Quando a semântica deste card estabilizar e for útil para outros "
+        f"projetos, abra ADR em `docs/design/01-decisions.md` pra promoção "
+        f"ao catálogo canônico.\n",
+        encoding="utf-8",
+    )
+
+    (detection_dir / "signals.yaml").write_text(
+        "# .claude/cards/local/{0}/detection/signals.yaml\n"
+        "# ──────────────────────────────────────────────────────────────────\n"
+        "# Signals do card local. Preencha após init rodar e mapear sinais\n"
+        "# reais do projeto. Espelhe entries em `card.yaml > detection.signals`.\n"
+        "# ──────────────────────────────────────────────────────────────────\n\n"
+        "schema-version: 1\n\n"
+        "signals: []\n\n"
+        "threshold: 0.6\n".format(name),
+        encoding="utf-8",
+    )
+
+    renderer.write(
+        renderer.colored(f"  ✓ card local `{name}` criado em {card_dir.relative_to(project_root)}", "green")
+    )
+
+    # Validate imediato (catch malformação)
+    try:
+        load_card(card_dir)
+    except CardError as exc:
+        renderer.write(
+            renderer.colored(f"  ⚠️  validate_card_yaml acusou: {exc}", "yellow")
+        )
+
+    # Warning se signals vazio (que é o estado padrão do skeleton)
+    if confirm == "stub":
+        renderer.write(
+            renderer.colored(
+                "  ⚠️  signals.yaml vazio — detection ignora este card "
+                "até preencher signals.",
+                "yellow",
+            )
+        )
+
+    _append_history(
+        project_root,
+        {
+            "op":           "card-local-add",
+            "name":         name,
+            "provides":     [capability],
+            "conflicts-with": conflicts,
+        },
+    )
 
 
 def _card_local_remove(project_root: Path, working: dict[str, Any]) -> None:
