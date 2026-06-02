@@ -496,6 +496,7 @@ CARD-015  detection.signals.threshold ∈ [0.0, 1.0]
 CARD-016  detection.signals confidence sum cannot exceed 2.0 (sanity check)
 CARD-017  no circular dependency in requires graph
 CARD-018  README.md must exist
+CARD-019  legacy-marker, if present, must be bool
 ```
 
 ## Examples

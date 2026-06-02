@@ -1,7 +1,7 @@
 """Card loader + `card.yaml` validation.
 
 Loads a card directory into a `CardManifest` and runs schema validation
-(CARD-001..CARD-018 from `docs/schemas/card.md §Validation`).
+(CARD-001..CARD-019 from `docs/schemas/card.md §Validation`).
 
 The capability-label catalog (`docs/schemas/capability-labels.md`) is parsed
 lazily from the markdown source-of-truth via `_parse_capability_catalog`.
@@ -445,11 +445,13 @@ def _load_with_cascade(project_root: Path) -> list[CardManifest]:
 
 
 def validate_card_yaml(manifest_dict: dict[str, Any], source_path: Path) -> list[str]:
-    """Validate a parsed `card.yaml` dict against CARD-001..CARD-018.
+    """Validate a parsed `card.yaml` dict against CARD-001..CARD-019.
 
     Returns a list of violation strings. Empty list = card is valid.
     Implements the static checks only — cross-card validation (CARD-007/008/017)
     lives in the resolver.
+
+    CARD-019  legacy-marker, se presente, deve ser bool (opcional, default false).
     """
     violations: list[str] = []
 
@@ -525,6 +527,14 @@ def validate_card_yaml(manifest_dict: dict[str, Any], source_path: Path) -> list
         for entry in conflicts:
             if not isinstance(entry, str) or not entry:
                 violations.append(f"CARD-008: conflicts-with entry must be non-empty string, got {entry!r}")
+
+    # ── Top-level `legacy-marker` (Gap 5 — aditivo, opcional) ────────────────
+    # CARD-019: legacy-marker, if present, must be bool (default false when absent).
+    legacy_marker = manifest_dict.get("legacy-marker", False)
+    if not isinstance(legacy_marker, bool):
+        violations.append(
+            f"CARD-019: legacy-marker deve ser bool (true|false), got {legacy_marker!r}"
+        )
 
     contributes = manifest_dict.get("contributes") or {}
     if not isinstance(contributes, dict):

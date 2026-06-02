@@ -2,8 +2,9 @@
 """validate_card_yaml.py — Thin wrapper over engine.cards.loader.validate_card_yaml.
 
 Validates one (--card NAME) or all card.yaml files under either the project's
-snapshot (`.claude/cards/`) or the canonical library (`cards/`).
-Surfaces every CARD-001..CARD-018 violation.
+snapshot (`.claude/cards/`) — including the local overlay `.claude/cards/local/` —
+or the canonical library (`cards/`) as fallback.
+Surfaces every CARD-001..CARD-019 violation.
 
 Schema source: docs/schemas/card.md §Validation.
 """
@@ -29,23 +30,47 @@ from engine.utils.paths import cards_canonical_dir, cards_dir  # noqa: E402
 from engine.utils.yaml_io import read_yaml_or_default  # noqa: E402
 
 
-def _collect_cards(project_root: Path, only: str | None = None) -> list[Path]:
-    """Snapshot-first; fall back to canonical library when snapshot is empty."""
-    candidates: list[Path] = []
+def _collect_cards(
+    project_root: Path, only: str | None = None
+) -> list[tuple[Path, str]]:
+    """Return list of (card_yaml_path, origin) where origin ∈ {"canon", "local"}.
+
+    Cascade:
+      - canon snapshot: `<project>/.claude/cards/<name>/card.yaml` (exclui `local/` subdir)
+      - local overlay: `<project>/.claude/cards/local/<name>/card.yaml`
+      - fallback: canonical library `<forge_home>/cards/<name>/card.yaml` quando snapshot vazio
+    """
+    candidates: list[tuple[Path, str]] = []
     snapshot = cards_dir(project_root)
     if snapshot.is_dir():
-        candidates.extend(snapshot.glob("*/card.yaml"))
+        for entry in snapshot.glob("*/card.yaml"):
+            # Pula a subpasta `local/` — handled separately abaixo
+            if entry.parent.parent.name == "local":
+                continue
+            if entry.parent.name == "local":
+                continue
+            candidates.append((entry, "canon"))
+        local_root = snapshot / "local"
+        if local_root.is_dir():
+            for entry in local_root.glob("*/card.yaml"):
+                candidates.append((entry, "local"))
     if not candidates:
         canonical = cards_canonical_dir()
         if canonical.is_dir():
-            candidates.extend(canonical.glob("*/card.yaml"))
+            for entry in canonical.glob("*/card.yaml"):
+                candidates.append((entry, "canon"))
     if only:
-        candidates = [c for c in candidates if c.parent.name == only]
-    return sorted(candidates)
+        candidates = [(p, o) for p, o in candidates if p.parent.name == only]
+    return sorted(candidates, key=lambda t: (t[1], str(t[0])))
 
 
 def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
-    """Run engine.cards.loader.validate_card_yaml against every card."""
+    """Run engine.cards.loader.validate_card_yaml against every card.
+
+    Cross-checks adicionados:
+      - Colisão canon ∩ local (hard fail, dispara antes do schema check)
+      - Mensagens carregam contexto `[canon]` ou `[local]` por path
+    """
     only = kwargs.get("card")
     cards = _collect_cards(project_root, only=only)
     if not cards:
@@ -57,16 +82,41 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
             why=["forge init ainda não criou snapshot, ou nome inválido em --card"],
         )
 
+    # Cross-check: colisão de nome canon ∩ local (Approach A — hard fail).
+    canon_names = {p.parent.name for p, o in cards if o == "canon"}
+    local_names = {p.parent.name for p, o in cards if o == "local"}
+    collisions = sorted(canon_names & local_names)
+    if collisions:
+        return result_fail(
+            f"colisão de nome canon×local em {len(collisions)} card(s)",
+            what_failed=", ".join(collisions),
+            where=".claude/cards/<name>/ + .claude/cards/local/<name>/",
+            why=[
+                "Approach A: card local não pode ter o mesmo nome de canon ativo.",
+                "Sem merge silencioso, sem override — escolha consciente exigida.",
+            ],
+            paths=make_paths(
+                "Renomear o card local (`forge reconfigure → card-local → remover` + criar com nome novo)",
+                "Mais simples — local pode ter nome qualquer fora do canon.",
+                "Abrir ADR pra promoção do card local ao canon",
+                "Quando a semântica está madura pra entrar no catálogo oficial.",
+                "Remover o canon e manter só local (revisita decisão)",
+                "Raríssimo — exige revisita do catálogo canon.",
+            ),
+        )
+
     all_violations: list[str] = []
     warnings_only: list[str] = []
-    for card_yaml in cards:
+    for card_yaml, origin in cards:
         data = read_yaml_or_default(card_yaml, {}) or {}
         if not isinstance(data, dict):
-            all_violations.append(f"{card_yaml.parent.name}: top-level not mapping")
+            all_violations.append(
+                f"[{origin}] {card_yaml.parent.name}: top-level not mapping"
+            )
             continue
         viols = core_validate(data, card_yaml.parent)
         for v in viols:
-            label = f"{card_yaml.parent.name}: {v}"
+            label = f"[{origin}] {card_yaml.parent.name}: {v}"
             if "-WARN:" in v:
                 warnings_only.append(label)
             else:
@@ -77,30 +127,33 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
             f"{len(all_violations)} violação(ões) em {len(cards)} card(s)",
             what_failed="; ".join(all_violations[:3])
             + (f" (+{len(all_violations)-3} more)" if len(all_violations) > 3 else ""),
-            where="cards/*/card.yaml",
+            where="cards/*/card.yaml + .claude/cards/local/*/card.yaml",
             why=[
-                "docs/schemas/card.md §Validation define CARD-001..CARD-018.",
+                "docs/schemas/card.md §Validation define CARD-001..CARD-019.",
                 "Loader rejeita cards inválidos — composer/resolver não funcionam.",
+                "Contexto `[canon]` ou `[local]` identifica camada do erro.",
             ],
             paths=make_paths(
                 "Editar o card.yaml e corrigir cada CARD-NNN listado",
-                "Mensagens contêm o código + campo exato.",
+                "Mensagens contêm o código + campo exato + camada.",
                 "Re-snapshot do canonical — `forge reconfigure → atualizar card`",
-                "Se snapshot ficou stale vs canonical.",
-                "Remover o card — `forge reconfigure → remover card`",
-                "Se o card está deprecated ou broken.",
+                "Quando o erro está em camada canon (origem oficial).",
+                "Remover o card local — `forge reconfigure → card-local → remover`",
+                "Quando o erro está só no overlay local.",
             ),
         )
 
     if warnings_only:
         return result_warn(
-            f"{len(warnings_only)} warning(s) (CARD-*-WARN) em {len(cards)} card(s)",
+            f"{len(warnings_only)} warning(s) em {len(cards)} card(s)",
             what_failed="; ".join(warnings_only[:3]),
-            where="cards/*/card.yaml",
+            where="cards/*/card.yaml + .claude/cards/local/*/card.yaml",
             why=["Warnings não bloqueiam — agentes sem extension-points formalizadas"],
         )
 
-    return result_pass(f"{len(cards)} card(s) com schema válido (CARD-001..018)")
+    return result_pass(
+        f"{len(cards)} card(s) com schema válido (canon + local, CARD-001..019)"
+    )
 
 
 def _extra_args(parser: Any) -> None:
