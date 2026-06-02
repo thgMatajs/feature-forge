@@ -435,9 +435,15 @@ def _check_reuse_findings(project_root: Path) -> _CategoryReport:
             )
         )
         return _CategoryReport("Reuse intelligence", checks)
+    # R3.6 fix: use closing() so the connection is unconditionally
+    # closed on every exit path — including non-sqlite3 exceptions
+    # (MemoryError, KeyboardInterrupt, etc.) that the outer except
+    # wouldn't intercept. The previous try/finally was correct for the
+    # happy path but `closing()` is the idiomatic, defensive shape.
+    from contextlib import closing
+
     try:
-        conn = sqlite3.connect(str(path))
-        try:
+        with closing(sqlite3.connect(str(path))) as conn:
             cols = {r[1] for r in conn.execute("PRAGMA table_info(reuse_findings)").fetchall()}
             if not cols:
                 checks.append(
@@ -452,8 +458,6 @@ def _check_reuse_findings(project_root: Path) -> _CategoryReport:
             rows = conn.execute(
                 "SELECT category, COUNT(*) AS n FROM reuse_findings GROUP BY category"
             ).fetchall()
-        finally:
-            conn.close()
     except sqlite3.Error as exc:
         checks.append(_Check("sqlite open", _STATUS_FAIL, str(exc)))
         return _CategoryReport("Reuse intelligence", checks)
