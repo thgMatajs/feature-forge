@@ -54,3 +54,14 @@ def test_infer_target_duplicate_cross_module_with_shared_ancestor() -> None:
         },
     )
     assert result == "shared/core/src/commonMain/kotlin/.../util/"
+
+
+def test_infer_target_near_duplicate() -> None:
+    """Near-dup never auto-suggests a path — bodies diverged, manual review."""
+    result = infer_suggested_target(
+        category="near-duplicate",
+        modules_in_group=["app:android", "shared:foo"],
+        closure={},
+        gradle_modules={},
+    )
+    assert result == "manual review — bodies divergem"
