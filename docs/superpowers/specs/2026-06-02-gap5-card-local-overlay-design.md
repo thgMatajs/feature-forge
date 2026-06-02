@@ -25,18 +25,18 @@ A solução escolhida é **híbrida**: ship Retrofit + SharedPreferences como ca
 
 O overlay vive em dois lugares distintos: projeto consumidor (cards de equipe, versionados junto do código) e snapshot canon (já existente, gravado por `forge init`).
 
+Cards canon vivem como **diretórios completos** sob `cards/<name>/` (schema oficial em `docs/schemas/card.md §Card anatomy`), e o overlay local espelha essa estrutura sob `.claude/cards/local/<name>/`. Não há single-file YAML em nenhum dos lados — a anatomia diretório-completo é load-bearing pra co-localizar templates, validators, agent-contributions e signals junto do `card.yaml` que os declara.
+
 ```
 <projeto-consumidor>/
 ├── .claude/
 │   ├── cards/
 │   │   └── local/                          ← NOVO (versionado, team-shared)
 │   │       └── <name>/
-│   │           ├── card.yaml
-│   │           ├── signals.yaml
-│   │           ├── templates/
-│   │           │   └── .gitkeep
-│   │           └── agent-prompts/
-│   │               └── .gitkeep
+│   │           ├── card.yaml               (preenchido via prompts)
+│   │           ├── README.md               (skeleton placeholder)
+│   │           └── detection/
+│   │               └── signals.yaml        (vazio com comentário até detection rodar)
 │   ├── inventory/
 │   │   ├── capability-labels.yaml          ← snapshot canon (já existe)
 │   │   ├── capability-labels.local.yaml    ← NOVO (overlay, versionado)
@@ -47,10 +47,28 @@ O overlay vive em dois lugares distintos: projeto consumidor (cards de equipe, v
 
 ~/Documents/feature-forge/
 ├── cards/                                   ← canon (já existe)
-│   ├── koin.yaml
-│   ├── room.yaml
-│   ├── retrofit-client.yaml                ← NOVO (canon)
-│   └── shared-preferences-prefs.yaml       ← NOVO (canon, legacy-marker)
+│   ├── koin-annotations/                    (estrutura dir completa)
+│   │   ├── card.yaml
+│   │   ├── README.md
+│   │   ├── detection/signals.yaml
+│   │   ├── templates/
+│   │   ├── validators/
+│   │   └── agent-contributions/
+│   ├── room-database/                       (idem)
+│   ├── retrofit-client/                    ← NOVO (canon, dir completo)
+│   │   ├── card.yaml
+│   │   ├── README.md
+│   │   ├── detection/signals.yaml
+│   │   ├── templates/
+│   │   ├── validators/
+│   │   └── agent-contributions/
+│   └── shared-preferences-prefs/           ← NOVO (canon, dir completo, legacy-marker)
+│       ├── card.yaml
+│       ├── README.md
+│       ├── detection/signals.yaml
+│       ├── templates/
+│       ├── validators/
+│       └── agent-contributions/
 └── docs/schemas/
     └── card.md                              ← MODIFICA (legacy-marker + local section)
 ```
@@ -62,66 +80,226 @@ O overlay vive em dois lugares distintos: projeto consumidor (cards de equipe, v
 - **Decision 22** (no runtime deps em outras skills) — overlay é arquivo plano lido por loader nativo da forge, sem dep externa.
 - **Discipline §4** (`.bak` retention 7d) — remoção de card local em reconfigure passa por `.bak`, igual aos canônicos.
 
+**Distinção canon × local é via path, não campo no YAML:** loader observa onde o `card.yaml` foi lido (`cards/<name>/` vs `.claude/cards/local/<name>/`) e tagga `card.origin` em memória (ver Seção 3). Nenhum campo `canonical: true` no schema — origem é propriedade do filesystem, não do conteúdo. Isso fortalece a separação porque um card local não pode mentir sobre ser canon mexendo num bool, e move o overlay layer (`.claude/cards/local/`) ainda é git-ignorable / git-versionado segundo política do time, sem precisar coordenar valor de flag.
+
 ## Seção 2 — Cards canon novos (Retrofit + SharedPreferences)
 
-Ambos shippam no mesmo PR que o mecanismo overlay. Ficam em `cards/` (raiz da forge), e o snapshotter de `forge init` passa a copiar os 22 canônicos (não 20).
+Ambos shippam no mesmo PR que o mecanismo overlay. Ficam em `cards/<name>/` (raiz da forge, estrutura diretório-completo conforme `docs/schemas/card.md §Card anatomy`), e o snapshotter de `forge init` passa a copiar os 22 canônicos (não 20).
 
-### 2.1 `cards/retrofit-client.yaml`
+Os YAMLs abaixo seguem o schema canon (`docs/schemas/card.md` linhas 80-223). Os arquivos satélites (`templates/*`, `validators/*`, `agent-contributions/*`, `README.md`) ficam como TODO de implementação — o spec declara intenção; o conteúdo concreto vem na phase de implementação dispatch-by-dispatch.
+
+### 2.1 `cards/retrofit-client/card.yaml`
 
 ```yaml
-name: retrofit-client
-canonical: true
-schema_version: 1
+# cards/retrofit-client/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# Retrofit2 HTTP client. Provider clássico de `http-client` em projetos
+# Android-only ou Android-side de KMP onde Ktor multiplatform não é
+# escolhido. Android-only é semântica derivada das signals (todas batem em
+# arquivos Android-side), não declaração de campo.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         retrofit-client
+  version:      1.0.0
+  description:  "Retrofit2 HTTP client para Android / Android-side de KMP. Provider clássico de http-client quando Ktor multiplatform não é a escolha."
+  category:     network
+  maturity:     stable
+  maintainer:   feature-forge-core
+  created-at:   2026-06-02
+  last-updated: 2026-06-02
+  license:      MIT
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
 provides:
   - http-client
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+# kotlinx-serialization-json aparece como capability requerida porque
+# converter padrão moderno usa kotlinx.serialization; quando o projeto
+# usa Moshi/Gson, esses signals derivados ficam pra implementação
+# parametrizar via config-defaults.
+requires:
+  - kotlin-language
+  - serialization-json
+
+
+# ── CONFLICTS ─────────────────────────────────────────────────────────────
 conflicts-with:
   - ktor-client
-target-platforms:
-  - android
-signals:
-  gradle-deps:
-    - "com.squareup.retrofit2:retrofit"
-    - "com.squareup.retrofit2:converter-moshi"
-    - "com.squareup.retrofit2:converter-gson"
-  source-patterns:
-    - "@(GET|POST|PUT|DELETE|PATCH)\\b"
-    - "import retrofit2\\."
-    - "Retrofit\\.Builder\\(\\)"
-confidence-budget: 1.5
-description: >
-  Retrofit2 HTTP client para Android. Provider clássico da label
-  `http-client` em projetos Android-only ou Android-side de KMP onde
-  Ktor multiplatform não é escolhido.
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+# TODO impl: preencher templates, validators, agent-prompts concretos.
+# Spec declara intenção; conteúdo vem dispatch-by-dispatch.
+contributes:
+  templates: []
+  validators: []
+  agent-prompts: []
+  config-defaults: {}
+
+
+# ── DETECTION ─────────────────────────────────────────────────────────────
+# Android-only é derivado: signals batem em build.gradle Android e em
+# .kt com imports retrofit2. Sem campo target-platforms.
+detection:
+  signals:
+    - type:       dependency
+      file:       "**/build.gradle*"
+      contains:   "com.squareup.retrofit2:retrofit"
+      confidence: 0.5
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "@retrofit2.http"
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "import retrofit2"
+      confidence: 0.2
+
+  threshold: 0.6
+
+  alternative-cards:
+    - ktor-client
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "architecture_android"
 ```
 
-### 2.2 `cards/shared-preferences-prefs.yaml`
+### 2.2 `cards/shared-preferences-prefs/card.yaml`
 
 ```yaml
-name: shared-preferences-prefs
-canonical: true
-schema_version: 1
+# cards/shared-preferences-prefs/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# SharedPreferences (Android). Provider legacy de `local-prefs-storage`.
+# legacy-marker: true → quando coexistir com datastore-prefs detectado, init
+# surfaca 3-caminhos (manter legacy / migrar / coexistir transição).
+# Android-only é semântica derivada das signals.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         shared-preferences-prefs
+  version:      1.0.0
+  description:  "SharedPreferences (Android) como provider legacy de local-prefs-storage. Coexiste com datastore-prefs; init surfaca 3-caminhos quando ambos detectados."
+  category:     storage
+  maturity:     stable
+  maintainer:   feature-forge-core
+  created-at:   2026-06-02
+  last-updated: 2026-06-02
+  license:      MIT
+
+
+# ── LEGACY MARKER ─────────────────────────────────────────────────────────
+# Campo top-level opcional, aditivo ao schema canon (ver seção
+# "Schema bump aditivo" abaixo).
+legacy-marker: true
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
 provides:
   - local-prefs-storage
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+requires:
+  - kotlin-language
+
+
+# ── CONFLICTS ─────────────────────────────────────────────────────────────
+# Coexistência é permitida (label auxiliar) mas init surfaca 3-caminhos
+# quando ambos detectados — comportamento dirigido por legacy-marker, não
+# por conflict hard.
 conflicts-with:
   - datastore-prefs
-target-platforms:
-  - android
-signals:
-  source-patterns:
-    - "getSharedPreferences\\("
-    - "PreferenceManager\\.getDefaultSharedPreferences"
-    - "import android\\.content\\.SharedPreferences"
-confidence-budget: 1.2
-legacy-marker: true
-description: >
-  SharedPreferences (Android). Provider legacy da label
-  `local-prefs-storage`. Quando detectado junto com DataStore, init
-  surfaca 3-caminhos (manter legacy / migrar / coexistir transição).
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+# TODO impl: preencher templates, validators, agent-prompts concretos.
+contributes:
+  templates: []
+  validators: []
+  agent-prompts: []
+  config-defaults: {}
+
+
+# ── DETECTION ─────────────────────────────────────────────────────────────
+# Confidence por signal calibrada ligeiramente menor que datastore-prefs
+# equivalente — reflete que evidência de SharedPreferences em codebase
+# moderno é tipicamente legacy detectado, não escolha ativa. Threshold
+# canônico 0.6 idêntico aos demais cards. Calibração via signal confidence
+# individual, não via "budget" agregado fora do schema.
+detection:
+  signals:
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "getSharedPreferences("
+      confidence: 0.4
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "PreferenceManager.getDefaultSharedPreferences"
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "import android.content.SharedPreferences"
+      confidence: 0.2
+
+  threshold: 0.6
+
+  alternative-cards:
+    - datastore-prefs
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "architecture_android"
 ```
 
 **Catálogo de capability-labels não muda.** `http-client` e `local-prefs-storage` já existem em v1.1; os dois novos cards são providers adicionais das mesmas labels (canon ganha alternativas, não invented labels novas).
 
-**`confidence-budget` baixo** para SharedPreferences (1.2 vs 1.5 do Retrofit) reflete que evidência de SharedPreferences em codebase moderno é tipicamente legacy detectado, não escolha ativa. Detection ainda funciona; o budget só calibra ordem de exibição quando coexiste com DataStore.
+**Threshold canônico (0.6) idêntico aos dois.** A calibração do "isso é legacy detectado, não escolha ativa" pra SharedPreferences se faz via **signal confidence individual** (cada signal SharedPrefs ganha valores ligeiramente menores que DataStore equivalente — detalhe fica pra implementação afinar contra o piloto). Sem campo agregado fora do schema; o schema canon já tem `threshold` + per-signal `confidence` suficientes pra modelar a diferença.
+
+**Sem campo `target-platforms` no schema.** Plataforma é semântica derivada das signals (Retrofit signals só batem em arquivos Android-side; SharedPreferences idem). Adicionar campo declarativo redundante violaria reuso (mandamento #3) e o princípio "never invents" do `docs/design/00-vision.md §What feature-forge is NOT` — se a info já está nas signals, declarar de novo é invenção paralela.
+
+## Schema bump aditivo — `legacy-marker`
+
+Esta entrega adiciona **um único campo novo** ao schema canon de cards: `legacy-marker: bool` (opcional, default `false`), top-level no `card.yaml`.
+
+**Justificativa de design:**
+
+- **Top-level, não dentro de `identity`** — `legacy-marker` é flag de UX (dispara 3-caminhos no init quando coexiste com provider moderno da mesma capability), não metadata identitário (nome, versão, autor). Aninhar em `identity` mistura camadas conceituais distintas.
+- **Campo opcional aditivo** — cards existentes (todos os 20 v1.1) continuam válidos sem mexer em nada. Forward-compat preserved.
+- **`schema-version` permanece 1** — adição de campo opcional aditivo NÃO bumpa schema-version. Bump fica reservado pra mudanças que quebram leitores antigos (remoção de campo, mudança de tipo, novo required field). Esta é a política canônica de schema versioning e está alinhada com `docs/schemas/card.md`.
+
+**Semântica operacional:**
+
+- `legacy-marker: true` → init Step 7.5 lê esse flag. Quando 2+ cards proveem a mesma capability label e ao menos um tem `legacy-marker: true`, init dispara prompt 3-caminhos antes de materializar o plan (manter legacy / migrar pro moderno / coexistir explicitamente).
+- `legacy-marker: false` ou ausente → comportamento default, cards coexistem normalmente segundo regras de `conflicts-with` declaradas.
+
+**Doc-sync obrigatório no PR:**
+
+- `docs/schemas/card.md` ganha entrada formal documentando o campo (seção entre `identity` e `provides`, ou logo após `identity`).
+- `CHANGELOG.md` lista o campo em `### Added` (aditivo, não breaking).
+- Validador `validate_card_yaml` aceita o campo opcional e passa-o intacto pro loader (sem agir sobre o valor — quem age é o init Step 7.5).
 
 ## Seção 3 — Loader cascade
 
@@ -304,11 +482,21 @@ Abrindo card.yaml para edição de signals...
 
 ### 5.3 Skeleton minimal
 
-Por que minimal (apenas `card.yaml` + `signals.yaml` + dois `.gitkeep`):
+O skeleton local espelha a estrutura canon, mas só materializa o que é **obrigatório no schema** (`card.yaml` + `README.md` são `Required files` em `docs/schemas/card.md`) mais o subdiretório `detection/` (porque signals são o coração do overlay — sem signal, card local nunca ativa):
 
-- **YAGNI** — templates e agent-prompts vazios são overhead se o card local cobre uma necessidade tática.
-- **Discovery** — diretórios stub (`.gitkeep`) mostram pro time onde adicionar quando houver demanda; não impõem.
-- **Reversibility** — remover card local cria `.bak` do diretório inteiro; minimal facilita merge entre `.bak` e novo skeleton se houver reversão.
+```
+.claude/cards/local/<name>/
+├── card.yaml        (preenchido pelos prompts do reconfigure)
+├── README.md        (skeleton placeholder explicando o card e linkando convenções do time)
+└── detection/
+    └── signals.yaml (vazio com comentário "preencher após init detection rodar e mapear sinais reais do projeto")
+```
+
+Os subdirs opcionais (`templates/`, `validators/`, `agent-contributions/`, `hooks/`, `examples/`) NÃO são criados como stubs vazios — viram dirs sob demanda quando o time efetivamente adiciona conteúdo. Esta decisão sustenta a tríade:
+
+- **YAGNI** — templates e agent-contributions vazios são overhead se o card local cobre uma necessidade tática enquanto o time não tem capacidade de escrever templates novos. Stub vazio em `.gitkeep` polui árvore e induz commit ruidoso de "removeu .gitkeep, adicionou conteúdo".
+- **Discovery** — `README.md` skeleton documenta os dirs opcionais por nome ("se quiser contribuir templates ao feature package, crie `templates/` aqui com fragmentos no padrão `docs/schemas/card.md`"). Discovery por linguagem, não por placeholder.
+- **Reversibility** — remover card local cria `.bak` do diretório inteiro; minimal facilita reversão sem ter que reconciliar dirs vazios que ninguém usou.
 
 ### 5.4 Pós-criação
 
@@ -363,8 +551,9 @@ Onde:
 
 Por que importa:
   Materializar o plan sem provider declarado deixa essas capabilities
-  como "comportamento inventado" — viola Decision 17 (não-invenção)
-  e quebra o contrato com validate_no_invented_behavior na Fase 5b.
+  como "comportamento inventado" — viola o princípio "never invents"
+  (`docs/design/00-vision.md §What feature-forge is NOT`) e quebra o
+  contrato com validate_no_invented_behavior na Fase 5b.
 
 Três caminhos pra resolver:
 
@@ -420,11 +609,10 @@ Mudanças cirúrgicas em dois validators existentes; nada novo standalone.
 
 ### 7.1 `validators/validate_card_yaml.py` — patches
 
-- **Detecta canon vs local via path:** `cards/<name>.yaml` → canon; `.claude/cards/local/<name>/card.yaml` → local.
-- **Local rejeita `canonical: true`** com mensagem clara: "Cards locais não podem ter canonical=true. Promoção exige ADR."
-- **Cross-check de colisão de nome:** se nome existe em ambos, hard fail apontando os dois paths.
+- **Detecta canon vs local via path** (sem campo no YAML): `cards/<name>/card.yaml` → canon; `.claude/cards/local/<name>/card.yaml` → local. Loader tagga `card.origin` em memória (Seção 3); validator usa o path direto pra discriminar mensagens. Distinção não vive no conteúdo do YAML — vive no filesystem.
+- **Cross-check de colisão de nome:** se mesmo `identity.name` existe em ambos paths (canon e local), hard fail apontando os dois paths concretos.
 - **Cross-check `provides` ∉ reservadas** (já existia pra canon; passa a aplicar pra local também).
-- **Novo campo `legacy-marker: bool` aceito** (default false). Validator não age sobre o valor — é metadata pro detection cascade calibrar 3-caminhos.
+- **Novo campo `legacy-marker: bool` aceito** (top-level, opcional, default `false`). Validator passa-o intacto pro loader — é metadata pro init Step 7.5 calibrar 3-caminhos; validator não age sobre o valor.
 
 ### 7.2 `validators/validate_capability_labels.py` — patches
 
@@ -496,15 +684,18 @@ Tentei propor inicialmente; reconheci como SRP-decoy. Lógica do overlay é atra
 
 | Componente | LOC estimado |
 |---|---|
-| `cards/retrofit-client.yaml` + `cards/shared-preferences-prefs.yaml` | ~50 |
+| `cards/retrofit-client/` (card.yaml + README + detection/signals.yaml + templates/validators/agent-contributions stubs) | ~150-200 |
+| `cards/shared-preferences-prefs/` (idem, com legacy-marker) | ~150-200 |
 | Loader cascade (`engine/cards/loader.py` patches) | ~120 |
 | Capability labels overlay (`validators/_common.py` + validator patches) | ~100 |
 | Reconfigure submenu card-local | ~180 |
 | Init Step 7.5 (orphan signals + 3-caminhos) | ~200 |
 | Validator patches (`validate_card_yaml`, `validate_capability_labels`) | ~150 |
 | Tests novos (~25-30 testes) | ~600 |
-| Doc-sync (9 arquivos) | ~260 |
-| **Total** | **~1660 LOC** |
+| Doc-sync (9 arquivos, agora incluindo schema bump de `legacy-marker` em card.md) | ~260 |
+| **Total** | **~1910 LOC** |
+
+Estimativa por card canon (~150-200 LOC) reflete a estrutura diretório-completo real: `card.yaml` completo (~80-100 LOC com comentários no padrão koin-annotations), `README.md` substantivo (~40-60 LOC), `detection/signals.yaml` (~20-30 LOC), stubs ou TODOs declarados para `templates/`, `validators/`, `agent-contributions/`. O delta vs estimativa anterior (+250 LOC totais) é honestidade arquitetural — single-file YAML era ficção do spec antigo.
 
 **Princípios load-bearing preservados:**
 
