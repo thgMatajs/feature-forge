@@ -19,7 +19,7 @@ import yaml as _yaml_lib
 
 from ..utils.paths import forge_home
 from ..utils.yaml_io import YamlIOError, read_yaml
-from . import CardError
+from . import CardError, CardConflictError
 
 # ── Canonical catalog (hardcoded, FOLLOWUP: parse capability-labels.md) ──────
 
@@ -289,6 +289,8 @@ class CardManifest:
     documentation: dict[str, Any] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict)
     source_path: Path = field(default_factory=lambda: Path("."))
+    legacy_marker: bool = False
+    origin: str = "canon"  # "canon" | "local" — set by load_all_cards cascade
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -335,18 +337,43 @@ def load_card(card_dir: Path) -> CardManifest:
         documentation=dict(data.get("documentation") or {}),
         raw=data,
         source_path=card_dir,
+        legacy_marker=bool(data.get("legacy-marker", False)),
+        origin="canon",  # default; load_all_cards reassigns based on cascade
     )
 
 
 def load_all_cards(cards_root: Path) -> list[CardManifest]:
     """Load every card under `cards_root/<name>/card.yaml`.
 
-    Skips dotfile directories (`.archived/`, `.git/`, etc.). Sorted by name
-    for determinism.
+    Backward-compatible shape: when caller passes the canonical cards/ root
+    directly (no `.claude/cards/local/` sibling), returns canon-only. When
+    caller passes a project root that has `.claude/cards/local/`, returns
+    canon ∪ local with `card.origin` tagged.
+
+    Argument semantics (autodetect):
+      - If `cards_root` itself contains `<name>/card.yaml` entries, treat it
+        as a canon-only root (legacy callers: snapshot dir, canonical dir).
+      - If `cards_root` looks like a project root (contains `.claude/`),
+        treat it as cascade-mode: canon snapshot under
+        `cards_root/.claude/cards/<name>/` + local under
+        `cards_root/.claude/cards/local/<name>/`.
+
+    Raises:
+      CardConflictError: when a name appears in both canon and local layers.
+
+    Side-effects (cascade mode only):
+      Writes `<project>/.claude/inventory/local-cards-manifest.yaml`
+      listing local card names + provides + conflicts-with for CI audit.
     """
     if not cards_root.is_dir():
         raise CardError(f"cards root not found: {cards_root}")
 
+    # Autodetect: if `.claude/` exists at cards_root, treat as project-root cascade.
+    project_marker = cards_root / ".claude"
+    if project_marker.is_dir() and not (cards_root / "card.yaml").exists():
+        return _load_with_cascade(cards_root)
+
+    # Legacy canon-only path: cards_root holds <name>/card.yaml siblings.
     manifests: list[CardManifest] = []
     for entry in sorted(cards_root.iterdir(), key=lambda p: p.name):
         if not entry.is_dir():
@@ -355,8 +382,66 @@ def load_all_cards(cards_root: Path) -> list[CardManifest]:
             continue
         if not (entry / "card.yaml").is_file():
             continue
-        manifests.append(load_card(entry))
+        manifest = load_card(entry)
+        manifest.origin = "canon"
+        manifests.append(manifest)
     return manifests
+
+
+def _load_with_cascade(project_root: Path) -> list[CardManifest]:
+    """Cascade load: canon snapshot first, local overlay second.
+
+    Order is deliberate — canon is the audited set, local is the controlled
+    extension. Inverting order would permit silent override (violates
+    Approach A from spec).
+    """
+    canon_root = project_root / ".claude" / "cards"
+    local_root = project_root / ".claude" / "cards" / "local"
+
+    canon: dict[str, CardManifest] = {}
+    if canon_root.is_dir():
+        for entry in sorted(canon_root.iterdir(), key=lambda p: p.name):
+            if not entry.is_dir():
+                continue
+            if entry.name.startswith("."):
+                continue  # skips `.archived/`, `.git/`, etc.
+            if entry.name == "local":
+                continue  # the overlay dir is handled below, not a canon card
+            if not (entry / "card.yaml").is_file():
+                continue
+            manifest = load_card(entry)
+            manifest.origin = "canon"
+            canon[manifest.name] = manifest
+
+    local: dict[str, CardManifest] = {}
+    if local_root.is_dir():
+        for entry in sorted(local_root.iterdir(), key=lambda p: p.name):
+            if not entry.is_dir():
+                continue
+            if entry.name.startswith("."):
+                continue
+            if not (entry / "card.yaml").is_file():
+                # Empty local card dir: warning skip. Caller (forge doctor)
+                # can surface; loader stays quiet to keep snapshot loadable.
+                continue
+            manifest = load_card(entry)
+            manifest.origin = "local"
+            local[manifest.name] = manifest
+
+    # Hard fail on name collision — Approach A.
+    conflicts = sorted(set(canon) & set(local))
+    if conflicts:
+        raise CardConflictError(
+            f"Nomes em colisão canon×local: {conflicts}. "
+            f"Renomeie o card local ou abra ADR pra promoção ao canon."
+        )
+
+    # Manifest write side-effect (cascade mode only).
+    _write_local_cards_manifest(project_root, local)
+
+    return [canon[name] for name in sorted(canon)] + [
+        local[name] for name in sorted(local)
+    ]
 
 
 def validate_card_yaml(manifest_dict: dict[str, Any], source_path: Path) -> list[str]:
@@ -636,3 +721,17 @@ def _validate_config_defaults(defaults: Any, violations: list[str]) -> None:
     for key in defaults:
         if not isinstance(key, str) or not key:
             violations.append(f"CARD-014: config-defaults key must be non-empty string, got {key!r}")
+
+
+def _write_local_cards_manifest(
+    project_root: Path, local: dict[str, "CardManifest"]
+) -> None:
+    """Write `.claude/inventory/local-cards-manifest.yaml` for CI audit.
+
+    Stub in Task 4 — fully implemented in Task 5. Stub no-op when local is
+    empty (canon-only project = no manifest needed).
+    """
+    if not local:
+        return
+    # Task 5 expands this to write the YAML. Leave as no-op here.
+    return
