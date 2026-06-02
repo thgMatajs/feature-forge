@@ -1,7 +1,7 @@
 """Coverage — ``engine.graph.gradle_deps.infer_suggested_target``.
 
 Pins the exact path-format / hint-string output for each known category.
-Tests are split into 5 functions, one per category, mirroring the
+Tests are split into 6 functions, one per category, mirroring the
 master-review list:
 
   - duplicate-within-module
@@ -9,6 +9,7 @@ master-review list:
   - near-duplicate
   - kmp-migration-candidate
   - redundant-platform-specific
+  - duplicate-ts-helper
 
 This is the integration point where ``forge graph`` query results get
 turned into actionable "where should this live" hints — drift here
@@ -87,3 +88,19 @@ def test_infer_target_redundant_platform_specific() -> None:
         gradle_modules={},
     )
     assert result == "keep: shared:foo · remove: app:android"
+
+
+def test_infer_target_duplicate_ts_helper() -> None:
+    """TS-helper dup → util/ path under the module (no kotlin source-set chain).
+
+    Web/Node hits this branch; the suggestion is intentionally lighter than the
+    Kotlin variants (no ``/src/main/kotlin/...``) because the consumer-side
+    layout is flatter — ``util/`` is the canonical TS helpers convention.
+    """
+    result = infer_suggested_target(
+        category="duplicate-ts-helper",
+        modules_in_group=["web:ui"],
+        closure={},
+        gradle_modules={"web/ui": "web:ui"},
+    )
+    assert result == "web/ui/util/"
