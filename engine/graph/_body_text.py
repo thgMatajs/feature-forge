@@ -182,8 +182,9 @@ def hash_body(text: str) -> str:
     >100M símbolos, subir pra SHA-1 completo (40 hex) ou BLAKE3-128.
 
     Truncamento escolhido porque cada símbolo grava 1 hash em SQLite —
-    strings de 32 chars inflariam o DB ~2x pra ganho de segurança
-    irrelevante na escala atual.
+    subir pra BLAKE3-128 (32 chars) inflaria a coluna de hash ~2x; SHA-1
+    completo (40 chars) ~2.5x. Ganho de safety em colisão irrelevante na
+    escala de v1.1.
     """
     return hashlib.sha1(normalize_body(text).encode("utf-8")).hexdigest()[:16]
 
