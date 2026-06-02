@@ -824,13 +824,20 @@ def _parse_near_duplicate_occurrences(occ_csv: Optional[str]) -> list[dict]:
 
 
 def _fingerprint(*parts: str) -> str:
-    """Build a 64-char sha256 fingerprint compatible with the distiller's
-    rejected-evolutions lookup.
+    """Build a 64-char sha256 fingerprint for reuse-finding uniqueness.
 
-    Format: ``sha256(parts joined by '|')``. Length matches what
-    ``compute_proposal_fingerprint`` produces so the rejection veto applies.
+    Format: ``sha256(parts joined by '\\x00')``. The NUL separator cannot
+    appear in legal source text (paths, identifiers, signatures), so
+    distinct partitions of the input stay distinct after the join — a
+    plain ``|`` separator would collide on TypeScript union-type signatures
+    like ``(x: string | number) => string`` (R2.1).
+
+    Length matches the 64-char hex digest emitted by the distiller's
+    canonical-form fingerprint, but the algorithms are not interchangeable:
+    this fingerprint is used only for the duplicates table's UNIQUE index
+    and the rejection-veto lookup against findings already marked rejected.
     """
-    payload = "|".join(parts)
+    payload = "\x00".join(parts)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
