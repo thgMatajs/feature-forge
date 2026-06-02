@@ -3,8 +3,8 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-02 (v1.1.0 round 2 — 30 commits adicionais sobre PR #1)
-**Estado:** v1.1.0 round 2 pronto pra merge — 45 commits total no PR #1 (R1: 15, R2: 30), 508 tests passando (unit + integration). Round 2 fechou bugs não-inlinados do master review (A7/A8/A10/A11/A13 + incremental conn leak + RFC arrow nested parens + narrow except), aplicou MD-03 (phase_lock_held context manager em implement.py), e cobriu cobertura mínima (Q12–Q17 + infer_suggested_target 6 categorias + Kotlin raw-string + Swift `"""`). 1 falha pré-existente conhecida em `test_build_full_creates_meta_schema_version` (schema "1" vs "2", agendada pra v1.1.1).
+**Última atualização:** 2026-06-02 (PR #1 round 3 — 9 fixes pós-release)
+**Estado:** PR #1 round 3 pronto pra merge — 55 commits totais (R1: 15, R2: 30, R3 + doc-sync: 10), 463 unit tests passando. Round 3 fechou 9 inline comments do code-review que tinham passado pela leitura inicial: A3 foreign-lock preservation em implement, bootstrap symlink repair, flock em hooks de drift + load-bearing, session-start exit-0 contract, doctor conn-close-on-exception, parser_kotlin _simplify_generics termination hardening, sentinel unlink failure surfacing em l1, blocking_deps warning tightening. Doc-sync incremento R3 cobre CHANGELOG `### Fixed (PR #1 round 3)` + este handoff + 1 nota em `04-pending.md`. 1 falha pré-existente conhecida em `test_build_full_creates_meta_schema_version` (schema "1" vs "2", agendada pra v1.1.1).
 
 ---
 

@@ -1309,6 +1309,12 @@ Itens emergidos durante o round 2 do PR #1 (30 commits aplicados sobre o que fic
 - **A13 `IN`-clause >999 findings ceiling** (review IN-01, 2026-06-02) — `list_reuse_findings` colapsou N+1 → single JOIN usando `WHERE finding_id IN ({placeholders})`. SQLite default `SQLITE_MAX_VARIABLE_NUMBER=999` quebra se `len(finding_ids) > 999`. Chunking em batches de 500 quando relevante. Não atinge projeto conhecido hoje; target v1.1.2+.
 - **`forge undo` coverage para reconfigure-external-deps** (review WR-01, 2026-06-02) — `_undo_reconfigure` em `engine/undo.py` não enumera per-task `.bak` files criados pelo loop de external-deps em `engine/reconfigure.py:754` (per-task `.bak` em vez de single `.bak` no arquivo do submenu). Recovery atualmente manual via `.bak` direto no disco. Target v1.1.1.
 
+### Gaps surfaced em PR #1 round 3 (2026-06-02)
+
+- **`_simplify_generics` hardening pre-existing safe** (R3, parser_kotlin) — investigação durante R3 confirmou que o increment do índice no caminho normal já estava correto (não havia loop infinito real). Hardening defensivo aplicado preventivamente (ceiling de iteração tied a remaining text length + increment garantido em todos os branches) pra blindar input malformed (`"List<T"` sem fechamento) caso novo branch seja introduzido por contribuidores futuros. Sem regression real fechada — documenta o invariant "função sempre termina" como guard explícito. Tests com threading watchdog em `tests/unit/test_parser_kotlin_simplify_generics.py`.
+- **R3 test hardening backlog** (defer v1.1.1) — itens identificados em review do round 3 mas adiados pra session de test-hardening dedicada: (a) `_TrackedConn.instances` global state precisa de fixture-scoped isolation pra suportar `pytest -n auto` (paralelização); (b) `time.sleep(0.030)` em phase_lock concurrency tests substituível por `threading.Event` (winner sinaliza antes do write); (c) `p.is_alive()` check pós-join em thread tests pra detectar joins incompletos. Tests passam consistentemente no setup atual (sequencial), mas refactor melhora confiabilidade quando CI migrar pra paralelização.
+- **doctor.py + sqlite_io.py refactor opportunities** (defer v1.1.1) — (a) distinguir `database is locked` de outros `sqlite3.OperationalError` no doctor pra triagem mais rápida; (b) wrapping de `open_db` em `GraphError` pra API hardening. Não bloqueantes; momentum atual é shipping v1.1.
+
 ### Resumo da fila pós-stress-test (cumulativo)
 
 Total: 18 gaps mapeados a partir de 20 cenários analisados (3 rounds).

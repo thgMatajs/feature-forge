@@ -7,6 +7,46 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed (PR #1 round 3 — 2026-06-02)
+
+- `implement.run` blocked-on-external branch não chama mais
+  `release_phase_lock` antes do acquire — preservava lock stale de
+  outro fluxo, violando single-writer invariant. Recovery de lock
+  stale fica via `forge undo` (A3; `engine/implement.py`).
+- `.claude/bootstrap.sh` detecta symlinks quebrados (target ausente) e
+  re-linka em vez de pular silenciosamente.
+- `.claude/hooks/post-edit-doc-drift.sh` agora usa `fcntl.flock` (via
+  python3 inline) ao ler-modificar-escrever os JSON state files
+  (`drift-warned.json`, `drift-pending.json`) — protege contra race em
+  invocações concorrentes do hook.
+- `.claude/hooks/pre-tool-use-load-bearing.sh` agora usa `fcntl.flock`
+  no append do audit log — sem corrupção de JSONL em invocações
+  paralelas.
+- `.claude/hooks/session-start-orientation.sh` removeu
+  `set -euo pipefail` que violava o contrato "sempre exit 0". Errors
+  internos não derrubam mais a sessão.
+- `engine/doctor._check_reuse_findings` usa `contextlib.closing()` em
+  vez de try/finally — conn fecha mesmo em exceções não-sqlite3
+  (RuntimeError, MemoryError).
+- `engine.graph.parser_kotlin._simplify_generics` ganhou ceiling de
+  iteração + increment garantido — input malformed (`"List<T"` sem
+  fechamento) não pode mais loopar infinitamente.
+- `engine.memory.acquire_phase_lock` agora emite warning via stderr
+  quando o unlink do sentinel falha após `_mirror_phase_lock_to_status`
+  raise — operadores vêem o sentinel stuck em vez de o erro ser
+  silenciado.
+- `blocking_deps` warning wording mudou pra `corrupt YAML — failed to
+  parse` (era `skipping unreadable`); test regex agora exige keyword
+  específico ao invés de só checar task ID.
+
+### Tests (R3)
+
+- 5 novos regression tests pra R3: foreign-lock preservation,
+  doctor conn-close-on-error, parser_kotlin simplify_generics
+  termination (com threading watchdog), bootstrap symlink repair
+  (integration), e tightened blocking_deps warning assertion.
+- Total: **463 unit tests passing** (era 455 fim de R2 → +8).
+
 ### Fixed (PR #1 round 2 — 2026-06-02)
 
 - `_fingerprint` agora usa `\x00` (NUL) como separador em vez de `|`, fechando colisão com TS union types em body text (A7; `engine/graph/duplicates.py`).
