@@ -167,3 +167,130 @@ def run_cli(
     extra = {k: v for k, v in vars(args).items() if k != "project_root"}
     result = validator_fn(root, **extra)
     return emit_and_exit(result)
+
+
+# ── Capability catalog overlay loader ────────────────────────────────────────
+#
+# Une o catálogo canônico (parseado de docs/schemas/capability-labels.md via
+# engine.cards.loader) com o overlay local em
+# .claude/inventory/capability-labels.local.yaml. Guards aplicados aqui são
+# fonte única — validators downstream consomem o resultado.
+
+from dataclasses import dataclass, field  # noqa: E402
+
+import yaml as _yaml_lib  # noqa: E402
+
+
+@dataclass
+class CapabilityCatalog:
+    """Efectivo = canon ∪ local. `reserved` permanece sempre canon-only."""
+
+    canon_all: frozenset[str] = field(default_factory=frozenset)
+    canon_singular: frozenset[str] = field(default_factory=frozenset)
+    canon_latent: frozenset[str] = field(default_factory=frozenset)
+    canon_reserved: frozenset[str] = field(default_factory=frozenset)
+    local_added: frozenset[str] = field(default_factory=frozenset)
+
+    @property
+    def active(self) -> frozenset[str]:
+        return self.canon_all | self.local_added
+
+    @property
+    def reserved(self) -> frozenset[str]:
+        return self.canon_reserved
+
+
+class CatalogOverlayError(Exception):
+    """Raised when capability-labels.local.yaml is malformed or violates guards."""
+
+
+_FORBIDDEN_LOCAL_KEYS = {"overrides", "reserved-promotions"}
+
+
+def load_catalog(project_root: Path) -> CapabilityCatalog:
+    """Return canon ∪ local catalog with all guards applied.
+
+    Guards (hard fail):
+      - Local label ∈ canon.reserved → CatalogOverlayError
+      - Local label ∈ canon.active → CatalogOverlayError
+      - Local YAML contém chaves `overrides:` ou `reserved-promotions:` → CatalogOverlayError
+      - Local YAML não-mapping → CatalogOverlayError
+
+    Edge cases:
+      - Local file ausente → catálogo canon-only (silent)
+      - Local file vazio mapping → catálogo canon-only
+      - Local com `added: []` → catálogo canon-only
+    """
+    # Import lazy pra evitar circularidade na partida dos validators.
+    from engine.cards.loader import _get_catalog
+
+    all_labels, singular, latent = _get_catalog()
+    reserved = frozenset(all_labels - singular - latent)
+
+    local_path = project_root / ".claude" / "inventory" / "capability-labels.local.yaml"
+    if not local_path.is_file():
+        return CapabilityCatalog(
+            canon_all=all_labels,
+            canon_singular=singular,
+            canon_latent=latent,
+            canon_reserved=reserved,
+            local_added=frozenset(),
+        )
+
+    try:
+        raw_text = local_path.read_text(encoding="utf-8")
+        data = _yaml_lib.safe_load(raw_text) or {}
+    except _yaml_lib.YAMLError as exc:
+        raise CatalogOverlayError(
+            f"{local_path}: YAML inválido — {exc}"
+        ) from exc
+
+    if not isinstance(data, dict):
+        raise CatalogOverlayError(
+            f"{local_path}: top-level deve ser mapping, got {type(data).__name__}"
+        )
+
+    forbidden_present = sorted(set(data) & _FORBIDDEN_LOCAL_KEYS)
+    if forbidden_present:
+        raise CatalogOverlayError(
+            f"{local_path}: chaves proibidas {forbidden_present} — "
+            f"overlay não pode redefinir canon nem promover reservada. "
+            f"Promoção exige ADR em docs/design/01-decisions.md."
+        )
+
+    added_raw = data.get("added") or []
+    if not isinstance(added_raw, list):
+        raise CatalogOverlayError(
+            f"{local_path}: `added` deve ser lista, got {type(added_raw).__name__}"
+        )
+
+    added_names: set[str] = set()
+    for entry in added_raw:
+        if not isinstance(entry, dict):
+            raise CatalogOverlayError(
+                f"{local_path}: cada entrada em `added` deve ser mapping"
+            )
+        name = entry.get("name")
+        if not isinstance(name, str) or not name:
+            raise CatalogOverlayError(
+                f"{local_path}: cada entrada `added` precisa de `name: <str>` não-vazio"
+            )
+        if name in reserved:
+            raise CatalogOverlayError(
+                f"{local_path}: label local {name!r} está reservada no canon. "
+                f"Promoção exige ADR + revisita decisão do catálogo."
+            )
+        if name in all_labels:
+            raise CatalogOverlayError(
+                f"{local_path}: label local {name!r} colide com canon ativo. "
+                f"Renomeie no overlay ou remova do canon (revisita)."
+            )
+        added_names.add(name)
+
+    return CapabilityCatalog(
+        canon_all=all_labels,
+        canon_singular=singular,
+        canon_latent=latent,
+        canon_reserved=reserved,
+        local_added=frozenset(added_names),
+    )
