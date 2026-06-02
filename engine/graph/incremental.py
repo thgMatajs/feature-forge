@@ -47,8 +47,8 @@ def update_file(
     """Re-parse a single file and refresh its edges/symbols."""
     target_db = db_path or graph_db_path(project_root)
     conn = open_db(target_db, create=True)
-    gradle_modules = load_gradle_modules(project_root)
     try:
+        gradle_modules = load_gradle_modules(project_root)
         _ensure_imports_to_file_id_column(conn)
         _ensure_reuse_intelligence_columns(conn)
         with transaction(conn):
@@ -92,8 +92,8 @@ def update_batch(
     """Refresh many files inside a single transaction."""
     target_db = db_path or graph_db_path(project_root)
     conn = open_db(target_db, create=True)
-    gradle_modules = load_gradle_modules(project_root)
     try:
+        gradle_modules = load_gradle_modules(project_root)
         _ensure_imports_to_file_id_column(conn)
         _ensure_reuse_intelligence_columns(conn)
         files_updated = 0
@@ -160,10 +160,15 @@ def detect_after_update(
     edited_relpaths = {_relpath(project_root, p) for p in file_paths if p.exists()}
 
     conn = open_db(target_db, create=False)
-    gradle_modules = load_gradle_modules(project_root)
-    deps = parse_module_dependencies(project_root, gradle_modules)
-
     try:
+        # Discovery happens INSIDE the try so a failure in either call still
+        # closes the connection (R2.5). detect_after_update is best-effort —
+        # any error degrades to [] without leaking sqlite handles.
+        try:
+            gradle_modules = load_gradle_modules(project_root)
+            deps = parse_module_dependencies(project_root, gradle_modules)
+        except Exception:
+            return []
         with transaction(conn):
             detect_all_reuse_findings(conn, gradle_modules, deps)
         if not edited_relpaths:
