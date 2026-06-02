@@ -66,25 +66,39 @@ if [[ "$ALREADY_WARNED" == "yes" ]]; then
     exit 0
 fi
 
-# Append to warned + pending
-WARNED="$WARNED" PENDING="$PENDING" TARGET="$REL_PATH" python3 -c "
-import json, os, sys
+# Append to warned + pending — protected by fcntl.flock so concurrent
+# hook invocations (Edit/Write/NotebookEdit in parallel) can't race on
+# the read-modify-write of the JSON state files. R3.3 fix. We do the
+# lock inside python3 (fcntl.flock) because the system `flock(1)`
+# binary isn't present on stock macOS — python's stdlib gives us the
+# same primitive cross-platform.
+WARNED="$WARNED" PENDING="$PENDING" TARGET="$REL_PATH" \
+    STATE_DIR="$STATE_DIR" python3 -c "
+import fcntl, json, os, sys
+
 warned_path = os.environ['WARNED']
 pending_path = os.environ['PENDING']
 target = os.environ['TARGET']
+state_dir = os.environ['STATE_DIR']
 
-for p in (warned_path, pending_path):
-    data = {'files': []}
-    if os.path.exists(p):
-        try:
-            with open(p) as f:
-                data = json.load(f)
-        except Exception:
+lock_path = os.path.join(state_dir, '.drift-state.lock')
+with open(lock_path, 'w') as lock_fh:
+    fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+    try:
+        for p in (warned_path, pending_path):
             data = {'files': []}
-    if target not in data.get('files', []):
-        data.setdefault('files', []).append(target)
-    with open(p, 'w') as f:
-        json.dump(data, f, indent=2)
+            if os.path.exists(p):
+                try:
+                    with open(p) as f:
+                        data = json.load(f)
+                except Exception:
+                    data = {'files': []}
+            if target not in data.get('files', []):
+                data.setdefault('files', []).append(target)
+            with open(p, 'w') as f:
+                json.dump(data, f, indent=2)
+    finally:
+        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
 "
 
 cat <<EOF >&2
