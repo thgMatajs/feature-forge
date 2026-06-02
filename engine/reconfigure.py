@@ -195,6 +195,7 @@ def _show_snapshot(config: dict[str, Any]) -> None:
 def _choose_categories() -> list[str]:
     options = {
         "cards":          "add/remove/upgrade/lock/inspect",
+        "card-local":     "listar/adicionar/remover cards locais (overlay)",
         "paths":          "feature-roots, tests-roots",
         "conventions":    "DI, navigation, folder layout, naming",
         "backend":        "ticketing, external-docs",
@@ -398,6 +399,158 @@ def _cards_inspect(project_root: Path, working: dict[str, Any]) -> None:
         f"hooks={len(card.contributes.get('hooks') or [])}",
     ]
     renderer.write(renderer.box(f"Card · {card.name}", lines))
+
+
+# ── card-local submenu (Gap 5 — Task 8) ─────────────────────────────────────
+
+
+def _handle_card_local(
+    project_root: Path, current: dict[str, Any], working: dict[str, Any]
+) -> None:
+    """Submenu card-local — cobre listar, adicionar (Task 9), remover.
+
+    Cards locais vivem em `<project>/.claude/cards/local/<name>/`. Schema
+    idêntico ao canon — diferença é apenas o path. Loader cascade
+    (Task 4-5) tagga `card.origin = "local"`.
+    """
+    del current  # working já reflete o estado vigente
+    action = question.ask(
+        "card-local — qual ação?",
+        {
+            "list":   "1. listar cards locais existentes",
+            "add":    "2. adicionar card local (criar do skeleton)",
+            "remove": "3. remover card local",
+            "back":   "0. voltar",
+        },
+        default="list",
+    )
+    if action == "list":
+        _card_local_list(project_root)
+    elif action == "add":
+        _card_local_add(project_root, working)
+    elif action == "remove":
+        _card_local_remove(project_root, working)
+    # "back" = no-op
+
+
+def _card_local_root(project_root: Path) -> Path:
+    return project_root / ".claude" / "cards" / "local"
+
+
+def _card_local_list(project_root: Path) -> None:
+    """Enumera `.claude/cards/local/*/card.yaml` em tabela name+provides+conflicts."""
+    root = _card_local_root(project_root)
+    if not root.is_dir():
+        renderer.write("Nenhum card local cadastrado neste projeto.")
+        renderer.write("  → Use opção 2 (adicionar) para criar o primeiro.")
+        return
+
+    entries: list[tuple[str, list[str], list[str]]] = []
+    for d in sorted(root.iterdir(), key=lambda p: p.name):
+        if not d.is_dir() or d.name.startswith("."):
+            continue
+        if d.name.endswith(".bak"):
+            continue
+        if not (d / "card.yaml").is_file():
+            continue
+        try:
+            card = load_card(d)
+        except CardError as exc:
+            renderer.write(renderer.colored(f"  ⚠️  {d.name} inválido: {exc}", "yellow"))
+            continue
+        entries.append((card.name, card.provides, card.conflicts_with))
+
+    if not entries:
+        renderer.write("Diretório `local/` existe mas está vazio.")
+        return
+
+    lines = [f"{'name':<28} provides                              conflicts-with"]
+    lines.append("-" * 90)
+    for name, prov, conf in entries:
+        lines.append(
+            f"{name:<28} {', '.join(prov)[:38]:<38} {', '.join(conf)}"
+        )
+    renderer.write(renderer.box(f"Cards locais ({len(entries)})", lines))
+
+
+def _card_local_add(project_root: Path, working: dict[str, Any]) -> None:
+    """Criar card local do skeleton — expansão completa em Task 9."""
+    del working
+    renderer.write(
+        "Adicionar card local: implementação completa em Task 9 do plano Gap 5."
+    )
+    renderer.write(f"  → diretório alvo: {_card_local_root(project_root)}")
+
+
+def _card_local_remove(project_root: Path, working: dict[str, Any]) -> None:
+    """Remove um card local com 3-caminhos de confirmação e .bak retention."""
+    del working  # remoção não muda workflow-config; só filesystem
+    root = _card_local_root(project_root)
+    if not root.is_dir():
+        renderer.write("Nenhum card local pra remover.")
+        return
+
+    names = sorted(
+        d.name
+        for d in root.iterdir()
+        if d.is_dir()
+        and not d.name.startswith(".")
+        and not d.name.endswith(".bak")
+        and (d / "card.yaml").is_file()
+    )
+    if not names:
+        renderer.write("Diretório `local/` vazio — nada a remover.")
+        return
+
+    opts = {n: f"local card `{n}`" for n in names}
+    opts["cancelar"] = "voltar sem remover nada"
+    picked = question.ask("Remover qual card local?", opts, default="cancelar")
+    if picked == "cancelar" or picked not in names:
+        renderer.write("Cancelado.")
+        return
+
+    snap_dir = root / picked
+    bak_dir = root / f"{picked}.bak"
+
+    confirmation = question.ask(
+        f"Remover `{picked}` definitivo (3-caminhos)?",
+        {
+            "remove": f"1. mover snap → .bak ({picked}.bak, retention 7d)",
+            "keep":   "2. cancelar — manter o card",
+            "abort":  "3. abortar submenu inteiro",
+        },
+        default="remove",
+    )
+    if confirmation == "keep":
+        renderer.write("Mantido.")
+        return
+    if confirmation == "abort":
+        renderer.write("Abortado.")
+        return
+
+    if bak_dir.exists():
+        # Discipline §4 — .bak já existe (remoção anterior do mesmo nome).
+        # Sobrescrever silenciosamente perde audit; surface ao user.
+        renderer.write(
+            renderer.colored(
+                f"⚠️  {bak_dir} já existe — remoção anterior não foi limpa. "
+                "Rode `forge reconfigure → cleanup-bak` antes de tentar de novo.",
+                "yellow",
+            )
+        )
+        return
+
+    shutil.move(str(snap_dir), str(bak_dir))
+    renderer.write(renderer.colored(f"  - {picked} (snapshot → {picked}.bak)", "yellow"))
+
+    _append_history(
+        project_root,
+        {
+            "op": "card-local-remove",
+            "name": picked,
+            "bak": str(bak_dir.relative_to(project_root)),
+        },
+    )
 
 
 def _handle_paths(
@@ -818,6 +971,7 @@ def _handle_external_deps(
 
 _CATEGORY_HANDLERS = {
     "cards":         _handle_cards,
+    "card-local":    _handle_card_local,
     "paths":         _handle_paths,
     "conventions":   _handle_conventions,
     "backend":       _handle_backend,
@@ -934,22 +1088,39 @@ def _save_draft(draft_path: Path, working: dict[str, Any]) -> None:
 
 def _append_history(
     project_root: Path,
+    payload: dict[str, Any] | None = None,
     *,
-    before_sha: str,
-    after_sha: str,
-    notes: str,
+    before_sha: str | None = None,
+    after_sha: str | None = None,
+    notes: str | None = None,
 ) -> None:
-    """Append a single JSONL line per `docs/schemas/workflow-config-history.md`."""
-    entry = {
+    """Append a single JSONL line per `docs/schemas/workflow-config-history.md`.
+
+    Two call styles supported:
+      - Legacy/canonical (reconfigure-applied):
+          _append_history(root, before_sha=..., after_sha=..., notes=...)
+      - Op-specific (e.g. card-local-remove):
+          _append_history(root, {"op": "card-local-remove", "name": ..., "bak": ...})
+
+    The op-specific style wraps the dict under `op` and merges extra fields
+    inline; common envelope (timestamp, command, schema-version) stays uniform.
+    """
+    base = {
         "schema-version": 1,
         "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "command": "forge reconfigure",
-        "action": "reconfigure-applied",
-        "before-snapshot-sha": before_sha,
-        "after-snapshot-sha": after_sha,
-        "user-confirmed": True,
-        "notes": notes,
     }
+    if payload is not None:
+        entry = {**base, **payload}
+    else:
+        entry = {
+            **base,
+            "action": "reconfigure-applied",
+            "before-snapshot-sha": before_sha,
+            "after-snapshot-sha": after_sha,
+            "user-confirmed": True,
+            "notes": notes,
+        }
     path = claude_dir(project_root) / _HISTORY_NAME
     path.parent.mkdir(parents=True, exist_ok=True)
     line = json.dumps(entry, ensure_ascii=False) + "\n"
