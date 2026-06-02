@@ -173,7 +173,18 @@ def normalize_body(text: str) -> str:
 
 
 def hash_body(text: str) -> str:
-    """SHA-1 of the normalized body, truncated to 16 hex chars."""
+    """SHA-1 of the normalized body, truncated to 16 hex chars (64 bits).
+
+    Collision domain: 64 bits → birthday collision probability ~50%
+    around 2^32 (~4 bilhões) de bodies distintos. Na escala de v1.1
+    (graph guarda ≤ alguns milhões de símbolos mesmo em monorepos),
+    a probabilidade de colisão é desprezível. Se surgirem projetos com
+    >100M símbolos, subir pra SHA-1 completo (40 hex) ou BLAKE3-128.
+
+    Truncamento escolhido porque cada símbolo grava 1 hash em SQLite —
+    strings de 32 chars inflariam o DB ~2x pra ganho de segurança
+    irrelevante na escala atual.
+    """
     return hashlib.sha1(normalize_body(text).encode("utf-8")).hexdigest()[:16]
 
 
