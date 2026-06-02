@@ -315,12 +315,21 @@ What `forge init` writes when run inside a project:
 │   │   ├── firebase-auth/
 │   │   ├── firebase-firestore/
 │   │   ├── firebase-storage/
-│   │   └── crashlytics/
+│   │   ├── crashlytics/
+│   │   └── local/                         ← overlay versionado (Gap 5)
+│   │       └── <local-card-name>/
+│   │           ├── card.yaml
+│   │           ├── README.md
+│   │           └── detection/signals.yaml
 │   │
 │   ├── inventory/                         factual snapshot — committed
 │   │   ├── design-system.yaml
 │   │   ├── i18n.yaml
-│   │   └── conventions.yaml
+│   │   ├── conventions.yaml
+│   │   ├── capability-labels.yaml         (snapshot canon)
+│   │   ├── capability-labels.local.yaml   ← overlay (Gap 5)
+│   │   ├── local-cards-manifest.yaml      ← gerado pelo loader (Gap 5)
+│   │   └── ignored-signals.yaml           ← gerado pelo init Step 7.5 (Gap 5)
 │   │
 │   ├── memory/
 │   │   ├── L1/                            per-feature WIP — NOT committed

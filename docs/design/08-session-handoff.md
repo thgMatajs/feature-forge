@@ -3,8 +3,17 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-02 (PR #1 round 3 — 9 fixes pós-release)
-**Estado:** PR #1 round 3 pronto pra merge — 55 commits totais (R1: 15, R2: 30, R3 + doc-sync: 10), 463 unit tests passando. Round 3 fechou 9 inline comments do code-review que tinham passado pela leitura inicial: A3 foreign-lock preservation em implement, bootstrap symlink repair, flock em hooks de drift + load-bearing, session-start exit-0 contract, doctor conn-close-on-exception, parser_kotlin _simplify_generics termination hardening, sentinel unlink failure surfacing em l1, blocking_deps warning tightening. Doc-sync incremento R3 cobre CHANGELOG `### Fixed (PR #1 round 3)` + este handoff + 1 nota em `04-pending.md`. 1 falha pré-existente conhecida em `test_build_full_creates_meta_schema_version` (schema "1" vs "2", agendada pra v1.1.1).
+**Última atualização:** 2026-06-02 (v1.1.x — Gap 5 card local overlay)
+**Estado:** Gap 5 entregue (overlay + 2 cards canon novos + Step 7.5 órfão-signals).
+Branch `feat/gap5-card-local-overlay` com 13 commits (Tasks 1–12 atomic +
+Task 13 doc-sync). Loader cascade canon ∪ local com hard-fail em colisão;
+`validate_card_yaml` + `validate_capability_labels` overlay-aware via
+`validators/_common.load_catalog`; reconfigure ganha submenu `card-local`;
+init ganha Step 7.5 com 3-caminhos pra signals órfãos. Cards canon: 20 → 22
+(`retrofit-client` + `shared-preferences-prefs` com `legacy-marker: true`).
+Nova decisão locked 28 (ADR append-only). Próximo: revisitar Gap 9 (catálogo
+evolutivo) à luz do overlay e considerar Gap 14 (preset coverage).
+Histórico prévio (PR #1 R3) preservado abaixo na timeline.
 
 ---
 
@@ -118,6 +127,13 @@ restantes ficam pra v1.2+ ou v2/Phase 6:
 - **plan.py `phase_lock_held` CM migration deferred** — R2.7 (MD-03) migrou só `engine/implement.py` para `with phase_lock_held(...)`. `engine/plan.py` tem múltiplos deferred paths via `_persist_deferred` que precisam de brainstorm focado antes de migrar; happy path em `plan.py` (linha ~1108, `final_state`) seta `phase_lock=None` via `write_l1_status` mas **NÃO chama `release_phase_lock`**, deixando sentinel `.phase-lock` órfão no disco. Recovery manual: `rm .planning/<slug>/.phase-lock`. Fix proposto: chamar `release_phase_lock` no happy path antes da migração CM. Target v1.1.1.
 - **A13 `IN`-clause >999 findings ceiling** (review IN-01) — `list_reuse_findings` agora usa `WHERE finding_id IN ({placeholders})` que falha com SQLite default `SQLITE_MAX_VARIABLE_NUMBER=999` se `findings > 999`. Chunking em batches de 500 quando relevante. Não atinge nenhum projeto conhecido hoje; target v1.1.2+.
 - **`forge undo` coverage para reconfigure-external-deps** (review WR-01) — `_undo_reconfigure` em `engine/undo.py` não enumera per-task `.bak` files criados pelo loop de external-deps em `engine/reconfigure.py:754`. Recovery atualmente manual via `.bak` direto. Target v1.1.1.
+
+**Gap 5 (card local overlay) surfaced (2026-06-02) — não bloqueia merge, target v1.2:**
+
+- **Card local re-prompt** — fluxo `_card_local_add` em colisão de nome
+  oferece 3-caminhos (rename / abort / listar) mas o "rename" não reabre
+  o prompt do nome — encerra a operação. Gap pra v1.2; documentado em
+  `docs/design/04-pending.md`.
 
 ## Fase 4 — completa (resumo)
 

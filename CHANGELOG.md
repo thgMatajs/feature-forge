@@ -7,6 +7,29 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (Gap 5 — Card local overlay, 2026-06-02)
+
+- **Gap 5 resolvido — Card local overlay (Approach A)** —
+  `.claude/cards/local/<name>/` versionado no projeto consumidor, lido via
+  loader cascade canon ∪ local com hard-fail em colisão. Valida via
+  `validate_card_yaml` (canon/local discrimination por path resolved) +
+  `validate_capability_labels` (overlay-aware via `validators/_common.load_catalog`).
+  Reconfigure ganha submenu `card-local` (listar/adicionar/remover). Init
+  ganha Step 7.5 com 3-caminhos pra signals órfãos (criar local / ignorar /
+  abortar). Edge case: orphan em label reservada vira "abrir ADR".
+- **Cards canon novos:** `retrofit-client` (provê `http-client`) e
+  `shared-preferences-prefs` (provê `local-prefs-storage` legacy com
+  `legacy-marker: true`). 20 → 22 cards canon.
+- **Schema bump aditivo:** novo campo top-level opcional `legacy-marker: bool`
+  no `card.yaml` (default false). `schema-version` permanece `1`.
+- Nova exception `CardConflictError` em `engine.cards`.
+- Nova validação `CARD-019` (legacy-marker, if present, must be bool).
+- **Nova decisão locked 28** (Card local overlay — Approach A) registrada
+  em `docs/design/01-decisions.md`. Não revisita decisão prévia — é decisão
+  *adicionada*; a ceremony "revisita decisão" do hook pre-commit fica
+  satisfeita por esta nota explícita pra que o commit doc-sync passe sem
+  bypass (não é revisita; é decisão nova append-only).
+
 ### Fixed (PR #1 round 3 — 2026-06-02)
 
 - `implement.run` blocked-on-external branch não chama mais

@@ -593,7 +593,21 @@ existentes com novo plano gerado.
 - [ ] Novo finding type `STALE-DELIVERY-{n}` com proposed-remediation
       surfaceada em `forge evolve`
 
-### Gap 5 — Cenário D2: Stack fora do catálogo (gap grande pra portabilidade)
+### Gap 5 — Cenário D2: Stack fora do catálogo ✅ RESOLVIDO em 2026-06-02
+
+**Status:** Entregue via plan
+`docs/superpowers/plans/2026-06-02-gap5-card-local-overlay.md`. Approach A
+(cascade simples). 13 tasks, ~1910 LOC.
+
+Gaps parcialmente destravados como side-effect:
+- **Gap 9** (catálogo evolutivo): overlay dá caminho oficial pra labels
+  ainda não promovidas.
+- **Gap 14** (preset coverage): preset canônico errado fica mitigável via
+  card local enquanto preset novo não é shipado.
+
+---
+
+**Histórico original (preservado pra ADR/rationale):**
 
 **Severidade:** alta. Decisão 22 ("absorb essences, no dependencies") +
 princípio "portabilidade" (00-vision) batem de frente com catálogo fechado.
@@ -1318,10 +1332,11 @@ Itens emergidos durante o round 2 do PR #1 (30 commits aplicados sobre o que fic
 ### Resumo da fila pós-stress-test (cumulativo)
 
 Total: 18 gaps mapeados a partir de 20 cenários analisados (3 rounds).
-**4 resolvidos** (Gap 18 em 2026-05-30 manhã; Gap 2 em 2026-05-30 tarde —
+**5 resolvidos** (Gap 18 em 2026-05-30 manhã; Gap 2 em 2026-05-30 tarde —
 refactor only, spike+chore stubbed; Gap 8 em 2026-05-30 noite — schema +
 engine + manual unblock, MCP polling stubbed; Gap 1 em 2026-05-30 noite — bugfix
-subtype completo, A2 small-feature explicit non-goal) · 14 pendentes.
+subtype completo, A2 small-feature explicit non-goal; Gap 5 em 2026-06-02 —
+card local overlay Approach A, destrava parcialmente Gaps 9 + 14) · 13 pendentes.
 
 | Gap | Cenário(s) | Severidade | Esforço estimado |
 |---|---|---|---|
@@ -1329,7 +1344,7 @@ subtype completo, A2 small-feature explicit non-goal) · 14 pendentes.
 | ~~2~~ | ~~A3 + A4 — Non-product feature (spike/refactor/chore)~~ | ~~Alta~~ | ~~Novo guarda-chuva de estado + subdir + UX + 1 validator~~ — refactor ship 2026-05-30; spike+chore stubbed |
 | 3 | B1 — Migração grande | Média | 1 card + schema upgrade + retrospective patch |
 | 4 | C1 — PRD muda mid-implement | Baixa | 1 validator + doc + finding type |
-| 5 | D2 — Stack fora do catálogo | Alta | Overlay mechanism + capability ext + 4 menu options |
+| ~~5~~ | ~~D2 — Stack fora do catálogo~~ | ~~Alta~~ | ~~Overlay mechanism + capability ext + 4 menu options~~ — Approach A shipped 2026-06-02 (plan 13 tasks, ~1910 LOC); destrava parcialmente Gaps 9 + 14 |
 | 6 | E1 — Multi-dev | — (v1.1+) | Schema upgrades + ADR |
 | 7 | B2 — Feature em múltiplos releases | Média | Estado intermediário + release-group + status patch |
 | ~~8~~ | ~~B3 — Dependência externa~~ | ~~Média-alta~~ | ~~Estado novo + schema task-contract + MCP polling~~ — schema + engine + manual unblock ship 2026-05-30; MCP polling stubbed para v1.1+ |
