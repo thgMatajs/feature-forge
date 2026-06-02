@@ -136,3 +136,43 @@ def test_legacy_canon_only_root_still_works(tmp_path):
     manifests = loader.load_all_cards(canon_root)
     assert [m.name for m in manifests] == ["demo"]
     assert manifests[0].origin == "canon"
+
+
+# ── Local-cards manifest writer ─────────────────────────────────────────────
+
+
+def test_cascade_writes_local_cards_manifest_when_local_present(tmp_path):
+    project = _make_project(tmp_path)
+    inv_dir = project / ".claude" / "inventory"
+    inv_dir.mkdir(parents=True, exist_ok=True)
+
+    _write_card_dir(project / ".claude" / "cards" / "canon-a", _valid_card_dict("canon-a"))
+    _write_card_dir(
+        project / ".claude" / "cards" / "local" / "team-x",
+        _valid_card_dict("team-x", provides=["kotlin-multiplatform"]),
+    )
+
+    loader.load_all_cards(project)
+
+    manifest_path = inv_dir / "local-cards-manifest.yaml"
+    assert manifest_path.is_file(), "manifest deve ser escrito quando há cards locais"
+    parsed = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+    assert parsed.get("schema-version") == 1
+    cards_block = parsed.get("local-cards") or []
+    names = {c.get("name") for c in cards_block}
+    assert names == {"team-x"}
+    # provides + conflicts-with devem ser preservados pro audit
+    team_x = next(c for c in cards_block if c.get("name") == "team-x")
+    assert team_x.get("provides") == ["kotlin-multiplatform"]
+
+
+def test_cascade_skips_manifest_when_no_local(tmp_path):
+    project = _make_project(tmp_path)
+    inv_dir = project / ".claude" / "inventory"
+    inv_dir.mkdir(parents=True, exist_ok=True)
+    _write_card_dir(project / ".claude" / "cards" / "canon-only", _valid_card_dict("canon-only"))
+
+    loader.load_all_cards(project)
+
+    manifest_path = inv_dir / "local-cards-manifest.yaml"
+    assert not manifest_path.exists(), "no-op manifest quando nenhum local card"

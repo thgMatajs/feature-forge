@@ -726,12 +726,44 @@ def _validate_config_defaults(defaults: Any, violations: list[str]) -> None:
 def _write_local_cards_manifest(
     project_root: Path, local: dict[str, "CardManifest"]
 ) -> None:
-    """Write `.claude/inventory/local-cards-manifest.yaml` for CI audit.
+    """Write `.claude/inventory/local-cards-manifest.yaml` listing local cards.
 
-    Stub in Task 4 — fully implemented in Task 5. Stub no-op when local is
-    empty (canon-only project = no manifest needed).
+    Side-effect deterministic — quando `local` é vazio (canon-only project),
+    no-op e NÃO cria o arquivo (evita ruído em projetos que nunca tocaram
+    overlay). Quando há cards locais, escreve YAML versionado contendo:
+      - schema-version: 1
+      - generated-by: feature-forge
+      - local-cards: [{name, provides, conflicts-with, source}]
+
+    Diretório `.claude/inventory/` é criado se ausente — chamada idempotente.
+    O arquivo é versionado pelo time (não está em .gitignore do projeto
+    consumidor) — usado por CI pra auditar quais cards locais entraram.
     """
     if not local:
         return
-    # Task 5 expands this to write the YAML. Leave as no-op here.
-    return
+
+    inv_dir = project_root / ".claude" / "inventory"
+    inv_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = inv_dir / "local-cards-manifest.yaml"
+
+    entries: list[dict[str, Any]] = []
+    for name in sorted(local):
+        card = local[name]
+        entries.append(
+            {
+                "name": card.name,
+                "provides": list(card.provides),
+                "conflicts-with": list(card.conflicts_with),
+                "source": str(card.source_path.relative_to(project_root)),
+            }
+        )
+
+    payload = {
+        "schema-version": 1,
+        "generated-by": "feature-forge engine.cards.loader",
+        "local-cards": entries,
+    }
+    manifest_path.write_text(
+        _yaml_lib.safe_dump(payload, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
