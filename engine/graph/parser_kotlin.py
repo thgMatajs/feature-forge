@@ -561,7 +561,19 @@ def _simplify_generics(text: Optional[str]) -> str:
             i += 1
             block_start = i
             inner_depth = 1
-            while i < len(text) and inner_depth > 0:
+            # R3.7 hardening: guarantee progress on every iteration even
+            # under pathological inputs (the existing `i += 1` already
+            # ran on both branches, but it sat AFTER the conditional —
+            # if a future edit ever short-circuits with `continue`
+            # without incrementing, we'd hang on malformed input like
+            # `List<T` or `<<<`). Hoist the increment to the end and
+            # add an explicit hard ceiling tied to remaining text
+            # length: under no condition can the inner loop run more
+            # iterations than there are characters left.
+            start_i = i
+            max_iter = len(text) - start_i + 1
+            iter_count = 0
+            while i < len(text) and inner_depth > 0 and iter_count < max_iter:
                 if text[i] == "<":
                     inner_depth += 1
                 elif text[i] == ">":
@@ -569,6 +581,7 @@ def _simplify_generics(text: Optional[str]) -> str:
                     if inner_depth == 0:
                         break
                 i += 1
+                iter_count += 1
             inner = text[block_start:i]
             stripped_params = ", ".join(
                 _strip_bound(p) for p in _split_top_level_commas(inner)
