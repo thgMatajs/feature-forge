@@ -503,11 +503,23 @@ def acquire_phase_lock(
             fh.flush()
             os.fsync(fh.fileno())
         _mirror_phase_lock_to_status(feature_slug, project_root, lock_id)
-    except Exception:
+    except Exception as mirror_err:
+        # R3.8 fix: surface the unlink failure if it happens. Previously
+        # we swallowed `OSError` silently, leaving a stuck sentinel that
+        # blocks every subsequent acquire — and the operator had no
+        # signal pointing them at `forge undo` for cleanup. Now we
+        # write a clear recovery hint to stderr before re-raising.
         try:
             lock_path.unlink()
-        except OSError:
-            pass
+        except OSError as unlink_err:
+            try:
+                sys.stderr.write(
+                    f"forge: phase-lock sentinel stuck at {lock_path} — "
+                    f"mirror failed ({mirror_err!r}) and unlink failed "
+                    f"({unlink_err!r}). Run `forge undo` to clear.\n"
+                )
+            except Exception:  # pragma: no cover — stderr write itself failed
+                pass
         raise
     return True
 
