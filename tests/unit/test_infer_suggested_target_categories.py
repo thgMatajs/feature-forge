@@ -76,3 +76,14 @@ def test_infer_target_kmp_migration_candidate() -> None:
         gradle_modules={},
     )
     assert result == "replace Swift extension with SKIE call to shared"
+
+
+def test_infer_target_redundant_platform_specific() -> None:
+    """Redundant platform copy → keep the shared variant, remove the rest."""
+    result = infer_suggested_target(
+        category="redundant-platform-specific",
+        modules_in_group=["shared:foo", "app:android"],
+        closure={},
+        gradle_modules={},
+    )
+    assert result == "keep: shared:foo · remove: app:android"
