@@ -55,6 +55,99 @@ _TYPE_MODIFIERS = (
 
 _ALL_MODIFIERS = _FUN_MODIFIERS + _TYPE_MODIFIERS + ("inline",)
 
+
+def _mask_strings_and_comments(text: str) -> str:
+    """Return ``text`` with the contents of strings and comments replaced
+    by spaces, preserving overall length so character offsets and line
+    counts stay aligned. Used to pre-process source before running
+    ``_RE_DECL.finditer`` so that ``fun``/``class``/``object`` tokens
+    inside literals or comments don't produce false-positive symbols
+    (R2.4).
+
+    Handled forms:
+      - Triple-quoted raw strings ``\"\"\" ... \"\"\"`` (multi-line).
+      - Double-quoted strings ``" ... "`` with ``\\"`` escapes (single line).
+      - Single-quoted char literals ``' ... '`` with ``\\'`` escapes.
+      - Block comments ``/* ... */`` (multi-line; newlines preserved).
+      - Line comments ``// ...`` to end-of-line.
+
+    Delimiters themselves are kept in place; only the *content* is
+    masked, so positions remain stable.
+    """
+    n = len(text)
+    out = list(text)
+    i = 0
+    while i < n:
+        ch = text[i]
+        # Triple-quoted raw string.
+        if ch == '"' and text.startswith('"""', i):
+            end = text.find('"""', i + 3)
+            if end == -1:
+                # Unterminated — mask to EOF, keep newlines for line count.
+                for j in range(i + 3, n):
+                    if text[j] != "\n":
+                        out[j] = " "
+                return "".join(out)
+            for j in range(i + 3, end):
+                if text[j] != "\n":
+                    out[j] = " "
+            i = end + 3
+            continue
+        # Block comment.
+        if ch == "/" and i + 1 < n and text[i + 1] == "*":
+            end = text.find("*/", i + 2)
+            if end == -1:
+                for j in range(i + 2, n):
+                    if text[j] != "\n":
+                        out[j] = " "
+                return "".join(out)
+            for j in range(i + 2, end):
+                if text[j] != "\n":
+                    out[j] = " "
+            i = end + 2
+            continue
+        # Line comment.
+        if ch == "/" and i + 1 < n and text[i + 1] == "/":
+            j = i + 2
+            while j < n and text[j] != "\n":
+                out[j] = " "
+                j += 1
+            i = j
+            continue
+        # Double-quoted string (single-line semantics is enough here).
+        if ch == '"':
+            j = i + 1
+            while j < n and text[j] != "\n":
+                if text[j] == "\\" and j + 1 < n:
+                    out[j] = " "
+                    out[j + 1] = " "
+                    j += 2
+                    continue
+                if text[j] == '"':
+                    break
+                out[j] = " "
+                j += 1
+            i = j + 1 if j < n and text[j] == '"' else j
+            continue
+        # Single-quoted char literal.
+        if ch == "'":
+            j = i + 1
+            while j < n and text[j] != "\n":
+                if text[j] == "\\" and j + 1 < n:
+                    out[j] = " "
+                    out[j + 1] = " "
+                    j += 2
+                    continue
+                if text[j] == "'":
+                    break
+                out[j] = " "
+                j += 1
+            i = j + 1 if j < n and text[j] == "'" else j
+            continue
+        i += 1
+    return "".join(out)
+
+
 # Top-level declarations. Multi-modifier slot via repeated non-capturing group;
 # optional extension receiver before the name.
 _RE_DECL = re.compile(
@@ -138,7 +231,13 @@ def parse_kotlin_file(path: Path) -> KotlinFileInfo:
     di_annotations: list[dict] = []
     lines = text.splitlines()
 
-    for match in _RE_DECL.finditer(text):
+    # Run _RE_DECL against a mask where string/comment content has been
+    # replaced by spaces (offsets preserved). This filters out false
+    # positives like `fun fake() {}` written inside a raw string or
+    # `/* class Foo */` — see R2.4.
+    masked = _mask_strings_and_comments(text)
+
+    for match in _RE_DECL.finditer(masked):
         kind = match.group("kind")
         name = match.group("name")
         if not name:
