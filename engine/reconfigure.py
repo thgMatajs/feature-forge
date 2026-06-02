@@ -727,13 +727,15 @@ def _handle_external_deps(
             affected_slugs.add(slug)
 
         # Per-file atomicity via write_yaml(atomic=True) — cada escrita
-        # individual sobrevive a interrupção. Mas `kill -9` no meio do loop
-        # deixa um update PARCIAL entre tasks: as anteriores ao sinal já têm
+        # individual é durável. Mas `kill -9` no meio do loop deixa um
+        # update PARCIAL entre tasks: as anteriores ao sinal já têm
         # depends_on_external atualizado, as posteriores ainda mantêm o
-        # valor antigo. Recovery: `forge undo` faz rollback via rollback_log
-        # (entries pré-sinal sobrevivem; tasks pós-sinal não foram tocadas).
-        # Update cross-file totalmente transacional exigiria journal externo
-        # — fora do escopo de v1.1.
+        # valor antigo. Recovery hoje é MANUAL: o `.bak` por task sobrevive
+        # em disco (criado pelo `backup_file` abaixo) em `<task_path>.bak`,
+        # restore via `cp` ou edit à mão. `forge undo` NÃO enumera esses
+        # backups — só restaura `workflow-config.yaml`. Update cross-file
+        # totalmente transacional exigiria journal externo — gap rastreado
+        # em docs/design/04-pending.md, slated for v1.1.1+.
         for task_path, deps_to_update in by_file.items():
             data = read_yaml(task_path) or {}
             if not isinstance(data, dict):
