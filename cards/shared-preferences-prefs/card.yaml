@@ -1,0 +1,87 @@
+# cards/shared-preferences-prefs/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# SharedPreferences (Android). Provider legacy de `local-prefs-storage`.
+# legacy-marker: true → quando coexistir com datastore-prefs detectado, init
+# surfaca 3-caminhos (manter legacy / migrar / coexistir transição).
+# Android-only é semântica derivada das signals.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         shared-preferences-prefs
+  version:      1.0.0
+  description:  "SharedPreferences (Android) como provider legacy de local-prefs-storage. Coexiste com datastore-prefs; init surfaca 3-caminhos quando ambos detectados."
+  category:     persistence
+  maturity:     stable
+  maintainer:   feature-forge-core
+  created-at:   2026-06-02
+  last-updated: 2026-06-02
+  license:      MIT
+
+
+# ── LEGACY MARKER ─────────────────────────────────────────────────────────
+# Campo top-level opcional, aditivo ao schema canon (Task 1).
+legacy-marker: true
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
+provides:
+  - local-prefs-storage
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+requires:
+  - kotlin
+
+
+# ── CONFLICTS ─────────────────────────────────────────────────────────────
+# Coexistência é permitida (label auxiliar) mas init surfaca 3-caminhos
+# quando ambos detectados — comportamento dirigido por legacy-marker, não
+# por conflict hard.
+conflicts-with:
+  - datastore-prefs
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+contributes:
+  config-defaults:
+    conventions.persistence.prefs:       "shared-preferences"
+    conventions.persistence.prefs-scope: "legacy KV — pre-DataStore feature toggles, last-shown markers"
+
+
+# ── DETECTION ─────────────────────────────────────────────────────────────
+# Confidence por signal calibrada ligeiramente menor que datastore-prefs
+# equivalente — reflete que evidência de SharedPreferences em codebase
+# moderno é tipicamente legacy detectado, não escolha ativa. Threshold
+# canônico 0.6.
+detection:
+  signals:
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "getSharedPreferences("
+      confidence: 0.4
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "PreferenceManager.getDefaultSharedPreferences"
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "import android.content.SharedPreferences"
+      confidence: 0.2
+
+  threshold: 0.6
+
+  alternative-cards:
+    - datastore-prefs
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "architecture_android"
