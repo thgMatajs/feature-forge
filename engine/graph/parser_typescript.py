@@ -51,9 +51,20 @@ _RE_EXPORT_TYPE = re.compile(
 )
 _RE_EXPORT_DEFAULT_ANON = re.compile(r"""^\s*export\s+default\s+(?!function|class)""", re.MULTILINE)
 
+# One-level balanced-paren match for the parameter list: ``(`` then any
+# sequence of (non-paren chars OR a one-level nested ``(...)``) then ``)``.
+# Catches destructured props with arrow defaults like
+# ``({callback = (x) => x})`` — see R2.6. Depth-2 nesting (defaults
+# containing destructured defaults) is rare enough to not justify a full
+# bracket matcher.
+#
+# Body lookahead accepts ``(`` (parenthesized expression), ``{`` (block or
+# object), or ``<`` (JSX element / fragment / generic-call) — all three
+# are common RFC body starts.
 _RE_RFC_ARROW = re.compile(
     r"""(?:^|\n)(?:export\s+(?:default\s+)?)?const\s+(?P<name>[A-Z][A-Za-z0-9_]*)\s*"""
-    r"""(?::\s*[^=]+)?=\s*(?:\([^)]*\)|[A-Za-z_][A-Za-z0-9_]*)\s*=>\s*[\(\{]""",
+    r"""(?::\s*[^=]+)?=\s*"""
+    r"""(?:\((?:[^()]|\([^()]*\))*\)|[A-Za-z_][A-Za-z0-9_]*)\s*=>\s*[\(\{<]""",
 )
 _RE_RFC_FUNC = re.compile(
     r"""(?:^|\n)(?:export\s+(?:default\s+)?)?function\s+(?P<name>[A-Z][A-Za-z0-9_]*)\s*\("""
