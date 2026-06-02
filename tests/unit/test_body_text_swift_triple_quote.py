@@ -52,6 +52,46 @@ def test_swift_triple_quoted_string_with_odd_quotes_and_close_brace():
     assert "return json" in body
 
 
+def test_swift_triple_quote_with_braces_and_nested_escaped_quotes():
+    """R2.22 — Swift ``\"\"\"`` literal carrying both ``{`` and escaped ``\\\"``.
+
+    Two independently risky tokens combined:
+
+    1. ``{`` inside the literal — if triple-quote mode is not entered
+       (or exits early), the counter increments ``depth`` and the next
+       ``}`` after the literal pops the outer function scope prematurely.
+    2. ``\\\"`` inside the literal — a backslash-escaped quote. The
+       triple-quote scanner must NOT exit on a single ``\"`` inside the
+       literal; only a real ``\"\"\"`` ends the literal.
+
+    Layout::
+
+        func render() -> String {
+            let json = \"\"\"
+            { "k": "v with \\\"nested\\\" quote" }
+            \"\"\"
+            return json
+        }
+
+    Expected: brace counter cleanly closes at the outer ``}``, so
+    ``return json`` lives inside the extracted body.
+    """
+    source = (
+        'func render() -> String {\n'
+        '    let json = """\n'
+        '    { "k": "v with \\"nested\\" quote" }\n'
+        '    """\n'
+        '    return json\n'
+        '}\n'
+    )
+    body = _body_for(source, "func render() -> String")
+    assert body is not None, (
+        "Swift parser must skip the entire triple-quoted literal even when "
+        "it carries both braces and nested escaped quotes."
+    )
+    assert "return json" in body
+
+
 def test_kotlin_triple_quote_still_works():
     """Regression guard: don't break Kotlin while fixing Swift."""
     source = '''
