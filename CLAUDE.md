@@ -112,6 +112,20 @@ Matriz código→docs: `.claude/rules/doc-sync.md`.
 
 ---
 
+## Mentalidade operacional: não-procrastinação
+
+**Não procrastine:** endereça tudo dentro do escopo agora, defer só com
+razão concreta (over-engineering / YAGNI / falso positivo /
+cross-cutting / decisão do user). Default é IMPLEMENTAR, não defer.
+
+Antes de fechar triage com items "deferred", apresenta 3-caminhos ao
+user (✅ implementar / ⏭️ não implementar / 🤔 investigar) e espera
+veredito. Discussão > decisão unilateral.
+
+Detalhe + template: `.claude/rules/orchestrator-persona.md §Não-procrastinação`.
+
+---
+
 ## Workflow por verbo
 
 | Vou… | Skills (orchestrator invoca) | Quem executa |

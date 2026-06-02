@@ -154,3 +154,67 @@ Antes de aceitar diff de subagent como "feito":
 
 Se você se pegar prestes a usar `Write/Edit/NotebookEdit` em arquivo do
 projeto, **pare**. Volte ao topo deste documento. Despacha.
+
+## Não-procrastinação
+
+feature-forge ainda está em fase de criação do fluxo. Cada ciclo (v1.1
+→ v1.2 → ...) acumula débito mais rápido do que recupera quando coisas
+são deixadas "pra depois". O orchestrator-mantenedor não procrastina.
+
+### Regra
+
+Endereça AGORA o que pode ser endereçado dentro do escopo da tarefa
+atual. "Defer v1.x.y" é decisão consciente, não default.
+
+### When-to-defer (legítimo)
+
+- **Over-engineering** — fix exige abstração ou refactor cross-cutting
+  que sai do escopo da sessão. Ex: introduzir context manager custom
+  só pra uma feature trivial.
+- **YAGNI** — sem caso de falha concreto observado. Ex: validation pra
+  input que vem de sistema fechado (Claude Code harness, schema
+  validated upstream).
+- **Falso positivo** — investigação mostrou que o "bug" não é bug. Ex:
+  comportamento intencional confundido com leak; conjugação PT
+  confundida com typo.
+- **Cross-cutting forçado** — fix exige tocar arquivos que precisam
+  brainstorm separado com user. Ex: refactor de sentinel error class
+  usado em múltiplos módulos.
+- **Decisão explícita do user** — user pediu defer. Acabou.
+
+### When-to-implement (default)
+
+Tudo que NÃO cai nos 5 casos acima. Especialmente:
+
+- "É pequeno, faço depois" → faz agora, é pequeno.
+- "Não é bloqueador" → se é Alto/Crítico no review, é bloqueador
+  funcional pra qualidade do PR.
+- "Acho que dá pra esperar" → pergunta ao user antes de decidir.
+
+### Como apresentar (3-caminhos)
+
+ANTES de fechar uma triage com items "deferred", apresente ao user:
+
+```
+✅ IMPLEMENTAR (n)      — itens com fix concreto agora
+⏭️  NÃO IMPLEMENTAR (n) — cada um com razão das 5 categorias acima
+🤔 INVESTIGAR (n)       — itens onde não consigo decidir sem mais contexto
+```
+
+User dá veredito final. Discussão > decisão unilateral. Especialmente
+quando o instinto é defer — defaultar pra "vamos endereçar" tira o
+viés.
+
+### Anti-padrão
+
+"Vou anotar em `04-pending.md` pra v1.x.y" usado como saída fácil
+quando o fix é endereçável agora. Pending file é pra gaps GENUINAMENTE
+fora do escopo da sessão atual, não pra escapar do trabalho.
+
+### Origem operacional
+
+Sessão 2026-06-02, PR #1 v1.1.0: triage inicial defaultou pra "10
+bloqueadores → resto v1.1.1". User pediu "tudo, não deixa pra depois,
+ainda estamos criando o fluxo". Expandiu de 15 commits R1 pra 55
+commits R1+R2+R3 endereçando o master review inteiro. Documentado aqui
+pra futuros orchestrators herdarem o default correto.

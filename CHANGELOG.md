@@ -59,6 +59,7 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Changed
 
+- `.claude/rules/orchestrator-persona.md` ganhou seção "Não-procrastinação" formalizando default "endereça agora" vs "defer com razão concreta" (5 categorias legítimas de defer). CLAUDE.md root aponta pra ela em nova seção "Mentalidade operacional". Origem: feedback de sessão 2026-06-02 no PR #1, depois que expansão de escopo R1→R2→R3 cobriu 55 commits em vez dos 15 iniciais (2026-06-02).
 - `engine.memory.l1.phase_lock_held` context manager substitui o flag pattern em `engine.implement.run` — release estrutural via `__exit__` em vez de `if not lock_released: release_phase_lock(...)`. NOT REENTRANT-SAFE — documentado em docstring + test (MD-03).
 - `parser_typescript._RE_RFC_ARROW`: body start lookahead expandido de `[\(\{]` para `[\(\{<]` (aceita JSX raw bodies). Subprodute: contagem de RFCs detectados vai crescer em codebases com `const X = () => <div/>`.
 
