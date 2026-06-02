@@ -78,8 +78,32 @@ except Exception:
     print('unknown')
 " <<< "$INPUT")
 
-    printf '{"ts":"%s","file":"%s","tool":"%s"}\n' \
-        "$TS" "$REL_PATH" "$TOOL" >> "$AUDIT_LOG"
+    # R3.4 fix: concurrent hook invocations could interleave their
+    # append-writes to AUDIT_LOG and corrupt JSONL lines. Wrap the
+    # append in a fcntl.flock-protected critical section. We use
+    # python3 (already a hard dep above for JSON parsing) because
+    # stock macOS ships without the system flock(1) binary.
+    AUDIT_LOG="$AUDIT_LOG" TS="$TS" REL_PATH="$REL_PATH" TOOL="$TOOL" \
+        STATE_DIR="$STATE_DIR" python3 -c "
+import fcntl, json, os
+
+audit = os.environ['AUDIT_LOG']
+state_dir = os.environ['STATE_DIR']
+lock_path = os.path.join(state_dir, '.load-bearing-audit.lock')
+
+with open(lock_path, 'w') as lock_fh:
+    fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+    try:
+        line = json.dumps({
+            'ts': os.environ['TS'],
+            'file': os.environ['REL_PATH'],
+            'tool': os.environ['TOOL'],
+        }) + '\n'
+        with open(audit, 'a') as fh:
+            fh.write(line)
+    finally:
+        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+"
 fi
 
 exit 0
