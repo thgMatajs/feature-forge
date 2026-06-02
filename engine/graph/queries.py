@@ -684,31 +684,45 @@ def list_reuse_findings(
     """
     conn = _connect(project_root, db_path)
     try:
+        # A13 fix — collapse N+1 (1 + N location lookups) into 2 queries:
+        # one for the finding rows + one IN-clause batch for all locations.
         if category:
-            findings = conn.execute(
+            findings_rows = conn.execute(
                 "SELECT * FROM reuse_findings WHERE category = ? ORDER BY confidence DESC, symbol_name",
                 (category,),
             ).fetchall()
         else:
-            findings = conn.execute(
+            findings_rows = conn.execute(
                 "SELECT * FROM reuse_findings ORDER BY confidence DESC, category, symbol_name"
             ).fetchall()
 
+        if not findings_rows:
+            return []
+
+        finding_ids = [row["id"] for row in findings_rows]
+        placeholders = ",".join("?" for _ in finding_ids)
+        location_rows = conn.execute(
+            f"""
+            SELECT loc.finding_id, loc.module, loc.source_set, loc.line_start,
+                   loc.language, loc.body_hash, files.path
+            FROM reuse_finding_locations loc
+            JOIN files ON files.id = loc.file_id
+            WHERE loc.finding_id IN ({placeholders})
+            ORDER BY loc.finding_id, loc.module, loc.line_start
+            """,
+            finding_ids,
+        ).fetchall()
+
+        locations_by_finding: dict[int, list[dict]] = {}
+        for loc in location_rows:
+            entry = dict(loc)
+            fid = entry.pop("finding_id")
+            locations_by_finding.setdefault(fid, []).append(entry)
+
         result: list[dict] = []
-        for f in findings:
-            locations = conn.execute(
-                """
-                SELECT loc.module, loc.source_set, loc.line_start, loc.language,
-                       loc.body_hash, files.path
-                FROM reuse_finding_locations loc
-                JOIN files ON files.id = loc.file_id
-                WHERE loc.finding_id = ?
-                ORDER BY loc.module, loc.line_start
-                """,
-                (f["id"],),
-            ).fetchall()
+        for f in findings_rows:
             entry = dict(f)
-            entry["locations"] = [dict(loc) for loc in locations]
+            entry["locations"] = locations_by_finding.get(f["id"], [])
             result.append(entry)
         return result
     finally:
