@@ -29,3 +29,28 @@ def test_infer_target_duplicate_within_module() -> None:
         gradle_modules={"app/android": "app:android"},
     )
     assert result == "app/android/src/main/kotlin/.../util/"
+
+
+def test_infer_target_duplicate_cross_module_with_shared_ancestor() -> None:
+    """Cross-module dup with shared:core registered → commonMain path under shared:core.
+
+    No closure is provided, so ``find_smallest_common_ancestor`` returns
+    ``None`` and ``_static_cross_module_fallback`` kicks in: it sees a
+    ``shared:*`` module in the group, ``shared:core`` is registered, so
+    the ancestor resolves to ``shared:core``. Because the ancestor starts
+    with ``shared``, the path is the ``commonMain`` variant.
+    """
+    result = infer_suggested_target(
+        category="duplicate-cross-module",
+        modules_in_group=["app:android", "shared:foo"],
+        closure={},  # forces fallback path
+        # ``load_gradle_modules`` returns ``{dir_path: gradle_module_name}``.
+        # The fallback inspects ``set(gradle_modules.values())`` for
+        # ``shared:core`` — so registered gradle NAMES go on the value side.
+        gradle_modules={
+            "app/android": "app:android",
+            "shared/foo": "shared:foo",
+            "shared/core": "shared:core",
+        },
+    )
+    assert result == "shared/core/src/commonMain/kotlin/.../util/"
