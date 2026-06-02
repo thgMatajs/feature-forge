@@ -214,6 +214,72 @@ def test_phase_lock_released_when_read_l1_status_raises_after_acquire(
     )
 
 
+def test_blocked_on_external_does_not_release_foreign_lock(
+    tmp_forge_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A3 regression: the blocked-on-external early-return path must NOT
+    strip a phase lock owned by another flow.
+
+    The bug: `release_phase_lock(slug, project_root)` was called
+    unconditionally before `return 7` in the blocked-on-external branch
+    (around line 721). That branch executes BEFORE the
+    `phase_lock_held(...)` acquire, so any lock present at that moment
+    belongs to someone else (e.g. a concurrent `forge plan` mid-write or
+    a leftover sentinel from a crashed flow). Unconditional release =
+    single-writer invariant violation.
+
+    Fix: don't release. If a stale lock exists, `forge undo` is the
+    canonical recovery — never strip silently. See Bot Thread 3336132002.
+    """
+    from engine.memory.l1 import acquire_phase_lock
+
+    slug = "lembrete-rega"
+    feature_root = _seed_ready_feature(tmp_forge_project, slug)
+    monkeypatch.chdir(tmp_forge_project)
+
+    # Overwrite TASK-001 with a blocking external dependency so the
+    # blocked-on-external branch fires.
+    (feature_root / "tasks" / "TASK-001.yaml").write_text(
+        "task_id: TASK-001\n"
+        "description: needs external ticket\n"
+        "allowed_files: []\n"
+        "validations: []\n"
+        "gates: []\n"
+        "dependencies: []\n"
+        "status: pending\n"
+        "depends_on_external:\n"
+        "  - ticket: JIRA-FOREIGN-1\n"
+        "    integration: jira\n"
+        "    description: blocks this task\n"
+        "    blocking: true\n",
+        encoding="utf-8",
+    )
+
+    # Plant a FOREIGN lock — pretend `forge plan` is mid-flight with its
+    # own lock id, completely unrelated to TASK-001.
+    foreign_id = "foreign-task-123"
+    assert acquire_phase_lock(slug, tmp_forge_project, foreign_id) is True
+    assert current_phase_lock(slug, tmp_forge_project) == foreign_id
+
+    # Stub UI so the run is autonomous.
+    monkeypatch.setattr(
+        "engine.ui.question.confirm", lambda *a, **kw: False, raising=False
+    )
+    monkeypatch.setattr(
+        "engine.ui.question.ask", lambda *a, **kw: "abort", raising=False
+    )
+
+    rc = implement.run([slug])
+    assert rc == 7, f"expected blocked-on-external exit 7, got {rc}"
+
+    # The critical assertion — the foreign lock survives.
+    assert current_phase_lock(slug, tmp_forge_project) == foreign_id, (
+        "blocked-on-external early-return stripped a foreign phase lock "
+        "(single-writer invariant violation). A3 fix missing."
+    )
+
+
 def test_phase_lock_released_on_happy_path(
     tmp_forge_project: Path,
     monkeypatch: pytest.MonkeyPatch,

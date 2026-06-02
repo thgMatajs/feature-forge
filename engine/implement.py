@@ -718,7 +718,13 @@ def run(argv: list[str]) -> int:
             )
 
         _print_blocked_refusal(task, alternative, project_root)
-        release_phase_lock(slug, project_root)
+        # A3 fix: do NOT unconditionally release here. This branch fires
+        # BEFORE we acquire the phase lock for `task.task_id` (the
+        # `with phase_lock_held(...)` below). An unconditional release would
+        # strip a stale lock from ANOTHER flow (e.g. `forge plan` mid-write)
+        # without authorization — violating the single-writer invariant.
+        # If a stale lock genuinely exists from this aborted flow, `forge
+        # undo` is the canonical recovery path.
         return 7  # distinct exit code — caller scripts can switch behavior
 
     # Acquire task-scoped phase lock via context manager (MD-03 refactor).
