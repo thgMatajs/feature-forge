@@ -65,3 +65,14 @@ def test_infer_target_near_duplicate() -> None:
         gradle_modules={},
     )
     assert result == "manual review — bodies divergem"
+
+
+def test_infer_target_kmp_migration_candidate() -> None:
+    """KMP candidate → fixed hint, not a path. Swift consumer should SKIE-call shared."""
+    result = infer_suggested_target(
+        category="kmp-migration-candidate",
+        modules_in_group=["shared:core"],
+        closure={},
+        gradle_modules={},
+    )
+    assert result == "replace Swift extension with SKIE call to shared"
