@@ -179,6 +179,12 @@ def _stamp_last_doctor_run(
     `overall_status` é o resultado do veredito (ok/warn/fail), não derivado
     do exit code — em strict mode, warn pode virar exit 1 sem que o status
     deixe de ser warn.
+
+    Observabilidade best-effort apenas — invocações concorrentes (ex.: matrix
+    de CI rodando `forge doctor` em jobs paralelos) competem nesta escrita e
+    o último writer vence. Aceitável porque o stamp é informacional e o
+    doctor em si é read-only contra o estado do projeto. Se auditoria
+    precisa por execução virar load-bearing, trocar pra JSONL append log.
     """
     if not config_path.is_file() or not isinstance(config, dict):
         return
