@@ -187,7 +187,7 @@ def _q_duplicates_within_module(conn: sqlite3.Connection) -> list[dict]:
         """
         SELECT s.name, s.receiver_type, s.signature, s.body_hash, s.modifiers,
                f.module AS module, f.source_set AS source_set,
-               GROUP_CONCAT(f.id || ':' || s.line_start || ':' || f.path) AS occurrences,
+               GROUP_CONCAT(f.id || ':' || s.line_start || ':' || f.path, char(31)) AS occurrences,
                COUNT(*) AS n
         FROM symbols s
         JOIN files f ON s.file_id = f.id
@@ -209,7 +209,7 @@ def _q_duplicates_cross_module(conn: sqlite3.Connection) -> list[dict]:
         """
         SELECT s.name, s.receiver_type, s.signature, s.body_hash, s.modifiers,
                GROUP_CONCAT(DISTINCT f.module) AS modules,
-               GROUP_CONCAT(f.id || ':' || s.line_start || ':' || f.path) AS occurrences,
+               GROUP_CONCAT(f.id || ':' || s.line_start || ':' || f.path, char(31)) AS occurrences,
                GROUP_CONCAT(COALESCE(f.source_set, '')) AS source_sets,
                COUNT(DISTINCT f.module) AS n_modules,
                COUNT(*) AS n_files
@@ -272,7 +272,8 @@ def _q_near_duplicates(conn: sqlite3.Connection) -> list[dict]:
                GROUP_CONCAT(DISTINCT s.body_hash) AS body_hashes,
                GROUP_CONCAT(
                  f.id || ':' || s.line_start || ':' ||
-                 COALESCE(s.body_hash, '_none_') || ':' || f.path
+                 COALESCE(s.body_hash, '_none_') || ':' || f.path,
+                 char(31)
                ) AS occurrences,
                COUNT(DISTINCT s.body_hash) AS n_bodies,
                COUNT(*) AS n_files
@@ -339,7 +340,7 @@ def _q_duplicate_ts_helpers(conn: sqlite3.Connection) -> list[dict]:
         """
         SELECT s.name, s.signature, s.body_hash, s.modifiers,
                f.module AS module,
-               GROUP_CONCAT(f.id || ':' || s.line_start || ':' || f.path) AS occurrences,
+               GROUP_CONCAT(f.id || ':' || s.line_start || ':' || f.path, char(31)) AS occurrences,
                COUNT(*) AS n
         FROM symbols s
         JOIN files f ON s.file_id = f.id
@@ -784,12 +785,17 @@ def _insert_location(
     )
 
 
+# Unit Separator (ASCII 0x1F) — used as GROUP_CONCAT delimiter so that paths
+# containing legal POSIX commas don't ambiguate the parse. See R2.2.
+_OCC_SEP = "\x1f"
+
+
 def _parse_occurrences(occ_csv: Optional[str]) -> list[dict]:
     """Parse the ``file_id:line:path`` triplets emitted by GROUP_CONCAT."""
     if not occ_csv:
         return []
     items: list[dict] = []
-    for chunk in occ_csv.split(","):
+    for chunk in occ_csv.split(_OCC_SEP):
         parts = chunk.split(":", 2)
         if len(parts) < 2:
             continue
@@ -808,7 +814,7 @@ def _parse_near_duplicate_occurrences(occ_csv: Optional[str]) -> list[dict]:
     if not occ_csv:
         return []
     items: list[dict] = []
-    for chunk in occ_csv.split(","):
+    for chunk in occ_csv.split(_OCC_SEP):
         parts = chunk.split(":", 3)
         if len(parts) < 3:
             continue

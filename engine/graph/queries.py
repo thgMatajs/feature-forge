@@ -433,7 +433,7 @@ def find_duplicates_within_module(
             """
             SELECT s.name, s.receiver_type, s.signature, s.body_hash, s.modifiers,
                    f.module AS module, f.source_set AS source_set,
-                   GROUP_CONCAT(f.id || ':' || s.line_start || ':' || f.path) AS occurrences,
+                   GROUP_CONCAT(f.id || ':' || s.line_start || ':' || f.path, char(31)) AS occurrences,
                    COUNT(*) AS n
             FROM symbols s
             JOIN files f ON s.file_id = f.id
@@ -469,7 +469,7 @@ def find_duplicates_cross_module(
             """
             SELECT s.name, s.receiver_type, s.signature, s.body_hash, s.modifiers,
                    GROUP_CONCAT(DISTINCT f.module) AS modules,
-                   GROUP_CONCAT(f.id || ':' || s.line_start || ':' || f.path) AS occurrences,
+                   GROUP_CONCAT(f.id || ':' || s.line_start || ':' || f.path, char(31)) AS occurrences,
                    COUNT(DISTINCT f.module) AS n_modules,
                    COUNT(*) AS n_files
             FROM symbols s
@@ -559,7 +559,8 @@ def find_near_duplicates(
                    GROUP_CONCAT(DISTINCT s.body_hash) AS body_hashes,
                    GROUP_CONCAT(
                      f.id || ':' || s.line_start || ':' ||
-                     COALESCE(s.body_hash, '_none_') || ':' || f.path
+                     COALESCE(s.body_hash, '_none_') || ':' || f.path,
+                     char(31)
                    ) AS occurrences,
                    COUNT(DISTINCT s.body_hash) AS n_bodies,
                    COUNT(*) AS n_files
@@ -650,7 +651,7 @@ def find_duplicate_ts_helpers(
             """
             SELECT s.name, s.signature, s.body_hash, s.modifiers,
                    f.module AS module,
-                   GROUP_CONCAT(f.id || ':' || s.line_start || ':' || f.path) AS occurrences,
+                   GROUP_CONCAT(f.id || ':' || s.line_start || ':' || f.path, char(31)) AS occurrences,
                    COUNT(*) AS n
             FROM symbols s
             JOIN files f ON s.file_id = f.id
