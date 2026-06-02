@@ -40,3 +40,8 @@ dist/
 .claude/graph.db
 .claude/memory/L1/*
 !.claude/memory/L1/archived/
+
+# Claude Code — runtime state (per-session, não versionado)
+.claude/state/*.json
+.claude/state/*.jsonl
+!.claude/state/.gitkeep

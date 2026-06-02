@@ -375,16 +375,47 @@ Open questions novas — entradas em `open-questions.yaml` com
 
 - TQ-{{NNN}} — `{{topic}}` · blocking: `{{true|false}}`
 
-## 14. Cross-feature reusability candidates (CFR)
+## 14. Cross-feature reusability (CFR)
 
-Helpers propostos nesta feature que passam em SP-022 ampliado / SP-025
-(memory.L2.findings).
+Avaliação em 2 passos por `agents/tech-spec-agent.md §Phase 5`:
+
+1. **Reuse existing** — match contra `.claude/memory/L1/{{feature_slug}}/existing-helpers.yaml`
+   (pré-computado pela Phase 4.5 do conductor via canonical query Q11). Quando
+   há match de assinatura, NUNCA propor helper novo — usa o existente.
+2. **Propose new** — apenas para helpers sem match em existing-helpers.yaml.
+   Avaliação eager-extract por SP-022 ampliado / SP-025 (memory.L2.findings).
+
+### 14.1 Reuse existing
+
+<!--
+  Renderizar APENAS quando existing-helpers.yaml tem matches. Greenfield
+  (lista vazia) → omitir esta sub-seção inteira (não emitir tabela vazia).
+  cfr-reuse-existing no output JSON conta as linhas desta tabela.
+-->
+
+| Existing helper | Path | Why it covers the need |
+|---|---|---|
+| `fun <T> Result<T>.foldStateUI(): StateUI<T>` | `shared/core/util/ResultStateUIExtension.kt` | TASK-{{NNN}} precisa Result→StateUI; já existe e cobre |
+
+### 14.2 Propose new — eager-extract qualifies
+
+<!--
+  Helpers novos que passam em SP-022 ampliado (≤10 LOC, stdlib/kotlinx OU
+  mesmo módulo onde extension vive) + SP-025 (organização de arquivo).
+  cfr-propose-new-qualified no output JSON conta linhas desta tabela.
+-->
 
 | Helper | LOC | Signature scope | Target file | Why qualifies |
 |---|---|---|---|---|
 | `fun String.toLocalDateOrNull(): LocalDate?` | 1 | stdlib + kotlinx.datetime | `shared/core/util/StringDateExtension.kt` | ≤ 10 LOC, stdlib-only |
 
-Helpers que NÃO qualificam (defer to rule-of-three):
+### 14.3 Propose new — defer to rule-of-three
+
+<!--
+  Helpers que NÃO passam em SP-022 (cross-feature type, >10 LOC, third-party
+  dep). Aguardam 3ª ocorrência antes de extrair.
+  cfr-propose-new-deferred no output JSON conta linhas desta tabela.
+-->
 
 | Helper | LOC | Why deferred |
 |---|---|---|

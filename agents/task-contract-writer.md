@@ -21,6 +21,8 @@ extension-points:
     purpose: "Card-specific validator commands (e.g., firestore-persistence adds rules validators)"
   - id: "section:Task Categories"
     purpose: "Card-specific task types (e.g., backend-e2e for firestore-persistence)"
+  - id: "after:External Dependencies"
+    purpose: "Card-specific external-dep providers (e.g., jira-mcp may inject ticket metadata)"
 ---
 
 # Task Contract Writer
@@ -57,7 +59,19 @@ YAML pack from the conductor:
   features; L2 `findings` to avoid
 - `active-cards` + `card-contributions` — pre-merged fragments inlined
   at extension points (`after:Allowed Files`, `after:Validations`,
-  `section:Task Categories`)
+  `section:Task Categories`, `after:External Dependencies`)
+- `external-deps` (optional, discipline §9) — list of external
+  dependencies the conductor captured during Phase 2/3 elicitation:
+  ```yaml
+  external-deps:
+    - task-hint: shared-data       # category hint OR concrete TASK-NNNN
+      ticket: BACKEND-1284
+      integration: jira            # jira | linear | github-issues | manual
+      description: "Endpoint /api/weather pendente"
+      blocking: true
+  ```
+  Empty list = feature has no external dependencies — emit `depends_on_external: []` on every task. Phase 4 below covers
+  mapping `task-hint` → concrete TASK-NNNN.
 
 You read the pack. You do NOT fetch new sources. Missing field →
 3-caminhos failure, never a guess.
@@ -260,6 +274,36 @@ Compute `blocks` as inverse. Topologically sort. Emit `critical-path`
    `workflow.pre-commit-review.blocking`.
 5. **References** — link BDD scenario IDs, `data-contract`
    collections/tables, `ui-states`, and cards touched.
+6. **External dependencies** (discipline §9) — for each entry in
+   the `external-deps` context-pack list, resolve `task-hint` to the
+   actual TASK-NNNN id of the task this entry applies to, then emit a
+   `depends_on_external` entry on that task:
+
+   ```yaml
+   depends_on_external:
+     - ticket: BACKEND-1284
+       integration: jira
+       description: "Endpoint /api/weather pendente"
+       blocking: true
+       declared-at: 2026-05-30T14:20:00Z
+       resolved-at: null
+   ```
+
+   Rules:
+   - `task-hint` is one of: (a) concrete TASK-NNNN if conductor already
+     knew, (b) a layer name (`shared-data`, `android-ui`, etc.) — in
+     which case the writer assigns to the first task of that layer, or
+     (c) a free-form hint string — escalate via 3-caminhos to the
+     conductor (`task-hint unresolvable: '{hint}' didn't match any
+     emitted TASK or layer`).
+   - When the same ticket affects multiple tasks (e.g., one endpoint
+     used by both shared-data and qa), the conductor sends one entry
+     per task; the writer just copies them through.
+   - `resolved-at` is **always** `null` at writer time. Resolution is
+     interactive via `forge reconfigure` post-plan — never inferred.
+   - Tasks with no matching `external-deps` entry get
+     `depends_on_external: []` (empty list, explicit). Schema
+     requires the key to exist.
 
 ### Phase 5 — Self-check
 
@@ -448,3 +492,6 @@ references:
 | `workflow.pre-commit-review.blocking: false` | Set task `review.blocking: false` to mirror. |
 | Self-check finds cycle in dependency graph | Re-examine `depends-on`; reduce until acyclic. |
 | Internal validator fails 3 times | Escalate to conductor with last failure verbatim. |
+| Context pack has `external-deps[].task-hint` that doesn't match any emitted TASK or layer | 3-caminhos to conductor (do not invent assignment). |
+| Context pack has `external-deps` but `external-deps[].ticket` is empty | 3-caminhos to conductor (`integration: manual` requires a description; missing → bug upstream). |
+| Same ticket appears for multiple tasks in `external-deps` | Emit one `depends_on_external` entry per affected task. Same ticket id repeated is expected — engine/reconfigure resolves them all together. |

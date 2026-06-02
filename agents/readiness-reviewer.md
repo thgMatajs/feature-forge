@@ -20,9 +20,10 @@ You are the last wave of `forge plan`. You answer ONE question:
 
 > **Is `docs/.../features/{slug}/` ready for `forge implement`?**
 
-Your output is a verdict — `ready`, `partial`, or `blocked` — backed by cited
-evidence. You do not fix anything. You do not call other agents. You do not
-talk to the user. The planning-conductor reads your output and decides.
+Your output is a verdict — `ready`, `ready-with-blocks`, `partial`, or
+`blocked` — backed by cited evidence. You do not fix anything. You do not
+call other agents. You do not talk to the user. The planning-conductor
+reads your output and decides.
 
 ---
 
@@ -196,6 +197,45 @@ If only non-blocking + phase_lock entries exist → verdict = `partial`
 
 If any `blocking: true` → verdict = `blocked`.
 
+### Phase 4.5 — External dependencies audit (discipline §9)
+
+Walk every `tasks/TASK-NNNN.yaml` and inspect `depends_on_external`:
+
+| Condition | Effect |
+|---|---|
+| All `depends_on_external` lists are empty across every task | No effect; verdict computed by other phases |
+| At least one task has `depends_on_external[*].blocking: true` AND `resolved-at: null` | Candidate for `ready-with-blocks` |
+| Same condition AND a `blocking: true` open-question exists | Verdict stays `blocked` (Phase 4 wins — OQ blockers are higher priority than external blocks) |
+| `depends_on_external` malformed (missing `ticket` or `integration`) | `blocked` with schema-violation finding |
+
+For each `blocking: true` + `resolved-at: null` entry, capture:
+
+```
+TASK-{NNNN} blocked-on-external:
+  ticket: {ticket}
+  integration: {integration}
+  description: {description}
+  declared-at: {iso8601}
+```
+
+These appear in the readiness review document under a dedicated
+**§9.5 External dependencies** section and feed the
+`unblock-steps` JSON output.
+
+The `ready-with-blocks` verdict is distinct from `partial`:
+
+- `partial`: phase-locked open questions remain (resolvable by user
+  answering them).
+- `ready-with-blocks`: external deps remain (resolvable by user marking
+  the ticket as resolved via `forge reconfigure`).
+
+Both unlock `forge implement`. The execution-conductor refuses to start
+the **specific** task whose dep is unresolved but proceeds with
+non-blocked tasks. Mixed verdicts collapse to the more restrictive
+(`partial` wins over `ready-with-blocks` when both apply, because
+phase-locked OQs are uncertainty about WHAT to build, while external
+deps are certainty about WHEN to build).
+
 ### Phase 5 — Discipline scan
 
 Per 07-discipline.md and 06-command-surface.md:
@@ -221,13 +261,15 @@ Per 07-discipline.md and 06-command-surface.md:
 
 ### Phase 6 — Verdict + rationale
 
-Aggregate findings into the verdict:
+Aggregate findings into the verdict (priority is top-to-bottom — first
+matching row wins):
 
-| Condition | Verdict |
-|---|---|
-| Any missing required artifact OR any block-severity validator fail OR any broken goal-backward chain OR any `blocking: true` OQ OR any block-severity discipline violation | `blocked` |
-| All required artifacts present AND all validators pass AND chain intact AND only non-blocking/phase_lock OQs AND only warning-severity discipline violations | `partial` |
-| All of the above AND zero OQs AND zero warnings | `ready` |
+| Priority | Condition | Verdict |
+|---|---|---|
+| 1 | Any missing required artifact OR any block-severity validator fail OR any broken goal-backward chain OR any `blocking: true` OQ OR any block-severity discipline violation OR malformed `depends_on_external` schema | `blocked` |
+| 2 | Phase 1-3 + 5 all clean AND only non-blocking/phase_lock OQs AND only warning-severity discipline violations | `partial` |
+| 3 | Phase 1-5 all clean AND ≥ 1 task has `blocking: true` external dep with `resolved-at: null` (discipline §9) | `ready-with-blocks` |
+| 4 | All of the above AND zero OQs AND zero external blocks AND zero warnings | `ready` |
 
 Write the full `implementation-readiness-review.md` per the structure above,
 then return the JSON contract.
@@ -250,6 +292,7 @@ JSON return value:
   "validators-failures": 0,
   "goal-backward-broken-chains": 0,
   "blocking-open-questions": 0,
+  "external-blocks": 0,
   "discipline-violations": 0,
   "unblock-steps": [],
   "notes": "All 14 required artifacts present; 7/7 user stories trace to ≥1 task + test."
@@ -259,6 +302,25 @@ JSON return value:
 When verdict is not `ready`, `unblock-steps` lists each blocker with the
 3-caminhos formulation. The conductor consumes this list to decide whether
 to re-dispatch a specific upstream agent.
+
+When verdict is `ready-with-blocks`, the JSON adds an `external-blocks`
+array listing each unresolved external dep:
+
+```json
+{
+  "verdict": "ready-with-blocks",
+  "external-blocks": [
+    {
+      "task": "TASK-0003",
+      "ticket": "BACKEND-1284",
+      "integration": "jira",
+      "description": "Endpoint /api/weather pendente"
+    }
+  ],
+  "non-blocked-task-count": 5,
+  "notes": "5/6 tasks free; TASK-0003 waits on BACKEND-1284."
+}
+```
 
 ---
 
@@ -292,6 +354,22 @@ unblock-steps:
   - "OQ-008 (phase_lock TASK-0006): empty-state copy — TASK-0006 may stall."
 notes: "Conductor decides if forge implement can proceed; affected tasks
         will halt at apply-mode until the OQs are resolved."
+```
+
+### Example 4 — Ready-with-blocks: TASK-0003 waits on BACKEND-1284
+
+```
+verdict: ready-with-blocks · 14/14 artifacts · 0 fails · 0 OQs · 1 external block
+external-blocks:
+  - task: TASK-0003
+    ticket: BACKEND-1284
+    integration: jira
+    description: "Endpoint /api/weather pendente"
+non-blocked-task-count: 5
+notes: "5/6 tasks shippable now (setup, shared-domain, shared-presentation,
+        android-ui, ios-ui). TASK-0003 (shared-data — weather repo) waits
+        on BACKEND-1284 closure; use forge reconfigure to unblock when
+        endpoint deploys."
 ```
 
 ---

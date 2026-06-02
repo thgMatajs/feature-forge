@@ -14,6 +14,7 @@ import json
 import os
 import shutil
 import sys
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -47,7 +48,19 @@ _VALID_STATES = {
     "deferred",
     "aborted",
     "paused",
+    # Discipline §9 — engine-driven block when ≥1 task carries an unresolved
+    # blocking external dep. Sibling of `deferred` (human-driven pause). Set
+    # by `engine.implement` on first refusal; cleared by `engine.reconfigure`
+    # when the ticket is marked resolved.
+    "blocked-on-external",
 }
+
+# Discipline §8 (Non-product feature track) — subtype enum. Default is
+# "product" for forward compatibility with status.json files written by
+# pre-Gap-2 engines. "bugfix" added by Gap 1 (2026-05-30) — shipped
+# fully (Wave B conditional, focused tech-spec, 5-whys retrospective).
+_VALID_SUBTYPES = {"product", "refactor", "bugfix", "spike", "chore"}
+_DEFAULT_SUBTYPE = "product"
 
 
 # ── Dataclass ────────────────────────────────────────────────────────────────
@@ -59,6 +72,11 @@ class L1State:
 
     `raw` carries any extra fields present on disk (forward compatibility) so a
     write-back round-trip preserves unknown keys.
+
+    `subtype` is the discipline §8 dimension that classifies the feature track
+    (product | refactor | spike | chore). Defaults to "product" — read paths
+    treat a missing field on disk as "product" so older status.json files keep
+    working unchanged.
     """
 
     feature_slug: str
@@ -66,6 +84,7 @@ class L1State:
     last_action_at: str
     last_action_kind: str
     phase_lock: Optional[str] = None
+    subtype: str = _DEFAULT_SUBTYPE
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -183,12 +202,18 @@ def read_l1_status(feature_slug: str, project_root: Path) -> Optional[L1State]:
     if not isinstance(data, dict):
         raise MemoryError(f"status.json must be a JSON object at {path}")
 
+    # subtype is additive — missing field falls back to "product" for
+    # status.json files written by pre-Gap-2 engines (discipline §8).
+    raw_subtype = data.get("subtype")
+    subtype = raw_subtype if raw_subtype in _VALID_SUBTYPES else _DEFAULT_SUBTYPE
+
     return L1State(
         feature_slug=str(data.get("feature-slug", feature_slug)),
         status=str(data.get("state", data.get("status", "not-started"))),
         last_action_at=str(data.get("last-action-at") or data.get("last_action_at") or ""),
         last_action_kind=str(data.get("last-action") or data.get("last_action_kind") or ""),
         phase_lock=data.get("phase-lock") or data.get("phase_lock"),
+        subtype=subtype,
         raw=data,
     )
 
@@ -203,6 +228,11 @@ def write_l1_status(state: L1State, project_root: Path) -> None:
         raise MemoryError(
             f"invalid status '{state.status}'; must be one of {sorted(_VALID_STATES)}"
         )
+    if state.subtype not in _VALID_SUBTYPES:
+        raise MemoryError(
+            f"invalid subtype '{state.subtype}'; must be one of {sorted(_VALID_SUBTYPES)} "
+            "(discipline §8 — non-product feature track)"
+        )
     if not state.last_action_at:
         state.last_action_at = _utc_now_iso()
 
@@ -212,6 +242,7 @@ def write_l1_status(state: L1State, project_root: Path) -> None:
             "schema-version": payload.get("schema-version", 1),
             "feature-slug": state.feature_slug,
             "state": state.status,
+            "subtype": state.subtype,
             "last-action": state.last_action_kind,
             "last-action-at": state.last_action_at,
             "phase-lock": state.phase_lock,
@@ -401,45 +432,191 @@ def list_archived_features(project_root: Path) -> list[str]:
 # ── phase_lock ───────────────────────────────────────────────────────────────
 
 
+def _phase_lock_path(feature_slug: str, project_root: Path) -> Path:
+    """Filesystem path of the atomic phase-lock sentinel file."""
+    return _l1_dir(project_root, feature_slug) / _PHASE_LOCK_FILE
+
+
 def acquire_phase_lock(
     feature_slug: str,
     project_root: Path,
     lock_id: str,
 ) -> bool:
-    """Try to set `phase_lock = lock_id` on status.json. Reentrant for same id.
+    """Try to set `phase_lock = lock_id`. Atomic across processes. Reentrant.
+
+    Uses ``os.open(O_CREAT | O_EXCL)`` on a per-feature sentinel file to win
+    the race deterministically — exactly one process succeeds when N race
+    on the same tick. status.json is mirrored AFTER the atomic gate so
+    read APIs (`current_phase_lock`) keep working unchanged.
 
     Returns True on success, False when another lock id is already active.
-    Creates a minimal status.json if absent (state `planning` by default).
+    Same lock_id is reentrant (returns True without rewriting state).
+
+    Orphan locks survive process crashes — recovery is via ``forge undo``
+    per Decision 27. We do not auto-clean stale sentinels here because the
+    "is this lock stale?" question requires user judgment.
     """
     if not lock_id:
         raise MemoryError("lock_id must be non-empty")
 
+    lock_path = _phase_lock_path(feature_slug, project_root)
+    ensure_dir(lock_path.parent)
+
+    # Atomic gate — first writer wins via O_CREAT | O_EXCL. All other
+    # racers see FileExistsError and fall through to the reentrant check.
+    try:
+        fd = os.open(
+            str(lock_path),
+            os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+            0o644,
+        )
+    except FileExistsError:
+        # Sentinel already exists — read it. Same id → reentrant True.
+        # HG-03 (review): the atomic gate is two steps — ``os.open(O_EXCL)``
+        # returns the fd; ``fh.write(lock_id)`` then places the content.
+        # A racing reentrant caller can land between those steps and read
+        # an empty sentinel. Treating empty as "foreign lock → False"
+        # produced spurious denials. Retry up to 3 times with 20ms backoff
+        # to let the winner finish its write; only after the window
+        # exhausts do we treat empty as a genuinely foreign holder.
+        existing = ""
+        for _ in range(3):
+            try:
+                existing = lock_path.read_text(encoding="utf-8").strip()
+            except OSError:
+                existing = ""
+            if existing:
+                break
+            time.sleep(0.020)
+        if existing == lock_id:
+            # Re-stamp status.json so the human-readable mirror stays fresh.
+            _mirror_phase_lock_to_status(feature_slug, project_root, lock_id)
+            return True
+        return False
+
+    # We won. Write the id, then mirror to status.json. If the mirror step
+    # raises, unlink the sentinel so the caller can retry — otherwise we'd
+    # leak a sentinel pointing at a status that disagrees.
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(lock_id)
+            fh.flush()
+            os.fsync(fh.fileno())
+        _mirror_phase_lock_to_status(feature_slug, project_root, lock_id)
+    except Exception as mirror_err:
+        # R3.8 fix: surface the unlink failure if it happens. Previously
+        # we swallowed `OSError` silently, leaving a stuck sentinel that
+        # blocks every subsequent acquire — and the operator had no
+        # signal pointing them at `forge undo` for cleanup. Now we
+        # write a clear recovery hint to stderr before re-raising.
+        try:
+            lock_path.unlink()
+        except OSError as unlink_err:
+            try:
+                sys.stderr.write(
+                    f"forge: phase-lock sentinel stuck at {lock_path} — "
+                    f"mirror failed ({mirror_err!r}) and unlink failed "
+                    f"({unlink_err!r}). Run `forge undo` to clear.\n"
+                )
+            except Exception:  # pragma: no cover — stderr write itself failed
+                pass
+        raise
+    return True
+
+
+def _mirror_phase_lock_to_status(
+    feature_slug: str, project_root: Path, lock_id: Optional[str]
+) -> None:
+    """Sync the atomic sentinel value into status.json's ``phase_lock`` field.
+
+    Called after every successful acquire / release so read APIs that
+    consume status.json keep returning consistent data. The atomic gate
+    above guarantees only one writer reaches this function at a time per
+    feature, so the read-modify-write here is safe.
+    """
     state = read_l1_status(feature_slug, project_root)
     if state is None:
         state = L1State(
             feature_slug=feature_slug,
             status="planning",
             last_action_at=_utc_now_iso(),
-            last_action_kind="phase-lock-acquired",
+            last_action_kind=(
+                "phase-lock-acquired" if lock_id else "phase-lock-released"
+            ),
             phase_lock=lock_id,
         )
         write_l1_status(state, project_root)
-        return True
-
-    if state.phase_lock and state.phase_lock != lock_id:
-        return False
+        return
 
     state.phase_lock = lock_id
-    state.last_action_kind = "phase-lock-acquired"
+    state.last_action_kind = (
+        "phase-lock-acquired" if lock_id else "phase-lock-released"
+    )
     state.last_action_at = _utc_now_iso()
     write_l1_status(state, project_root)
-    return True
+
+
+@contextmanager
+def phase_lock_held(
+    feature_slug: str,
+    project_root: Path,
+    lock_id: str,
+) -> Iterator[bool]:
+    """Context manager wrapping ``acquire_phase_lock`` / ``release_phase_lock``.
+
+    Yields ``True`` when the lock was acquired (release happens on exit, for
+    every path including exceptions); yields ``False`` when acquisition lost
+    the race (no release on exit — the foreign holder keeps its lock).
+
+    Use this instead of the manual ``lock_released = False`` flag pattern in
+    callers (MD-03). The pattern is correct but refactor-fragile: a new
+    return inside the try block silently leaks the lock if it forgets to
+    flip the flag. The context manager moves the bookkeeping out of the
+    caller's hands so the contract is unforgeable.
+
+    ⚠️  NOT REENTRANT-SAFE. Se o caller já segura o lock com o mesmo
+    ``lock_id`` ao entrar em ``phase_lock_held``, ``acquire_phase_lock``
+    devolve ``True`` (reentrant success) e o CM vai *release* no exit —
+    puxando o tapete de quem detinha o lock por fora. Pra qualquer cenário
+    aninhado, use ``acquire_phase_lock`` / ``release_phase_lock``
+    diretamente; este CM assume seções críticas únicas, não-sobrepostas,
+    por ``feature_slug``.
+
+    Hoje os callers (``engine.plan.run``, ``engine.implement.run``) não
+    aninham — se um caller futuro precisar aninhar, escolha o API direto,
+    ou estenda este CM pra devolver um sentinel "won"/"reentrant" antes
+    do release. Gap rastreado em ``docs/design/04-pending.md``.
+
+    Sempre faz release no exit SE acquired. Caller deve checar o bool
+    yielded.
+
+    Example::
+
+        with phase_lock_held(slug, root, task_id) as acquired:
+            if not acquired:
+                return rc_contention
+            # ... critical region; any return / raise releases on exit
+    """
+    acquired = acquire_phase_lock(feature_slug, project_root, lock_id)
+    try:
+        yield acquired
+    finally:
+        if acquired:
+            release_phase_lock(feature_slug, project_root)
 
 
 def release_phase_lock(feature_slug: str, project_root: Path) -> None:
-    """Clear `phase_lock` on status.json. No-op if no lock or no status.json."""
+    """Clear `phase_lock` on status.json + remove sentinel. No-op when absent."""
+    lock_path = _phase_lock_path(feature_slug, project_root)
+    sentinel_existed = lock_path.exists()
+    if sentinel_existed:
+        try:
+            lock_path.unlink()
+        except OSError:
+            pass
+
     state = read_l1_status(feature_slug, project_root)
-    if state is None or state.phase_lock is None:
+    if state is None or (state.phase_lock is None and not sentinel_existed):
         return
     state.phase_lock = None
     state.last_action_kind = "phase-lock-released"
@@ -448,9 +625,199 @@ def release_phase_lock(feature_slug: str, project_root: Path) -> None:
 
 
 def current_phase_lock(feature_slug: str, project_root: Path) -> Optional[str]:
-    """Return current `phase_lock` value (or None when absent / no status)."""
+    """Return current `phase_lock` value (or None when absent).
+
+    HG-02 (review): the O_EXCL sentinel file is the authoritative gate.
+    status.json is the human-readable MIRROR written by
+    ``_mirror_phase_lock_to_status`` AFTER the sentinel — there is a
+    window where the sentinel exists and status.json hasn't caught up.
+    Readers must consult the sentinel first to avoid reporting a stale
+    ``None`` while a real lock is in flight.
+    """
+    lock_path = _phase_lock_path(feature_slug, project_root)
+    if lock_path.exists():
+        try:
+            sentinel_value = lock_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            sentinel_value = ""
+        if sentinel_value:
+            return sentinel_value
+        # Empty sentinel — winner is mid-write. Fall through to status.json
+        # which may hold the previous holder's value; better than returning
+        # None and signaling "no lock" when a write race is in flight.
+
     state = read_l1_status(feature_slug, project_root)
     return state.phase_lock if state else None
+
+
+# ── External dependencies (discipline §9 — Gap 8) ────────────────────────────
+
+
+def _feature_tasks_dir(feature_slug: str, project_root: Path) -> Optional[Path]:
+    """Best-effort resolver for `features/{slug}/tasks/` honoring subtype.
+
+    Mirrors `engine.plan._feature_path` decision logic but lives here to keep
+    l1.py free of circular imports (l1 ↔ plan would loop on subtype init).
+    Returns None when the directory doesn't exist on disk (caller treats as
+    "no tasks emitted yet" — same semantics as empty list).
+    """
+    subtype = current_subtype(feature_slug, project_root)
+    base = project_root / "docs" / "feature-implementation-workflow"
+    parent = base / ("non-product" if subtype != "product" else "features")
+    candidate = parent / feature_slug / "tasks"
+    if candidate.is_dir():
+        return candidate
+    # Fallback: product folder even when subtype isn't product (legacy or
+    # mid-migration state).
+    fallback = base / "features" / feature_slug / "tasks"
+    if fallback.is_dir():
+        return fallback
+    return None
+
+
+def blocking_deps(
+    feature_slug: str, project_root: Path
+) -> list[dict[str, Any]]:
+    """Return the list of unresolved blocking external deps across all tasks.
+
+    Walks `tasks/TASK-*.yaml`, parses `depends_on_external`, and collects
+    every entry where `blocking: true` and `resolved-at` is None. Each
+    dictionary in the output contains:
+      - task: TASK-NNNN id (derived from filename)
+      - ticket: ticket identifier (string)
+      - integration: jira | linear | github-issues | manual
+      - description: free-form
+      - blocking: True (guaranteed for entries we return)
+      - declared-at: ISO 8601 string if present
+      - resolved-at: None (guaranteed for entries we return)
+
+    Returns [] when:
+      - feature has no tasks/ directory
+      - no task carries `depends_on_external`
+      - every entry has `resolved-at` filled in
+
+    Read-only; never writes. Used by `engine.implement` to decide refusal,
+    by `engine.status` for the board, and by `engine.reconfigure` to list
+    candidates for "marcar como resolvida".
+    """
+    tasks_dir = _feature_tasks_dir(feature_slug, project_root)
+    if tasks_dir is None:
+        return []
+
+    from engine.utils.yaml_io import read_yaml_or_default
+
+    out: list[dict[str, Any]] = []
+    for path in sorted(tasks_dir.glob("TASK-*.yaml")):
+        try:
+            data = read_yaml_or_default(path, {}) or {}
+        except Exception as exc:  # noqa: BLE001 — best-effort: log + skip
+            # A single malformed task must not abort the whole scan
+            # (R2.3). Warn so the operator can clean up, but keep going.
+            try:
+                # R3.9: explicit "corrupt YAML — failed to parse" wording so
+                # operators (and the regression test) get a clear,
+                # searchable signal in stderr. Voice stays mentor-calm.
+                sys.stderr.write(
+                    f"forge: blocking_deps: corrupt YAML — failed to parse "
+                    f"{path}: {exc}\n"
+                )
+            except Exception:  # pragma: no cover — stderr write itself failed
+                pass
+            continue
+        if not isinstance(data, dict):
+            continue
+        # Accept both snake_case (template canonical) and kebab-case
+        # (alternative dialect — defensive).
+        deps = data.get("depends_on_external") or data.get("depends-on-external")
+        if not isinstance(deps, list):
+            continue
+        task_id = str(data.get("task_id") or data.get("task-id") or path.stem)
+        for entry in deps:
+            if not isinstance(entry, dict):
+                continue
+            blocking = entry.get("blocking", True)
+            resolved = entry.get("resolved-at") or entry.get("resolved_at")
+            if not blocking:
+                continue
+            if resolved:
+                continue
+            out.append(
+                {
+                    "task": task_id,
+                    "ticket": str(entry.get("ticket") or ""),
+                    "integration": str(entry.get("integration") or "manual"),
+                    "description": str(entry.get("description") or ""),
+                    "blocking": True,
+                    "declared-at": entry.get("declared-at")
+                    or entry.get("declared_at"),
+                    "resolved-at": None,
+                }
+            )
+    return out
+
+
+def is_blocked(feature_slug: str, project_root: Path) -> bool:
+    """True when the feature has ≥ 1 unresolved blocking external dep.
+
+    Thin convenience wrapper over `blocking_deps`. Used by `engine.implement`
+    refusal path and `engine.status` board rendering. Decision is
+    recomputable from disk on every call — no cached state.
+    """
+    return bool(blocking_deps(feature_slug, project_root))
+
+
+def list_blocked_features(project_root: Path) -> list[str]:
+    """Sorted list of feature slugs with at least one unresolved blocking dep.
+
+    Convenience for `engine.status` board section "blocked on external"
+    and `engine.reconfigure` external-deps menu. Walks every active L1
+    feature; archived/done features are skipped (their L1 dir is gone).
+    """
+    out: list[str] = []
+    for slug in list_active_features(project_root):
+        if is_blocked(slug, project_root):
+            out.append(slug)
+    return out
+
+
+# ── subtype (discipline §8) ──────────────────────────────────────────────────
+
+
+def current_subtype(feature_slug: str, project_root: Path) -> str:
+    """Return the subtype for this feature (discipline §8).
+
+    Defaults to "product" when status.json is absent or the field is missing —
+    the same forward-compat behavior `read_l1_status` already implements.
+    """
+    state = read_l1_status(feature_slug, project_root)
+    return state.subtype if state else _DEFAULT_SUBTYPE
+
+
+def set_subtype(feature_slug: str, project_root: Path, subtype: str) -> None:
+    """Persist `subtype` on status.json. Creates a minimal status if absent.
+
+    Raises MemoryError when `subtype` is not in {product, refactor, spike,
+    chore}.
+    """
+    if subtype not in _VALID_SUBTYPES:
+        raise MemoryError(
+            f"invalid subtype '{subtype}'; must be one of {sorted(_VALID_SUBTYPES)} "
+            "(discipline §8 — non-product feature track; 'bugfix' added Gap 1)"
+        )
+    state = read_l1_status(feature_slug, project_root)
+    if state is None:
+        state = L1State(
+            feature_slug=feature_slug,
+            status="planning",
+            last_action_at=_utc_now_iso(),
+            last_action_kind="subtype-set",
+            subtype=subtype,
+        )
+    else:
+        state.subtype = subtype
+        state.last_action_kind = "subtype-set"
+        state.last_action_at = _utc_now_iso()
+    write_l1_status(state, project_root)
 
 
 # ── verify-log.jsonl (bonus — symmetry with history) ─────────────────────────
@@ -546,9 +913,15 @@ __all__ = [
     "archive_feature",
     "list_active_features",
     "list_archived_features",
+    "list_blocked_features",
     "acquire_phase_lock",
     "release_phase_lock",
+    "phase_lock_held",
     "current_phase_lock",
+    "current_subtype",
+    "set_subtype",
+    "is_blocked",
+    "blocking_deps",
     "append_verify_log",
 ]
 

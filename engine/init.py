@@ -794,6 +794,62 @@ def _run_pipeline(project_root: Path) -> int:
         f"{graph_stats['duration_ms']}ms"
     )
 
+    checkpoint.step = "step-11.5-reuse-scan"
+    checkpoint.at = _utc_now_iso()
+    _save_checkpoint(checkpoint)
+
+    # ── Step 11.5 — Reuse-intelligence proposals ────────────────────────────
+    # Surfaces duplications, cross-module candidates, and cross-language KMP
+    # migration hints detected by the graph builder. Queued as
+    # DistillationProposals — user reviews via `forge evolve`.
+    renderer.write("")
+    renderer.write("[0:19] Scanning for reuse opportunities…")
+    try:
+        from engine.graph.duplicates import queue_proposals_from_table
+
+        n_queued = queue_proposals_from_table(project_root)
+    except Exception as exc:  # never fail init for a scan hiccup
+        renderer.write(
+            f"  ⚠ reuse scan errored: {type(exc).__name__}: {exc}"
+        )
+        n_queued = 0
+    if n_queued:
+        renderer.write(
+            f"  ✓ {n_queued} reuse-intelligence proposal(s) queued — "
+            "`forge evolve` to review"
+        )
+    else:
+        renderer.write("  ✓ no reuse opportunities detected")
+
+    # ── Step 11.6 — Incremental detection hook (opt-in) ─────────────────────
+    # Writes a hook script in .claude/hooks/. Wiring it to Claude Code's
+    # `tool-use:post:Edit` hook is left to the user — we print a one-liner
+    # they can paste into .claude/settings.local.json.
+    hooks_dir = claude_dir(project_root) / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    hook_script = hooks_dir / "post-edit-detect-duplications.sh"
+    hook_script.write_text(
+        "#!/usr/bin/env bash\n"
+        "# Post-edit hook: surface reuse-intelligence findings introduced by the edit.\n"
+        "# Installed by `forge init` — wire it up in .claude/settings.local.json:\n"
+        "#   { \"hooks\": { \"tool-use:post:Edit\": "
+        "[{\"command\": \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit-detect-duplications.sh \\\"$file_path\\\"\"}] } }\n"
+        "set -e\n"
+        "FILE=\"${1:-}\"\n"
+        "[ -z \"$FILE\" ] && exit 0\n"
+        "[ -f \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/graph.db\" ] || exit 0\n"
+        "forge graph detect-incremental \"$FILE\" 2>/dev/null || true\n"
+    , encoding="utf-8")
+    try:
+        import stat as _stat
+        hook_script.chmod(hook_script.stat().st_mode | _stat.S_IXUSR | _stat.S_IXGRP)
+    except OSError:
+        pass
+    renderer.write(
+        "  · hook em `.claude/hooks/post-edit-detect-duplications.sh` "
+        "(referencie em settings.local.json pra detection inline)"
+    )
+
     checkpoint.step = "step-12-write-config"
     checkpoint.at = _utc_now_iso()
     _save_checkpoint(checkpoint)

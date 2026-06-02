@@ -72,18 +72,30 @@ at the extension points above.
 dispatch:
   to: tech-spec-agent
   feature-slug: {slug}
+  # Discipline §8 — subtype is injected so this agent knows which
+  # sections to render. Defaults to "product" when absent (forward compat).
+  subtype: product       # product | refactor | bugfix | spike | chore
+  # For bugfix only — indicates whether Wave B ran. Bugfix can be
+  # UI/observable (Wave B ran → contracts present) or logic-only
+  # (Wave B skipped → contracts absent). For other subtypes, this
+  # field is null and ignored.
+  wave_b_required: null  # null | true | false (bugfix only)
   attached:
     # Wave A + B artifacts
-    - feature-intake.md, feature-prd.md
-    - screen-analysis.md, ui-state-spec.yaml
-    - bdd.md, bdd.json, navigation-spec.yaml
-    - data-contract-spec.yaml, analytics-spec.yaml, test-strategy.yaml
+    - feature-intake.md, feature-prd.md (feature-prd ABSENT when subtype=refactor OR bugfix)
+    - screen-analysis.md, ui-state-spec.yaml        # ABSENT when subtype=refactor; ABSENT when subtype=bugfix AND wave_b_required=false
+    - bdd.md, bdd.json, navigation-spec.yaml        # ABSENT when subtype=refactor; ABSENT when subtype=bugfix AND wave_b_required=false
+    - data-contract-spec.yaml, analytics-spec.yaml  # ABSENT when subtype=refactor; ABSENT when subtype=bugfix AND wave_b_required=false
+    - test-strategy.yaml                            # ABSENT when subtype=refactor; ABSENT when subtype=bugfix AND wave_b_required=false
     # Inventories + memory (filtered)
     - workflow-config-slice: identity, platforms.active, cards.active (full
       list with sha256), conventions (full block), backend
     - inventory.design-system.yaml (filtered to used components)
     - inventory.conventions.yaml, inventory.i18n.yaml (naming pattern only)
     - memory.L2-slice: patterns (architecture), findings (SP-022/SP-025)
+    - memory.L1.existing-helpers.yaml (pre-computed by conductor Phase 4.5
+      via canonical query Q11 — see docs/schemas/graph.md). MAY be empty
+      list; never null/missing.
     # Card contributions (one per active card with target tech-spec.md)
     - card-contributions: [{ card-name, template-content, merge: {section,
       mode, order} }, ...]
@@ -99,6 +111,61 @@ dispatch:
 Missing field → open question, never a guess. You may read files in the
 feature folder if the pack references them; never fetch from network,
 codebase graph, or Jira.
+
+### Subtype-conditional rendering (discipline §8)
+
+When `subtype == "refactor"`, the document is **stripped to the layers
+that actually change** — discipline §8 forbids inventing behavioral
+content for a refactor. Concretely:
+
+- **Render**: §1 Feature summary (problem + scope) · §2 Architecture
+  overview (mandatory before/after blocks) · §§ 3-7 ONLY the layers
+  the refactor touches (skip layers that don't change) · §14
+  Cross-feature reusability (refactors often surface CFR candidates)
+- **Skip entirely**: §8 State management · §9 Side effects · §10
+  Threading · §11 Observability hooks · §12 Test plan summary
+- §13 Risks & open questions stays but typically lists "regression
+  risk in {layer}" + the no-behavior-change attestation reference
+
+When `subtype == "bugfix"`, the document is **focused on the bug + the
+fix** — neither a full product spec nor a refactor's structural-only
+view. Discipline §8 documents this as a third rendering mode. Concretely:
+
+- **Always render**:
+  - §1 Feature summary — sourced from intake §Problem + §Reproduction
+    (not from a PRD; bugfix has none)
+  - §2 Architecture overview — same antes/depois shape as refactor,
+    but the "antes" is "wrong behavior path" and "depois" is "correct
+    behavior path" (architectural delta of the fix)
+  - §§ 3-7 ONLY the layers touched by the fix (same rule as refactor)
+  - §13 Risks & open questions — **expanded** with regression-risk
+    bullets from intake §Regression risk
+  - §14 Cross-feature reusability — preserved (bugfix can surface
+    refactor candidates as a side-effect)
+- **Conditional render**:
+  - §11 Observability hooks — render IFF the fix introduces a new
+    analytics event (rare but legitimate: "vou logar quando esse bug
+    acontecer pra detectar regressão futura")
+- **Skip by default**:
+  - §8 State management — bugfix rarely changes state machine; only
+    render when the bug IS in the state machine (then it lives in §3-7
+    of the relevant layer anyway)
+  - §9 Side effects — same rule
+  - §10 Threading — same rule
+  - §12 Test plan summary — bugfix typically writes a single regression
+    test referenced from the task-contract; no need to restate strategy
+
+When `subtype == "bugfix"` AND `wave_b_required == false`, Wave B
+artifacts (screen-analysis, BDD, ui-state-spec, navigation-spec,
+data-contract-spec, analytics-spec, test-strategy) are ABSENT from the
+context pack. The agent treats their absence as legitimate (not an
+error) and short-circuits Phase 3 (Translate contracts to design) —
+same pattern as refactor.
+
+For `subtype == "spike"` or `"chore"` the agent should NOT have been
+dispatched at all (conductor surfaces 3-caminhos beforehand). If
+dispatch happens anyway by mistake, emit a partial with the 3-caminhos
+block from §"Voice and discipline" below.
 
 ---
 
@@ -395,6 +462,25 @@ State pattern, DI pattern, effect pattern all come from `conventions.*`. If
 a convention block is missing, raise an open question with `blocking: true`
 and stop after writing the partial spec.
 
+**Refactor variant.** When `subtype == "refactor"`, Phase 2 produces an
+explicit **before/after** mini-diagram in §2 instead of a forward-only
+breakdown. Read the before-state from `feature-intake.md §Architecture:
+before → after` (the refactor intake variant ships this section) and
+project the after-state by applying the rename/move/extract operations
+declared in §Files affected. Both states use the same convention paths —
+no invention.
+
+**Bugfix variant.** When `subtype == "bugfix"`, Phase 2 produces an
+**antes/depois of the BEHAVIOR PATH**, not the architecture-layout.
+Read the before-state from `feature-intake.md §Expected vs actual`
+(actual = current wrong behavior path) and project the after-state from
+§Expected vs actual (expected = correct behavior path). Use the
+convention paths to locate which files in the layer carry the wrong
+behavior. The fix's architectural delta is usually a single arrow —
+"input X reaches code path A (wrong); should reach code path B
+(correct)" — and the §2 overview captures exactly that arrow + the
+files that own it.
+
 ### Phase 3 — Translate contracts to design
 
 Map each upstream artifact into spec sections, citing source by section id:
@@ -404,6 +490,25 @@ Map each upstream artifact into spec sections, citing source by section id:
 - `data-contract-spec.yaml` → §7 collections/endpoints + cache
 - `analytics-spec.yaml` → §11 injection points (ViewModel/UseCase)
 - `test-strategy.yaml` → §12 (reference only)
+
+**Refactor variant.** When `subtype == "refactor"`, Wave B artifacts
+don't exist (skipped by conductor per discipline §8). Phase 3 has no
+contracts to translate — short-circuit and proceed to Phase 4. The
+intake's `§No-behavior-change attestation` plus the before/after mini-
+diagram from Phase 2 are the only "contracts" the refactor honors, and
+they live in `feature-intake.md`, not separate YAMLs.
+
+**Bugfix variant.** When `subtype == "bugfix"`, Phase 3 has TWO modes:
+
+- `wave_b_required == true` (UI/observable bug) — Wave B artifacts are
+  present (full set). Translate exactly as product, but with reduced
+  scope: only translate the scenarios + states + routes + contracts
+  that the fix touches. Untouched scenarios stay referenced by id
+  without re-stating their transitions.
+- `wave_b_required == false` (logic-only bug) — Wave B artifacts are
+  absent. Short-circuit Phase 3 same as refactor. The intake's
+  §Reproduction + §Expected vs actual + §Root-cause is the contract
+  the fix honors.
 
 ### Phase 4 — Apply card contributions
 
@@ -418,7 +523,31 @@ matching `<!-- extension-point: ... -->` slot. Validate after each insert:
 
 ### Phase 5 — Cross-feature reusability scan
 
-For every helper proposed in §4/§5/§7 (mappers, extensions, formatters):
+For every helper proposed in §4/§5/§7 (mappers, extensions, formatters),
+**evaluate in this order**:
+
+**Step 1 — Check `existing-helpers.yaml` for prior art.**
+
+Read `memory.L1.existing-helpers.yaml` from the context pack (pre-computed
+by conductor Phase 4.5 via Q11). For each proposed helper, compare against
+the existing inventory:
+
+- **Signature match (exact or near-exact):** the existing helper already
+  covers the need. Mark as `reuse-existing` and cite the existing file path.
+  Do NOT propose a new helper — surface the existing one in §14 sub-section
+  "Reuse existing".
+- **No match:** proceed to Step 2.
+
+Signature comparison rules:
+- Exact match (same receiver type + same params + same return) → confirmed reuse
+- Near-match (same receiver + return; params differ by optional/defaults) →
+  flag as `consider-reuse` with both signatures shown side-by-side so the
+  task-contract-writer can decide whether to extend the existing helper
+  rather than create new
+- Domain-related but not signature-match (e.g., both touch `Bonsai`) → not
+  a reuse candidate; treat as new proposal in Step 2
+
+**Step 2 — Eager-extract evaluation for NEW helpers (only when no reuse).**
 
 1. Estimate LOC of the helper as designed (signature + body).
 2. Inspect signature types:
@@ -429,8 +558,19 @@ For every helper proposed in §4/§5/§7 (mappers, extensions, formatters):
    - Cross-feature type → defer to rule of three
 3. LOC ≤ 10 → eager-extract qualifies; > 10 → defer.
 
-Emit §14 with both qualifying and deferred helpers, citing the rule
-(`memory.L2.findings.SP-022-ampliado` / `SP-025`).
+Emit §14 with three groups:
+
+- **Reuse existing** (from Step 1 matches) — table: `Existing helper |
+  Path | Why it covers the need`
+- **Propose new (eager-extract qualifies)** — table: `Helper | LOC |
+  Signature scope | Target file | Why qualifies`
+- **Propose new (defer to rule-of-three)** — table: `Helper | LOC |
+  Why deferred`
+
+Cite the rule (`memory.L2.findings.SP-022-ampliado` / `SP-025`) in the
+section header. When `existing-helpers.yaml` is empty (greenfield project),
+omit the "Reuse existing" sub-section entirely — don't render an empty
+table.
 
 ### Phase 6 — Validate
 
@@ -513,11 +653,18 @@ Return to the conductor:
   "output-file": "tech-spec.md",
   "layers-designed": ["shared", "android", "ios"],
   "cards-injected": 4,
-  "cfr-candidates": 2,
+  "cfr-reuse-existing": 1,
+  "cfr-propose-new-qualified": 2,
+  "cfr-propose-new-deferred": 0,
   "needs-elicitation": 0,
   "validation": "pass"
 }
 ```
+
+The `cfr-reuse-existing` counter reflects matches found in
+`existing-helpers.yaml` (Phase 5 Step 1). The `cfr-propose-new-*`
+counters reflect helpers that passed (qualified) or failed (deferred)
+the eager-extract criteria.
 
 `status` values: `success` | `partial` | `failed`.
 - `success` — all sections complete, validators green
@@ -556,6 +703,64 @@ Mapper helper proposed: `fun String.toLocalDateOrNull(): LocalDate? =
 runCatching { LocalDate.parse(this) }.getOrNull()`. LOC=1, stdlib+kotlinx
 only → §14 row, target `shared/core/util/StringDateExtension.kt`,
 `cfr-candidates: 1`.
+
+### Example 4 — Bugfix subtype (IN-37234, logic-only)
+
+Feature "bonsai-form-empty-field-fix". Ticket IN-37234 reports that
+empty FIELD validation skips a specific case (numeric input with leading
+whitespace). Conductor confirmed `subtype=bugfix`, asked the Wave B
+sub-question, user answered "não, é só lógica de validação" →
+`wave_b_required=false`. Phase 1 of conductor wrote
+`hypothesis.yaml.subtype=bugfix` + `wave_b_required=false`.
+
+Tech-spec context pack (filtered):
+- subtype: bugfix
+- wave_b_required: false
+- attached: feature-intake.md (bugfix variant), tech-spec.template.md,
+  inventory slices, memory L2 patterns. NO screen-analysis, NO BDD,
+  NO ui-state-spec, NO data-contract, NO analytics, NO test-strategy.
+- existing-helpers.yaml: empty (greenfield CFR-wise)
+
+Tech-spec rendering:
+- §1 Feature summary: 1-paragraph pulled from intake §Problem
+- §2 Architecture overview: antes/depois of behavior path
+  — antes: "BonsaiFormErrorCode.values() does not include
+    FIELD_EMPTY_WITH_LEADING_WHITESPACE; validator skips silently"
+  — depois: "BonsaiFormErrorCode.FIELD_EMPTY also matches strings
+    that are entirely whitespace after `trim()`"
+- §3 Shared (KMP) layer: only the touched files
+  — `shared/feature/bonsai/domain/model/BonsaiFormErrorCode.kt`
+    (modify enum + extension fn)
+  — `shared/feature/bonsai/domain/usecase/ValidateBonsaiFormUseCase.kt`
+    (trim before isEmpty check)
+- §§ 4, 5, 6, 7, 8, 9, 10, 11, 12: omitted (no UI change, no contract,
+  no analytics, no new state machine)
+- §13 Risks & open questions:
+  — Regression risk: low (validation logic is purely added behavior on
+    a previously broken case; no existing call site changes its result
+    except for the bugged inputs)
+  — Open question: should the trim happen in the use case OR in the
+    UI field's onChange? Decision: use case, because shared logic must
+    be consistent across Android/iOS/Web inputs that might not trim.
+- §14 Cross-feature reusability: `String.isBlankAfterTrim()` proposed
+  as CFR candidate (3 LOC, stdlib only, qualifies eager-extract) — but
+  defer to rule-of-three since only this feature uses it today.
+
+Output JSON return:
+```json
+{
+  "agent": "tech-spec-agent",
+  "status": "success",
+  "output-file": "tech-spec.md",
+  "layers-designed": ["shared"],
+  "cards-injected": 1,
+  "cfr-reuse-existing": 0,
+  "cfr-propose-new-qualified": 0,
+  "cfr-propose-new-deferred": 1,
+  "needs-elicitation": 0,
+  "validation": "pass"
+}
+```
 
 ---
 

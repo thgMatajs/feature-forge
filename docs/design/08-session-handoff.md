@@ -3,8 +3,8 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-05-29 (Fase 5 completa — v1 done)
-**Estado:** Fase 1+2+3+3.5+4+5 completas. v1 entregue end-to-end. Próximo: commit inicial + dogfooding.
+**Última atualização:** 2026-06-02 (PR #1 round 3 — 9 fixes pós-release)
+**Estado:** PR #1 round 3 pronto pra merge — 55 commits totais (R1: 15, R2: 30, R3 + doc-sync: 10), 463 unit tests passando. Round 3 fechou 9 inline comments do code-review que tinham passado pela leitura inicial: A3 foreign-lock preservation em implement, bootstrap symlink repair, flock em hooks de drift + load-bearing, session-start exit-0 contract, doctor conn-close-on-exception, parser_kotlin _simplify_generics termination hardening, sentinel unlink failure surfacing em l1, blocking_deps warning tightening. Doc-sync incremento R3 cobre CHANGELOG `### Fixed (PR #1 round 3)` + este handoff + 1 nota em `04-pending.md`. 1 falha pré-existente conhecida em `test_build_full_creates_meta_schema_version` (schema "1" vs "2", agendada pra v1.1.1).
 
 ---
 
@@ -28,7 +28,8 @@ Depois siga as instruções. Estou na Fase {N}.
 ## Estado atual (anchors)
 
 ```
-~245 arquivos · ~28,000 linhas · 27 decisões locked + 7 decisões direcionais (Fase 3.5)
+~379 arquivos · ~50,700 linhas · 27 decisões locked + 7 direcionais (Fase 3.5)
+v1.1.0 release: 508 tests passing (unit + integration, PR #1 R2 baseline) · 17 graph queries · 16 proposal kinds
 ```
 
 | Categoria | Status |
@@ -39,19 +40,28 @@ Depois siga as instruções. Estou na Fase {N}.
 | Phase 3.5 — refactor backend-agnostic + REST coverage | ✅ 100% |
 | Phase 4 Wave 1 — foundation (bin + cli + utils + ui + persona) | ✅ 100% (16 arquivos, ~1440 LOC) |
 | Phase 4 Wave 2 — state + integration (cards + memory + graph + inventory + mcp + vision) | ✅ 100% (28 arquivos, ~5400 LOC) |
-| Phase 4 Wave 3 — commands handlers (13 módulos) | ✅ 100% (13 arquivos, ~6040 LOC). **Nota:** `forge implement` é stub manual em v1 — Apply Mode automatizado, Pre-commit Review e Atomic Commit ficam pra v2/Phase 6. |
+| Phase 4 Wave 3 — commands handlers (13 módulos) | ✅ 100% (13 arquivos, ~6040 LOC). **Nota:** `forge implement` é stub manual em v1 — Apply Mode automatizado fica pra v2/Phase 6. |
 | **Phase 4 total** | ✅ **57 arquivos, ~12880 LOC** |
 | Phase 5 Wave A — hooks (8 .sh + 1 CI yml) | ✅ ~277 LOC |
 | Phase 5 Wave B — validators Python (13 + 2 helpers) | ✅ 2622 LOC |
 | Phase 5 Wave C — pytest suite (unit + integration + e2e) | ✅ ~3460 LOC, 258 passing |
 | Phase 5 Cleanup — hooks install no init + 3 handlers ingest + validator tests | ✅ +838 LOC |
 | **Phase 5 total** | ✅ **72 arquivos, ~6600 LOC, 258 tests passing** |
-| **🎉 feature-forge v1 completa** | ✅ **~370 arquivos, ~28 mil LOC, 5 fases + cleanup** |
+| **🎉 feature-forge v1.0 completa** | ✅ **~370 arquivos, ~28K LOC, 5 fases + cleanup** (2026-05-29) |
+| v1.1 — Gap 1 (bugfix subtype) | ✅ shipped 2026-05-30 — `_VALID_SUBTYPES + ['bugfix']`, ticket-pattern detection, Wave B conditional, template intake-bugfix |
+| v1.1 — Gap 2 (refactor subtype + non-product track) | ✅ shipped 2026-05-30 — `_VALID_SUBTYPES + ['refactor', 'spike', 'chore']` (refactor only completo), `non-product/{slug}/`, `check_no_behavior_change` validator, template intake-refactor |
+| v1.1 — Gap 8 (blocked-on-external state) | ✅ shipped 2026-05-30 — L1 status enum, manual unblock via reconfigure |
+| v1.1 — Gap 18 (reuse intelligence expansion) | ✅ shipped 2026-06-01 — 6 detection categories, schema v2, parser overhaul, gradle modules+deps, init Step 11.5+11.6, evolve dispatch, doctor check, incremental hook, forge plan integration. **+12.360 LOC, 55 arquivos, 20 unit tests novos.** |
+| **🎉 feature-forge v1.1.0 completa** | ✅ **~379 arquivos, ~50.7K LOC, 458 tests passing (rapid lane)** (2026-06-01) |
+| v1.1.0 — PR #1 bloqueadores resolvidos | ✅ shipped 2026-06-01 — 14 commits cobrindo C1–C4 (phase lock atomic O_EXCL, implement try/finally, `_reset_domain_tables` atomic, version bump 1.1.0) + A1/A2/A5/A6/A9/A12 (Swift `"""` brace counter, Groovy DSL parens, tie-breaker determinístico, root-level `test/` recognition, `forge plan` rc=130 em deferred) + review fixes (CR-01/CR-02/MD-01/HG-01/HG-02/HG-03). **+38 regression tests, total 458 (baseline 367 + 53)**. Detalhe em `CHANGELOG.md`. |
 
-## Conhecidos limites v1
+## Conhecidos limites v1.1 (atualizado)
 
-A v1 entregue inclui o pipeline completo de planning + verify + memory + graph,
-mas alguns gaps deliberados ficam pra v2/Phase 6:
+A v1.1 entregue inclui o pipeline completo de planning + verify + memory + graph
++ reuse-intelligence + non-product feature track (refactor/bugfix). Limites
+restantes ficam pra v1.2+ ou v2/Phase 6:
+
+**v1.0 herdados (ainda válidos):**
 
 - **`forge implement` não automatiza Apply Mode** — em v1 é um **stub manual**:
   `forge implement` renderiza Plan Mode (contract + allowed_files + gates) e
@@ -63,14 +73,51 @@ mas alguns gaps deliberados ficam pra v2/Phase 6:
   de provider de ticketing (Jira, Linear, GitHub Issues) sai com `provider=none`
   no `workflow-config.yaml` por default. Para configurar pós-init, use
   `forge reconfigure → ticketing`.
-- **9 kinds de `apply_proposal_to_l2` ficam em fall-through** — `engine/memory/distiller.py`
-  reconhece os kinds principais (`pattern-promotion`, `naming-convention`,
-  `decision-frozen`) mas faz fall-through silencioso pros 9 kinds restantes
-  (`tooling-update`, `card-version-bump`, etc.). Será fixado quando esses kinds
-  emergirem de uso real — sub-agent C deve cobrir.
-- **LLM/sub-agent hookup real** — `plan.py`/`implement.py` v1 narram fluxo +
+- **3 kinds de `apply_proposal_to_l2` ainda em fall-through** — `engine/memory/distiller.py`
+  resolveu 6 kinds reuse-intelligence em v1.1, mas `tooling-update`,
+  `card-version-bump` e `template-update` (entre outros retrospective kinds)
+  continuam raise NotImplementedError até emergirem de uso real.
+- **LLM/sub-agent hookup real** — `plan.py`/`implement.py` narram fluxo +
   renderam templates. Integração real com Anthropic API dentro do `forge`
   requer hooks + Claude integration (já documentado em §Out-of-scope abaixo).
+
+**v1.1 novos (decisões deliberadas, não bugs):**
+
+- **`kmp-migration-candidate` confidence é shallow** — token Jaccard sintático,
+  não AST semântico. Pode flagar Swift function com nome igual a Kotlin shared
+  mas semântica diferente. Mitigação: confidence 0.50–0.75 (manual review
+  obrigatório), apply NUNCA auto-runs, rejection veto persiste.
+- **Incremental detection hook wiring é manual** — `forge init` Step 11.6
+  escreve `.claude/hooks/post-edit-detect-duplications.sh`, mas a referência
+  em `.claude/settings.local.json` é **opt-in por design** — não modificamos
+  settings.local.json automaticamente pra não surpreender o usuário.
+- **Gradle dependency parsing** cobre `implementation(project(...))` e
+  variantes comuns (`api`, `compileOnly`, `testImplementation`, etc.).
+  `includeBuild`, DSL Kotlin avançado, ou versionCatalogs podem precisar
+  extensão futura. Fallback: heurística estática (`:shared:core` como
+  ancestor padrão pra cross-shared dups).
+- **Spike + chore subtypes stubbed** — `_VALID_SUBTYPES` aceita `spike` e
+  `chore`, mas só `refactor` tem flow completo (Gap 2 ship). Spike + chore
+  caem no fluxo product por default; será implementado quando emergir.
+- **MCP polling para external-dep resolution (Gap 8)** stubbed — v1.1 ship
+  manual unblock via `forge reconfigure → external-deps`. Auto-polling via
+  Jira/Linear webhook fica pra v1.2+.
+
+**Rules system v1 (2026-06-01) — limites reconhecidos:**
+
+- Per-tool-use Mandamento 0 detection é manual (depende de orchestrator obedecer regra textual). Hook bloqueante de main-vs-subagent depende de Claude Code expor distinção no hook protocol — anotado em `04-pending.md`.
+- `forge audit-rules` (comando futuro pra verificar conformidade em git log) ainda não existe — anotado em `04-pending.md` pra v1.2+.
+- Bloqueios opt-in (test-count regression, validator-cascade fail) estão documentados em `.claude/rules/doc-sync.md` mas comentados no script; ativar quando emergir necessidade real.
+
+**Pré-existente em v1.1.0 (não bloqueia ship, fix agendado pra v1.1.1):**
+
+- **`tests/integration/test_graph_build_meobonsai.py::test_build_full_creates_meta_schema_version`** assertava `meta.schema_version == "1"`, mas `engine/utils/sqlite_io.py:20` declara `SCHEMA_VERSION = "2"` desde o bump da reuse-intelligence schema (v1.1.0 Gap 18). Falha **não bloqueia** rapid lane (458 passing), `forge verify`, nem o ship v1.1.0 — só atinge a integration lane. Surfaced 2026-06-01 durante verification final do PR #1. Fix pequeno: ler `sqlite_io.SCHEMA_VERSION` em vez de hardcoded `"1"`. Gap completo em `docs/design/04-pending.md § Gaps pós-rules-system`.
+
+**Round 2 surfaced (2026-06-02) — não bloqueiam merge do PR #1, agendados pra v1.1.1+:**
+
+- **plan.py `phase_lock_held` CM migration deferred** — R2.7 (MD-03) migrou só `engine/implement.py` para `with phase_lock_held(...)`. `engine/plan.py` tem múltiplos deferred paths via `_persist_deferred` que precisam de brainstorm focado antes de migrar; happy path em `plan.py` (linha ~1108, `final_state`) seta `phase_lock=None` via `write_l1_status` mas **NÃO chama `release_phase_lock`**, deixando sentinel `.phase-lock` órfão no disco. Recovery manual: `rm .planning/<slug>/.phase-lock`. Fix proposto: chamar `release_phase_lock` no happy path antes da migração CM. Target v1.1.1.
+- **A13 `IN`-clause >999 findings ceiling** (review IN-01) — `list_reuse_findings` agora usa `WHERE finding_id IN ({placeholders})` que falha com SQLite default `SQLITE_MAX_VARIABLE_NUMBER=999` se `findings > 999`. Chunking em batches de 500 quando relevante. Não atinge nenhum projeto conhecido hoje; target v1.1.2+.
+- **`forge undo` coverage para reconfigure-external-deps** (review WR-01) — `_undo_reconfigure` em `engine/undo.py` não enumera per-task `.bak` files criados pelo loop de external-deps em `engine/reconfigure.py:754`. Recovery atualmente manual via `.bak` direto. Target v1.1.1.
 
 ## Fase 4 — completa (resumo)
 

@@ -607,10 +607,572 @@ Pause vs abort — Referenced from:
 
 ---
 
+## 8. Non-product feature track (subtypes)
+
+Forge nasceu modelando features de produto — telas, contratos, eventos de
+analytics. Stress test 2026-05-29 (cenários A3/A4) mostrou que isso quebra
+em três classes legítimas de trabalho mobile, e o stress test seguinte
+(cenário A1, 2026-05-30) adicionou uma quarta:
+
+- **Refactor** — comportamento inalterado por design. Mover `MeoButton` de
+  `organisms/` para `atoms/`, renomear pacote, migrar de Nav2 para Nav3 em
+  uma feature já implementada. Sem PRD natural, sem screen-analysis (zero
+  mudança visual), sem analytics nova.
+- **Bugfix** — restaurar comportamento correto. Bug com reprodução
+  conhecida, root-cause analisável, fix localizado, atomic commit. NÃO
+  é "feature pequena" (essas continuam product) — é o caso onde existe
+  um comportamento documentado-ou-esperado que está quebrado e precisa
+  voltar a funcionar. Frequentemente urgente (P0/P1, hotfix, ticket de
+  produção), o que torna especialmente importante cortar cerimônia
+  desproporcional sem sacrificar disciplina.
+- **Spike** — investigação técnica. Comportamento ainda desconhecido,
+  output esperado é findings/decisão, não código de produção. Forçar Wave
+  B faria conductor inventar PRD.
+- **Chore** — atualização de dependência, bump de versão, cleanup. Mesma
+  classe: sem produto, sem comportamento novo.
+
+Forçar essas três classes pelo pipeline default viola **dois princípios
+load-bearing simultaneamente**:
+
+1. `00-vision §What feature-forge is NOT` ("never invents") — sub-agents
+   produzem 5 specs vazias ou artificiais.
+2. `agents/planning-conductor.md §Discipline 3` ("Never invent") —
+   conductor é obrigado a inventar PRD/screen-analysis pra alimentar Waves
+   B e C.
+
+A remediação é um **guarda-chuva non-product-feature track** com 4 subtipos
+(`refactor`, `bugfix`, `spike`, `chore`). Subtype é detectado conversacionalmente
+em Cena 2.5 do `forge-plan-roteiro.md` (zero flag — Decision 10 preservada),
+persistido em `status.json.subtype` e em `hypothesis.yaml.subtype`, e o
+conductor branch o wave dispatch a partir dele.
+
+### Subtype semantics (v1.0)
+
+| Subtype | Waves | Artifacts produzidos | Validators extras |
+|---|---|---|---|
+| `product` (default) | A · B · C · D · E | 16 artefatos canônicos | (cascade padrão) |
+| `refactor` | A · C · D · E (Wave B **skipped**) | intake (refactor variant) · tech-spec parcial (§§ 2 + 3-7 modified-layers + 14) · task-breakdown · TASK-NNNN · readiness · handoff | `check_no_behavior_change` em Wave E |
+| `bugfix` | A · (**B conditional**) · C · D · E | intake (bugfix variant) · Wave B artifacts iff UI/behavioral · tech-spec focado (§§ 1 · 2 · 3-7 touched-layers · 13 · 14) · task-breakdown (1 task default) · TASK-NNNN · readiness · handoff · 5-whys retro template | (cascade padrão; o fix muda comportamento por definição — `check_no_behavior_change` não se aplica) |
+| `spike` | Stub em v1.0 — conductor surfaces 3-caminhos | n/a | n/a |
+| `chore` | Stub em v1.0 — conductor surfaces 3-caminhos | n/a | n/a |
+
+### Refactor — comportamento detalhado (única subtype completa em v1.0)
+
+**Wave A — `feature-intake.md` (refactor variant)**
+
+O intake usa `templates/feature-intake-refactor.template.md` (drop das
+seções "user value", "business outcome", "target persona") e ganha duas
+seções dedicadas:
+
+- §Problem — o que está errado hoje (acoplamento, naming, location)
+- §Files affected — paths concretos a serem tocados
+- §No-behavior-change attestation — declaração explícita "este refactor
+  não muda comportamento observável"
+
+Não há `feature-prd.md` no refactor variant. PRD pressupõe valor de
+usuário; refactor por definição não muda o que o usuário vê.
+
+**Wave B — SKIPPED integralmente**
+
+Nenhum dos artefatos behaviorais faz sentido em refactor:
+- `screen-analysis.md` — sem mudança visual, nada pra analisar
+- `bdd.md` / `bdd.json` — sem comportamento novo, scenarios vazios
+- `ui-state-spec.yaml` — UI state inalterado
+- `navigation-spec.yaml` — rotas inalteradas
+- `data-contract-spec.yaml` — schema inalterado
+- `analytics-spec.yaml` — sem eventos novos
+- `test-strategy.yaml` — strategy = "rodar tests existentes, comportamento
+  inalterado" (capturado na própria readiness)
+
+Forçar esses artefatos forçaria conductor a inventar, violando discipline
+3 da planning-conductor.
+
+**Wave C — `tech-spec.md` (refactor variant)**
+
+Renderiza apenas:
+- §2 Architecture overview — **antes/depois** explícito
+- §§ 3-7 — só as layers que mudam (geralmente uma única layer; se o
+  refactor toca 3 layers, o intake já levantou flag)
+- §14 Cross-feature reusability — preserve, pode emergir oportunidade
+- §§ 8-13 (state mgmt, side effects, dispatchers, observability, tests,
+  risks) — **omitidas**. State machine não muda em refactor; observability
+  fica intacta por design.
+
+**Wave D — `task-breakdown.yaml` + `tasks/TASK-NNNN.yaml`**
+
+Task contracts com `allowed_files` precisos. Refactor geralmente vira 1-3
+tasks (extrair, atualizar referências, validar). Cada task declara
+explicitamente `validations: [check_no_behavior_change]` em adição às
+validações padrão.
+
+**Wave E — readiness-reviewer aceita Wave B skipada quando `subtype=refactor`**
+
+O readiness-reviewer's checklist sub-section "Wave B artifacts present"
+torna-se opcional condicional: a checagem renderiza "n/a (subtype=refactor)"
+em vez de falhar.
+
+### O novo validator `check_no_behavior_change`
+
+Em Wave E (e novamente em `forge verify` durante implement), quando
+`status.json.subtype == "refactor"`, a cascade roda `check_no_behavior_change`:
+
+- Lê `git diff --cached --name-only` (ou diff da feature contra HEAD em
+  modo verify).
+- Marca como **fail** se algum arquivo de teste funcional na scope da
+  feature está sendo modificado/adicionado.
+- Modificar teste em refactor é sinal forte de mudança comportamental
+  disfarçada — "ajustei o teste pra passar com o novo código" é
+  literalmente a definição de mudança comportamental.
+- Adicionar novo teste pra cobertura adicional é OK (e útil), mas em
+  v1.0 conservadoramente todo touch em test files levanta 3-caminhos:
+  - A) Confirmar attestation — extender allowed_files declarando que
+    estes tests precisaram mudar e por quê
+  - B) Reverter mudança de teste
+  - C) Split — virar feature subtype `product` se o refactor de fato
+    muda comportamento
+
+### Bugfix — comportamento detalhado (Gap 1, 2026-05-30)
+
+**Quando bugfix subtype se aplica**
+
+Bugfix existe pra um caso preciso: um único bug, root-causable, fix-shaped.
+Critérios de detecção:
+
+- Reprodução concreta (steps OU vídeo OU log) — não "tem algo estranho"
+- Comportamento esperado é articulável — "deveria mostrar X, mostra Y"
+- Fix se encaixa em um atomic commit OU 1-2 tasks correlatas
+- Frequentemente trackeado em ticket de produção (IN-NNNNN, PD-NNNN,
+  BACKEND-NNNN style)
+
+**Não é bugfix:**
+
+- "Feature pequena" (1-2 tasks) que adiciona comportamento novo →
+  product (naturally small). Não há mecanismo especial pra A2 (small
+  feature); a plan IS small porque a feature IS small.
+- "Bug" sem reprodução e sem comportamento esperado claro → ainda não
+  é um bugfix; é uma investigação. Conductor drilla pra concretizar OU
+  rota como product (com pesquisa) OU como spike (quando v1.1+ chegar).
+- Refactor que descobriu bug embutido → escalate para conductor
+  reavaliar subtype; pode virar bugfix OU product dependendo da
+  profundidade.
+
+**Distinção formal de refactor:**
+
+| Eixo | Refactor | Bugfix |
+|---|---|---|
+| Mudança de comportamento | Proibida por design | **Inerente** — de quebrado para correto |
+| Wave B | Skipped sempre | **Conditional** (UI/behavioral → run; logic-only → skip) |
+| Tests existentes | Não toca (gate `check_no_behavior_change`) | **Pode tocar** — testes provam que o bug existia + agora não existe |
+| Atestation block | "No-behavior-change" no intake | "Reproduction steps" + "Expected vs actual" no intake |
+| Retrospective | Surface de promoção de helpers | **5-whys obrigatório** — root cause depth, não fix shape |
+
+**Wave A — `feature-intake.md` (bugfix variant)**
+
+O intake usa `templates/feature-intake-bugfix.template.md` com seções
+específicas pra bug:
+
+- §Problem statement (1 parágrafo — o que está quebrado)
+- §Reproduction steps (numerados, MANDATORY — sem repro o bug não é
+  planável)
+- §Expected vs actual behavior (lado a lado)
+- §Root-cause hypothesis (com confidence; "unknown" é válido mas trigga
+  drill-down do conductor antes da Wave B)
+- §Fix scope (estimativa de arquivos afetados)
+- §Regression risk (o que pode quebrar se o fix introduzir efeito
+  colateral)
+- §Validation strategy (como saber que o bug realmente sumiu — repro
+  passa pra "comportamento esperado" + testes regressão)
+- §Links (ticket id, related commits, affected versions)
+
+Diferente de product: sem "user value paragraph", sem "scope OUT"
+(bugfix é fix de bug, escopo é o próprio bug), sem "why now" (porque
+está quebrado).
+
+**Wave B — conditional**
+
+Conductor pergunta UMA vez em Cena 2.5 (após confirmação do subtype):
+
+> "Esse bug envolve mudança de UI ou de comportamento observável?
+>  (sim → Wave B roda; não → logic-only, Wave B skipada)"
+
+Critérios pra "sim":
+
+- Bug visual (layout quebrado, copy errada, estado UI travado)
+- Bug de navegação (rota quebrada, back-stack errado)
+- Bug de comportamento user-facing (validação faltando, mensagem de
+  erro errada, fluxo interrompido)
+- Novo evento de analytics seria útil pra detecção (raro, mas válido)
+
+Critérios pra "não":
+
+- Bug puramente de lógica (cálculo errado, condição invertida, off-by-one)
+- Bug de dados (mapping errado, schema parse falho, timezone)
+- Bug de concorrência (race, deadlock, retry storm)
+- Bug de infraestrutura (config, build, deploy)
+
+**Decisão clave:** se "sim", a Wave B completa roda. Não tem variante
+"meia Wave B". O bug touched contract → todo o contrato precisa estar
+respeitado pelo fix. Mentor calmo: "se touching UI, vou querer todos os
+estados modelados — caso contrário, fix vai introduzir regressão num
+estado que ninguém pensou."
+
+**Wave C — `tech-spec.md` (bugfix variant)**
+
+Renderiza:
+
+- §1 Feature summary — pulled do intake §Problem + §Reproduction
+- §2 Architecture overview — só o **antes** (estado atual com bug) +
+  **depois** (estado corrigido); paralelo a refactor mas com foco no
+  ponto exato da mudança
+- §§ 3-7 — só as layers tocadas pelo fix (igual a refactor)
+- §13 Risks & open questions — **expandido** com "Regression risks"
+  vindos do intake §Regression risk
+- §14 Cross-feature reusability — preservado (bugfix pode surfacing
+  refactor candidates)
+- §§ 8-12 — **omitidas por default**. Bugfix raramente introduz nova
+  state machine, novo side effect, novo observability. Exceção: §11
+  Observability **renderiza quando o fix introduz analytics novo** (raro
+  mas válido — "vou logar quando esse bug acontecer pra detectar
+  regressão futura").
+
+**Wave D — `task-breakdown.yaml` + `tasks/TASK-NNNN.yaml`**
+
+Default: **1 task**. Bug → 1 fix → 1 atomic commit é o shape natural.
+Conductor pode propor split quando:
+
+- Fix toca shared + Android + iOS (3 plataformas → 3 tasks paralelas)
+- Fix tem step preparatório (refactor pré-fix) + step de fix em si
+- Dev pede split explicitamente
+
+Cada task contract:
+- `allowed_files` preciso
+- `validations: [check_files_in_allowed_files, validate_task_contract]`
+  (cascade padrão; `check_no_behavior_change` NÃO se aplica)
+- Reference ao bug ticket no `metadata.bug_ticket` se existir
+
+**Wave E — `readiness-reviewer`**
+
+Readiness relaxada quando Wave B foi skipada:
+
+- Não pede screen-analysis presente (skipada por design)
+- Não pede contracts presentes (skipada por design)
+- Pede: intake completo com §Reproduction + §Expected vs actual +
+  §Validation strategy
+- Pede: tech-spec mínimo (§1 + §2 + ≥1 layer + §13)
+- Pede: task-contract com allowed_files
+
+Verdict `ready` quando todas as checks acima passam. `partial` quando
+§Root-cause é unknown — bug pode entrar implement mas a hipótese de
+causa fica como open-question pra resolver durante o fix.
+
+**Phase 6 retrospective — 5-whys (Gap 1 mandatory)**
+
+Bugfix retrospective tem maior valor de aprendizado de todos os subtipos:
+o bug existiu, o fix foi escrito, agora a pergunta é "o que **impediria**
+esse bug de ter existido?". Retrospective-agent (Phase 6 do conductor)
+emite proposed-evolutions baseado no 5-whys:
+
+```
+1. Why did this bug occur?
+   → {root cause direta — do intake §Root-cause hypothesis confirmed}
+
+2. Why did the root cause happen?
+   → {causa estrutural — faltou validação? typing? teste?}
+
+3. Why did that structural cause exist?
+   → {causa processual — review pulou esse caso? convenção não cobria?}
+
+4. Why is the process gap there?
+   → {causa cultural — pressão de release? documentação missing?}
+
+5. Why is THAT the culture/cause?
+   → {causa fundadora — opcional; pode chegar em "trade-off válido"}
+```
+
+Output esperado:
+- ≥1 proposta concreta pra L2 (pattern, rule, validator novo)
+- 0 propostas vazias ("seja mais cuidadoso" não é uma proposta)
+
+Diferente de refactor retrospective (que surface CFR candidates) e
+product retrospective (que surface naming patterns / arquitetural
+patterns), bugfix retrospective surface **gates** — "o que poderia ter
+pegado isso antes?"
+
+### Filesystem layout
+
+`docs/feature-implementation-workflow/non-product/{slug}/` paralelo a
+`features/{slug}/`. Mesmo `.claude/memory/L1/{slug}/` para `L1`. Sub-tree
+de status, history, dispatch-log, verify-log idênticos. Bugfix usa o
+mesmo `non-product/{slug}/` que refactor — decisão deliberada: bugfix
+também é "não é nova product behavior", é "restaurar product behavior
+correto", então pertence ao mesmo guarda-chuva non-product.
+
+### Spike e chore em v1.0 — stub via 3-caminhos
+
+Quando Cena 2.5 detecta keywords de spike (`POC`, `viabilidade`, `spike`,
+`exploração`) ou chore (`bump`, `atualizar dependência`, `cleanup`,
+`limpeza`), conductor confirma o subtype e em seguida emite:
+
+```
+🛑 Subtype '{subtype}' ainda não tem implementação completa em v1.0.
+
+   v1.0 ship `refactor` por completo. `spike` e `chore` estão
+   programados pra v1.1+ — sem improviso aqui.
+
+   Três caminhos:
+
+     1) Tratar como feature padrão (subtype=product)
+        Você terá Waves B/C completas — sub-agentes vão pedir
+        contexto que pode parecer artificial pro caso. Faz sentido
+        quando o spike/chore tem dimensão de comportamento real
+        (ex.: chore com flag rollout).
+
+     2) Esperar v1.1+
+        Pause aqui. Eu marco status como deferred e quando
+        v1.1+ chegar o subtype completo, retomamos.
+
+     3) Abortar
+        Sai do forge plan, faz o trabalho fora do pipeline. Não
+        viola disciplina; só não fica trackeado.
+
+   Voz humana decide.
+```
+
+Spike+chore stub é um dos itens da lista de **residuais TODO** que
+04-pending.md documenta no fechamento da Gap 2 — não vão silentes pra
+backlog, são explicitamente parte do roadmap v1.1+.
+
+### Subtype detection (resumida — completa em forge-plan-roteiro.md §Cena 2.5)
+
+Cena 2 source-inquiry parseia keywords da resposta livre do usuário:
+
+| Keyword/padrão | Subtype provável |
+|---|---|
+| `mover X de Y`, `renomear`, `extrair`, `refactor`, `reorganizar`, `sem mudança visual`, `comportamento inalterado` | refactor |
+| `bugfix`, `hotfix`, `P0`, `P1`, `crítico`, `crítica`, `bug `, `fix `, `falha`, `quebrado`, `não funciona`, `regression`, ticket pattern (`IN-NNNNN`, `PD-NNNN`, `BACKEND-NNNN`) | bugfix |
+| `spike`, `POC`, `viabilidade`, `prototipar`, `investigar se`, `exploração` | spike |
+| `bump`, `atualizar dependência`, `update {dep}`, `cleanup`, `limpeza`, `chore` | chore |
+| (nada match) | product (default) |
+
+Ticket pattern é alto-confiança: regex `[A-Z]{2,6}-\d{2,6}` na entrada
+livre frequentemente indica bug rastreado em sistema externo. Conductor
+ainda confirma — mas o default da pergunta vira "isso parece bugfix"
+em vez de "isso parece product".
+
+Detection é **inference, não imposição**: conductor confirma com pergunta
+de uma linha ("isso parece refactor — confirma?") e aceita user override
+("não, é product"). Cena 2.5 mostra o flow completo com voz mentor-calmo.
+
+### O que esta discipline NÃO faz
+
+- Não invalida nenhuma das 27 decisões locked.
+- Não introduz comando novo (`forge refactor` não existe — `forge plan`
+  com subtype detectado em Cena 2.5).
+- Não adiciona flag (`--subtype=refactor` não existe — conversational).
+- Não cria estado novo de feature (subtype é dimensão ortogonal ao state
+  enum existente).
+- Não obriga refactor a virar product — usuário sempre pode dizer "não,
+  é product" e Wave B roda normalmente.
+
+### Referenced from
+
+Non-product feature track — Referenced from:
+`docs/schemas/memory.md §status.json subtype field` ·
+`docs/design/05-filesystem-layout.md §non-product/{slug}/` ·
+`agents/planning-conductor.md §Phase 1 + §Phase 4 wave dispatch branching + §Phase 6 5-whys retrospective` ·
+`agents/tech-spec-agent.md §Document structure conditional render` ·
+`docs/ux/forge-plan-roteiro.md §Cena 2.5 Subtype detection` ·
+`engine/plan.py _initialize_status + _dispatch_waves_for_subtype` ·
+`validators/check_no_behavior_change.py` ·
+`templates/feature-intake-refactor.template.md` ·
+`templates/feature-intake-bugfix.template.md`.
+
+---
+
+## 9. External dependencies (`blocked-on-external`)
+
+Mobile features routinely depend on work outside the repository: a backend
+endpoint behind another team, a legal copy review, a Figma asset still in
+revision. Stress test 2026-05-30 (cenário B3) confirmed forge had no
+first-class way to model this. Feature would sit in `state: implementing`
+with `current-task: null`, dev would open `forge implement`, pick a task,
+hit the dependency, lose time discovering it.
+
+The remediation is a **new feature lifecycle state** plus a **per-task
+declaration** of external dependencies — both file-driven, both
+recomputable from disk, both auditable.
+
+`blocked-on-external` is the engine-driven sibling of `deferred`
+(human-driven pause from §7). The two are **deliberately separate**: a
+human pause uses one exit path (resume by re-running the command); an
+external dependency uses a different exit path (mark the ticket as
+resolved interactively via `forge reconfigure`). Conflating them would
+make resume ambiguous.
+
+### When the gate triggers
+
+`engine/implement.py` refuses to start a task that has at least one
+`depends-on-external` entry with `blocking: true` and `resolved-at: null`.
+On the first refusal of a session, it also flips the feature-level state
+in `status.json` from `implementing` (or `planning`) → `blocked-on-external`,
+so `forge status` and downstream commands see the same signal.
+
+### When the gate releases
+
+The user runs `forge reconfigure` and picks "marcar dep externa como
+resolvida". The interactive prompt asks for the ticket id, locates every
+`depends-on-external` entry referencing that ticket across all task
+contracts in the feature, fills `resolved-at` with the current UTC
+timestamp, and re-evaluates the feature state. When zero blocking deps
+remain unresolved, the feature flips back to its previous lifecycle state
+(`implementing` if at least one task was in-flight, otherwise `planning`).
+
+### Why manual unblock (v1.0)
+
+MCP polling — Jira webhook → `forge ingest --event
+external-dep-resolved` → auto-flip — is the obvious v1.1+ extension. It
+is **out of scope for v1.0** for two reasons:
+
+1. **Trust gate.** Marking a ticket resolved is a state mutation that
+   downstream commands trust. A misfired webhook (Jira ticket reopened,
+   integration desync) would lie to `forge implement` about safety to
+   proceed. Manual confirmation via `forge reconfigure` keeps the
+   human in the loop on every mutation (00-vision §"The user decides").
+2. **Surface stability.** v1.0 already has 12 commands + 1 hidden
+   ingest entrypoint. Adding `--event external-dep-resolved` to the
+   ingest routing table requires designing failure modes (auth, retry,
+   idempotency) that aren't load-bearing for the v1.0 ship. Better to
+   ship the schema + manual flow first, then layer the polling on
+   top once the manual flow is validated.
+
+The stub surface is documented in `docs/lifecycle/memory-and-graph.md`
+under "Out of scope for v1" so the v1.1+ path is explicit.
+
+### Three-caminhos at the gate
+
+When `forge implement` refuses, the user sees the canonical block from §1:
+
+```
+🛑 Task bloqueada por dependência externa
+
+O que falhou:
+  TASK-{NNNN} depende de {ticket} ({integration}) — ainda não resolvido.
+
+Onde:
+  tasks/TASK-{NNNN}.yaml.depends_on_external[0]
+
+Por que importa:
+  · Hard-gate readiness-must-be-ready exige dependências resolvidas
+  · execution-conductor recusa começar com `resolved-at: null`
+  · Continuar sem isso vira invented behavior contra um endpoint que
+    ainda não existe — bug latente
+
+Três caminhos pra resolver:
+
+  1) Marcar dependência como resolvida agora
+     forge reconfigure → "marcar dep externa como resolvida"
+     (use quando o ticket externo já fechou e você sabe disso)
+
+  2) Pegar outra task que não dependa de {ticket}
+     forge implement {slug} pula a bloqueada e pega a próxima
+     livre — útil quando há tasks paralelas na breakdown
+
+  3) Pausar a feature inteira
+     deferred — você volta quando o ticket fechar; status fica
+     auditável em forge status
+
+Sem auto-fix aqui — escolha humana.
+```
+
+Path A flips a single ticket. Path B reroute around the block. Path C
+escalates to a longer pause. Three honest exits.
+
+### Subtype interaction (§8) — no conflict
+
+`subtype` (what kind of feature: product / refactor / spike / chore) and
+`state` (where in lifecycle, including `blocked-on-external`) are
+**orthogonal dimensions**. Both live in status.json. A refactor feature
+can wait on an external linter rule upgrade ticket — refactor +
+blocked-on-external. The `check_no_behavior_change` gate runs only when
+subtype=refactor; the external-dep gate runs regardless of subtype.
+
+### Pause-vs-abort interaction (§7) — preserved
+
+`blocked-on-external` does NOT replace `deferred` / `aborted`. The user
+can still type `para` (→ `deferred`) or `forge undo` → "abort feature
+entirely" (→ `aborted`) on a blocked feature. The blocked state is what
+the engine sets autonomously; pause/abort remains the explicit human
+override.
+
+### `forge status` board
+
+`forge status` separates **In-flight** (planning/implementing without
+external blocks), **Blocked** (state=blocked-on-external), **Deferred**
+(state=deferred), **Done** (state=done). The Blocked section lists each
+ticket and integration alongside the feature slug so the user knows what
+to chase externally:
+
+```
+blocked on external
+  · lembrete-rega         BACKEND-1284 (jira)
+                          desde 2026-05-30 · 1 task bloqueada
+  · bonsai-detail-share   DESIGN-44 (manual)
+                          desde 2026-05-29 · 2 tasks bloqueadas
+```
+
+### Partial-ready (readiness-reviewer extension)
+
+When some tasks in a feature have external blocks but the non-blocked
+subset has its own valid coverage (every Wave A-D artifact present, all
+contracts pass, BDD scenarios trace forward for the non-blocked tasks),
+the readiness-reviewer emits **`ready-with-blocks`** — a new partial
+verdict distinguishing "subset is shippable now" from the legacy
+"partial" (which meant "phase-locked open questions"). Treatment:
+
+| Verdict | Meaning | `forge implement` behavior |
+|---|---|---|
+| `ready` | All tasks ready, zero blockers | Picks next task normally |
+| `ready-with-blocks` | Non-blocked subset complete; ≥1 task blocked on external | Picks next non-blocked task; refuses blocked ones with 3-caminhos |
+| `partial` | Phase-locked open questions remain | Same as today — conductor flags |
+| `blocked` | Required artifact missing OR validator fail OR blocking OQ | Refuse implement |
+
+`ready-with-blocks` is **opt-in via task-contract declaration** — it
+never triggers without an explicit `depends-on-external` entry. Forge
+does not infer external blockers from natural language.
+
+### What's NOT in v1.0
+
+- ❌ Auto-promote `ready-with-blocks` → `ready` when external deps
+  resolve. User confirms manually via `forge reconfigure`.
+- ❌ MCP polling for ticket state. Stubbed under
+  `docs/lifecycle/memory-and-graph.md §Out of scope for v1`.
+- ❌ `forge implement --force` bypass. Decision 10 (zero flags).
+- ❌ Per-ticket TTL or auto-stale warnings. v1.1+ when there's data
+  to know what "stale" means in practice.
+
+### Referenced from
+
+External dependencies — Referenced from:
+`docs/schemas/memory.md §state.blocked-on-external` ·
+`templates/task-contract.template.yaml §depends_on_external` ·
+`agents/planning-conductor.md §Phase 2 external-dep elicitation` ·
+`agents/task-contract-writer.md §depends_on_external rendering` ·
+`agents/readiness-reviewer.md §ready-with-blocks verdict` ·
+`docs/ux/forge-plan-roteiro.md §Cena external-dep detection` ·
+`docs/ux/forge-implement-roteiro.md §blocked task refusal` ·
+`docs/ux/forge-reconfigure-roteiro.md §marcar dep externa como resolvida` ·
+`engine/memory/l1.py is_blocked + blocking_deps` ·
+`engine/implement.py blocked refusal` ·
+`engine/status.py blocked section` ·
+`engine/reconfigure.py mark-external-dep-resolved menu` ·
+`validators/validate_task_contract.py depends_on_external schema`.
+
+---
+
 ## Cheat-sheet operacional
 
 Quando você (agente, humano, future-self) estiver escrevendo roteiro novo
-ou agent-prompt e bater num dos seis pontos:
+ou agent-prompt e bater num dos sete pontos:
 
 | Situação | Discipline section |
 |---|---|
@@ -621,6 +1183,8 @@ ou agent-prompt e bater num dos seis pontos:
 | "Posso aplicar tudo de uma vez?" | §5 — single-by-single |
 | "L2 está cheia, e agora?" | §6 — pause + notify |
 | "Ctrl+C aqui faz o quê?" | §7 — pause = default, abort = explicit |
+| "Esta feature é refactor/spike/chore?" | §8 — non-product feature track |
+| "Esperando endpoint do backend — pode rodar a task?" | §9 — external dependencies |
 
 Quando o que você quer escrever contradiz alguma disciplina, **pare** e
 abra issue. Mentor calmo é firme nas bordas — disciplina universal é

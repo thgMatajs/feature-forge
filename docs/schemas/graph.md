@@ -382,6 +382,45 @@ WHERE f.language IN ('kotlin', 'swift')
 
 CLI form: named query `untested-files` (no prompt)
 
+### Q11 — Reusable helpers (existing utilities / extensions relevant to a feature)
+
+Returns candidate helpers (functions, including extensions) already present
+in the codebase whose signature references entity types from the feature's
+data contract OR live in shared utility paths (`shared/core/util/`,
+`shared/core/extensions/`, `shared/feature/*/util/`). Result feeds
+`tech-spec-agent` §14 reuse-existing detection — closes the gap where new
+features inadvertently propose helpers that already exist.
+
+```sql
+-- Inputs: list of domain entity types from data-contract-spec.yaml
+-- (e.g., ['Bonsai', 'Task', 'Reminder']) bound as :entity_n placeholders.
+SELECT s.name, s.signature, s.visibility, f.path, f.module
+FROM symbols s
+JOIN files f ON s.file_id = f.id
+WHERE s.kind = 'fun'
+  AND s.visibility IN ('public', 'internal')
+  AND f.module = 'shared'
+  AND (
+    -- Match A: signature references a domain entity type
+    s.signature LIKE '%' || :entity_1 || '%'
+    OR s.signature LIKE '%' || :entity_2 || '%'
+    -- ...
+    -- Match B: general-purpose helper in a shared utility path
+    OR f.path LIKE '%/util/%'
+    OR f.path LIKE '%/extensions/%'
+    OR f.path LIKE '%/core/%'
+  )
+ORDER BY f.module, f.path, s.line_start;
+```
+
+CLI form: named query `reusable-helpers` (interactive prompt for comma-
+separated entity types, e.g., `Bonsai, Task`)
+
+Used by `planning-conductor` Phase 4.5 (between Wave B and Wave C). Result
+is persisted to `.claude/memory/L1/{slug}/existing-helpers.yaml` so the
+tech-spec-agent receives it in the context pack — preserves the
+deterministic-context discipline (agent never queries the graph live).
+
 ## Incremental update protocol
 
 Pseudocode for `engine/graph/incremental.py`:
@@ -484,3 +523,138 @@ Run via `forge doctor` and dedicated graph checks.
 - `inventory/design-system.yaml` — source of truth for `ds_components` data
 - `inventory/i18n.yaml` — source of truth for `i18n_keys` data
 - Memory L1 / L2 — references graph queries to ground decisions
+
+---
+
+## Reuse Intelligence (schema v2)
+
+Shipped as part of `feat/reuse-intelligence-complete`. Adds detection of
+duplicated code (within-module, cross-module, cross-language, near-duplicate,
+redundant platform-specific) at `forge init` and on graph rebuild.
+
+### New columns
+
+**`files`**
+- `source_set TEXT` — KMP source-set name (`commonMain`, `androidMain`,
+  `iosMain`, …) or NULL for non-KMP projects.
+
+**`symbols`**
+- `receiver_type TEXT` — receiver of an extension function. Non-NULL only for
+  `fun ReceiverType.name(...)` (Kotlin) and `extension Type { func name }`
+  (Swift).
+- `body_hash TEXT` — SHA-1[:16] of the normalized function body. NULL when
+  the parser couldn't close the brace counter.
+- `body_tokens TEXT` — JSON array of normalized identifiers / literals for
+  cross-language Jaccard similarity.
+- `modifiers TEXT` — space-separated function modifiers (`inline`, `suspend`,
+  `infix`, …).
+
+### New tables
+
+**`module_deps`** — Gradle dependency edges parsed from each module's
+`build.gradle(.kts)`:
+
+```sql
+CREATE TABLE module_deps (
+  from_module TEXT NOT NULL,
+  to_module   TEXT NOT NULL,
+  scope       TEXT,
+  PRIMARY KEY (from_module, to_module, scope)
+);
+```
+
+**`reuse_findings`** — materialized output of the detection post-passes:
+
+```sql
+CREATE TABLE reuse_findings (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  category            TEXT NOT NULL,           -- 6 categories below
+  group_id            TEXT NOT NULL UNIQUE,    -- SHA-256 fingerprint
+  symbol_name         TEXT NOT NULL,
+  receiver_type       TEXT,
+  canonical_signature TEXT,
+  body_hash           TEXT,
+  primary_language    TEXT NOT NULL,
+  modifiers           TEXT,
+  suggested_target    TEXT,
+  confidence          REAL NOT NULL,
+  similarity_score    REAL,                    -- kmp-migration-candidate only
+  detected_at         TEXT NOT NULL
+);
+```
+
+`category` enum:
+- `duplicate-within-module` (conf 0.95)
+- `duplicate-cross-module` (conf 0.85)
+- `redundant-platform-specific` (conf 0.90)
+- `near-duplicate` (conf 0.40 — manual review)
+- `kmp-migration-candidate` (conf 0.50–0.75 scaled by similarity)
+- `duplicate-ts-helper` (conf 0.95)
+
+`group_id` is a 64-char SHA-256 fingerprint compatible with the distiller's
+rejection veto. Stable across rebuilds.
+
+**`reuse_finding_locations`** — one row per (finding, file) pair:
+
+```sql
+CREATE TABLE reuse_finding_locations (
+  finding_id  INTEGER NOT NULL REFERENCES reuse_findings(id) ON DELETE CASCADE,
+  file_id     INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+  module      TEXT NOT NULL,
+  source_set  TEXT,
+  line_start  INTEGER NOT NULL,
+  language    TEXT NOT NULL,
+  body_hash   TEXT
+);
+```
+
+### Canonical queries Q12–Q17
+
+| Q   | Function                            | Category                       |
+|-----|-------------------------------------|--------------------------------|
+| Q12 | `find_duplicates_within_module`     | `duplicate-within-module`      |
+| Q13 | `find_duplicates_cross_module`      | `duplicate-cross-module`       |
+| Q14 | `find_kmp_migration_candidates`     | `kmp-migration-candidate`      |
+| Q15 | `find_near_duplicates`              | `near-duplicate`               |
+| Q16 | `find_redundant_platform_specific`  | `redundant-platform-specific`  |
+| Q17 | `find_duplicate_ts_helpers`         | `duplicate-ts-helper`          |
+
+Plus `list_reuse_findings(category=None)` reads the materialized table.
+
+### Signature normalization
+
+Canonical form: `[Receiver.]fun([type1, type2, ...]): return_type` (Kotlin)
+or `[Receiver.]func([type1, type2, ...]) [effects] -> return_type` (Swift).
+Parameter names dropped; types preserved; generic bounds simplified
+(`<T : Any, U>` → `<T, U>`); modifiers tracked in `symbols.modifiers`.
+
+### Body normalization
+
+Line + block comments stripped; whitespace collapsed; identifiers / operators
+/ literals preserved verbatim. Hash = first 16 hex chars of `sha1(normalized)`.
+
+### Cross-language similarity (Q14)
+
+Body tokens are identifiers + numeric / string literals, lowercased and
+filtered against a per-language noise list (`val`/`fun` for Kotlin,
+`let`/`func` for Swift, `let`/`function` for TS). Jaccard similarity gates:
+
+- ≥ 0.80 → confidence 0.75
+- 0.60–0.80 → 0.60
+- 0.40–0.60 → 0.50
+- < 0.40 → dropped
+
+### Module + source-set inference
+
+`engine/graph/gradle_modules.py` parses `settings.gradle(.kts)` for
+`include(":...")` declarations and maps file paths to Gradle modules via
+**longest-prefix match**. Falls back to first path segment for mono-module
+projects. Source-set detected from path against the curated KMP set
+(`commonMain`, `androidMain`, `iosMain`, …).
+
+### Q11 backward compatibility
+
+`find_reusable_helpers` previously filtered `f.module = 'shared'`. With
+multi-module shared (`shared:core`, `shared:feature:auth`, ...) the filter
+became `f.module = 'shared' OR f.module LIKE 'shared:%'`. Single-module
+projects keep working.

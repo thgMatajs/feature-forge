@@ -292,6 +292,7 @@ decisions:
   "state": "planning",
   "state-since": "2026-05-28T14:23:11Z",
   "sub-state": null,
+  "subtype": "product",
   "last-action": "elicitation-completed",
   "last-action-at": "2026-05-28T14:30:00Z",
   "current-task": null,
@@ -308,12 +309,76 @@ decisions:
 | Field | Purpose | Allowed values | Who sets it | Who reads it |
 |---|---|---|---|---|
 | `sub-state` | Disambiguates the phase a feature is in while `state == implementing`. Without this, the execution-conductor cannot resume cleanly mid-task. | `"plan-mode"` (writing Plan Mode plan), `"apply-mode"` (executing the plan), `"fix-loop"` (post-review iteration), or `null` when `state != implementing`. | execution-conductor on every Plan/Apply transition; `forge implement` resume logic. | `forge status` (shows alongside state); `forge implement` to pick correct resume point; `forge verify` to refuse if fix-loop is mid-flight. |
+| `subtype` | Classifies the feature track for wave dispatch — see `docs/design/07-discipline.md §8`. Default `"product"` preserves the legacy pipeline (Waves A–E); `"refactor"` skips Wave B + §11 of tech-spec and requires `check_no_behavior_change` in Wave E; `"bugfix"` runs a compact intake with Wave B **conditional** (UI/behavioral bug → run; logic-only → skip) and a focused tech-spec; `"spike"` and `"chore"` are stubs in v1.0 (conductor surfaces 3-caminhos when chosen). | `"product"` \| `"refactor"` \| `"bugfix"` \| `"spike"` \| `"chore"`. Defaults `"product"` when field absent (forward compat for status.json written by pre-Gap-2 engines). | planning-conductor on Cena 2.5 subtype detection (or on resume from `hypothesis.yaml.subtype`); `engine.plan._initialize_status`. | planning-conductor (wave dispatch branching); tech-spec-agent (conditional section render); `forge status` (badge); `check_no_behavior_change` validator (gates only when `subtype == "refactor"`). |
 | `verify-degraded` | Last `forge verify` passed but emitted warnings (e.g., observability contract grew an entry but didn't break). Distinguishes "all green" from "green with caveats" for downstream commands. | `true` \| `false`. Defaults `false`. | `forge verify` sets at the end of a verify run. | `forge status` (badge in board); `forge implement` (refuses to advance if the previous task ended degraded and the user hasn't acknowledged). |
 | `graph-stale` | Indicates the graph DB needs rebuild before the next verify can trust queries. Set when paths or DS components mutate without an incremental graph update (rare — usually after a recovery from a corrupted graph). | `true` \| `false`. Defaults `false`. | `forge reconfigure` (sets true if config mutation invalidates graph rows); recovery scripts. | `forge verify` (refuses to run, asks user to pick "rebuild do graph" no menu de `forge reconfigure`); `forge doctor` (warns). |
 
-All three fields are **additive**: missing the field in a file written by an
-older engine is treated as `null` / `false` for forward compatibility. No
-migration required.
+All four fields are **additive**: missing the field in a file written by an
+older engine is treated as `null` / `false` / `"product"` for forward
+compatibility. No migration required.
+
+##### `blocked-on-external` state semantics (discipline §9)
+
+The `state` enum gains a new value `"blocked-on-external"` — orthogonal to
+`subtype` (what the feature is) and a sibling of `deferred` (which is a
+human-driven pause). `blocked-on-external` is engine-driven: it triggers
+when any task in the feature declares an unresolved
+`depends-on-external` entry with `blocking: true` (see
+`docs/schemas/task-contract.md §depends-on-external`).
+
+Transitions:
+
+```
+implementing ──┬─→ blocked-on-external   (first unresolved blocking dep detected)
+               │
+               └─← blocked-on-external   (all blocking deps marked resolved via
+                                          `forge reconfigure` → "marcar dep
+                                          externa como resolvida")
+```
+
+Read semantics:
+
+- `forge status` renders blocked features in their own section (not in
+  "in-flight", not in "deferred" — a third group).
+- `forge implement` refuses to start a task that itself has unresolved
+  blocking deps, surfacing the canonical 3-caminhos block.
+- `forge plan` accepts an explicit `depends-on-external` entry from the
+  user during Phase 2 elicitation (planning-conductor) and persists it
+  into the task-contract for tasks that need it.
+
+Write semantics:
+
+- Only `engine.implement` and `engine.reconfigure` toggle this state.
+  `forge plan` never writes `blocked-on-external` directly; it writes the
+  field to the task-contract and lets `engine.implement` infer the
+  feature-level state on first refusal.
+- Going back to `implementing` happens via `forge reconfigure` menu when
+  the user marks a ticket id as resolved. The engine re-scans
+  task-contracts for remaining blocking deps; if none, it flips state back.
+- `forge undo` can revert a "mark resolved" mutation by reading the
+  audit trail in `history.jsonl` (`kind: "external-dep-marked-resolved"`).
+
+The state is **additive**: status.json files written by pre-Gap-8 engines
+never carry `blocked-on-external` and parse without modification.
+`MEM-L1-008` accepts the new value as part of the enum.
+
+##### `subtype` semantics by value
+
+| Value | Waves that run | Artifacts emitted | Validators gated on Wave E |
+|---|---|---|---|
+| `product` (default) | A · B · C · D · E | Full 16-artifact package | `validate_feature_package`, `validate_readiness`, plus standard cascade |
+| `refactor` | A · C · D · E (Wave B **skipped**) | `feature-intake.md` (refactor variant) · `tech-spec.md` (§§ 2, 3-7 modified-layers, 14 only) · `task-breakdown.yaml` · `tasks/TASK-NNNN.yaml` · `implementation-readiness-review.md` · `plan-feature-handoff.json`. No `screen-analysis.md`, `bdd.*`, `ui-state-spec.yaml`, `navigation-spec.yaml`, `data-contract-spec.yaml`, `analytics-spec.yaml`, `test-strategy.yaml` | Standard cascade **plus** `check_no_behavior_change` |
+| `bugfix` | A · (B conditional) · C · D · E. Conductor asks once whether the bug touches UI/observable behavior — when "yes", the full Wave B runs (the fix must respect contracts); when "no" (logic-only / data-only), Wave B is skipped exactly like `refactor`. Wave D defaults to 1 task; dev can split. Wave E readiness relaxed when Wave B was skipped (`check_no_behavior_change` does **not** apply — bugfix changes behavior by definition: from broken to correct). | `feature-intake.md` (bugfix variant) · `tech-spec.md` (§§ 1 · 2 · 3-7 touched-layers · 13 · 14; §11 only when new analytics added) · Wave B artifacts iff UI/behavioral · `task-breakdown.yaml` · `tasks/TASK-NNNN.yaml` · `implementation-readiness-review.md` · `plan-feature-handoff.json` | Standard cascade (no extra gate; the fix legitimately changes behavior) |
+| `spike` | Stub in v1.0 — conductor surfaces 3-caminhos and asks user how to proceed | n/a (stub) | n/a (stub) |
+| `chore` | Stub in v1.0 — conductor surfaces 3-caminhos and asks user how to proceed | n/a (stub) | n/a (stub) |
+
+When `subtype != "product"`, feature artifacts live under
+`docs/feature-implementation-workflow/non-product/{slug}/` instead of
+`features/{slug}/` — see `docs/design/05-filesystem-layout.md`. This
+applies to `refactor`, `bugfix`, and the (stubbed) `spike`/`chore` —
+all share the non-product subtree so the product feature folder stays
+clean of "restore correct behavior" / "architecture-only" / "explore"
+work that has different shapes.
 
 `state` enum:
 
@@ -325,6 +390,7 @@ migration required.
 | `done` | Feature shipped; L1 will be archived to `summary.yaml` |
 | `aborted` | `forge plan/implement` aborted; `abort-reason` populated |
 | `paused` | User stopped mid-flow; safe to resume |
+| `blocked-on-external` | An unresolved external dependency (`depends-on-external.blocking: true` in a task-contract) prevents the next task from starting. Engine-driven, sibling of `deferred` (which is human-driven). See `docs/design/07-discipline.md §9`. |
 
 `status.json` is the canonical lock signal: other commands read `state` to
 detect whether a feature is currently active (see "L1 as a lock mechanism"
@@ -348,11 +414,19 @@ MEM-L1-005  rationale-trace decisions must reference real artifact files
 MEM-L1-006  dispatch-log + history must be valid JSONL
 MEM-L1-007  elicitation.remaining-ambiguity == 0 required for readiness=ready
 MEM-L1-008  status.json must exist and:
-              · state must be in {planning, implementing, verifying, done, aborted, paused}
+              · state must be in {planning, implementing, verifying, done,
+                aborted, paused, blocked-on-external}
               · sub-state must be in {null, "plan-mode", "apply-mode", "fix-loop"};
                 must be non-null IFF state == "implementing"
+              · subtype must be in {"product", "refactor", "bugfix", "spike", "chore"}
+                (default "product" when absent — forward compat for pre-Gap-2
+                files; "bugfix" added Gap 1)
               · verify-degraded must be a boolean (default false if absent)
               · graph-stale must be a boolean (default false if absent)
+              · when state == "blocked-on-external", at least one task in
+                tasks/TASK-*.yaml must declare `depends-on-external` with
+                `blocking: true` and `resolved-at: null` (discipline §9 —
+                external dependencies)
 ```
 
 ---
@@ -395,6 +469,13 @@ Terminal/safe states (`done`, `aborted`, `paused`) do NOT lock. `paused` is
 the user-driven safe state designed exactly for this: it lets a developer
 pause mid-feature to run `forge reconfigure` (which is where card add/remove/
 upgrade live as menu options) between sessions without losing progress.
+
+`blocked-on-external` is **also safe** for shared-state mutation: the
+feature is paused by an engine-driven gate, no sub-agent is mutating
+artifacts, and `forge reconfigure` is explicitly the entrypoint where
+the user marks the external ticket as resolved (sub-menu "marcar dep
+externa como resolvida"). Treating it as a lock would deadlock the only
+exit path.
 
 There is no separate `forge pause` or `forge abort` command — pause is
 triggered by typing "para" inside an active forge command (handled by

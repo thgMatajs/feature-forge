@@ -51,6 +51,45 @@ depends_on: []                                      # ids TASK-NNNN que precisam
 blocks: []                                          # inverso
 conflicts_with: []                                  # tasks que mutam files overlapando — não rodar concorrente
 
+# ---- External dependencies (discipline §9 — Gap 8) -----------------------
+# Tasks que dependem de trabalho FORA do repositório (backend endpoint,
+# decisão jurídica, asset de design ainda não aprovado). Declarado pelo
+# planning-conductor durante Phase 2 elicitation quando o ticket/usuário
+# menciona dep externa concreta.
+#
+# Regras:
+#   1. CADA entry precisa de `ticket` E `integration`. Vague description
+#      ("backend não está pronto") sem ticket → conductor drill-down até
+#      identificar ticket id concreto, ou recusa registrar a dep.
+#   2. `blocking: true` (default) faz forge implement RECUSAR começar a task
+#      até `resolved-at` ser preenchido via `forge reconfigure` → menu
+#      "marcar dep externa como resolvida". `blocking: false` é informativo
+#      (task pode rodar, mas a dep fica visível em forge status).
+#   3. `resolved-at` é null por default. Preenchido apenas via
+#      `forge reconfigure` (interactive flow auditável) — NUNCA editar à
+#      mão. Edit manual passa MEM-L1-009 mas deixa history.jsonl
+#      inconsistente.
+#   4. Quando TODAS as entries blocking de TODAS as tasks da feature têm
+#      `resolved-at != null`, forge implement volta a aceitar a task; o
+#      feature-level state.json transiciona blocked-on-external → implementing.
+#   5. MCP polling pra auto-resolver é v1.1+ (out of scope v1.0). Marcação
+#      é manual via reconfigure no v1.0.
+depends_on_external: []
+# Exemplo:
+# depends_on_external:
+#   - ticket: "BACKEND-1284"
+#     integration: "jira"               # jira | linear | github-issues | manual
+#     description: "Endpoint POST /api/weather ainda não está em homolog"
+#     blocking: true
+#     declared-at: "2026-05-30T14:20:00Z"
+#     resolved-at: null                 # preenchido via `forge reconfigure`
+#   - ticket: "DESIGN-44"
+#     integration: "manual"
+#     description: "Aprovação do mockup do banner empty-state"
+#     blocking: false
+#     declared-at: "2026-05-30T14:25:00Z"
+#     resolved-at: null
+
 # ---- Scope ----------------------------------------------------------------
 # Inclusão E exclusão explícitas. scope_out é tão importante quanto scope_in
 # pra prevenir invented behavior em apply mode.

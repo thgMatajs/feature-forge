@@ -32,7 +32,7 @@ dedicated PR. Silent expansion is forbidden.
 | 5 | `forge status` | Read-only board: in-flight features, current task, last verify, pending evolutions, doctor freshness. |
 | 6 | `forge doctor` | Read-only health check across config, cards, inventory, memory, graph, hooks, MCPs, i18n, connectivity. Interactive choice of scope (full / quick). |
 | 7 | `forge reconfigure` | **Single entrypoint for any post-init mutation**: cards, paths, conventions, backend, ticketing, workflow, persona, memory policy, external-docs, hooks, inventory re-extract, graph rebuild. Diff → confirm → apply → auto-doctor. |
-| 8 | `forge graph` | Read graph queries (similar features, blast-radius, orphans). Rebuild lives inside `forge reconfigure`. |
+| 8 | `forge graph` | Read graph queries Q1–Q17 (similar features, blast-radius, orphans, reusable-helpers, duplications, KMP-migration candidates, near-duplicates, redundant-platform). Rebuild lives inside `forge reconfigure`. |
 | 9 | `forge memory` | Inspect and manage memory across L1–L5. Interactive menu: inspect, forget, promote-from-L1, view-L2. Distillation is **automatic** (não tem comando manual). |
 | 10 | `forge evolve` | Review and apply / reject proposed evolutions queued by retrospective-agent. |
 | 11 | `forge undo` | Revert the last state-mutating action (task commit, reconfigure apply, init). Interactive prompt picks target if ambiguous — `last` is not a CLI suffix, é a opção default no menu. |
@@ -58,7 +58,9 @@ dedicated PR. Silent expansion is forbidden.
 | **Memory: forget / esquecer item** | `forge memory` (interactive menu) | "Forget" é opção; pede confirmação. |
 | **Memory: promote L1 → L2** | `forge evolve` aplica propostas que vieram de retrospective-agent | Promoção nunca é manual via comando — é review-and-apply. |
 | **Graph: rebuild full** | `forge reconfigure` → opção "rebuild graph" (também dentro de menu paths quando paths mudam) | Hooks normalmente mantêm o graph quente; rebuild manual é raro. |
-| **Graph: query** | `forge graph` | Read-only sempre. |
+| **Graph: query** | `forge graph` | Read-only sempre. Q1–Q10 estruturais, Q11 reusable-helpers, Q12–Q17 reuse-intelligence (duplications, KMP-migration, near-duplicates, redundant-platform, TS-helpers), `r` para combined view. |
+| **Reuse intelligence: list findings** | `forge graph` → opções 12–17 ou `r` (combined); `forge doctor` mostra counts agregados | Read-only. Findings são populated automaticamente em `forge init` Step 11.5 + `forge reconfigure → rebuild graph`. Apply review fica em `forge evolve`. |
+| **Reuse intelligence: apply finding** | `forge evolve` → escolher proposta de tipo `{consolidate-duplicate-helper, promote-to-shared-helper, remove-redundant-platform-helper, review-near-duplicate-helper, kmp-migration-candidate, consolidate-ts-helper}` → "aplicar" | Apply materializa `feature-intake.md` stub em `non-product/refactor-{slug}/` + L1 status.json com `subtype=refactor` → próximo passo é `forge plan refactor-{slug}`. |
 | **Doctor: full** | `forge doctor` → escolhe "full" no prompt inicial | |
 | **Doctor: quick (pre-plan reflex)** | `forge doctor` → escolhe "quick" no prompt inicial | Sem flag `--quick`. Reconfigure dispara o equivalente quick automaticamente pós-apply. |
 | **Preset change** | **Não suportado por reconfigure.** Criar branch dedicada, apagar `.claude/`, rodar `forge init` do zero. | Preset é decisão de bootstrap, não de reconfig. |
@@ -135,10 +137,12 @@ queue).
 | Hidden entrypoint | Who calls it | What it does | Why it's not in the 12 |
 |---|---|---|---|
 | `forge ingest --event <type> [payload]` | Claude Code hooks, git hooks, CI hooks, forge native dispatchers | Routes the event into `engine/ingest.py` which fans out to graph updater, memory updater, inventory updater, or proposal queue | Pure plumbing. No UX. User never types this; if a user runs it manually that's a bug in the hook layer, not a feature. |
+| `forge graph detect-incremental <file>...` | `.claude/hooks/post-edit-detect-duplications.sh` (Claude Code post-edit hook) | Re-parses edited files, refreshes graph row, runs reuse-intelligence detection, prints inline any finding touching the edited files. Exit 0 always — never breaks the developer's edit. | Subcomando POSICIONAL de `forge graph` (não flag — argv[0]=="detect-incremental"). É um modo non-interactive do verbo já existente, não um novo verbo. Decisão 9 preservada. |
 
 Adding a new hidden entrypoint requires the same scrutiny as adding a
 13th command: explicit PR, decision update, documentation. The current
-hidden surface is **one** entrypoint (`forge ingest`) — keep it that way.
+hidden surface is **two** entrypoints (`forge ingest`, `forge graph
+detect-incremental`) — keep it that way.
 
 Hidden entrypoints **must not** be advertised in `--help`, in cinematic
 roteiros, or in user-facing error messages. They appear in schema docs only

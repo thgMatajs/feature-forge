@@ -22,15 +22,17 @@ from __future__ import annotations
 
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
 from engine.memory.l1 import (
     L1State,
-    acquire_phase_lock,
     append_history,
+    blocking_deps,
+    is_blocked,
+    phase_lock_held,
     read_l1_status,
     release_phase_lock,
     write_l1_status,
@@ -66,6 +68,11 @@ class TaskContract:
     bdd_scenarios: list[str]
     status: str
     raw: dict[str, Any]
+    # Discipline §9 — external dependencies. List of dicts shaped like:
+    #   {"ticket": str, "integration": str, "description": str,
+    #    "blocking": bool, "declared-at": str|None, "resolved-at": str|None}
+    # Empty list when the task carries no external deps.
+    external_deps: list[dict[str, Any]] = field(default_factory=list)
 
 
 # ── Filesystem helpers (mirror plan.py — kept local to avoid import cycle) ───
@@ -140,12 +147,20 @@ def _readiness_from_review(review: Path) -> Optional[str]:
     return fallback.group(1).strip().lower() if fallback else None
 
 
+_READY_VERDICTS = {"ready", "ready-with-blocks"}
+
+
 def _check_readiness(feature_path: Path) -> tuple[bool, str]:
-    """Return (is_ready, observed_status)."""
+    """Return (is_ready, observed_status).
+
+    Both `ready` and `ready-with-blocks` (discipline §9) unlock implement.
+    `ready-with-blocks` means at least one task has an unresolved external
+    dep — execution-conductor handles the per-task refusal downstream.
+    """
     handoff = feature_path / "plan-feature-handoff.json"
     review = feature_path / "implementation-readiness-review.md"
     status = _readiness_from_handoff(handoff) or _readiness_from_review(review) or "unknown"
-    return status == "ready", status
+    return status in _READY_VERDICTS, status
 
 
 # ── Task loading + topo-sort ─────────────────────────────────────────────────
@@ -174,6 +189,29 @@ def _load_task_contract(path: Path) -> TaskContract:
         bdd = []
     status = str(raw.get("status") or "pending").lower()
 
+    # Discipline §9 — depends_on_external. Accept both snake/kebab variants.
+    ext_deps = (
+        raw.get("depends_on_external") or raw.get("depends-on-external") or []
+    )
+    if not isinstance(ext_deps, list):
+        ext_deps = []
+    normalized_ext: list[dict[str, Any]] = []
+    for entry in ext_deps:
+        if not isinstance(entry, dict):
+            continue
+        normalized_ext.append(
+            {
+                "ticket": str(entry.get("ticket") or ""),
+                "integration": str(entry.get("integration") or "manual"),
+                "description": str(entry.get("description") or ""),
+                "blocking": bool(entry.get("blocking", True)),
+                "declared-at": entry.get("declared-at")
+                or entry.get("declared_at"),
+                "resolved-at": entry.get("resolved-at")
+                or entry.get("resolved_at"),
+            }
+        )
+
     return TaskContract(
         task_id=task_id,
         path=path,
@@ -185,7 +223,17 @@ def _load_task_contract(path: Path) -> TaskContract:
         bdd_scenarios=[str(x) for x in bdd],
         status=status,
         raw=raw,
+        external_deps=normalized_ext,
     )
+
+
+def _task_blocking_deps(task: TaskContract) -> list[dict[str, Any]]:
+    """Return unresolved blocking external deps for this task (or [])."""
+    return [
+        d
+        for d in task.external_deps
+        if d.get("blocking", True) and not d.get("resolved-at")
+    ]
 
 
 def _collect_tasks(feature_path: Path) -> list[TaskContract]:
@@ -233,7 +281,15 @@ def _topo_sort(tasks: list[TaskContract]) -> list[TaskContract]:
     return order
 
 
-def _pick_next_task(tasks: list[TaskContract]) -> Optional[TaskContract]:
+def _pick_next_task(
+    tasks: list[TaskContract], *, skip_blocked: bool = False
+) -> Optional[TaskContract]:
+    """Pick the next runnable task in topo order.
+
+    When `skip_blocked=True`, tasks with unresolved blocking external deps
+    are skipped (discipline §9). Default is False so the caller can decide
+    whether to refuse + offer 3-caminhos or auto-skip.
+    """
     done = {t.task_id for t in tasks if t.status == "done"}
     sorted_tasks = _topo_sort(tasks)
     for task in sorted_tasks:
@@ -242,8 +298,80 @@ def _pick_next_task(tasks: list[TaskContract]) -> Optional[TaskContract]:
         unresolved = [d for d in task.dependencies if d not in done]
         if unresolved:
             continue
+        if skip_blocked and _task_blocking_deps(task):
+            continue
         return task
     return None
+
+
+def _print_blocked_refusal(
+    task: TaskContract,
+    alt_task: Optional[TaskContract],
+    project_root: Path,
+) -> None:
+    """Render the canonical 3-caminhos block for a task blocked on external deps.
+
+    Discipline §9 — the user gets exactly three legitimate paths:
+      A) Mark the dep resolved via `forge reconfigure` (when ticket actually closed)
+      B) Pick another task without external blocks (when one exists)
+      C) Pause the feature entirely (deferred)
+    """
+    blocking = _task_blocking_deps(task)
+    del project_root  # not currently needed for the render
+
+    renderer.write("")
+    renderer.write(
+        renderer.bold(
+            f"🛑 {task.task_id} bloqueada por dependência externa"
+        )
+    )
+    renderer.write("")
+    renderer.write("O que falhou:")
+    for dep in blocking:
+        ticket = dep.get("ticket") or "?"
+        integration = dep.get("integration") or "manual"
+        descr = dep.get("description") or "(sem descrição)"
+        renderer.write(f"  · {ticket} ({integration}) — {descr}")
+    renderer.write("")
+    renderer.write("Onde:")
+    renderer.write(f"  {task.path.name}.depends_on_external")
+    renderer.write("")
+    renderer.write("Por que importa:")
+    renderer.write(
+        "  · Hard-gate readiness-must-be-ready exige dep externa resolvida"
+    )
+    renderer.write(
+        "  · Implementar contra endpoint imaginário = invented behavior"
+    )
+    renderer.write(
+        "  · Tempo perdido refatorando quando o ticket real fechar"
+    )
+    renderer.write("")
+    renderer.write("Três caminhos:")
+    renderer.write("")
+    renderer.write(
+        "  1) Marcar dep externa como resolvida agora\n"
+        "     `forge reconfigure` → external-deps → marcar como resolvida"
+    )
+    if alt_task is not None:
+        renderer.write("")
+        renderer.write(
+            f"  2) Pegar {alt_task.task_id} (deps satisfeitas, zero ext.)\n"
+            f"     {alt_task.description or '<sem descrição>'}"
+        )
+    else:
+        renderer.write("")
+        renderer.write(
+            "  2) (sem outras tasks runáveis no DAG)\n"
+            "     todas as alternativas têm deps internas ou externas pendentes"
+        )
+    renderer.write("")
+    renderer.write(
+        "  3) Pausar a feature inteira\n"
+        "     state → deferred (volta quando o ticket fechar)"
+    )
+    renderer.write("")
+    renderer.write(renderer.dim("Sem auto-fix aqui — escolha humana."))
 
 
 # ── Plan Mode reveal ─────────────────────────────────────────────────────────
@@ -501,6 +629,23 @@ def run(argv: list[str]) -> int:
         )
         return 6
 
+    # Discipline §9 — recompute feature blocked state at startup.
+    # When state was blocked-on-external from a previous session and the user
+    # marked the ticket as resolved via `forge reconfigure`, this flip restores
+    # implementing automatically. The reverse (implementing → blocked) happens
+    # below on the first refusal.
+    startup_state = read_l1_status(slug, project_root)
+    if startup_state and startup_state.status == "blocked-on-external":
+        if not is_blocked(slug, project_root):
+            startup_state.status = "implementing"
+            startup_state.last_action_kind = "blocked-external-cleared"
+            write_l1_status(startup_state, project_root)
+            append_history(
+                slug,
+                project_root,
+                {"event": "blocked-external-cleared"},
+            )
+
     task = _pick_next_task(tasks)
     if task is None:
         renderer.write("")
@@ -526,116 +671,172 @@ def run(argv: list[str]) -> int:
         release_phase_lock(slug, project_root)
         return 0
 
-    # Acquire task-scoped phase lock.
-    lock_id = task.task_id
-    if not acquire_phase_lock(slug, project_root, lock_id):
-        current = read_l1_status(slug, project_root)
-        held = current.phase_lock if current else "?"
-        sys.stderr.write(
-            f"forge implement: '{slug}' phase-locked by '{held}'. "
-            "Run `forge undo` to release, or wait.\n"
-        )
-        return 3
+    # Discipline §9 — refuse to start a task with unresolved blocking deps.
+    # Flip feature state to blocked-on-external on FIRST refusal of a session
+    # (idempotent on subsequent calls). Offer 3-caminhos block.
+    task_blockers = _task_blocking_deps(task)
+    if task_blockers:
+        # Find an alternative task (deps satisfied AND zero blocking external).
+        alternative = _pick_next_task(tasks, skip_blocked=True)
+        # Skip the same task if topo handed us the blocked one again.
+        if alternative is not None and alternative.task_id == task.task_id:
+            alternative = None
 
-    # Cinematic header + auto-resume detection.
-    state = read_l1_status(slug, project_root)
-    if state and state.status == "implementing":
-        renderer.write("")
-        renderer.write(
-            renderer.dim(
-                f"Detectei implementação em andamento — continuando em {task.task_id}."
-            )
-        )
-    else:
-        if state is None:
-            state = L1State(
-                feature_slug=slug,
-                status="implementing",
-                last_action_at="",
-                last_action_kind="implement-started",
-                phase_lock=lock_id,
-            )
-        else:
-            state.status = "implementing"
-            state.last_action_kind = "implement-started"
-        write_l1_status(state, project_root)
-
-    renderer.write("")
-    renderer.write(
-        renderer.box(
-            f"feature-forge · implement · {slug}",
-            [
-                "Plan Mode antes de tudo. Sem improviso.",
-                f"Próxima task: {task.task_id}",
-            ],
-            width=72,
-        )
-    )
-
-    try:
-        _print_plan_mode(task, project_root)
-
-        confirmed = question.confirm(
-            "Topa esse plano? (sim segue pra Apply Mode)",
-            default=False,
-        )
-        if not confirmed:
-            renderer.write(
-                renderer.dim(
-                    "Plano não aprovado — saindo sem tocar arquivo. "
-                    "Ajuste o contrato em " + str(task.path.relative_to(project_root))
-                    + " e re-rode."
-                )
-            )
+        # Flip feature state only when not already blocked.
+        st = read_l1_status(slug, project_root)
+        if st and st.status != "blocked-on-external":
+            previous_status = st.status
+            st.status = "blocked-on-external"
+            st.last_action_kind = "blocked-on-external-detected"
+            write_l1_status(st, project_root)
             append_history(
                 slug,
                 project_root,
-                {"event": "plan-mode-rejected", "task": task.task_id},
+                {
+                    "event": "blocked-on-external-detected",
+                    "task": task.task_id,
+                    "tickets": [d.get("ticket") for d in task_blockers],
+                    "previous-status": previous_status,
+                },
             )
-            # Plano rejeitado — libera lock pra próxima invocação não travar.
-            release_phase_lock(slug, project_root)
+        elif st is None:
+            new = L1State(
+                feature_slug=slug,
+                status="blocked-on-external",
+                last_action_at="",
+                last_action_kind="blocked-on-external-detected",
+            )
+            write_l1_status(new, project_root)
+            append_history(
+                slug,
+                project_root,
+                {
+                    "event": "blocked-on-external-detected",
+                    "task": task.task_id,
+                    "tickets": [d.get("ticket") for d in task_blockers],
+                },
+            )
+
+        _print_blocked_refusal(task, alternative, project_root)
+        # A3 fix: do NOT unconditionally release here. This branch fires
+        # BEFORE we acquire the phase lock for `task.task_id` (the
+        # `with phase_lock_held(...)` below). An unconditional release would
+        # strip a stale lock from ANOTHER flow (e.g. `forge plan` mid-write)
+        # without authorization — violating the single-writer invariant.
+        # If a stale lock genuinely exists from this aborted flow, `forge
+        # undo` is the canonical recovery path.
+        return 7  # distinct exit code — caller scripts can switch behavior
+
+    # Acquire task-scoped phase lock via context manager (MD-03 refactor).
+    # The CM owns acquire + release bookkeeping — every exit path (normal
+    # return, PromptAbortedError, unexpected exception) flows through
+    # __exit__ which releases iff we won the race. No more lock_released
+    # flag to forget to flip when a new return is added inside the block.
+    lock_id = task.task_id
+    with phase_lock_held(slug, project_root, lock_id) as acquired:
+        if not acquired:
+            current = read_l1_status(slug, project_root)
+            held = current.phase_lock if current else "?"
+            sys.stderr.write(
+                f"forge implement: '{slug}' phase-locked by '{held}'. "
+                "Run `forge undo` to release, or wait.\n"
+            )
+            return 3
+
+        try:
+            # Cinematic header + auto-resume detection.
+            state = read_l1_status(slug, project_root)
+            if state and state.status == "implementing":
+                renderer.write("")
+                renderer.write(
+                    renderer.dim(
+                        f"Detectei implementação em andamento — continuando em {task.task_id}."
+                    )
+                )
+            else:
+                if state is None:
+                    state = L1State(
+                        feature_slug=slug,
+                        status="implementing",
+                        last_action_at="",
+                        last_action_kind="implement-started",
+                        phase_lock=lock_id,
+                    )
+                else:
+                    state.status = "implementing"
+                    state.last_action_kind = "implement-started"
+                write_l1_status(state, project_root)
+
+            renderer.write("")
+            renderer.write(
+                renderer.box(
+                    f"feature-forge · implement · {slug}",
+                    [
+                        "Plan Mode antes de tudo. Sem improviso.",
+                        f"Próxima task: {task.task_id}",
+                    ],
+                    width=72,
+                )
+            )
+
+            _print_plan_mode(task, project_root)
+
+            confirmed = question.confirm(
+                "Topa esse plano? (sim segue pra Apply Mode)",
+                default=False,
+            )
+            if not confirmed:
+                renderer.write(
+                    renderer.dim(
+                        "Plano não aprovado — saindo sem tocar arquivo. "
+                        "Ajuste o contrato em " + str(task.path.relative_to(project_root))
+                        + " e re-rode."
+                    )
+                )
+                append_history(
+                    slug,
+                    project_root,
+                    {"event": "plan-mode-rejected", "task": task.task_id},
+                )
+                return 0
+
+            append_history(
+                slug,
+                project_root,
+                {
+                    "event": "plan-mode-approved",
+                    "task": task.task_id,
+                    "files-in-scope": len(task.allowed_files),
+                },
+            )
+
+            _apply_mode_handoff(task, slug, project_root)
+
+            # Bonus interactive offer — surface the out-of-scope flow on demand,
+            # so users see how the gate fires before they trip it.
+            if question.confirm(
+                "Quer ver o fluxo de out-of-scope agora (registrar Finding)?",
+                default=False,
+            ):
+                _prompt_out_of_scope_paths(slug, project_root, feature_path, task)
+
             return 0
 
-        append_history(
-            slug,
-            project_root,
-            {
-                "event": "plan-mode-approved",
-                "task": task.task_id,
-                "files-in-scope": len(task.allowed_files),
-            },
-        )
-
-        _apply_mode_handoff(task, slug, project_root)
-
-        # Bonus interactive offer — surface the out-of-scope flow on demand,
-        # so users see how the gate fires before they trip it.
-        if question.confirm(
-            "Quer ver o fluxo de out-of-scope agora (registrar Finding)?",
-            default=False,
-        ):
-            _prompt_out_of_scope_paths(slug, project_root, feature_path, task)
-
-    except PromptAbortedError:
-        # Pause — keep state, release lock so other commands can run.
-        release_phase_lock(slug, project_root)
-        append_history(
-            slug,
-            project_root,
-            {"event": "implement-paused", "task": task.task_id},
-        )
-        renderer.write("")
-        renderer.write(
-            mentor_calmo.pause_message(
-                slug=slug, resume_command=f"forge implement {slug}"
+        except PromptAbortedError:
+            # Pause — append history + emit copy. Lock release is owned by
+            # the surrounding ``with phase_lock_held(...)``.
+            append_history(
+                slug,
+                project_root,
+                {"event": "implement-paused", "task": task.task_id},
             )
-        )
-        return 130
-
-    # Apply Mode handoff entregue — libera lock antes do retorno (próxima
-    # invocação `forge implement` precisa adquirir lock pra nova TASK).
-    release_phase_lock(slug, project_root)
-    return 0
+            renderer.write("")
+            renderer.write(
+                mentor_calmo.pause_message(
+                    slug=slug, resume_command=f"forge implement {slug}"
+                )
+            )
+            return 130
 
 
 __all__ = ["run"]

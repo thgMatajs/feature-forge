@@ -144,6 +144,7 @@ Multi-select cinemático. Categorias espelham blocos top-level de
        [ ] memory                      policy de promoção L1→L2, retention
        [ ] external-docs               provider, cache TTL, privacy-mode
        [ ] hooks                       ativar/desativar hooks instalados
+       [ ] external-deps               marcar dep externa como resolvida
 
        (não listado: preset, platforms, schema-version — exigem migração
         ou novo init. Pergunte se precisar.)
@@ -328,8 +329,138 @@ Tudo conversacional, nunca formulário seco.
                   post-back.on-feature-done:    true → false
 ```
 
+### 5.6 — External-deps (marcar dep externa como resolvida)
+
+Discipline §9 — sub-menu dedicado a destravar features no estado
+`blocked-on-external`. Single source of truth pra resolver
+`depends_on_external[*].resolved-at` em task-contracts.
+
+**Caso happy path — uma feature blocked, um ticket:**
+
+```
+[0:33] 🔗 External dependencies
+       
+       Procurando deps externas abertas em features ativas...
+       ├ lembrete-rega                              1 ticket aberto
+       │   · TASK-0003 ← BACKEND-1284 (jira) "Endpoint /api/weather pendente"
+       │     declarada em 2026-05-30T14:37Z · há 18h
+       └ (nenhuma outra feature blocked)
+       
+       Qual ticket marcar como resolvido?
+       
+         · BACKEND-1284
+         · cancelar
+       
+       > BACKEND-1284
+       
+[0:34] Confirma marcar BACKEND-1284 como resolved?
+       
+       Vai afetar:
+         · lembrete-rega/tasks/TASK-0003.yaml.depends_on_external[0].resolved-at
+           null → 2026-05-30T08:34:00Z
+       
+       Após resolver, vou re-scan os task contracts da feature. Se zero
+       deps blocking ficarem abertas, o feature-state volta de
+       blocked-on-external pra implementing.
+       
+       [sim / não]
+       
+       > sim
+
+[0:34] ✓ TASK-0003.yaml.depends_on_external[0].resolved-at = 2026-05-30T08:34:00Z
+       ✓ Backup criado: tasks/TASK-0003.yaml.bak
+       ✓ Re-scan lembrete-rega: 0 deps blocking abertas
+       ✓ status.json.state: blocked-on-external → implementing
+       
+       Próximo: forge implement lembrete-rega
+                (TASK-0003 destrancada)
+```
+
+**Caso edge — mesmo ticket em múltiplas tasks:**
+
+```
+[0:33] 🔗 External dependencies
+       
+       └ bonsai-detail-share                        1 ticket aberto
+           · TASK-0005 ← DESIGN-44 (manual)
+           · TASK-0008 ← DESIGN-44 (manual) (mesmo ticket)
+       
+       Marcar DESIGN-44 como resolvido afeta AMBAS:
+         · TASK-0005.depends_on_external[0].resolved-at: null → agora
+         · TASK-0008.depends_on_external[0].resolved-at: null → agora
+       
+       Confirma? [sim / não]
+       
+       > sim
+       
+[0:34] ✓ 2 entries atualizadas atomically (mesmo ticket = mesma decisão)
+       ✓ Backups: TASK-0005.yaml.bak · TASK-0008.yaml.bak
+       ✓ Re-scan: 0 deps blocking abertas
+       ✓ state: blocked-on-external → implementing
+```
+
+Mentor calmo dedupa por `ticket` value: 1 prompt, 1 confirmação, N
+entries atualizadas atomically. Anti-pattern explícito: nunca perguntar
+N vezes pro mesmo ticket.
+
+**Caso edge — nenhuma dep externa aberta:**
+
+```
+[0:33] 🔗 External dependencies
+       
+       Procurando deps externas abertas...
+       └ (zero deps blocking abertas no projeto)
+       
+       Nada pra resolver aqui. Saindo dessa categoria sem mudança.
+```
+
+Aceita silently. Não vira blocker pro flow de reconfigure.
+
+**Caso edge — ticket não existe em nenhuma feature:**
+
+User digita um ticket id que não tem entry correspondente:
+
+```
+> ABC-999
+
+       ✋ ABC-999 não aparece em nenhuma task contract ativa.
+       
+       Possíveis causas:
+         · Erro de digitação (re-checar)
+         · Dep já foi resolvida e a entry foi removida via undo
+         · Ticket pertence a feature já archived (não destravável daqui)
+       
+       Quer:
+         · Re-digitar
+         · Cancelar
+       
+       > cancelar
+```
+
+Mentor calmo nunca silently no-ops uma marcação que não bate em nada —
+o usuário ia jurar que destravou.
+
+**Note operacional:**
+
+- A operação é **atomic**: backup primeiro (`.bak` ao lado de cada
+  TASK-NNNN.yaml editada — discipline §3), depois write, depois
+  re-scan, depois state flip. Falha em qualquer ponto → rollback do
+  backup.
+- `history.jsonl` da feature ganha entrada:
+  ```jsonl
+  {"at":"...","kind":"external-dep-marked-resolved","ticket":"BACKEND-1284","entries-updated":2}
+  ```
+- `forge undo` consegue reverter: lê `kind: external-dep-marked-resolved`
+  do history, restaura `resolved-at: null` nas N entries afetadas.
+
 **Note:** cada revisão por categoria fecha em `✓ marcado pra diff`. Nada é
 escrito ainda. Reconfigure constrói um **plan de diff** em memória.
+
+> **Exceção pra 5.6 (external-deps):** essa categoria é **write-now**
+> ao invés de **stage-and-diff**. Diff de "task-contract YAML mutou
+> resolved-at de null pra timestamp" é binário (resolvido/não) e não
+> precisa preview tradicional. O usuário já confirmou no prompt
+> interno. Demais categorias mantêm o stage-and-diff classic.
 
 ---
 
@@ -703,6 +834,44 @@ após rollback.
 | **Idempotência** | Diff vazio = sai sem tocar nada. |
 | **Preset/platforms/slug imutáveis** | Forçam novo init em branch dedicada. |
 | **Total time: 60–70s típico** | Mais rápido que init (sem scan profundo). |
+
+---
+
+## Graph rebuild + reuse intelligence re-queue
+
+Quando o usuário escolhe `[ ] graph` → "rebuild full" no menu de reconfigure,
+o engine executa duas operações em sequência:
+
+```
+[0:42] Rebuilding graph…
+        parsing: 1247/1247
+        ✓ 1247 files · 5892 symbols · 14103 edges · 8214ms
+
+[0:51] ✓ 3 reuse proposal(s) (re)queued — `forge evolve`
+```
+
+A segunda linha vem de `engine/graph/duplicates.queue_proposals_from_table`:
+ao rebuildar o graph, qualquer mudança no codebase (extensions adicionadas,
+movidas ou removidas) reflete na detecção. Fingerprints SHA-256 são **group
+identity** (não membership), então:
+
+- Mesmo grupo cresceu (4ª duplicação aparece): payload da proposta refresca
+  com locations atualizadas; entry NÃO duplica.
+- Grupo encolheu (alguém já consolidou): proposta antiga não some
+  automaticamente — usuário aplica/rejeita normalmente.
+- Grupo desaparece (consolidação completa): proposta vira stale → será
+  removida no próximo evolve scan (Cena 13 evolve roteiro).
+- Rejeição persiste: fingerprint na `rejected-evolutions.yaml` impede
+  re-proposta. Mentor calmo: rejeitar uma vez é pra sempre.
+
+Quando o codebase está limpo:
+
+```
+[0:42] Rebuilding graph…
+        ✓ 1247 files · 5892 symbols · 14103 edges · 8214ms
+```
+
+(sem linha de re-queue — silêncio é o sinal de OK.)
 
 ---
 

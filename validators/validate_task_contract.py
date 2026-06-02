@@ -59,6 +59,10 @@ _REQUIRED_EVIDENCE = {
 
 _KNOWN_LAYERS = {"setup", "data", "domain", "presentation", "ui", "tests", "qa"}
 
+# Discipline §9 — external dependency schema.
+_VALID_INTEGRATIONS = {"jira", "linear", "github-issues", "manual"}
+_EXT_DEP_REQUIRED_KEYS = {"ticket", "integration"}
+
 
 def _resolve_slug_and_task(kwargs: dict[str, Any]) -> tuple[str | None, str | None]:
     scope = kwargs.get("scope") or "inferred"
@@ -155,6 +159,55 @@ def _validate_one(task_path: Path, hard_gates: list[str]) -> list[str]:
                 continue
             if dep not in siblings:
                 violations.append(f"depends_on references unknown task: {dep}")
+
+    # Discipline §9 — depends_on_external schema validation. Field is
+    # optional (absent OR empty list = task has no external deps). When
+    # present, every entry must declare ticket + integration; resolved-at
+    # may be null or an ISO 8601 string. Defensive: accept kebab-case dialect.
+    ext_deps = (
+        data.get("depends_on_external") or data.get("depends-on-external")
+    )
+    if ext_deps is not None:
+        if not isinstance(ext_deps, list):
+            violations.append(
+                f"depends_on_external must be a list, got {type(ext_deps).__name__}"
+            )
+        else:
+            for idx, entry in enumerate(ext_deps):
+                if not isinstance(entry, dict):
+                    violations.append(
+                        f"depends_on_external[{idx}] must be a mapping"
+                    )
+                    continue
+                missing_keys = _EXT_DEP_REQUIRED_KEYS - set(entry.keys())
+                if missing_keys:
+                    violations.append(
+                        f"depends_on_external[{idx}] missing keys: "
+                        f"{sorted(missing_keys)}"
+                    )
+                ticket = entry.get("ticket")
+                if not isinstance(ticket, str) or not ticket.strip():
+                    violations.append(
+                        f"depends_on_external[{idx}].ticket must be a non-empty string"
+                    )
+                integration = entry.get("integration")
+                if integration not in _VALID_INTEGRATIONS:
+                    violations.append(
+                        f"depends_on_external[{idx}].integration must be one of "
+                        f"{sorted(_VALID_INTEGRATIONS)}, got {integration!r}"
+                    )
+                blocking = entry.get("blocking", True)
+                if not isinstance(blocking, bool):
+                    violations.append(
+                        f"depends_on_external[{idx}].blocking must be bool, "
+                        f"got {type(blocking).__name__}"
+                    )
+                resolved = entry.get("resolved-at") or entry.get("resolved_at")
+                if resolved is not None and not isinstance(resolved, str):
+                    violations.append(
+                        f"depends_on_external[{idx}].resolved-at must be null or "
+                        "ISO 8601 string"
+                    )
 
     return violations
 

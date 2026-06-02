@@ -77,6 +77,149 @@ pedir uma com dependência aberta → ver **Edge case 2**.
 
 ---
 
+## Cena 2.5 — Blocked-on-external refusal (4s, conditional)
+
+Discipline §9 — Cena renderizada apenas quando a task escolhida (ou a
+única disponível) tem ≥ 1 entry em `depends_on_external` com
+`blocking: true` e `resolved-at: null`. Sem dep externa → Cena pulada,
+fluxo segue direto pra Cena 3 (Plan Mode).
+
+### Caso happy path — outra task disponível na breakdown
+
+```
+[0:04] 🛑 TASK-0003 bloqueada por dependência externa
+       
+       O que falhou:
+         BACKEND-1284 (jira) ainda está aberto. Sem o endpoint
+         /api/weather eu não consigo planejar contra um shape de
+         resposta que não existe.
+       
+       Onde:
+         tasks/TASK-0003.yaml.depends_on_external[0]
+       
+       Por que importa:
+         · Hard-gate readiness-must-be-ready exige dep externa resolvida
+         · Implementar contra endpoint imaginário = invented behavior
+         · Você perderia tempo refatorando quando o endpoint real chegar
+       
+       Três caminhos:
+       
+         1) Marcar dep externa como resolvida agora
+            forge reconfigure → menu "marcar dep externa como resolvida"
+            (use quando BACKEND-1284 fechou e você sabe disso — sai
+             daqui, marca lá, volta pra implement)
+         
+         2) Pegar outra task que não dependa de BACKEND-1284
+            TASK-0004 (Android UI · MeoCard list) já tem deps satisfeitas
+            e zero deps externas. Quer ir nela em vez?
+         
+         3) Pausar a feature inteira
+            state vira deferred, status.json salva o lugar. Você volta
+            quando o ticket fechar — sem perda de progresso.
+       
+       Sem auto-fix aqui — escolha humana.
+       
+       > 2
+       
+[0:05] Beleza, indo pra TASK-0004. Estado da feature continua
+       blocked-on-external (TASK-0003 ainda tem dep aberta) — forge
+       status mostra o badge.
+```
+
+`engine.implement` flipa `status.json.state = "blocked-on-external"` no
+primeiro refuse (já é idempotente em refuse subsequentes). Aceitar
+caminho 2 escolhe outra task mas não muda o feature-state.
+
+### Caso edge — nenhuma outra task disponível
+
+```
+[0:04] 🛑 TASK-0003 bloqueada por dependência externa
+       (BACKEND-1284 · jira · ainda não resolvido)
+       
+       Não há outra task no DAG com deps satisfeitas e zero deps
+       externas. Esta é a única candidata, e ela está bloqueada.
+       
+       Três caminhos:
+       
+         1) Marcar BACKEND-1284 como resolvida agora
+            forge reconfigure → "marcar dep externa como resolvida"
+         
+         2) Pausar a feature
+            state vira deferred. Volta quando o ticket fechar.
+         
+         3) Abortar a feature
+            forge undo → "abort feature entirely". Mais drástico — use
+            quando o ticket não vai fechar tão cedo e você quer
+            limpar o board.
+       
+       > 1
+
+[0:06] Saindo pra forge reconfigure. State da feature continua
+       blocked-on-external — eu volto a aceitar implement assim que
+       você marcar o ticket lá.
+```
+
+### Caso edge — dep externa resolvida durante o session
+
+User volta de `forge reconfigure` (marcou BACKEND-1284 resolved) e
+re-roda `forge implement {slug}`:
+
+```
+[0:00] forge implement lembrete-rega
+       
+[0:01] Status da feature: blocked-on-external (BACKEND-1284 ainda
+       aberta?) — vou checar.
+       
+       ├ Re-scan tasks/                              ✓
+       ├ BACKEND-1284 marcada resolved em 14:42      ✓
+       ├ Tasks ainda com deps blocking abertas       0
+       └ State: blocked-on-external → implementing   ✓
+       
+       Beleza, TASK-0003 destrancada. Seguindo Plan Mode normal.
+
+[0:03] [Cena 3 — Plan Mode reveal]
+```
+
+Recompute do feature-state acontece em todo `forge implement` startup
+quando state == blocked-on-external — barato (escaneia N task contracts
+do feature), evita estado stale.
+
+### Caso edge — múltiplas deps no mesmo ticket
+
+TASK-0003 tem 2 entries em depends_on_external apontando pro mesmo
+BACKEND-1284 (por design — uma dep pra read, outra pra write):
+
+```
+[0:04] 🛑 TASK-0003 bloqueada por dependência externa
+       
+       BACKEND-1284 (jira) cobre 2 deps nesta task:
+         · GET /api/weather (leitura)
+         · POST /api/weather/alert (escrita)
+       
+       Ambas marcadas como blocking — preciso de resolução completa
+       desse ticket. Marcando o ticket via forge reconfigure resolve
+       as duas entries de uma vez.
+       
+       [3-caminhos canônico]
+```
+
+`forge reconfigure` deduplica por `ticket` value quando marca: 1
+prompt, 1 confirmação, N entries atualizadas atomicamente.
+
+### Note operacional
+
+- Cena 2.5 NÃO bloqueia o usuário forever. Sempre oferece 3 caminhos
+  legítimos. Mentor calmo é firme no gate mas nunca cruel.
+- O state da feature vai pra blocked-on-external no PRIMEIRO refuse
+  de uma session. Refuses subsequentes não escrevem status.json
+  (idempotente).
+- `forge implement {slug}` em feature já em blocked-on-external SEMPRE
+  faz re-scan dos task contracts no startup. Se o usuário marcou via
+  reconfigure (ou editou na mão — discouraged), o destravamento é
+  automático.
+
+---
+
 ## Cena 3 — Plan Mode reveal (4.0–18s, cinematográfico)
 
 Agent lê o Task Contract e enumera tudo que vai tocar, **antes de tocar em
