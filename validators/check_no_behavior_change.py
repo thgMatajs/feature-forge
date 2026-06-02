@@ -37,6 +37,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from _common import (
     make_paths,
     result_fail,
@@ -140,7 +142,12 @@ def _resolve_subtype(project_root: Path, kwargs: dict[str, Any]) -> tuple[str, s
         return "product", None
     try:
         return current_subtype(slug, project_root), slug
-    except Exception:  # noqa: BLE001 — read-only fallback
+    except (FileNotFoundError, OSError, ValueError, KeyError, yaml.YAMLError):
+        # R2.8: narrowed from blanket `except Exception`. These five cover
+        # the genuine read-only fallback cases (missing status.json,
+        # unreadable file, malformed payload). Anything outside this set —
+        # MemoryError, RuntimeError, programmer errors — propagates so the
+        # gate fails loud instead of silently defaulting to "product".
         return "product", slug
 
 

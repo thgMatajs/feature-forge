@@ -72,3 +72,51 @@ def test_production_paths_are_not_misclassified(path: str):
 def test_filename_suffix_still_recognized_outside_test_folder():
     """A file with a `Test.kt` suffix sitting in production tree is still test-like."""
     assert _looks_like_test_file("src/main/kotlin/AuthRepoTest.kt")
+
+
+# ─── R2.8: narrow except in _resolve_subtype ─────────────────────────────────
+
+
+def _import_resolve_subtype():
+    """Resolve the helper after sys.path is set up; module-level import would
+    race with the test-collection-time path setup."""
+    import check_no_behavior_change as mod  # noqa: WPS433
+
+    return mod, mod._resolve_subtype
+
+
+def test_resolve_subtype_falls_back_on_filenotfound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Expected fallback case: missing status.json -> default to "product".
+
+    The narrow-except still catches OSError / FileNotFoundError per the
+    contract ("read-only fallback"), so the gate remains safe-by-default
+    for callers whose feature scope can't be resolved.
+    """
+    mod, resolve = _import_resolve_subtype()
+
+    def bad(_slug: str, _root: Path) -> str:
+        raise FileNotFoundError("no status.json")
+
+    monkeypatch.setattr(mod, "current_subtype", bad)
+
+    subtype, slug = resolve(tmp_path, {"scope": "feature", "id": "feature-x"})
+    assert (subtype, slug) == ("product", "feature-x")
+
+
+def test_resolve_subtype_propagates_memory_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A blanket ``except Exception`` swallowed MemoryError sentinels. The
+    narrowed except must let unexpected errors crash visibly so the gate
+    fails loud — not silently default to "product"."""
+    mod, resolve = _import_resolve_subtype()
+
+    def boom(_slug: str, _root: Path) -> str:
+        raise MemoryError("simulated corrupt config sentinel")
+
+    monkeypatch.setattr(mod, "current_subtype", boom)
+
+    with pytest.raises(MemoryError, match="corrupt config"):
+        resolve(tmp_path, {"scope": "feature", "id": "feature-x"})
