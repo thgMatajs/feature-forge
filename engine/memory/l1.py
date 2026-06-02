@@ -562,6 +562,22 @@ def phase_lock_held(
     flip the flag. The context manager moves the bookkeeping out of the
     caller's hands so the contract is unforgeable.
 
+    ⚠️  NOT REENTRANT-SAFE. Se o caller já segura o lock com o mesmo
+    ``lock_id`` ao entrar em ``phase_lock_held``, ``acquire_phase_lock``
+    devolve ``True`` (reentrant success) e o CM vai *release* no exit —
+    puxando o tapete de quem detinha o lock por fora. Pra qualquer cenário
+    aninhado, use ``acquire_phase_lock`` / ``release_phase_lock``
+    diretamente; este CM assume seções críticas únicas, não-sobrepostas,
+    por ``feature_slug``.
+
+    Hoje os callers (``engine.plan.run``, ``engine.implement.run``) não
+    aninham — se um caller futuro precisar aninhar, escolha o API direto,
+    ou estenda este CM pra devolver um sentinel "won"/"reentrant" antes
+    do release. Gap rastreado em ``docs/design/04-pending.md``.
+
+    Sempre faz release no exit SE acquired. Caller deve checar o bool
+    yielded.
+
     Example::
 
         with phase_lock_held(slug, root, task_id) as acquired:

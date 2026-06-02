@@ -87,3 +87,42 @@ def test_phase_lock_held_is_reentrant_for_same_id(
     finally:
         release_phase_lock(slug, root)
     assert current_phase_lock(slug, root) is None
+
+
+def test_phase_lock_held_documented_non_reentrant_contract(
+    feature_root: tuple[str, Path],
+) -> None:
+    """Pin the non-reentrant foot-gun (WR-02): CM releases on reentrant entry.
+
+    Hoje, se um caller já segura o lock com o mesmo ``lock_id`` e *entra*
+    em ``phase_lock_held`` com esse mesmo id, ``acquire_phase_lock`` devolve
+    ``True`` (reentrant ack), o CM yielda ``True`` e — ao sair — chama
+    ``release_phase_lock``. Resultado: o caller externo perde o lock sem
+    saber.
+
+    Este teste documenta esse comportamento como contrato VIGENTE da
+    docstring ("NOT REENTRANT-SAFE"). Se você mudar o CM pra pular o
+    release no caso reentrant (ex.: yieldar um sentinel "reentrant" e
+    skipar ``release_phase_lock``), **atualize aqui e na docstring de
+    ``phase_lock_held`` no mesmo commit** — esta asserção quebra de
+    propósito pra alertar.
+    """
+    slug, root = feature_root
+    # Outer holder acquires directly (NOT via CM).
+    assert acquire_phase_lock(slug, root, "shared-id") is True
+    assert current_phase_lock(slug, root) == "shared-id"
+    try:
+        # Inner CM with the SAME lock_id — reentrant ack.
+        with phase_lock_held(slug, root, "shared-id") as acquired:
+            assert acquired is True, (
+                "reentrant acquire returns True — CM cannot distinguish"
+            )
+        # The CM exited and released the lock. The outer holder thought
+        # it still owned it. This is the documented foot-gun.
+        assert current_phase_lock(slug, root) is None, (
+            "phase_lock_held releases on reentrant exit — non-reentrant "
+            "contract; see docstring + WR-02"
+        )
+    finally:
+        # Defensive cleanup — release_phase_lock is no-op when absent.
+        release_phase_lock(slug, root)
