@@ -188,7 +188,13 @@ def test_phase_lock_released_when_read_l1_status_raises_after_acquire(
         return result
 
     monkeypatch.setattr(implement, "read_l1_status", boom_read)
-    monkeypatch.setattr(implement, "acquire_phase_lock", arming_acquire)
+    # After MD-03, `engine.implement` uses the `phase_lock_held` context
+    # manager from `engine.memory.l1`, which itself calls
+    # `acquire_phase_lock` *from inside l1*. Patch the canonical lookup
+    # point so the arming wrapper still arms when the lock is taken.
+    import engine.memory.l1 as l1_module
+
+    monkeypatch.setattr(l1_module, "acquire_phase_lock", arming_acquire)
     # Stub UI prompts so the run is autonomous if it ever gets that far.
     monkeypatch.setattr(
         "engine.ui.question.confirm", lambda *a, **kw: False, raising=False

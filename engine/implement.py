@@ -29,10 +29,10 @@ from typing import Any, Optional
 
 from engine.memory.l1 import (
     L1State,
-    acquire_phase_lock,
     append_history,
     blocking_deps,
     is_blocked,
+    phase_lock_held,
     read_l1_status,
     release_phase_lock,
     write_l1_status,
@@ -721,141 +721,116 @@ def run(argv: list[str]) -> int:
         release_phase_lock(slug, project_root)
         return 7  # distinct exit code — caller scripts can switch behavior
 
-    # Acquire task-scoped phase lock.
+    # Acquire task-scoped phase lock via context manager (MD-03 refactor).
+    # The CM owns acquire + release bookkeeping — every exit path (normal
+    # return, PromptAbortedError, unexpected exception) flows through
+    # __exit__ which releases iff we won the race. No more lock_released
+    # flag to forget to flip when a new return is added inside the block.
     lock_id = task.task_id
-    if not acquire_phase_lock(slug, project_root, lock_id):
-        current = read_l1_status(slug, project_root)
-        held = current.phase_lock if current else "?"
-        sys.stderr.write(
-            f"forge implement: '{slug}' phase-locked by '{held}'. "
-            "Run `forge undo` to release, or wait.\n"
-        )
-        return 3
-
-    # CR-01 (review): `try:` opens IMMEDIATELY after acquire_phase_lock
-    # returns True. The cinematic header + auto-resume block below touches
-    # disk (read_l1_status, write_l1_status, renderer.box) and any of those
-    # calls can raise OSError / JSONDecodeError / MemoryError before the
-    # original try opened. The previous shape left ~50 lines of
-    # side-effecting code outside the finally — a leaked lock there forced
-    # the user to run `forge undo` to recover. Everything between acquire
-    # and the function return now lives under the same finally guard.
-    #
-    # `lock_released` tracks explicit releases inside the critical region so
-    # the `finally` block doesn't double-call release. The flag exists because
-    # release_phase_lock is idempotent on missing lock but writes status.json
-    # on every call — skipping the double-write keeps history clean and the
-    # contract explicit: each path documents WHY it releases.
-    lock_released = False
-    try:
-        # Cinematic header + auto-resume detection.
-        state = read_l1_status(slug, project_root)
-        if state and state.status == "implementing":
-            renderer.write("")
-            renderer.write(
-                renderer.dim(
-                    f"Detectei implementação em andamento — continuando em {task.task_id}."
-                )
+    with phase_lock_held(slug, project_root, lock_id) as acquired:
+        if not acquired:
+            current = read_l1_status(slug, project_root)
+            held = current.phase_lock if current else "?"
+            sys.stderr.write(
+                f"forge implement: '{slug}' phase-locked by '{held}'. "
+                "Run `forge undo` to release, or wait.\n"
             )
-        else:
-            if state is None:
-                state = L1State(
-                    feature_slug=slug,
-                    status="implementing",
-                    last_action_at="",
-                    last_action_kind="implement-started",
-                    phase_lock=lock_id,
+            return 3
+
+        try:
+            # Cinematic header + auto-resume detection.
+            state = read_l1_status(slug, project_root)
+            if state and state.status == "implementing":
+                renderer.write("")
+                renderer.write(
+                    renderer.dim(
+                        f"Detectei implementação em andamento — continuando em {task.task_id}."
+                    )
                 )
             else:
-                state.status = "implementing"
-                state.last_action_kind = "implement-started"
-            write_l1_status(state, project_root)
+                if state is None:
+                    state = L1State(
+                        feature_slug=slug,
+                        status="implementing",
+                        last_action_at="",
+                        last_action_kind="implement-started",
+                        phase_lock=lock_id,
+                    )
+                else:
+                    state.status = "implementing"
+                    state.last_action_kind = "implement-started"
+                write_l1_status(state, project_root)
 
-        renderer.write("")
-        renderer.write(
-            renderer.box(
-                f"feature-forge · implement · {slug}",
-                [
-                    "Plan Mode antes de tudo. Sem improviso.",
-                    f"Próxima task: {task.task_id}",
-                ],
-                width=72,
-            )
-        )
-
-        _print_plan_mode(task, project_root)
-
-        confirmed = question.confirm(
-            "Topa esse plano? (sim segue pra Apply Mode)",
-            default=False,
-        )
-        if not confirmed:
+            renderer.write("")
             renderer.write(
-                renderer.dim(
-                    "Plano não aprovado — saindo sem tocar arquivo. "
-                    "Ajuste o contrato em " + str(task.path.relative_to(project_root))
-                    + " e re-rode."
+                renderer.box(
+                    f"feature-forge · implement · {slug}",
+                    [
+                        "Plan Mode antes de tudo. Sem improviso.",
+                        f"Próxima task: {task.task_id}",
+                    ],
+                    width=72,
                 )
             )
+
+            _print_plan_mode(task, project_root)
+
+            confirmed = question.confirm(
+                "Topa esse plano? (sim segue pra Apply Mode)",
+                default=False,
+            )
+            if not confirmed:
+                renderer.write(
+                    renderer.dim(
+                        "Plano não aprovado — saindo sem tocar arquivo. "
+                        "Ajuste o contrato em " + str(task.path.relative_to(project_root))
+                        + " e re-rode."
+                    )
+                )
+                append_history(
+                    slug,
+                    project_root,
+                    {"event": "plan-mode-rejected", "task": task.task_id},
+                )
+                return 0
+
             append_history(
                 slug,
                 project_root,
-                {"event": "plan-mode-rejected", "task": task.task_id},
+                {
+                    "event": "plan-mode-approved",
+                    "task": task.task_id,
+                    "files-in-scope": len(task.allowed_files),
+                },
             )
-            # Plano rejeitado — libera lock pra próxima invocação não travar.
-            release_phase_lock(slug, project_root)
-            lock_released = True
+
+            _apply_mode_handoff(task, slug, project_root)
+
+            # Bonus interactive offer — surface the out-of-scope flow on demand,
+            # so users see how the gate fires before they trip it.
+            if question.confirm(
+                "Quer ver o fluxo de out-of-scope agora (registrar Finding)?",
+                default=False,
+            ):
+                _prompt_out_of_scope_paths(slug, project_root, feature_path, task)
+
             return 0
 
-        append_history(
-            slug,
-            project_root,
-            {
-                "event": "plan-mode-approved",
-                "task": task.task_id,
-                "files-in-scope": len(task.allowed_files),
-            },
-        )
-
-        _apply_mode_handoff(task, slug, project_root)
-
-        # Bonus interactive offer — surface the out-of-scope flow on demand,
-        # so users see how the gate fires before they trip it.
-        if question.confirm(
-            "Quer ver o fluxo de out-of-scope agora (registrar Finding)?",
-            default=False,
-        ):
-            _prompt_out_of_scope_paths(slug, project_root, feature_path, task)
-
-        # Apply Mode handoff entregue — libera lock antes do retorno (próxima
-        # invocação `forge implement` precisa adquirir lock pra nova TASK).
-        release_phase_lock(slug, project_root)
-        lock_released = True
-        return 0
-
-    except PromptAbortedError:
-        # Pause — keep state, release lock so other commands can run.
-        release_phase_lock(slug, project_root)
-        lock_released = True
-        append_history(
-            slug,
-            project_root,
-            {"event": "implement-paused", "task": task.task_id},
-        )
-        renderer.write("")
-        renderer.write(
-            mentor_calmo.pause_message(
-                slug=slug, resume_command=f"forge implement {slug}"
+        except PromptAbortedError:
+            # Pause — append history + emit copy. Lock release is owned by
+            # the surrounding ``with phase_lock_held(...)``.
+            append_history(
+                slug,
+                project_root,
+                {"event": "implement-paused", "task": task.task_id},
             )
-        )
-        return 130
-    finally:
-        # Backstop — any exception path that fell through without an explicit
-        # release lands here. Without this, an unhandled RuntimeError /
-        # OSError / etc. between acquire_phase_lock above and any return
-        # below leaks the lock and forces the user to run `forge undo`.
-        if not lock_released:
-            release_phase_lock(slug, project_root)
+            renderer.write("")
+            renderer.write(
+                mentor_calmo.pause_message(
+                    slug=slug, resume_command=f"forge implement {slug}"
+                )
+            )
+            return 130
 
 
 __all__ = ["run"]

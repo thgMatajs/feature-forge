@@ -544,6 +544,39 @@ def _mirror_phase_lock_to_status(
     write_l1_status(state, project_root)
 
 
+@contextmanager
+def phase_lock_held(
+    feature_slug: str,
+    project_root: Path,
+    lock_id: str,
+) -> Iterator[bool]:
+    """Context manager wrapping ``acquire_phase_lock`` / ``release_phase_lock``.
+
+    Yields ``True`` when the lock was acquired (release happens on exit, for
+    every path including exceptions); yields ``False`` when acquisition lost
+    the race (no release on exit — the foreign holder keeps its lock).
+
+    Use this instead of the manual ``lock_released = False`` flag pattern in
+    callers (MD-03). The pattern is correct but refactor-fragile: a new
+    return inside the try block silently leaks the lock if it forgets to
+    flip the flag. The context manager moves the bookkeeping out of the
+    caller's hands so the contract is unforgeable.
+
+    Example::
+
+        with phase_lock_held(slug, root, task_id) as acquired:
+            if not acquired:
+                return rc_contention
+            # ... critical region; any return / raise releases on exit
+    """
+    acquired = acquire_phase_lock(feature_slug, project_root, lock_id)
+    try:
+        yield acquired
+    finally:
+        if acquired:
+            release_phase_lock(feature_slug, project_root)
+
+
 def release_phase_lock(feature_slug: str, project_root: Path) -> None:
     """Clear `phase_lock` on status.json + remove sentinel. No-op when absent."""
     lock_path = _phase_lock_path(feature_slug, project_root)
@@ -851,6 +884,7 @@ __all__ = [
     "list_blocked_features",
     "acquire_phase_lock",
     "release_phase_lock",
+    "phase_lock_held",
     "current_phase_lock",
     "current_subtype",
     "set_subtype",
