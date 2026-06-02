@@ -7,7 +7,14 @@
 #   - Always exits 0
 #   - Stdout is injected as additional context
 #   - Stderr is logged but not blocking
-set -euo pipefail
+#
+# R3.5 fix: do NOT use `set -euo pipefail`. The contract above promises
+# exit 0 in all conditions, but `set -e` would cause any sub-command
+# failure (missing handoff file, grep returning empty, etc.) to abort
+# the script with non-zero. The script falls back gracefully on each
+# step (|| echo "(unknown)"), so we want errors to *propagate to
+# stderr* but NOT terminate the script. Explicit `exit 0` at the end
+# guarantees the contract.
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 STATE_DIR="$PROJECT_ROOT/.claude/state"
