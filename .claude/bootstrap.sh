@@ -21,9 +21,18 @@ for h in pre-commit pre-push; do
         if [[ -L "$target" || -f "$target" ]]; then
             current=$(readlink "$target" 2>/dev/null || echo "")
             expected="../../$source_file"
-            if [[ "$current" == "$expected" ]]; then
+            # R3.2 fix: `[[ -L "$target" ]]` is true even when the symlink
+            # target doesn't exist (broken link). Combine -L with -e (target
+            # exists) so a broken symlink falls through to relink instead
+            # of being silently accepted.
+            if [[ "$current" == "$expected" && -e "$target" ]]; then
                 echo "  ✓ $target → $source_file (já linkado)"
                 continue
+            elif [[ "$current" == "$expected" && ! -e "$target" ]]; then
+                # Symlink aponta pro lugar certo mas o alvo sumiu — relinka.
+                echo "  ⚙️  $target era symlink quebrado — recriando"
+                rm -f "$target"
+                # fall through to ln -s below
             elif [[ -n "$current" && "$current" != "$expected" ]]; then
                 echo "  ⚠️  $target já existe e aponta pra outro lugar — pulando (revisão manual)"
                 continue
