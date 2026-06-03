@@ -325,6 +325,11 @@ def cc_threshold_lookup(
     Multiple cards conflicting: first card with a `threshold` key wins
     (deterministic, matches declaration order). Card override entries
     without an explicit `threshold` field fall through to the next layer.
+
+    Note:
+        Threshold ≤ 0 (configuração degenerada) é repassado raw pro caller.
+        Helper é dumb-lookup; semântica "degraded" fica no validator caller
+        (Task 8 — check_cyclomatic_complexity.validate()).
     """
     for card in active_cards:
         if not isinstance(card, dict):
@@ -348,6 +353,11 @@ def cc_threshold_lookup(
         except (TypeError, ValueError):
             pass
 
+    if language not in DEFAULTS_CC:
+        raise ValueError(
+            f"language {language!r} not in CC gate scope; "
+            f"supported: {sorted(DEFAULTS_CC)}"
+        )
     return DEFAULTS_CC[language]
 
 
@@ -362,6 +372,8 @@ def cc_format_three_paths(
     `docs/superpowers/specs/2026-06-03-cc-gate-design.md §4` for the
     CC-specific instance.
     """
+    if not violations:
+        raise ValueError("cc_format_three_paths requires at least one violation")
     lines: list[str] = []
     lines.append("🛑 Cyclomatic Complexity gate")
     lines.append("")
@@ -386,7 +398,7 @@ def cc_format_three_paths(
     )
     th_str = ", ".join(f"{lang}={n}" for lang, n in sorted(thresholds.items()))
     lines.append(f"  · Threshold vigente: {th_str} (workflow-config.yaml)")
-    lines.append("  · Decision 23 — cascade fail-fast; este é o primeiro hard fail.")
+    lines.append("  · Decision 23 — cascade fail-fast; CC é gate hard.")
     lines.append("")
     lines.append("Três caminhos pra resolver:")
     lines.append("")

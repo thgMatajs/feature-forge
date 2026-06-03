@@ -99,3 +99,21 @@ def test_format_three_paths_new_function_annotation() -> None:
     )
     assert "[new]" in rendered
     assert "↑ de cc=" not in rendered
+
+
+def test_format_three_paths_empty_violations_raises() -> None:
+    """Empty violations list é programming error; falha alto."""
+    with pytest.raises(ValueError, match="at least one violation"):
+        cc_format_three_paths([], {"kotlin": 10})
+
+
+def test_lookup_unsupported_language_raises() -> None:
+    """Language fora do scope CC vira ValueError, não KeyError raw."""
+    with pytest.raises(ValueError, match="not in CC gate scope"):
+        cc_threshold_lookup("rust", [], {})
+
+
+def test_lookup_threshold_zero_or_negative_passes_through() -> None:
+    """Threshold ≤ 0 é semântica degraded; helper repassa raw."""
+    assert cc_threshold_lookup("kotlin", [], {"cc-gate": {"kotlin": 0}}) == 0
+    assert cc_threshold_lookup("kotlin", [], {"cc-gate": {"kotlin": -5}}) == -5
