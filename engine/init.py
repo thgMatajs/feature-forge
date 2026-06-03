@@ -320,6 +320,12 @@ def _surface_three_paths(
     criar local pros não-reservados e marca ADR-required pros reservados.
 
     Reprompt em escolha inválida (esperado [1-3], qualquer outro reabre).
+
+    Pós-condição caminho 1 (não-reservada): cards locais são gravados em
+    disco mas `activated` NÃO é recomputado nesta passagem — o catálogo
+    expandido só entra em vigor no próximo `forge init`. Mensagem
+    user-facing avisa explicitamente (N2 do power-review PR #2; behavior
+    fix completo — re-roda detection inline — fica pra v1.2).
     """
     if not orphans:
         return InitDecision(choice="noop")
@@ -362,9 +368,9 @@ def _surface_three_paths(
         renderer.write("     PR de promoção rodar.")
     else:
         renderer.write("  1) Criar card local agora (recomendado pra stack atual)")
-        renderer.write("     Chama reconfigure inline pra criar card(s) local(is) cobrindo")
-        renderer.write("     os signals órfãos. Após criação, init reentra no Step 7")
-        renderer.write("     (detection) com catálogo expandido.")
+        renderer.write("     Materializa card(s) local(is) em .claude/cards/local/ cobrindo")
+        renderer.write("     os signals órfãos. Init segue com a `activated` corrente —")
+        renderer.write("     re-rode `forge init` pra ativar com catálogo expandido.")
     renderer.write("")
     renderer.write("  2) Ignorar nesta init (registra decisão consciente)")
     renderer.write("     Grava .claude/inventory/ignored-signals.yaml versionado listando")
@@ -415,13 +421,19 @@ def _surface_three_paths(
             grouped[o.suggested_capability].append(o)
         for cap_orphans in grouped.values():
             _card_local_add_inline(project_root, cap_orphans)
-        note = ""
+        # N2: avisa o user que catálogo expandido só entra em vigor na
+        # próxima execução. Behavior fix completo (re-detection inline)
+        # fica pra v1.2 (anotado em docs/design/04-pending.md).
+        note_parts = [
+            "Cards locais criados. Re-rode `forge init` pra ativar com "
+            "catálogo expandido."
+        ]
         if reserved_labels:
-            note = (
+            note_parts.append(
                 f"Reservadas pendentes de ADR: {', '.join(reserved_labels)}. "
                 "Criados apenas os locais não-reservados."
             )
-        return InitDecision(choice="create-local", note=note)
+        return InitDecision(choice="create-local", note=" ".join(note_parts))
 
     if choice == "2":
         _write_ignored_signals(project_root, orphans)
@@ -461,7 +473,21 @@ def _card_local_add_inline(
         return
 
     capability = orphans[0].suggested_capability
-    name = capability if LOCAL_CARD_NAME_RE.match(capability) else "orphan-card"
+    base_name = capability if LOCAL_CARD_NAME_RE.match(capability) else "orphan-card"
+
+    # N3: se canon já tem card com o mesmo nome (não esperado em v1.1 — todas
+    # as capabilities órfãs apontam pra labels SEM card canon — mas defensivo
+    # caso o catálogo evolua), sufixa com `-local` pra evitar colisão silenciosa
+    # com a cascade canon×local (que faria hard fail no próximo load).
+    canon_root = project_root / ".claude" / "cards"
+    canon_names: set[str] = set()
+    if canon_root.is_dir():
+        canon_names = {
+            d.name
+            for d in canon_root.iterdir()
+            if d.is_dir() and not d.name.startswith(".") and d.name != "local"
+        }
+    name = base_name if base_name not in canon_names else f"{base_name}-local"
 
     local_root = project_root / ".claude" / "cards" / "local" / name
     local_root.mkdir(parents=True, exist_ok=True)
@@ -1123,7 +1149,10 @@ def _run_pipeline(project_root: Path) -> int:
                     )
                 )
                 return decision.exit_code or 7
-            # "create-local" ou "ignore" → segue pra Step 8 com catálogo expandido
+            # "create-local" ou "ignore" → segue pra Step 8 com a `activated`
+            # corrente. N2: catálogo expandido (no caso de create-local) só
+            # entra em vigor no próximo `forge init` — o decision.note já
+            # avisa o user. Re-detection inline fica pra v1.2.
             if decision.note:
                 renderer.write(renderer.colored(decision.note, "yellow"))
 
