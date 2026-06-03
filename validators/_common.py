@@ -240,9 +240,12 @@ def load_catalog(project_root: Path) -> CapabilityCatalog:
     try:
         raw_text = local_path.read_text(encoding="utf-8")
         data = _yaml_lib.safe_load(raw_text) or {}
-    except _yaml_lib.YAMLError as exc:
+    except (OSError, _yaml_lib.YAMLError) as exc:
+        # C11/C17: antes só YAMLError era capturado. OSError (permissão,
+        # disco corrompido) escapava como traceback bruto. Wrap em
+        # CatalogOverlayError pra mensagem mentor calmo + path/cause.
         raise CatalogOverlayError(
-            f"{local_path}: YAML inválido — {exc}"
+            f"{local_path}: erro ao ler ou processar arquivo — {exc}"
         ) from exc
 
     if not isinstance(data, dict):

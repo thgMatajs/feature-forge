@@ -108,7 +108,18 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
     all_violations: list[str] = []
     warnings_only: list[str] = []
     for card_yaml, origin in cards:
-        data = read_yaml_or_default(card_yaml, {}) or {}
+        # C13: read_yaml_or_default + downstream parse podem disparar
+        # YamlIOError ou erros de I/O. Antes, exceptions vazavam pra cima
+        # e abortavam a cascade no primeiro card malformado, perdendo
+        # contexto dos demais. Wrap → coleta como failure por card.
+        try:
+            data = read_yaml_or_default(card_yaml, {}) or {}
+        except Exception as exc:  # noqa: BLE001
+            all_violations.append(
+                f"[{origin}] {card_yaml.parent.name}: "
+                f"failed to parse YAML ({exc})"
+            )
+            continue
         if not isinstance(data, dict):
             all_violations.append(
                 f"[{origin}] {card_yaml.parent.name}: top-level not mapping"
