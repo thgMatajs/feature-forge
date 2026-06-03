@@ -30,6 +30,60 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   satisfeita por esta nota explícita pra que o commit doc-sync passe sem
   bypass (não é revisita; é decisão nova append-only).
 
+### Fixed (Power-review PR #2 follow-ups — 2026-06-03)
+
+- **CARD-008 conformity em `validate_capability_labels`** — `conflicts-with`
+  passa a aceitar label OR card-name conforme o schema. Antes, o validator
+  rejeitava o canon `shared-preferences-prefs` (que declara
+  `conflicts-with: [datastore-prefs]` por card-name) — bloqueava qualquer
+  consumer rodando `forge verify`.
+- **Orphan signals grouping por capability** em `engine/init.py` Step 7.5
+  caminho 1 — múltiplos orphans com a mesma `suggested_capability` agora
+  geram UM único card local com signals consolidados (antes, o segundo
+  write sobrescrevia silenciosamente o primeiro). `_card_local_add_inline`
+  aceita `OrphanSignal | list[OrphanSignal]` (backward compat).
+- **`_count_needle_hits` respeita `_SKIP_DIRS`** em `engine/init.py` —
+  `node_modules`, `build`, `.gradle`, `Pods`, `DerivedData`, `dist` são
+  filtrados no walk. Sem isso, init em monorepos travava por minutos
+  varrendo deps/build artifacts.
+- **Atomic write** em `_write_local_cards_manifest` (`engine/cards/loader.py`)
+  via `tempfile.mkstemp` + `os.replace` — sem manifest parcial em disco se
+  o processo morrer no meio do write.
+- **Rollback** em `_card_local_add` (`engine/reconfigure.py`): falha de
+  OSError em qualquer um dos 3 writes (card.yaml, README.md,
+  detection/signals.yaml) remove o card_dir parcial e mostra erro colored.
+- **OSError capture** em `validators/_common.load_catalog` e
+  `validators/validate_card_yaml.validate` — antes apenas YAMLError era
+  capturado; OSError vazava como traceback bruto.
+- **N2/N3 init** — docstring + UX copy de Step 7.5 caminho 1 agora avisa
+  honestamente que catálogo expandido só ativa no próximo `forge init`
+  (re-detection inline fica pra v1.2). Anti-colisão canon adicionada em
+  `_card_local_add_inline` (sufixo `-local` se nome colide com canon).
+- **N4 reconfigure** — `_save_draft` surface OSError via renderer warn
+  (era silently-swallowed). Reconfigure continua, mas user é avisado.
+- **N12 reconfigure** — label do caminho 1 no submenu de colisão de nome
+  troca "fornecer outro nome" por "ver cards existentes e voltar
+  (re-prompt em v1.2)" pra honrar o contrato 3-paths (disciplina #1).
+- **N10 refactor** — `_LOCAL_CARD_NAME_RE` promovido de
+  `engine.reconfigure` (private) pra `engine.cards.LOCAL_CARD_NAME_RE`
+  (public). Engine/init.py e engine/reconfigure.py importam da fonte
+  canônica; alias antigo mantido em reconfigure pra back-compat.
+- **N11 loader** — `_write_local_cards_manifest` fallback graceful pra
+  paths não-subpath de project_root (`relative_to` ValueError → str
+  absoluto). Raro mas observável em fixtures de teste.
+- **Tests strengthened** — `test_cascade_raises_on_malformed_local_card_yaml`
+  ganha assert do path/marker no erro (C9); novo
+  `test_cascade_writes_local_cards_manifest_with_multiple_cards_sorted`
+  cobre 2+ locals + ordem canônica (C10); dead imports limpos em
+  `test_e2e_local_card_pilot.py` (N8) e `test_card_md_schema.py` (N9);
+  type annotation em `_check_orphan_signals.catalog` (N5).
+- **Novos testes TDD** (rapid lane 521 → 533, +12):
+  - `tests/unit/test_validate_capability_labels_conflicts_with_card_name.py`
+    (N1, 3 testes)
+  - `tests/unit/test_init_count_needle_hits_skip_dirs.py` (C16, 5 testes)
+  - 3 testes adicionais em `tests/unit/test_init_orphan_signals.py` (C14/C15)
+  - 1 teste adicional em `tests/unit/test_cards_loader_local.py` (C10)
+
 ### Fixed (PR #1 round 3 — 2026-06-02)
 
 - `implement.run` blocked-on-external branch não chama mais
