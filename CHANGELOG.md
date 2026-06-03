@@ -83,6 +83,11 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   - `tests/unit/test_init_count_needle_hits_skip_dirs.py` (C16, 5 testes)
   - 3 testes adicionais em `tests/unit/test_init_orphan_signals.py` (C14/C15)
   - 1 teste adicional em `tests/unit/test_cards_loader_local.py` (C10)
+- **Graph schema_version integration test drift** — `tests/integration/test_graph_build_meobonsai.py::test_build_full_creates_meta_schema_version`
+  agora trackeia `sqlite_io.SCHEMA_VERSION` dinamicamente em vez de hardcoded `"1"`.
+  Drift introduzido em `65c358c` (feat: reuse-intelligence shipped novas tabelas de
+  graph + bump pra "2") nunca foi refletido no integration test. Pré-existente ao
+  PR #2 / Gap 5; identificado durante power-review R1.
 
 ### Fixed (PR #1 round 3 — 2026-06-02)
 
