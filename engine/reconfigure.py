@@ -534,10 +534,14 @@ def _card_local_add(project_root: Path, working: dict[str, Any]) -> None:
                 "yellow",
             )
         )
+        # N12: caminho 1 antes anunciava "fornecer outro nome" mas o código
+        # só retornava (re-prompt completo fica pra v1.2). Renomear label
+        # para refletir o comportamento real evita quebra do contrato 3-paths
+        # (disciplina #1) — user-facing label e behavior precisam coincidir.
         choice = question.ask(
             "Três caminhos:",
             {
-                "rename": "1. fornecer outro nome",
+                "rename": "1. ver cards existentes e voltar (re-prompt em v1.2)",
                 "abort":  "2. abortar adicionar",
                 "list":   "3. listar cards existentes",
             },
@@ -636,36 +640,55 @@ def _card_local_add(project_root: Path, working: dict[str, Any]) -> None:
             "readme": "README.md",
         },
     }
-    (card_dir / "card.yaml").write_text(
-        yaml.safe_dump(card_data, sort_keys=False, allow_unicode=True),
-        encoding="utf-8",
-    )
+    # C4: 3 writes em sequência (card.yaml, README.md, detection/signals.yaml).
+    # Se qualquer um falhar (OSError — disco cheio, permissão, etc.), o card
+    # fica em estado inconsistente — loader subsequente tenta ler skeleton
+    # parcial e dispara CardError silenciosamente. Wrap em try/except,
+    # rollback via rmtree no card_dir, e surface colorido pro user.
+    try:
+        (card_dir / "card.yaml").write_text(
+            yaml.safe_dump(card_data, sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
 
-    (card_dir / "README.md").write_text(
-        f"# {name}\n\n"
-        f"Card local (overlay) provido pelo time deste projeto. Provê "
-        f"`{capability}` para as plataformas: {', '.join(platforms)}.\n\n"
-        f"## Detection\n\n"
-        f"Signals ainda não preenchidos — edite `detection/signals.yaml` e "
-        f"replique os matches em `card.yaml > detection.signals`.\n\n"
-        f"## Promoção ao canon\n\n"
-        f"Quando a semântica deste card estabilizar e for útil para outros "
-        f"projetos, abra ADR em `docs/design/01-decisions.md` pra promoção "
-        f"ao catálogo canônico.\n",
-        encoding="utf-8",
-    )
+        (card_dir / "README.md").write_text(
+            f"# {name}\n\n"
+            f"Card local (overlay) provido pelo time deste projeto. Provê "
+            f"`{capability}` para as plataformas: {', '.join(platforms)}.\n\n"
+            f"## Detection\n\n"
+            f"Signals ainda não preenchidos — edite `detection/signals.yaml` e "
+            f"replique os matches em `card.yaml > detection.signals`.\n\n"
+            f"## Promoção ao canon\n\n"
+            f"Quando a semântica deste card estabilizar e for útil para outros "
+            f"projetos, abra ADR em `docs/design/01-decisions.md` pra promoção "
+            f"ao catálogo canônico.\n",
+            encoding="utf-8",
+        )
 
-    (detection_dir / "signals.yaml").write_text(
-        "# .claude/cards/local/{0}/detection/signals.yaml\n"
-        "# ──────────────────────────────────────────────────────────────────\n"
-        "# Signals do card local. Preencha após init rodar e mapear sinais\n"
-        "# reais do projeto. Espelhe entries em `card.yaml > detection.signals`.\n"
-        "# ──────────────────────────────────────────────────────────────────\n\n"
-        "schema-version: 1\n\n"
-        "signals: []\n\n"
-        "threshold: 0.6\n".format(name),
-        encoding="utf-8",
-    )
+        (detection_dir / "signals.yaml").write_text(
+            "# .claude/cards/local/{0}/detection/signals.yaml\n"
+            "# ──────────────────────────────────────────────────────────────────\n"
+            "# Signals do card local. Preencha após init rodar e mapear sinais\n"
+            "# reais do projeto. Espelhe entries em `card.yaml > detection.signals`.\n"
+            "# ──────────────────────────────────────────────────────────────────\n\n"
+            "schema-version: 1\n\n"
+            "signals: []\n\n"
+            "threshold: 0.6\n".format(name),
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        # Rollback: remove o card_dir parcial para não deixar skeleton
+        # corrompido pro próximo `forge verify`. rmtree é ignore_errors
+        # porque se chegamos aqui o filesystem já está em estado ruim.
+        shutil.rmtree(card_dir, ignore_errors=True)
+        renderer.write(
+            renderer.colored(
+                f"falha ao gravar card local `{name}` ({exc}). "
+                "Diretório parcial removido. Verifique permissões e disco.",
+                "red",
+            )
+        )
+        return
 
     renderer.write(
         renderer.colored(f"  ✓ card local `{name}` criado em {card_dir.relative_to(project_root)}", "green")
@@ -1298,10 +1321,23 @@ def _load_draft(draft_path: Path) -> dict[str, Any] | None:
 
 
 def _save_draft(draft_path: Path, working: dict[str, Any]) -> None:
+    """Persist draft do reconfigure no disco (atomic write).
+
+    N4: OSError aqui costuma indicar permissão / disco cheio. Antes era
+    silently-swallowed — agora surface via renderer pra user ver, mas
+    ainda não re-raise (rascunho é best-effort; perda do draft não
+    bloqueia o reconfigure rodando).
+    """
     try:
         write_yaml(draft_path, working, atomic=True)
-    except OSError:
-        pass
+    except OSError as exc:
+        renderer.write(
+            renderer.colored(
+                f"warn: falha ao salvar rascunho ({exc}). "
+                "Reconfigure continua, mas resume não estará disponível.",
+                "yellow",
+            )
+        )
 
 
 def _append_history(
