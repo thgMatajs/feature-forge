@@ -7,6 +7,96 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (Gap 9 — extends-feature mechanic, 2026-06-03)
+
+- **Gap 9 resolvido — extends-feature mechanic (re-escopado 2026-06-03)** —
+  feature done pode ser estendida via novo slug derivado (e.g.,
+  `lembrete-rega-watch-extension`) que herda contexto da pai via campo
+  aditivo `extends-feature: {parent-slug}` no `status.json` + intake. Sem
+  cards canon novos; sem mudança no enum `platforms`; sem upgrade de
+  inventory schema. Pattern leve product-derived. Cobertura nova:
+  - **Schema** — `docs/schemas/memory.md` ganha `extends-feature` +
+    `parent-feature` em `status.json`; MEM-L1-008 atualizada com regra
+    "se `extends-feature != null` → parent existe E `parent.state == done`".
+    Forward-compat: status.json pré-Gap 9 carregam normais (default null).
+  - **Engine** — `engine/memory/l1.py` `L1State` ganha `extends_feature` +
+    `parent_feature` + helpers `parent_state()` + `list_extensions_of()`.
+    `engine/plan.py` Cena 1 oferece 4º caminho **"Estender"** quando
+    feature pai existe em `state=done`; context-pack import lê `status.json`,
+    `hypothesis.yaml`, `data-contract-spec.yaml`, `screen-analysis.yaml`,
+    `tech-spec.md`, `existing-helpers.yaml` da pai e popula o intake da
+    extensão.
+  - **Template** — `templates/feature-intake.template.md` ganha bloco
+    condicional §Extension context (parent feature, parent shipped, scope of
+    extension, reuse from parent, out-of-scope vs parent). Ausente quando
+    `extends-feature` é null — standalone feature fica idêntica ao pré-Gap 9.
+  - **UX** — `docs/ux/forge-plan-roteiro.md` Cena 1 ganha 4º caminho
+    "Estender" com sub-cenários (happy / parent não-done / slug derivado
+    duplicate / cancelar).
+  - **Validator** — `validators/validate_extension_feature.py` novo:
+    EXT-001 (parent existe), EXT-002 (parent.state == done), EXT-003
+    (slug derivado != parent), EXT-004 (dedupe por `extension-scope`).
+    3-caminhos canônico no fail (discipline §1). Inativo quando
+    `extends-feature` é null (no-op pass).
+  - **Agents patched (4):** `planning-conductor` (Phase 1 step 5 extension
+    import + Phase 4 wave dispatch variants A/B/D + Phase 6 retrospective
+    variant + closing format), `feature-intake-agent` (extension block
+    elicitation), `tech-spec-agent` (context-pack ganha `extends-feature` +
+    `parent-baseline` references — sem mudança em rendering), `retrospective-
+    agent` (extension variant 4 perguntas: herdei literal / delta mínimo /
+    criei do zero apesar de extension / sinais pra refactor parent + extension
+    pra shared base).
+  - **Discipline §10 nova** em `docs/design/07-discipline.md` formaliza
+    semantics + distinção formal vs refactor/bugfix/standalone (tabela
+    4-eixos) + wave dispatch semantics + filesystem layout
+    (`L1/{parent}-{suffix}/`, **não** `non-product/`) + hypothesis schema +
+    Phase 6 retrospective (herança vs adição, sem 5-whys) + cheat-sheet
+    entry + cross-link com §8 + §9 + Gap 5.
+  - **Tests** — 37 novos (`tests/unit/test_extension_feature.py` cobre
+    round-trip L1State + helpers + validator happy + 4 fail paths;
+    `tests/unit/test_plan_extension.py` cobre Cena 1 4º caminho detection +
+    sub-cenários). Suite total: 595 → 637 passing (+42 cumulativo desde
+    v1.2.0: 37 Gap 9 + 5 do fix loop).
+- `engine/implement.py` escreve `shipped-at` (ISO 8601 UTC) automático na
+  transição `state=done` (sob o mesmo bloco que escreve
+  `last_action_kind = "implement-completed"`). Suportado por `L1State.raw`
+  round-trip — forward-compat com features done pre-Gap 9 (campo é
+  nullable, intake renderiza `unknown` quando ausente). Fix do W-002 do
+  REVIEW: extension intake rendering de `Parent shipped: {{parent_shipped_at_iso8601}}`
+  passa a ser populado em vez de sempre `null`/`unknown`.
+
+### Changed
+
+- `docs/design/04-pending.md` Gap 9 re-escopado e fechado: watchOS / Wear OS /
+  tvOS / multi-target movidos pra **"out-of-scope explícito permanente"**
+  (feature-forge cobre mobile = Android + iOS + KMP). Mecânica
+  `extends-feature` continua útil pra variant / sub-area / módulo paralelo.
+  Sinergia com Gap 5: plataforma exótica futura entra via overlay local
+  (`.claude/cards/local/`), não via canon expansion. Nenhuma decisão locked
+  revisitada (Decisões 9, 10, 14, 22, 28 aceitam aditivo natural).
+  Contadores atualizados (7 resolvidos / 9 acionáveis pra v1.x+).
+- `docs/design/07-discipline.md` §10 header padronizado (`## 10. Extension
+  feature`) alinhado ao paralelismo das §§ 1-9 (fix do I-007 do REVIEW —
+  consistência estilística vs prefixo `§10` + parênteses inline).
+- `engine/plan.py` `_create_extension_l1` ganha guard explícito enforçando
+  `parent_status.status == "done"` (fix do W-005 do REVIEW). Defesa em
+  profundidade: write-time check além do validator runtime. Custo: 4
+  linhas + 1 test.
+- `agents/retrospective-agent.md` extension variant agora cobre as **4
+  perguntas** canônicas do discipline §10 (era 3 — faltava "sinais pra
+  refactor parent + extension pra shared base"). Fix do W-003 do REVIEW.
+  `agents/planning-conductor.md` template prompt for retrospective-agent
+  (extension variant) idem.
+- `validators/validate_extension_feature.py` remove check redundante
+  `parent-feature != extends-feature` (fix do I-002 do REVIEW). Lockstep
+  é garantido por `_create_extension_l1` e `write_l1_status` no write path
+  — defender contra arquivo escrito à mão é overkill pra v1; os 4 codes
+  EXT-001..004 do plano canônico ficam estritos.
+- `CLAUDE.md` baseline de testes atualizado: `pytest (367 tests baseline)` →
+  `pytest (637 tests baseline)` (fix do I-006 do REVIEW — drift pré-existente
+  desde v1.1.0 + acumulado em v1.2.0 + Gap 9). Re-baselinar pra próximo
+  gap saber a verdade.
+
 ## [1.2.0] — 2026-06-03
 
 ### Added (Gap 5 — Card local overlay, 2026-06-02)

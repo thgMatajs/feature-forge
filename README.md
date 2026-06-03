@@ -2,7 +2,7 @@
 
 A standalone CLI skill that orchestrates end-to-end planning + implementation of mobile features across Android, iOS, KMP, and Web. Backend-agnostic (Firebase, REST, GraphQL, local-only).
 
-> **State:** v1.2.0 entregue (2026-06-03). ~400 arquivos, ~52.2K LOC. Adiciona Gap 5 (card local overlay — Approach A) + 2 cards canon (`retrofit-client` + `shared-preferences-prefs` com `legacy-marker`) + power-review PR #2 R1 (18 findings aplicados, 4 deferred v1.2.x em `04-pending.md`).
+> **State:** v1.2.0 entregue (2026-06-03) + Gap 9 ship em `feat/gap9-extends-feature` (2026-06-03). ~400 arquivos, ~52.5K LOC. v1.2.0 adicionou Gap 5 (card local overlay — Approach A) + 2 cards canon (`retrofit-client` + `shared-preferences-prefs` com `legacy-marker`) + power-review PR #2 R1. Gap 9 adicionou extends-feature mechanic (pattern leve product-derived) + novo validator EXT-001..004 + discipline §10. Multi-target watchOS/Wear/TV permanente out-of-scope.
 
 ## What it is
 
@@ -11,7 +11,7 @@ Skill CLI-first com 12 comandos canônicos (zero flags — toda parametrização
 1. **`forge init`** — bootstrap em qualquer projeto KMP/mobile (greenfield ou brownfield). Step 11.5 escaneia o codebase atrás de duplicações já existentes (6 categorias de finding).
 2. **`forge plan {feature-slug}`** — 5 waves (intake/PRD → screen+contracts → tech-spec → tasks → readiness) com 16 templates. Subtypes: product / refactor / bugfix / spike / chore (cada um com waves específicas).
 3. **`forge implement {feature-slug}`** — execução task-by-task com gates de scope + atomic commits
-4. **`forge verify`** — cascade de 14 validators com 3-caminhos discipline (inclui `check_no_behavior_change` para refactor)
+4. **`forge verify`** — cascade de 15 validators com 3-caminhos discipline (inclui `check_no_behavior_change` para refactor; `validate_extension_feature` cross-cutting pra Gap 9 extensions)
 5. **`forge doctor`** — health check em 12 categorias (inclui reuse-intelligence findings agregados)
 6. **`forge reconfigure`** — single entrypoint pra TODA mutação post-init (cards, paths, conventions, graph rebuild que re-queue reuse proposals)
 7. Outros: `status`, `evolve` (review proposals — 16 kinds), `undo`, `graph` (Q1-Q17), `memory`, `raw`
@@ -72,11 +72,11 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 | Templates canônicos | 18 (16 produto + feature-intake-bugfix + feature-intake-refactor) |
 | Cards canônicos | 22 (8 stack + 6 Firebase + 6 REST + retrofit-client + shared-preferences-prefs com `legacy-marker`); overlay local em `.claude/cards/local/<name>/` desde Gap 5 (2026-06-02) |
 | Preset | kmp-mobile (8 stack cards + 4 backend-candidates) |
-| Validators Python | 14 (+ 2 helpers) — inclui `check_no_behavior_change` para refactor; `validate_card_yaml` + `validate_capability_labels` ganharam overlay-awareness em Gap 5 |
+| Validators Python | 15 (+ 2 helpers) — inclui `check_no_behavior_change` para refactor; `validate_card_yaml` + `validate_capability_labels` ganharam overlay-awareness em Gap 5; `validate_extension_feature` novo em Gap 9 (EXT-001..004, cross-cutting) |
 | Hooks | 9 + 1 reuse incremental (`post-edit-detect-duplications.sh`) |
-| Tests | 595 passing + 12 skipped (rapid lane + integration/e2e — todos verde; +87 vs v1.1.0 baseline de 508; cumulativo cobre PR #1 R1+R2+R3 + Gap 5 + power-review PR #2 R1) |
-| LOC total | ~52.200 |
-| Engine LOC | ~21.900 (Python) |
+| Tests | 637 passing + 12 skipped (rapid lane + integration/e2e — todos verde; +129 vs v1.1.0 baseline de 508; cumulativo cobre PR #1 R1+R2+R3 + Gap 5 + power-review PR #2 R1 + Gap 9 +42 (37 ship + 5 fix loop)) |
+| LOC total | ~52.500 |
+| Engine LOC | ~22.000 (Python) |
 | Files total | ~400 |
 | Decisões locked | 27 + 7 direcionais (Fase 3.5) |
 | Subtypes feature | 5 (product / refactor / bugfix / spike / chore) |
@@ -121,9 +121,9 @@ Requer Python 3.11+ + PyYAML (única dep externa).
   templates/                            18 canonical templates (16 + bugfix + refactor)
   cards/                                22 canonical cards (+ overlay em consumidor)
   presets/kmp-mobile/                   canonical preset v1
-  validators/                           14 validators + helpers
+  validators/                           15 validators + helpers
   hooks/                                9 hooks + reuse incremental script
-  tests/                                595 passing tests (unit + integration + e2e) + 12 skipped
+  tests/                                637 passing tests (unit + integration + e2e) + 12 skipped
 
 [per project install via `forge init`]
 {project}/.claude/
@@ -144,8 +144,9 @@ forge plan           plan feature (waves A-E, subtype-aware)
                      · subtypes: product / refactor / bugfix / spike / chore
                      · `forge plan refactor-{slug}` lê L1 status e pula Wave A
 forge implement      execute task-by-task
-forge verify         validator cascade (14 validators)
+forge verify         validator cascade (15 validators)
                      · check_no_behavior_change gate quando subtype=refactor
+                     · validate_extension_feature cross-cutting quando feature tem extends-feature setado (Gap 9)
 forge status         read-only board
 forge doctor         health check (12 categorias)
                      · inclui reuse-intelligence findings agregados
@@ -173,8 +174,8 @@ Start here:
 - `docs/design/00-vision.md` — arquitetura (6 layers, capability cards)
 - `docs/design/01-decisions.md` — 27 decisões locked
 - `docs/design/06-command-surface.md` — 12 comandos canônicos + 2 hidden
-- `docs/design/07-discipline.md` — 7 disciplinas universais (§8 non-product, §9 external-deps)
-- `docs/design/04-pending.md` — 18 Gaps inventoriados (Gap 1+2+8+18 em v1.1.0; Gap 5 em v1.2.0)
+- `docs/design/07-discipline.md` — 10 disciplinas universais (§8 non-product, §9 external-deps, §10 extension feature)
+- `docs/design/04-pending.md` — 18 Gaps inventoriados (Gap 1+2+8+18 em v1.1.0; Gap 5 em v1.2.0; Gap 9 em v1.2 cumulativo — extends-feature mechanic; multi-target out-of-scope permanente)
 - `docs/schemas/graph.md` — schema v2 com reuse_findings + module_deps + Q1-Q17
 - `docs/schemas/proposed-evolutions.md` — 16 proposal kinds (10 retrospective + 6 reuse-intelligence)
 - `docs/schemas/capability-labels.md` — catálogo canônico de capabilities

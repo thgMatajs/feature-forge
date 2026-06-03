@@ -1041,10 +1041,48 @@ demanda real teria que reabrir a revisita Gap 9 inteira.
       o pattern "cross-cutting validator" tiver 2+ casos (até hoje só
       este).
 - [ ] **Smoke test E2E real** — Mandamento "verde antes de pronto"
-      cumprido (unit + integration verdes; pytest baseline preservada).
-      E2E real (dummy parent feature done + `forge plan` + escolher
-      Estender + verificar L1 + intake + validator) seria refinamento
-      de fixture pra v1.2+. Smoke manual abaixo cobre o gap até lá.
+      cumprido (unit + integration verdes; suite total 637 passing + 12
+      skipped). E2E real (dummy parent feature done + `forge plan` +
+      escolher Estender + verificar L1 + intake + validator) seria
+      refinamento de fixture pra v1.2.x. Smoke manual abaixo cobre o
+      gap até lá.
+
+**Power-review fix loop (post-ship 2026-06-03) — findings menores
+deferred:**
+
+O REVIEW.md em `.planning/gap9-extends-feature/REVIEW.md` listou 12
+findings (0 critical / 5 warning / 7 info). Fix loop aplicou W-002 +
+W-003 + W-005 + I-002 + I-007 antes do doc-sync; W-004 (commit fora de
+escopo `e0af68a chore(claude): migrate hooks`) foi aceito com nota no
+commit body (Caminho B do REVIEW); W-001 ficou como o item dedicado
+acima ("validate_extension_feature wiring") — decisão consciente
+documentada. INFO findings remanescentes como TODOs leves v1.x+:
+
+- [ ] **I-001** — Validator emite `EXT-001` quando `status.json` está
+      ausente do parent_dir (parent dir existe mas incompleto).
+      Tecnicamente o contrato do EXT-001 documentado é "parent slug
+      exists as a sibling L1 directory" — o caso melhor casaria com um
+      sub-código (e.g., `EXT-001b` ou `EXT-005 parent incompleto`).
+      Mensagem é clara o suficiente hoje pra operador entender; refinar
+      taxonomy é polish v1.x+.
+- [ ] **I-003** — Validator EXT-004 com scope vazio: comportamento
+      intencional (empty-scope-collision documentado no docstring) pode
+      confundir operador que ainda não declarou `extension-scope` (sinal
+      de "incompleto" mais do que "duplicado"). Trade-off: warn-shape
+      permite passar verify; fail-shape (atual) força resolução agora.
+      Avaliar warn-shape em v1.x+ se feedback de campo aparecer.
+- [ ] **I-004** — Tests `tests/unit/test_plan_extension.py` usam
+      `monkeypatch.setattr("engine.plan.question.ask", lambda ...)`
+      direto na signature interna de `question.ask`. Funciona, cria
+      acoplamento ao 3-arg + kwargs. Considerar v1.x+ um fake-input
+      dispatcher dedicado (`tests/_fakes/question_fake.py`) com API
+      estável. Não bloqueia merge.
+- [ ] **I-005** — `docs/schemas/memory.md:288-307` exemplo `status.json`
+      não mostra `shipped-at` (mesmo agora sendo escrito por
+      `engine/implement.py` na transição state=done — fix W-002). Quando
+      v1.x+ revisar o schema doc, adicionar `"shipped-at":
+      "2026-05-28T18:00:00Z"` em features done e `null` em features
+      pre-done. Mantém schema doc em sync com runtime.
 
 **Validation pendente para piloto smoke test:**
 
