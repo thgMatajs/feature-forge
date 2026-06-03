@@ -131,17 +131,13 @@ def _check_one_extension(
         )
         return fails
 
-    # Parent-feature mirror sanity — reverse pointer must agree when set.
-    # Tolerante: parent-feature null + extends-feature set é OK durante
-    # transição (engine ainda mirroring); divergência declarada (parent-
-    # feature != extends-feature) é corrupção. Warn-shape n/a num validator
-    # fail-only — surface como fail também.
-    if state.parent_feature is not None and state.parent_feature != state.extends_feature:
-        fails.append(
-            f"{slug}: parent-feature {state.parent_feature!r} diverge de "
-            f"extends-feature {state.extends_feature!r} (devem ser iguais ou ambos null)"
-        )
-        return fails
+    # I-002 (review fix Gap 9): check redundante "parent-feature !=
+    # extends-feature" removido. Lockstep dos dois campos já é enforced
+    # nos dois write paths (engine.plan._create_extension_l1 +
+    # engine.memory.l1.write_l1_status), então a única forma de divergir
+    # é editar status.json à mão — defender contra isso é overkill v1.
+    # Plano só prevê EXT-001..004; sem código EXT-NNN dedicado, esse
+    # check virava warning livre fora da taxonomia.
 
     # EXT-004 setup — record (parent, scope) for cross-slug dedupe.
     scope = _extension_scope(project_root, slug)
