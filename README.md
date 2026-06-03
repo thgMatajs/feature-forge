@@ -2,7 +2,7 @@
 
 A standalone CLI skill that orchestrates end-to-end planning + implementation of mobile features across Android, iOS, KMP, and Web. Backend-agnostic (Firebase, REST, GraphQL, local-only).
 
-> **State:** v1.1.0 entregue (2026-06-01). ~379 arquivos, ~50.7K LOC. Reuse-intelligence pipeline + non-product feature track (bugfix/refactor) + blocked-on-external state.
+> **State:** v1.2.0 entregue (2026-06-03). ~400 arquivos, ~52.2K LOC. Adiciona Gap 5 (card local overlay — Approach A) + 2 cards canon (`retrofit-client` + `shared-preferences-prefs` com `legacy-marker`) + power-review PR #2 R1 (18 findings aplicados, 4 deferred v1.2.x em `04-pending.md`).
 
 ## What it is
 
@@ -55,7 +55,7 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 
 6 layers (ver `docs/design/00-vision.md` pra detalhe):
 
-1. **Cards** — unidades atômicas de composição (20 cards canônicos v1)
+1. **Cards** — unidades atômicas de composição (22 cards canônicos v1.2 + overlay local em `.claude/cards/local/`)
 2. **Templates** — esqueletos dos 18 artefatos por feature (16 produto + bugfix-intake + refactor-intake)
 3. **Memory** — L1 per-feature (WIP) + L2 project (committed) + L3 read-only (auto-memory)
 4. **Graph** — SQLite com 17 queries canônicas (Q1–Q10 estruturais, Q11 reusable-helpers, Q12–Q17 reuse-intelligence: duplicates within/cross-module, KMP-migration, near-duplicates, redundant-platform, TS-helpers)
@@ -74,7 +74,7 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 | Preset | kmp-mobile (8 stack cards + 4 backend-candidates) |
 | Validators Python | 14 (+ 2 helpers) — inclui `check_no_behavior_change` para refactor; `validate_card_yaml` + `validate_capability_labels` ganharam overlay-awareness em Gap 5 |
 | Hooks | 9 + 1 reuse incremental (`post-edit-detect-duplications.sh`) |
-| Tests | 508 passing (unit + integration; +50 do round 2 do PR #1, +38 do round 1 bloqueadores, +36 integration do Claude Code rules system, vs baseline original v1.1.0 = 367) |
+| Tests | 595 passing + 12 skipped (rapid lane + integration/e2e — todos verde; +87 vs v1.1.0 baseline de 508; cumulativo cobre PR #1 R1+R2+R3 + Gap 5 + power-review PR #2 R1) |
 | LOC total | ~52.200 |
 | Engine LOC | ~21.900 (Python) |
 | Files total | ~400 |
@@ -91,7 +91,7 @@ export FORGE_HOME=~/Documents/feature-forge
 export PATH="$FORGE_HOME/bin:$PATH"
 
 # Verifica
-forge --version  # → forge 1.1.0
+forge --version  # → forge 1.2.0
 
 # Init num projeto novo (Step 11.5 já escaneia duplicações existentes)
 cd ~/code/my-project
@@ -119,11 +119,11 @@ Requer Python 3.11+ + PyYAML (única dep externa).
   docs/                                 design + schemas + UX roteiros + lifecycle
   agents/                               agent prompts (10 prompts)
   templates/                            18 canonical templates (16 + bugfix + refactor)
-  cards/                                20 canonical cards
+  cards/                                22 canonical cards (+ overlay em consumidor)
   presets/kmp-mobile/                   canonical preset v1
   validators/                           14 validators + helpers
   hooks/                                9 hooks + reuse incremental script
-  tests/                                508 passing tests (unit + integration)
+  tests/                                595 passing tests (unit + integration + e2e) + 12 skipped
 
 [per project install via `forge init`]
 {project}/.claude/
@@ -174,7 +174,7 @@ Start here:
 - `docs/design/01-decisions.md` — 27 decisões locked
 - `docs/design/06-command-surface.md` — 12 comandos canônicos + 2 hidden
 - `docs/design/07-discipline.md` — 7 disciplinas universais (§8 non-product, §9 external-deps)
-- `docs/design/04-pending.md` — 18 Gaps inventoriados (Gap 1+2+8+18 shipped em v1.1.0)
+- `docs/design/04-pending.md` — 18 Gaps inventoriados (Gap 1+2+8+18 em v1.1.0; Gap 5 em v1.2.0)
 - `docs/schemas/graph.md` — schema v2 com reuse_findings + module_deps + Q1-Q17
 - `docs/schemas/proposed-evolutions.md` — 16 proposal kinds (10 retrospective + 6 reuse-intelligence)
 - `docs/schemas/capability-labels.md` — catálogo canônico de capabilities
@@ -183,7 +183,7 @@ Start here:
 - `docs/ux/forge-evolve-roteiro.md` — Cenas 15-20 para os 6 reuse kinds
 - `agents/planning-conductor.md` — super-agent prompt (subtypes + waves)
 - `presets/kmp-mobile/README.md` — preset base v1
-- `CHANGELOG.md` — release notes v1.0.0 + v1.1.0
+- `CHANGELOG.md` — release notes v1.0.0 + v1.1.0 + v1.2.0
 
 ## Conhecidos limites v1.1
 

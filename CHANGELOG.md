@@ -7,6 +7,8 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-06-03
+
 ### Added (Gap 5 — Card local overlay, 2026-06-02)
 
 - **Gap 5 resolvido — Card local overlay (Approach A)** —
@@ -288,6 +290,7 @@ Round final de hardening da v1.1.0: critical (C1–C4), alta (A1, A2, A5, A6, A9
 - Gradle dependency parsing cobre `implementation(project(...))` e
   variantes comuns. DSL Kotlin avançado ou `includeBuild` pode falhar.
 
+[1.2.0]: https://github.com/thgMatajs/feature-forge/releases/tag/v1.2.0
 [1.1.0]: https://github.com/thgMatajs/feature-forge/releases/tag/v1.1.0
 
 ## [1.0.0] — 2026-05-29

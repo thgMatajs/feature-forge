@@ -3,23 +3,23 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-03 (v1.1.x — Gap 5 + power-review PR #2 follow-ups)
-**Estado:** Gap 5 entregue + power-review PR #2 R1 aplicado (22 findings
-endereçados em 9 atomic commits). Branch `feat/gap5-card-local-overlay`
-com 13 commits Gap 5 + 9 commits power-review R1 = 22 atomic + doc-sync.
-Loader cascade canon ∪ local com hard-fail em colisão; `validate_card_yaml`
-+ `validate_capability_labels` overlay-aware (CARD-008 conformity:
-conflicts-with aceita label OR card-name); reconfigure ganha submenu
-`card-local`; init ganha Step 7.5 com 3-caminhos pra signals órfãos
+**Última atualização:** 2026-06-03 (v1.2.0 — Gap 5 + power-review PR #2 R1 + tag release)
+**Estado:** v1.2.0 entregue. Gap 5 + power-review PR #2 R1 + schema_version
+fix merged em `main`; tags `v1.2.0` (HEAD doc-sync) e `v1.1.0` (retro em
+`859d528`) criadas. Loader cascade canon ∪ local com hard-fail em colisão;
+`validate_card_yaml` + `validate_capability_labels` overlay-aware (CARD-008
+conformity: conflicts-with aceita label OR card-name); reconfigure ganha
+submenu `card-local`; init ganha Step 7.5 com 3-caminhos pra signals órfãos
 (orphans agrupados por capability, `_count_needle_hits` respeita
 `_SKIP_DIRS` — sem mais hang em monorepos). Cards canon: 20 → 22
 (`retrofit-client` + `shared-preferences-prefs` com `legacy-marker: true`).
-Nova decisão locked 28 (ADR append-only). Rapid lane: 521 → 533 (+12 novos
-testes TDD). Próximo: revisitar Gap 9 (catálogo evolutivo) à luz do overlay
-e considerar Gap 14 (preset coverage). Itens deferred v1.2 anotados em
-`04-pending.md` (re-detection inline no Step 7.5, ADR-suspension audit log,
-catalog_overlay refactor, lenient local loader). Histórico prévio (PR #1 R3)
-preservado abaixo na timeline.
+Nova decisão locked 28 (ADR append-only — não revisita prévia). Suite total:
+607 tests passing (rapid lane + integration/e2e). Próximo: Gap 9 (catálogo
+evolutivo) à luz do overlay e considerar Gap 14 (preset coverage). Itens
+deferred v1.2.x anotados em `04-pending.md`: lenient local loader (C1),
+re-detection inline no Step 7.5 (N2-a), ADR-suspension audit log (N13),
+catalog_overlay refactor (N17). Histórico prévio (PR #1 R3) preservado
+abaixo na timeline.
 
 ---
 
