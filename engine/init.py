@@ -269,7 +269,15 @@ def _count_needle_hits(project_root: Path, needle: str, limit: int = 50) -> int:
     patterns = ("*.kt", "build.gradle", "build.gradle.kts", "settings.gradle*")
     for pattern in patterns:
         for path in project_root.rglob(pattern):
-            if any(part.startswith(".") for part in path.relative_to(project_root).parts):
+            try:
+                parts = path.relative_to(project_root).parts
+            except ValueError:
+                continue
+            # C16: filtra dirs ocultos (.git etc.) + monorepo culprits
+            # declarados em `_SKIP_DIRS` (node_modules, build, .gradle,
+            # Pods, DerivedData, dist). Sem isso, init trava em
+            # monorepos varrendo deps/build artifacts.
+            if any(part.startswith(".") or part in _SKIP_DIRS for part in parts):
                 continue
             try:
                 text = path.read_text(encoding="utf-8", errors="ignore")
@@ -392,12 +400,21 @@ def _surface_three_paths(
                 ),
             )
         # Cria local pros não-reservados; reservados saem como note.
+        # C14: agrupa por suggested_capability ANTES do loop — dois orphans
+        # mapeando pra mesma capability geram um único card local com
+        # signals consolidados (sem agrupar, o segundo write sobrescreve
+        # o primeiro silenciosamente).
+        from collections import defaultdict  # noqa: PLC0415 — lazy local
+
         non_reserved = [o for o in orphans if not o.is_reserved]
         reserved_labels = sorted(
             {o.suggested_capability for o in orphans if o.is_reserved}
         )
+        grouped: dict[str, list[OrphanSignal]] = defaultdict(list)
         for o in non_reserved:
-            _card_local_add_inline(project_root, o)
+            grouped[o.suggested_capability].append(o)
+        for cap_orphans in grouped.values():
+            _card_local_add_inline(project_root, cap_orphans)
         note = ""
         if reserved_labels:
             note = (
@@ -414,31 +431,63 @@ def _surface_three_paths(
     return InitDecision(choice="abort", exit_code=8)
 
 
-def _card_local_add_inline(project_root: Path, orphan: OrphanSignal) -> None:
-    """Cria card local minimal cobrindo um orphan signal (modo não-interativo).
+def _card_local_add_inline(
+    project_root: Path,
+    orphan_or_list: "OrphanSignal | list[OrphanSignal]",
+) -> None:
+    """Cria card local minimal cobrindo um ou mais orphan signals.
 
     Espelha skeleton de `_card_local_add` mas pre-preenche `name`,
-    `provides`, e adiciona um signal inicial baseado no orphan needle.
+    `provides`, e adiciona signals iniciais baseados no(s) orphan needle(s).
     Usado pelo Step 7.5 quando user escolhe caminho 1.
+
+    Aceita `OrphanSignal` (legacy/backward-compat) OU `list[OrphanSignal]`
+    pra consolidar múltiplos needles que apontam pra mesma capability num
+    único card local (sem agrupar, o segundo write sobrescreveria o
+    primeiro — bug N C14/C15 do power-review PR #2).
+
+    Pressupõe que todos os orphans da lista compartilham
+    `suggested_capability` (chamador agrupa antes). Se a lista for
+    heterogênea, usa o `suggested_capability` do primeiro como referência.
     """
     import yaml as _yaml_lib  # noqa: PLC0415 — lazy
-    from .reconfigure import _LOCAL_CARD_NAME_RE  # noqa: PLC0415 — lazy, evita circ
+    from engine.cards import LOCAL_CARD_NAME_RE  # noqa: PLC0415 — lazy
 
-    name_base = orphan.suggested_capability
-    name = name_base if _LOCAL_CARD_NAME_RE.match(name_base) else "orphan-card"
+    if isinstance(orphan_or_list, OrphanSignal):
+        orphans: list[OrphanSignal] = [orphan_or_list]
+    else:
+        orphans = list(orphan_or_list)
+    if not orphans:
+        return
+
+    capability = orphans[0].suggested_capability
+    name = capability if LOCAL_CARD_NAME_RE.match(capability) else "orphan-card"
 
     local_root = project_root / ".claude" / "cards" / "local" / name
     local_root.mkdir(parents=True, exist_ok=True)
     (local_root / "detection").mkdir(parents=True, exist_ok=True)
 
-    needle = orphan.signal_id.removeprefix("orphan:")
+    signals: list[dict[str, Any]] = []
+    needles_seen: list[str] = []
+    for o in orphans:
+        needle = o.signal_id.removeprefix("orphan:")
+        signals.append(
+            {
+                "type": "file-content",
+                "glob": "**/*.kt",
+                "contains": needle,
+                "confidence": 0.5,
+            }
+        )
+        needles_seen.append(needle)
+
     card_data = {
         "schema-version": 1,
         "identity": {
             "name": name,
             "version": "0.1.0",
             "description": (
-                f"Orphan-derived local card cobrindo {orphan.suggested_capability}."
+                f"Orphan-derived local card cobrindo {capability}."
             ),
             "category": "kmp",
             "maturity": "experimental",
@@ -447,19 +496,12 @@ def _card_local_add_inline(project_root: Path, orphan: OrphanSignal) -> None:
             "last-updated": _today_iso_for_init(),
         },
         "legacy-marker": False,
-        "provides": [orphan.suggested_capability],
+        "provides": [capability],
         "requires": [],
         "conflicts-with": [],
         "contributes": {"config-defaults": {}},
         "detection": {
-            "signals": [
-                {
-                    "type": "file-content",
-                    "glob": "**/*.kt",
-                    "contains": needle,
-                    "confidence": 0.5,
-                }
-            ],
+            "signals": signals,
             "threshold": 0.5,
         },
         "documentation": {"readme": "README.md"},
@@ -468,11 +510,12 @@ def _card_local_add_inline(project_root: Path, orphan: OrphanSignal) -> None:
         _yaml_lib.safe_dump(card_data, sort_keys=False, allow_unicode=True),
         encoding="utf-8",
     )
+    needle_list = ", ".join(f"`{n}`" for n in needles_seen)
     (local_root / "README.md").write_text(
         f"# {name}\n\n"
-        f"Card local criado automaticamente pelo init Step 7.5 a partir do "
-        f"signal órfão `{needle}`. Revise threshold e signals adicionais "
-        f"em `card.yaml` antes do próximo `forge verify`.\n",
+        f"Card local criado automaticamente pelo init Step 7.5 a partir "
+        f"de signal(s) órfão(s) {needle_list}. Revise threshold e signals "
+        f"adicionais em `card.yaml` antes do próximo `forge verify`.\n",
         encoding="utf-8",
     )
     (local_root / "detection" / "signals.yaml").write_text(

@@ -15,6 +15,8 @@ See `docs/schemas/card.md` for the full schema and resolver behaviour.
 
 from __future__ import annotations
 
+import re as _re
+
 
 class CardError(Exception):
     """Raised for any human-fixable problem in the card subsystem.
@@ -35,4 +37,11 @@ class CardConflictError(CardError):
     """
 
 
-__all__ = ["CardError", "CardConflictError"]
+# Regex canônica pra nome de card local (kebab-case, ≤40 chars).
+# Promovida do antigo `engine.reconfigure._LOCAL_CARD_NAME_RE` (private) pra
+# este módulo público (N10 do power-review PR #2) — vários módulos
+# (`init.py`, `reconfigure.py`) referenciavam o private; agora importam aqui.
+LOCAL_CARD_NAME_RE = _re.compile(r"^[a-z][a-z0-9-]{0,39}$")
+
+
+__all__ = ["CardError", "CardConflictError", "LOCAL_CARD_NAME_RE"]

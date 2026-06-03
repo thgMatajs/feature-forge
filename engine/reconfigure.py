@@ -29,6 +29,7 @@ from typing import Any
 
 import yaml
 
+from engine.cards import LOCAL_CARD_NAME_RE
 from engine.cards.loader import CardError, CardManifest, load_all_cards, load_card
 from engine.cards.resolver import resolve
 from engine.cards.snapshotter import (
@@ -476,7 +477,9 @@ def _card_local_list(project_root: Path) -> None:
     renderer.write(renderer.box(f"Cards locais ({len(entries)})", lines))
 
 
-_LOCAL_CARD_NAME_RE = _re.compile(r"^[a-z][a-z0-9-]{0,39}$")
+# Alias mantido para qualquer caller interno legado do módulo. Fonte canônica
+# vive em `engine.cards.LOCAL_CARD_NAME_RE` (N10 do power-review PR #2).
+_LOCAL_CARD_NAME_RE = LOCAL_CARD_NAME_RE
 
 
 def _today_iso() -> str:

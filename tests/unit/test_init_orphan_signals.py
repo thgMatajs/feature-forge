@@ -156,6 +156,97 @@ def test_three_paths_caminho_1_creates_local_for_non_reserved(rx_orphan, tmp_pat
     add_mock.assert_called_once()
 
 
+def test_three_paths_caminho_1_groups_multiple_orphans_by_capability(tmp_path):
+    """Múltiplos orphans com mesma suggested_capability viram UMA chamada.
+
+    C14+C15: cada capability deve gerar um único `_card_local_add_inline`
+    com a lista consolidada — sem isso, o segundo write sobrescreve o
+    primeiro (mesmo diretório local/<capability>/).
+    """
+    proj = tmp_path / "p"
+    (proj / ".claude").mkdir(parents=True)
+    orphan_a = OrphanSignal(
+        signal_id="orphan:foo-needle-a",
+        source="detected in 1 file(s)",
+        suggested_capability="shared-cap",
+        is_reserved=False,
+        hit_count=1,
+    )
+    orphan_b = OrphanSignal(
+        signal_id="orphan:foo-needle-b",
+        source="detected in 2 file(s)",
+        suggested_capability="shared-cap",
+        is_reserved=False,
+        hit_count=2,
+    )
+    with patch("engine.init.question.ask") as ask_mock, patch(
+        "engine.init._card_local_add_inline"
+    ) as add_mock:
+        ask_mock.return_value = "1"
+        decision = _surface_three_paths([orphan_a, orphan_b], project_root=proj)
+    assert decision.choice == "create-local"
+    # Uma única chamada — agrupada por capability.
+    add_mock.assert_called_once()
+    args, _kwargs = add_mock.call_args
+    # Segundo argumento deve ser lista com os dois orphans (signal aceita
+    # OrphanSignal | list[OrphanSignal]).
+    passed = args[1]
+    assert isinstance(passed, list)
+    assert {o.signal_id for o in passed} == {
+        "orphan:foo-needle-a",
+        "orphan:foo-needle-b",
+    }
+
+
+def test_card_local_add_inline_consolidates_signals_from_list(tmp_path):
+    """C15: chamada com lista de orphans grava TODOS os signals no card.yaml."""
+    from engine.init import _card_local_add_inline
+
+    proj = tmp_path / "p"
+    (proj / ".claude").mkdir(parents=True)
+
+    orphans = [
+        OrphanSignal(
+            signal_id=f"orphan:needle-{i}",
+            source=f"detected in {i} file(s)",
+            suggested_capability="shared-cap",
+            is_reserved=False,
+            hit_count=i,
+        )
+        for i in (1, 2, 3)
+    ]
+    _card_local_add_inline(proj, orphans)
+
+    card_yaml = proj / ".claude" / "cards" / "local" / "shared-cap" / "card.yaml"
+    assert card_yaml.is_file()
+    parsed = yaml.safe_load(card_yaml.read_text(encoding="utf-8"))
+    signals = (parsed.get("detection") or {}).get("signals") or []
+    contains_set = {s.get("contains") for s in signals}
+    assert contains_set == {"needle-1", "needle-2", "needle-3"}
+
+
+def test_card_local_add_inline_accepts_single_orphan_backward_compat(tmp_path):
+    """C15: single OrphanSignal continua sendo aceito (backward compat)."""
+    from engine.init import _card_local_add_inline
+
+    proj = tmp_path / "p"
+    (proj / ".claude").mkdir(parents=True)
+
+    orphan = OrphanSignal(
+        signal_id="orphan:single-needle",
+        source="detected in 1 file(s)",
+        suggested_capability="kotlin-multiplatform",
+        is_reserved=False,
+        hit_count=1,
+    )
+    _card_local_add_inline(proj, orphan)
+
+    card_yaml = (
+        proj / ".claude" / "cards" / "local" / "kotlin-multiplatform" / "card.yaml"
+    )
+    assert card_yaml.is_file()
+
+
 def test_three_paths_caminho_1_reserved_routes_to_adr(hilt_orphan, tmp_path):
     """Caminho 1 com reservada: NÃO cria local, oferece abrir ADR."""
     proj = tmp_path / "p"
