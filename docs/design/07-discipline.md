@@ -243,6 +243,14 @@ fail") · `docs/ux/forge-doctor-roteiro.md` (mesma semântica de cascade) ·
 `docs/schemas/workflow-config.md` §validators.fail-fast ·
 `.claude/hooks/post-subagent-validate.sh` (cascade local em hook).
 
+### Overlay-awareness (Gap 5, 2026-06-02)
+
+`validate_card_yaml` e `validate_capability_labels` são overlay-aware desde
+2026-06-02 — catálogo efetivo é canon ∪ local. Loader helper
+`validators/_common.load_catalog(project_root)` aplica guards
+(promoção-reservada, colisão-canon, chaves proibidas) numa única passada.
+Validators downstream consomem o resultado sem precisar repetir guards.
+
 ---
 
 ## 3. `.bak/` retention policy

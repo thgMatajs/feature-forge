@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from engine.graph import builder
+from engine.utils import sqlite_io
 from engine.utils.sqlite_io import open_db
 
 
@@ -50,7 +51,7 @@ def test_build_full_creates_meta_schema_version(meobonsai_root, tmp_path):
             "SELECT value FROM meta WHERE key='schema_version'"
         ).fetchone()
         assert row is not None
-        assert row["value"] == "1"
+        assert row["value"] == sqlite_io.SCHEMA_VERSION
     finally:
         conn.close()
 

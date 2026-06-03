@@ -212,3 +212,30 @@ total-labels:
   reserved: 5
   total: 35
 ```
+
+---
+
+## Local overlay (since v1.1.x — Gap 5)
+
+Projetos consumidores podem estender o catálogo via
+`.claude/inventory/capability-labels.local.yaml`. Schema enxuto:
+
+```yaml
+schema_version: 1
+added:
+  - name: feature-flag-remote
+    description: >
+      Capability local pra cobrir LaunchDarkly + Firebase Remote Config
+      sem precisar promoção ao canon.
+    target-platforms: [android, ios]
+```
+
+**Regras (validador rejeita):**
+
+- `overrides:` proibido — overlay NÃO redefine canon
+- `reserved-promotions:` proibido — promoção exige ADR no canon
+- Label local ∈ canon ativo → colisão (hard fail)
+- Label local ∈ canon reservadas → "promoção exige ADR"
+
+Detalhe operacional: `validators/_common.load_catalog(project_root)` aplica
+todos os guards numa única passada; validators downstream consomem o resultado.

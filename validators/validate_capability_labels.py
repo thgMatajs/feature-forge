@@ -3,11 +3,15 @@
 
 For every `cards/{name}/card.yaml` (or the snapshot under `.claude/cards/`),
 validates that every label in `provides` / `requires` / `conflicts-with` is
-present in the canonical catalog defined by
-`docs/schemas/capability-labels.md`.
+present in the **effective catalog** (canon ∪ local overlay).
 
+- Canon: `docs/schemas/capability-labels.md` (source-of-truth)
+- Overlay: `.claude/inventory/capability-labels.local.yaml` (project-local additions)
+
+Behavior:
 - Out-of-catalog labels → fail
-- Reserved labels (still planned) → warn
+- Reserved labels (still planned, canon-only) → warn
+- Overlay malformed / forbidden keys / collision with canon → fail (CatalogOverlayError)
 
 Schema source: docs/schemas/capability-labels.md.
 """
@@ -19,6 +23,8 @@ from pathlib import Path
 from typing import Any
 
 from _common import (
+    CatalogOverlayError,
+    load_catalog,
     make_paths,
     result_fail,
     result_pass,
@@ -28,15 +34,7 @@ from _common import (
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from engine.cards.loader import (  # noqa: E402
-    _get_catalog,
-    _parse_capability_catalog,
-)
-from engine.utils.paths import (  # noqa: E402
-    cards_canonical_dir,
-    cards_dir,
-    forge_home,
-)
+from engine.utils.paths import cards_canonical_dir, cards_dir  # noqa: E402
 from engine.utils.yaml_io import read_yaml_or_default  # noqa: E402
 
 
@@ -46,6 +44,10 @@ def _collect_cards(project_root: Path) -> list[Path]:
     snapshot = cards_dir(project_root)
     if snapshot.is_dir():
         candidates.extend(snapshot.glob("*/card.yaml"))
+        # Inclui overlay local quando existe (cards/local/<name>/card.yaml).
+        local_root = snapshot / "local"
+        if local_root.is_dir():
+            candidates.extend(local_root.glob("*/card.yaml"))
     if not candidates:
         canonical = cards_canonical_dir()
         if canonical.is_dir():
@@ -53,23 +55,18 @@ def _collect_cards(project_root: Path) -> list[Path]:
     return sorted(candidates)
 
 
-def _catalog() -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
-    """Catalog (all, singular, latent). Hits the cached parse from engine."""
-    try:
-        return _get_catalog()
-    except Exception:
-        # Fall back to a direct parse — useful when cache is unset.
-        catalog_path = forge_home() / "docs/schemas/capability-labels.md"
-        return _parse_capability_catalog(catalog_path)
+def _collect_known_card_names(cards: list[Path]) -> frozenset[str]:
+    """Set de nomes-de-card conhecidos (canon ∪ local), pra resolver CARD-008.
 
-
-def _reserved_labels(all_labels: frozenset[str], singular: frozenset[str], latent: frozenset[str]) -> frozenset[str]:
-    """Labels that exist in the catalog but are neither singular nor latent."""
-    return frozenset(all_labels - singular - latent)
+    `conflicts-with` aceita label OR card-name por schema (docs/schemas/card.md).
+    O nome do card é inferido pelo nome do diretório que contém `card.yaml`,
+    espelhando a convenção de `engine.cards.loader`.
+    """
+    return frozenset(p.parent.name for p in cards)
 
 
 def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
-    """Validate every card's capability-label usage against the catalog."""
+    """Validate every card's capability-label usage against canon ∪ local catalog."""
     cards = _collect_cards(project_root)
     if not cards:
         return result_warn(
@@ -79,8 +76,30 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
             why=["forge init ainda não rodou, ou snapshot vazio"],
         )
 
-    all_labels, singular, latent = _catalog()
-    reserved = _reserved_labels(all_labels, singular, latent)
+    try:
+        catalog = load_catalog(project_root)
+    except CatalogOverlayError as exc:
+        return result_fail(
+            "capability-labels.local.yaml inválido",
+            what_failed=str(exc),
+            where=".claude/inventory/capability-labels.local.yaml",
+            why=[
+                "Overlay tem guards: sem `overrides`, sem `reserved-promotions`,",
+                "sem colisão com canon ativo, sem promoção de reservada.",
+            ],
+            paths=make_paths(
+                "Corrigir o YAML local — remover chaves proibidas",
+                "Validator rejeita overlay que tenta redefinir canon.",
+                "Renomear label local para evitar colisão",
+                "Active set canon tem precedência (Approach A).",
+                "Abrir ADR pra promoção ao canon",
+                "Promoção exige revisita do catálogo, não overlay.",
+            ),
+        )
+
+    active = catalog.active
+    reserved = catalog.reserved
+    known_card_names = _collect_known_card_names(cards)
 
     failures: list[str] = []
     reserved_hits: list[str] = []
@@ -97,34 +116,63 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
             failures.append(f"{card_yaml.parent.name}: top-level not mapping")
             continue
 
-        for block_name in ("provides", "requires", "conflicts-with"):
+        # provides + requires: estritamente labels do catálogo.
+        for block_name in ("provides", "requires"):
             block = data.get(block_name) or []
             if not isinstance(block, list):
                 continue
             for label in block:
                 if not isinstance(label, str) or not label:
                     continue
-                if label not in all_labels:
-                    failures.append(f"{card_yaml.parent.name}.{block_name}: {label!r} out-of-catalog")
+                if label not in active:
+                    failures.append(
+                        f"{card_yaml.parent.name}.{block_name}: {label!r} out-of-catalog"
+                    )
                 elif label in reserved:
-                    reserved_hits.append(f"{card_yaml.parent.name}.{block_name}: {label!r} (reserved)")
+                    reserved_hits.append(
+                        f"{card_yaml.parent.name}.{block_name}: {label!r} (reserved)"
+                    )
+
+        # conflicts-with: schema CARD-008 permite label OR card-name.
+        # Aceita ambos; rejeita só quando entrada não é nenhum dos dois.
+        conflicts = data.get("conflicts-with") or []
+        if isinstance(conflicts, list):
+            for entry in conflicts:
+                if not isinstance(entry, str) or not entry:
+                    continue
+                if entry in active:
+                    if entry in reserved:
+                        reserved_hits.append(
+                            f"{card_yaml.parent.name}.conflicts-with: "
+                            f"{entry!r} (reserved)"
+                        )
+                    continue
+                if entry in known_card_names:
+                    # Card-name reference é caminho legítimo do schema.
+                    continue
+                failures.append(
+                    f"{card_yaml.parent.name}.conflicts-with: {entry!r} "
+                    "unknown label/card-name"
+                )
 
     if failures:
         return result_fail(
             f"{len(failures)} label(s) out-of-catalog em {cards_checked} card(s)",
-            what_failed="; ".join(failures[:3]) + (f" (+{len(failures)-3} more)" if len(failures) > 3 else ""),
+            what_failed="; ".join(failures[:3])
+            + (f" (+{len(failures)-3} more)" if len(failures) > 3 else ""),
             where="cards/*/card.yaml",
             why=[
-                "capability-labels.md é source-of-truth (CARD-006/CARD-007).",
-                "Labels fora do catálogo quebram resolução de cards.",
+                "capability-labels.md é source-of-truth canon (CARD-006/CARD-007).",
+                "Overlay pode adicionar labels via capability-labels.local.yaml.",
+                "Labels fora do catálogo efetivo quebram resolução de cards.",
             ],
             paths=make_paths(
-                "Adicionar a label ao docs/schemas/capability-labels.md (PR canônico)",
+                "Adicionar a label ao docs/schemas/capability-labels.md (PR canon)",
                 "Catalog evolve via 1-file change; veja seção Reserved.",
-                "Editar o card.yaml e usar uma label canônica equivalente",
-                "Costuma haver um sinônimo no catalog.",
-                "Marcar o card como experimental — `forge reconfigure → remover card`",
-                "Se o card está deprecado, removê-lo evita o erro.",
+                "Adicionar a label ao .claude/inventory/capability-labels.local.yaml",
+                "Overlay aceita additions com schema enxuto (`added: [...]`).",
+                "Editar o card.yaml e usar label canônica equivalente",
+                "Costuma haver sinônimo no catalog.",
             ),
         )
 
@@ -137,7 +185,7 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
         )
 
     return result_pass(
-        f"{cards_checked} card(s) com labels todas no catálogo canônico"
+        f"{cards_checked} card(s) com labels todas no catálogo efetivo (canon ∪ local)"
     )
 
 

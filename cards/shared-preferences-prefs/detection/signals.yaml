@@ -1,0 +1,35 @@
+# cards/shared-preferences-prefs/detection/signals.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Sinais de detecção do card shared-preferences-prefs (LEGACY provider de
+# local-prefs-storage). Confidence individual calibrada ligeiramente menor
+# que datastore-prefs equivalente — vide README.md §Detection.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+signals:
+  - id:         shared-prefs-runtime-getter
+    type:       file-content
+    glob:       "**/*.kt"
+    contains:   "getSharedPreferences("
+    confidence: 0.4
+    rationale:  "Chamada direta a Context.getSharedPreferences — evidência runtime forte."
+
+  - id:         shared-prefs-default-manager
+    type:       file-content
+    glob:       "**/*.kt"
+    contains:   "PreferenceManager.getDefaultSharedPreferences"
+    confidence: 0.3
+    rationale:  "API legacy de PreferenceManager — confirma uso ativo mesmo em código mais antigo."
+
+  - id:         shared-prefs-import
+    type:       file-content
+    glob:       "**/*.kt"
+    contains:   "import android.content.SharedPreferences"
+    confidence: 0.2
+    rationale:  "Import direto — confidence menor pois pode ser tipo declarado em interface sem uso runtime ativo."
+
+threshold: 0.6
+
+alternative-cards:
+  - datastore-prefs

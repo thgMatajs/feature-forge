@@ -1,0 +1,84 @@
+# cards/retrofit-client/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# Retrofit2 HTTP client. Provider clássico de `http-client` em projetos
+# Android-only ou Android-side de KMP onde Ktor multiplatform não é
+# escolhido. Android-only é semântica derivada das signals (todas batem em
+# arquivos Android-side), não declaração de campo.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         retrofit-client
+  version:      1.0.0
+  description:  "Retrofit2 HTTP client para Android / Android-side de KMP. Provider clássico de http-client quando Ktor multiplatform não é a escolha."
+  category:     network
+  maturity:     stable
+  maintainer:   feature-forge-core
+  created-at:   2026-06-02
+  last-updated: 2026-06-02
+  license:      MIT
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
+provides:
+  - http-client
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+# kotlinx-serialization-json é converter moderno padrão. Quando o projeto usa
+# Moshi/Gson, esses signals derivados ficam pra implementação parametrizar
+# via config-defaults.
+requires:
+  - kotlin
+  - serialization-json
+
+
+# ── CONFLICTS ─────────────────────────────────────────────────────────────
+conflicts-with:
+  - ktor-client
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+# Stubs declarados — templates/validators/agent-prompts concretos shipam
+# dispatch-by-dispatch em plano futuro. Stub aqui evita poluir o YAML com
+# entradas vazias.
+contributes:
+  config-defaults:
+    conventions.network.http-client: "retrofit"
+    conventions.network.converter:   "kotlinx-serialization"
+
+
+# ── DETECTION ─────────────────────────────────────────────────────────────
+# Android-only é derivado: signals batem em build.gradle Android e em
+# .kt com imports retrofit2. Sem campo target-platforms.
+detection:
+  signals:
+    - type:       file-content
+      glob:       "**/build.gradle*"
+      contains:   "com.squareup.retrofit2:retrofit"
+      confidence: 0.5
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "@retrofit2.http"
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "import retrofit2"
+      confidence: 0.2
+
+  threshold: 0.6
+
+  alternative-cards:
+    - ktor-client
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "architecture_android"

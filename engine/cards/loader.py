@@ -1,7 +1,7 @@
 """Card loader + `card.yaml` validation.
 
 Loads a card directory into a `CardManifest` and runs schema validation
-(CARD-001..CARD-018 from `docs/schemas/card.md §Validation`).
+(CARD-001..CARD-019 from `docs/schemas/card.md §Validation`).
 
 The capability-label catalog (`docs/schemas/capability-labels.md`) is parsed
 lazily from the markdown source-of-truth via `_parse_capability_catalog`.
@@ -10,7 +10,9 @@ Adding labels is a one-file change (the markdown table).
 
 from __future__ import annotations
 
+import os
 import re
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -19,7 +21,7 @@ import yaml as _yaml_lib
 
 from ..utils.paths import forge_home
 from ..utils.yaml_io import YamlIOError, read_yaml
-from . import CardError
+from . import CardError, CardConflictError
 
 # ── Canonical catalog (hardcoded, FOLLOWUP: parse capability-labels.md) ──────
 
@@ -289,6 +291,8 @@ class CardManifest:
     documentation: dict[str, Any] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict)
     source_path: Path = field(default_factory=lambda: Path("."))
+    legacy_marker: bool = False
+    origin: str = "canon"  # "canon" | "local" — set by load_all_cards cascade
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -335,18 +339,43 @@ def load_card(card_dir: Path) -> CardManifest:
         documentation=dict(data.get("documentation") or {}),
         raw=data,
         source_path=card_dir,
+        legacy_marker=bool(data.get("legacy-marker", False)),
+        origin="canon",  # default; load_all_cards reassigns based on cascade
     )
 
 
 def load_all_cards(cards_root: Path) -> list[CardManifest]:
     """Load every card under `cards_root/<name>/card.yaml`.
 
-    Skips dotfile directories (`.archived/`, `.git/`, etc.). Sorted by name
-    for determinism.
+    Backward-compatible shape: when caller passes the canonical cards/ root
+    directly (no `.claude/cards/local/` sibling), returns canon-only. When
+    caller passes a project root that has `.claude/cards/local/`, returns
+    canon ∪ local with `card.origin` tagged.
+
+    Argument semantics (autodetect):
+      - If `cards_root` itself contains `<name>/card.yaml` entries, treat it
+        as a canon-only root (legacy callers: snapshot dir, canonical dir).
+      - If `cards_root` looks like a project root (contains `.claude/`),
+        treat it as cascade-mode: canon snapshot under
+        `cards_root/.claude/cards/<name>/` + local under
+        `cards_root/.claude/cards/local/<name>/`.
+
+    Raises:
+      CardConflictError: when a name appears in both canon and local layers.
+
+    Side-effects (cascade mode only):
+      Writes `<project>/.claude/inventory/local-cards-manifest.yaml`
+      listing local card names + provides + conflicts-with for CI audit.
     """
     if not cards_root.is_dir():
         raise CardError(f"cards root not found: {cards_root}")
 
+    # Autodetect: if `.claude/` exists at cards_root, treat as project-root cascade.
+    project_marker = cards_root / ".claude"
+    if project_marker.is_dir() and not (cards_root / "card.yaml").exists():
+        return _load_with_cascade(cards_root)
+
+    # Legacy canon-only path: cards_root holds <name>/card.yaml siblings.
     manifests: list[CardManifest] = []
     for entry in sorted(cards_root.iterdir(), key=lambda p: p.name):
         if not entry.is_dir():
@@ -355,16 +384,76 @@ def load_all_cards(cards_root: Path) -> list[CardManifest]:
             continue
         if not (entry / "card.yaml").is_file():
             continue
-        manifests.append(load_card(entry))
+        manifest = load_card(entry)
+        manifest.origin = "canon"
+        manifests.append(manifest)
     return manifests
 
 
+def _load_with_cascade(project_root: Path) -> list[CardManifest]:
+    """Cascade load: canon snapshot first, local overlay second.
+
+    Order is deliberate — canon is the audited set, local is the controlled
+    extension. Inverting order would permit silent override (violates
+    Approach A from spec).
+    """
+    canon_root = project_root / ".claude" / "cards"
+    local_root = project_root / ".claude" / "cards" / "local"
+
+    canon: dict[str, CardManifest] = {}
+    if canon_root.is_dir():
+        for entry in sorted(canon_root.iterdir(), key=lambda p: p.name):
+            if not entry.is_dir():
+                continue
+            if entry.name.startswith("."):
+                continue  # skips `.archived/`, `.git/`, etc.
+            if entry.name == "local":
+                continue  # the overlay dir is handled below, not a canon card
+            if not (entry / "card.yaml").is_file():
+                continue
+            manifest = load_card(entry)
+            manifest.origin = "canon"
+            canon[manifest.name] = manifest
+
+    local: dict[str, CardManifest] = {}
+    if local_root.is_dir():
+        for entry in sorted(local_root.iterdir(), key=lambda p: p.name):
+            if not entry.is_dir():
+                continue
+            if entry.name.startswith("."):
+                continue
+            if not (entry / "card.yaml").is_file():
+                # Empty local card dir: warning skip. Caller (forge doctor)
+                # can surface; loader stays quiet to keep snapshot loadable.
+                continue
+            manifest = load_card(entry)
+            manifest.origin = "local"
+            local[manifest.name] = manifest
+
+    # Hard fail on name collision — Approach A.
+    conflicts = sorted(set(canon) & set(local))
+    if conflicts:
+        raise CardConflictError(
+            f"Nomes em colisão canon×local: {conflicts}. "
+            f"Renomeie o card local ou abra ADR pra promoção ao canon."
+        )
+
+    # Manifest write side-effect (cascade mode only).
+    _write_local_cards_manifest(project_root, local)
+
+    return [canon[name] for name in sorted(canon)] + [
+        local[name] for name in sorted(local)
+    ]
+
+
 def validate_card_yaml(manifest_dict: dict[str, Any], source_path: Path) -> list[str]:
-    """Validate a parsed `card.yaml` dict against CARD-001..CARD-018.
+    """Validate a parsed `card.yaml` dict against CARD-001..CARD-019.
 
     Returns a list of violation strings. Empty list = card is valid.
     Implements the static checks only — cross-card validation (CARD-007/008/017)
     lives in the resolver.
+
+    CARD-019  legacy-marker, se presente, deve ser bool (opcional, default false).
     """
     violations: list[str] = []
 
@@ -440,6 +529,14 @@ def validate_card_yaml(manifest_dict: dict[str, Any], source_path: Path) -> list
         for entry in conflicts:
             if not isinstance(entry, str) or not entry:
                 violations.append(f"CARD-008: conflicts-with entry must be non-empty string, got {entry!r}")
+
+    # ── Top-level `legacy-marker` (Gap 5 — aditivo, opcional) ────────────────
+    # CARD-019: legacy-marker, if present, must be bool (default false when absent).
+    legacy_marker = manifest_dict.get("legacy-marker", False)
+    if not isinstance(legacy_marker, bool):
+        violations.append(
+            f"CARD-019: legacy-marker deve ser bool (true|false), got {legacy_marker!r}"
+        )
 
     contributes = manifest_dict.get("contributes") or {}
     if not isinstance(contributes, dict):
@@ -636,3 +733,66 @@ def _validate_config_defaults(defaults: Any, violations: list[str]) -> None:
     for key in defaults:
         if not isinstance(key, str) or not key:
             violations.append(f"CARD-014: config-defaults key must be non-empty string, got {key!r}")
+
+
+def _write_local_cards_manifest(
+    project_root: Path, local: dict[str, "CardManifest"]
+) -> None:
+    """Write `.claude/inventory/local-cards-manifest.yaml` listing local cards.
+
+    Side-effect deterministic — quando `local` é vazio (canon-only project),
+    no-op e NÃO cria o arquivo (evita ruído em projetos que nunca tocaram
+    overlay). Quando há cards locais, escreve YAML versionado contendo:
+      - schema-version: 1
+      - generated-by: feature-forge
+      - local-cards: [{name, provides, conflicts-with, source}]
+
+    Diretório `.claude/inventory/` é criado se ausente — chamada idempotente.
+    O arquivo é versionado pelo time (não está em .gitignore do projeto
+    consumidor) — usado por CI pra auditar quais cards locais entraram.
+    """
+    if not local:
+        return
+
+    inv_dir = project_root / ".claude" / "inventory"
+    inv_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = inv_dir / "local-cards-manifest.yaml"
+
+    entries: list[dict[str, Any]] = []
+    for name in sorted(local):
+        card = local[name]
+        # N11: card.source_path pode não ser subpath de project_root (p.ex.
+        # ambiente de teste com paths simbólicos / fixtures). relative_to
+        # levanta ValueError nesse caso; fallback graceful pro path absoluto.
+        try:
+            rel = card.source_path.relative_to(project_root).as_posix()
+        except ValueError:
+            rel = str(card.source_path)
+        entries.append(
+            {
+                "name": card.name,
+                "provides": list(card.provides),
+                "conflicts-with": list(card.conflicts_with),
+                "source": rel,
+            }
+        )
+
+    payload = {
+        "schema-version": 1,
+        "generated-by": "feature-forge engine.cards.loader",
+        "local-cards": entries,
+    }
+    # C2: write atômico via tempfile + os.replace — evita manifest parcial
+    # se o processo morrer no meio do write (fast-fail discipline).
+    serialized = _yaml_lib.safe_dump(payload, sort_keys=False, allow_unicode=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=".manifest-", dir=str(inv_dir), text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(serialized)
+        os.replace(tmp_path, manifest_path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise

@@ -35,6 +35,7 @@ revisit, not silent drift.
 | 25 | Rejected proposal fingerprint | `sha256` sobre canonical-form `{type, name, normalized-description, sorted-provenance-set}` | Estável contra timestamps e edits cosméticos; muda quando conteúdo ou evidência mudam — permite re-apresentar quando há padrão novo. |
 | 26 | Batch-apply em `forge evolve` | Proibido. Aplicação é single-by-single sempre; alta confidence apenas acelera apresentação, não pula confirmação | Engine nunca decide sem usuário (00-vision). O valor de `evolve` É o gate humano — batch-apply tira o valor. |
 | 27 | Pause vs abort semantics | Ctrl+C / `para` = pause (state `deferred`, auto-resumable); abort terminal só via `forge undo` interativo escolhendo "abort feature entirely" | Loops longos (plan/implement/evolve) precisam pausa segura como default. Abort destrutivo requer dois passos explícitos. |
+| 28 | Card local overlay (Approach A — added 2026-06-02) | `.claude/cards/local/<name>/` versionado no projeto consumidor. Cascade canon ∪ local com hard-fail em colisão de nome. Sem merge silencioso, sem override. `legacy-marker: bool` é campo aditivo opcional (schema-version permanece 1). Capability labels overlay vive em `.claude/inventory/capability-labels.local.yaml` com guards: sem `overrides`, sem `reserved-promotions`, sem colisão com canon ativo. | Destrava portabilidade real (Gaps 5, 9, 14) sem violar Decision 22 (zero runtime deps) nem Decision 15 (snapshot copy local). Hard-fail explícito > merge silencioso; promoção formal exige ADR. |
 
 ## User-provided constraints (verbatim notes)
 

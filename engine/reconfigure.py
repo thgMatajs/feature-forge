@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re as _re
 import shutil
 import sys
 from copy import deepcopy
@@ -26,6 +27,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import yaml
+
+from engine.cards import LOCAL_CARD_NAME_RE
 from engine.cards.loader import CardError, CardManifest, load_all_cards, load_card
 from engine.cards.resolver import resolve
 from engine.cards.snapshotter import (
@@ -195,6 +199,7 @@ def _show_snapshot(config: dict[str, Any]) -> None:
 def _choose_categories() -> list[str]:
     options = {
         "cards":          "add/remove/upgrade/lock/inspect",
+        "card-local":     "listar/adicionar/remover cards locais (overlay)",
         "paths":          "feature-roots, tests-roots",
         "conventions":    "DI, navigation, folder layout, naming",
         "backend":        "ticketing, external-docs",
@@ -398,6 +403,395 @@ def _cards_inspect(project_root: Path, working: dict[str, Any]) -> None:
         f"hooks={len(card.contributes.get('hooks') or [])}",
     ]
     renderer.write(renderer.box(f"Card · {card.name}", lines))
+
+
+# ── card-local submenu (Gap 5 — Task 8) ─────────────────────────────────────
+
+
+def _handle_card_local(
+    project_root: Path, current: dict[str, Any], working: dict[str, Any]
+) -> None:
+    """Submenu card-local — cobre listar, adicionar (Task 9), remover.
+
+    Cards locais vivem em `<project>/.claude/cards/local/<name>/`. Schema
+    idêntico ao canon — diferença é apenas o path. Loader cascade
+    (Task 4-5) tagga `card.origin = "local"`.
+    """
+    del current  # working já reflete o estado vigente
+    action = question.ask(
+        "card-local — qual ação?",
+        {
+            "list":   "1. listar cards locais existentes",
+            "add":    "2. adicionar card local (criar do skeleton)",
+            "remove": "3. remover card local",
+            "back":   "0. voltar",
+        },
+        default="list",
+    )
+    if action == "list":
+        _card_local_list(project_root)
+    elif action == "add":
+        _card_local_add(project_root, working)
+    elif action == "remove":
+        _card_local_remove(project_root, working)
+    # "back" = no-op
+
+
+def _card_local_root(project_root: Path) -> Path:
+    return project_root / ".claude" / "cards" / "local"
+
+
+def _card_local_list(project_root: Path) -> None:
+    """Enumera `.claude/cards/local/*/card.yaml` em tabela name+provides+conflicts."""
+    root = _card_local_root(project_root)
+    if not root.is_dir():
+        renderer.write("Nenhum card local cadastrado neste projeto.")
+        renderer.write("  → Use opção 2 (adicionar) para criar o primeiro.")
+        return
+
+    entries: list[tuple[str, list[str], list[str]]] = []
+    for d in sorted(root.iterdir(), key=lambda p: p.name):
+        if not d.is_dir() or d.name.startswith("."):
+            continue
+        if d.name.endswith(".bak"):
+            continue
+        if not (d / "card.yaml").is_file():
+            continue
+        try:
+            card = load_card(d)
+        except CardError as exc:
+            renderer.write(renderer.colored(f"  ⚠️  {d.name} inválido: {exc}", "yellow"))
+            continue
+        entries.append((card.name, card.provides, card.conflicts_with))
+
+    if not entries:
+        renderer.write("Diretório `local/` existe mas está vazio.")
+        return
+
+    lines = [f"{'name':<28} provides                              conflicts-with"]
+    lines.append("-" * 90)
+    for name, prov, conf in entries:
+        lines.append(
+            f"{name:<28} {', '.join(prov)[:38]:<38} {', '.join(conf)}"
+        )
+    renderer.write(renderer.box(f"Cards locais ({len(entries)})", lines))
+
+
+# Alias mantido para qualquer caller interno legado do módulo. Fonte canônica
+# vive em `engine.cards.LOCAL_CARD_NAME_RE` (N10 do power-review PR #2).
+_LOCAL_CARD_NAME_RE = LOCAL_CARD_NAME_RE
+
+
+def _today_iso() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+def _card_local_add(project_root: Path, working: dict[str, Any]) -> None:
+    """Cria card local do skeleton via prompts mentor-calmo.
+
+    Skeleton minimal (espelha schema canon):
+      .claude/cards/local/<name>/
+      ├── card.yaml           (preenchido pelos prompts)
+      ├── README.md           (skeleton placeholder)
+      └── detection/signals.yaml  (vazio com comentário pra preencher depois)
+
+    Subdirs opcionais (templates/, validators/, agent-contributions/) NÃO
+    são criados como stubs — emergem sob demanda quando o time adiciona
+    conteúdo (rationale em spec §5.3).
+    """
+    del working
+    local_root = _card_local_root(project_root)
+    local_root.mkdir(parents=True, exist_ok=True)
+
+    # Existing names (canon + local) para detectar colisão.
+    snapshot_root = project_root / ".claude" / "cards"
+    existing_canon = {
+        d.name
+        for d in snapshot_root.iterdir()
+        if d.is_dir() and not d.name.startswith(".") and d.name != "local"
+    } if snapshot_root.is_dir() else set()
+    existing_local = {
+        d.name
+        for d in local_root.iterdir()
+        if d.is_dir() and not d.name.startswith(".")
+    }
+    taken = existing_canon | existing_local
+
+    name = question.ask_text(
+        "Nome do card local (kebab-case, [a-z][a-z0-9-]{0,39}, sem espaços):"
+    ).strip()
+    if not _LOCAL_CARD_NAME_RE.match(name or ""):
+        renderer.write(
+            renderer.colored(
+                f"Nome inválido: {name!r}. Cancelado.", "red"
+            )
+        )
+        return
+    if name in taken:
+        renderer.write(
+            renderer.colored(
+                f"Nome `{name}` já existe ({'canon' if name in existing_canon else 'local'}).",
+                "yellow",
+            )
+        )
+        # N12: caminho 1 antes anunciava "fornecer outro nome" mas o código
+        # só retornava (re-prompt completo fica pra v1.2). Renomear label
+        # para refletir o comportamento real evita quebra do contrato 3-paths
+        # (disciplina #1) — user-facing label e behavior precisam coincidir.
+        choice = question.ask(
+            "Três caminhos:",
+            {
+                "rename": "1. ver cards existentes e voltar (re-prompt em v1.2)",
+                "abort":  "2. abortar adicionar",
+                "list":   "3. listar cards existentes",
+            },
+            default="abort",
+        )
+        # Política simplificada: qualquer escolha != continuação encerra aqui.
+        # Re-prompt completo é gap declarado pra v1.2 (anota em pending).
+        if choice == "list":
+            _card_local_list(project_root)
+        return
+
+    capability = question.ask_text(
+        "Qual capability este card provê?\n"
+        "  Veja catálogo ativo em docs/schemas/capability-labels.md\n"
+        "  Reservadas (não-disponíveis aqui) exigem ADR pra promoção.\n"
+        "Label:"
+    ).strip()
+    if not capability:
+        renderer.write(renderer.colored("Capability obrigatória. Cancelado.", "red"))
+        return
+
+    add_to_overlay = question.ask(
+        f"'{capability}' será gravada no card. Confirma?",
+        {"yes": "1. sim, adicionar", "no": "2. cancelar"},
+        default="yes",
+    )
+    if add_to_overlay != "yes":
+        renderer.write("Cancelado.")
+        return
+
+    conflicts_raw = question.ask_text(
+        "Conflicts-with (lista de cards canon/local separados por vírgula, "
+        "vazio se nenhum):"
+    ).strip()
+    conflicts = [c.strip() for c in conflicts_raw.split(",") if c.strip()]
+
+    platforms_raw = question.ask_text(
+        "Target platforms (android,ios,kmp,web — múltiplos separados por vírgula):"
+    ).strip()
+    # Platforms é metadata informativa pro README do skeleton; não vai pro YAML
+    # (cards não declaram target-platforms — semântica derivada de signals).
+    platforms = [p.strip() for p in platforms_raw.split(",") if p.strip()] or ["android"]
+
+    summary_lines = [
+        f"name:           {name}",
+        f"provides:       [{capability}]",
+        f"conflicts-with: {conflicts or '[]'}",
+        f"target:         {platforms}",
+        "legacy-marker:  false",
+    ]
+    renderer.write(renderer.box("Vou criar card local com", summary_lines))
+
+    confirm = question.ask(
+        "Três caminhos:",
+        {
+            "create": "1. criar e abrir card.yaml para preenchimento de signals",
+            "stub":   "2. criar com signals.yaml vazio (preencher depois)",
+            "cancel": "3. cancelar e voltar ao menu",
+        },
+        default="create",
+    )
+    if confirm == "cancel":
+        renderer.write("Cancelado.")
+        return
+
+    # Materializa skeleton.
+    card_dir = local_root / name
+    card_dir.mkdir(parents=True, exist_ok=True)
+    detection_dir = card_dir / "detection"
+    detection_dir.mkdir(parents=True, exist_ok=True)
+
+    card_data = {
+        "schema-version": 1,
+        "identity": {
+            "name":         name,
+            "version":      "0.1.0",
+            "description":  f"Local card {name} — {capability} (overlay).",
+            "category":     "kmp",
+            "maturity":     "experimental",
+            "maintainer":   "team-local",
+            "created-at":   _today_iso(),
+            "last-updated": _today_iso(),
+        },
+        "legacy-marker": False,
+        "provides":      [capability],
+        "requires":      [],
+        "conflicts-with": conflicts,
+        "contributes": {
+            "config-defaults": {},
+        },
+        "detection": {
+            "signals":   [],
+            "threshold": 0.6,
+        },
+        "documentation": {
+            "readme": "README.md",
+        },
+    }
+    # C4: 3 writes em sequência (card.yaml, README.md, detection/signals.yaml).
+    # Se qualquer um falhar (OSError — disco cheio, permissão, etc.), o card
+    # fica em estado inconsistente — loader subsequente tenta ler skeleton
+    # parcial e dispara CardError silenciosamente. Wrap em try/except,
+    # rollback via rmtree no card_dir, e surface colorido pro user.
+    try:
+        (card_dir / "card.yaml").write_text(
+            yaml.safe_dump(card_data, sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
+
+        (card_dir / "README.md").write_text(
+            f"# {name}\n\n"
+            f"Card local (overlay) provido pelo time deste projeto. Provê "
+            f"`{capability}` para as plataformas: {', '.join(platforms)}.\n\n"
+            f"## Detection\n\n"
+            f"Signals ainda não preenchidos — edite `detection/signals.yaml` e "
+            f"replique os matches em `card.yaml > detection.signals`.\n\n"
+            f"## Promoção ao canon\n\n"
+            f"Quando a semântica deste card estabilizar e for útil para outros "
+            f"projetos, abra ADR em `docs/design/01-decisions.md` pra promoção "
+            f"ao catálogo canônico.\n",
+            encoding="utf-8",
+        )
+
+        (detection_dir / "signals.yaml").write_text(
+            "# .claude/cards/local/{0}/detection/signals.yaml\n"
+            "# ──────────────────────────────────────────────────────────────────\n"
+            "# Signals do card local. Preencha após init rodar e mapear sinais\n"
+            "# reais do projeto. Espelhe entries em `card.yaml > detection.signals`.\n"
+            "# ──────────────────────────────────────────────────────────────────\n\n"
+            "schema-version: 1\n\n"
+            "signals: []\n\n"
+            "threshold: 0.6\n".format(name),
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        # Rollback: remove o card_dir parcial para não deixar skeleton
+        # corrompido pro próximo `forge verify`. rmtree é ignore_errors
+        # porque se chegamos aqui o filesystem já está em estado ruim.
+        shutil.rmtree(card_dir, ignore_errors=True)
+        renderer.write(
+            renderer.colored(
+                f"falha ao gravar card local `{name}` ({exc}). "
+                "Diretório parcial removido. Verifique permissões e disco.",
+                "red",
+            )
+        )
+        return
+
+    renderer.write(
+        renderer.colored(f"  ✓ card local `{name}` criado em {card_dir.relative_to(project_root)}", "green")
+    )
+
+    # Validate imediato (catch malformação)
+    try:
+        load_card(card_dir)
+    except CardError as exc:
+        renderer.write(
+            renderer.colored(f"  ⚠️  validate_card_yaml acusou: {exc}", "yellow")
+        )
+
+    # Warning se signals vazio (que é o estado padrão do skeleton)
+    if confirm == "stub":
+        renderer.write(
+            renderer.colored(
+                "  ⚠️  signals.yaml vazio — detection ignora este card "
+                "até preencher signals.",
+                "yellow",
+            )
+        )
+
+    _append_history(
+        project_root,
+        {
+            "op":           "card-local-add",
+            "name":         name,
+            "provides":     [capability],
+            "conflicts-with": conflicts,
+        },
+    )
+
+
+def _card_local_remove(project_root: Path, working: dict[str, Any]) -> None:
+    """Remove um card local com 3-caminhos de confirmação e .bak retention."""
+    del working  # remoção não muda workflow-config; só filesystem
+    root = _card_local_root(project_root)
+    if not root.is_dir():
+        renderer.write("Nenhum card local pra remover.")
+        return
+
+    names = sorted(
+        d.name
+        for d in root.iterdir()
+        if d.is_dir()
+        and not d.name.startswith(".")
+        and not d.name.endswith(".bak")
+        and (d / "card.yaml").is_file()
+    )
+    if not names:
+        renderer.write("Diretório `local/` vazio — nada a remover.")
+        return
+
+    opts = {n: f"local card `{n}`" for n in names}
+    opts["cancelar"] = "voltar sem remover nada"
+    picked = question.ask("Remover qual card local?", opts, default="cancelar")
+    if picked == "cancelar" or picked not in names:
+        renderer.write("Cancelado.")
+        return
+
+    snap_dir = root / picked
+    bak_dir = root / f"{picked}.bak"
+
+    confirmation = question.ask(
+        f"Remover `{picked}` definitivo (3-caminhos)?",
+        {
+            "remove": f"1. mover snap → .bak ({picked}.bak, retention 7d)",
+            "keep":   "2. cancelar — manter o card",
+            "abort":  "3. abortar submenu inteiro",
+        },
+        default="remove",
+    )
+    if confirmation == "keep":
+        renderer.write("Mantido.")
+        return
+    if confirmation == "abort":
+        renderer.write("Abortado.")
+        return
+
+    if bak_dir.exists():
+        # Discipline §4 — .bak já existe (remoção anterior do mesmo nome).
+        # Sobrescrever silenciosamente perde audit; surface ao user.
+        renderer.write(
+            renderer.colored(
+                f"⚠️  {bak_dir} já existe — remoção anterior não foi limpa. "
+                "Rode `forge reconfigure → cleanup-bak` antes de tentar de novo.",
+                "yellow",
+            )
+        )
+        return
+
+    shutil.move(str(snap_dir), str(bak_dir))
+    renderer.write(renderer.colored(f"  - {picked} (snapshot → {picked}.bak)", "yellow"))
+
+    _append_history(
+        project_root,
+        {
+            "op": "card-local-remove",
+            "name": picked,
+            "bak": str(bak_dir.relative_to(project_root)),
+        },
+    )
 
 
 def _handle_paths(
@@ -818,6 +1212,7 @@ def _handle_external_deps(
 
 _CATEGORY_HANDLERS = {
     "cards":         _handle_cards,
+    "card-local":    _handle_card_local,
     "paths":         _handle_paths,
     "conventions":   _handle_conventions,
     "backend":       _handle_backend,
@@ -926,30 +1321,60 @@ def _load_draft(draft_path: Path) -> dict[str, Any] | None:
 
 
 def _save_draft(draft_path: Path, working: dict[str, Any]) -> None:
+    """Persist draft do reconfigure no disco (atomic write).
+
+    N4: OSError aqui costuma indicar permissão / disco cheio. Antes era
+    silently-swallowed — agora surface via renderer pra user ver, mas
+    ainda não re-raise (rascunho é best-effort; perda do draft não
+    bloqueia o reconfigure rodando).
+    """
     try:
         write_yaml(draft_path, working, atomic=True)
-    except OSError:
-        pass
+    except OSError as exc:
+        renderer.write(
+            renderer.colored(
+                f"warn: falha ao salvar rascunho ({exc}). "
+                "Reconfigure continua, mas resume não estará disponível.",
+                "yellow",
+            )
+        )
 
 
 def _append_history(
     project_root: Path,
+    payload: dict[str, Any] | None = None,
     *,
-    before_sha: str,
-    after_sha: str,
-    notes: str,
+    before_sha: str | None = None,
+    after_sha: str | None = None,
+    notes: str | None = None,
 ) -> None:
-    """Append a single JSONL line per `docs/schemas/workflow-config-history.md`."""
-    entry = {
+    """Append a single JSONL line per `docs/schemas/workflow-config-history.md`.
+
+    Two call styles supported:
+      - Legacy/canonical (reconfigure-applied):
+          _append_history(root, before_sha=..., after_sha=..., notes=...)
+      - Op-specific (e.g. card-local-remove):
+          _append_history(root, {"op": "card-local-remove", "name": ..., "bak": ...})
+
+    The op-specific style wraps the dict under `op` and merges extra fields
+    inline; common envelope (timestamp, command, schema-version) stays uniform.
+    """
+    base = {
         "schema-version": 1,
         "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "command": "forge reconfigure",
-        "action": "reconfigure-applied",
-        "before-snapshot-sha": before_sha,
-        "after-snapshot-sha": after_sha,
-        "user-confirmed": True,
-        "notes": notes,
     }
+    if payload is not None:
+        entry = {**base, **payload}
+    else:
+        entry = {
+            **base,
+            "action": "reconfigure-applied",
+            "before-snapshot-sha": before_sha,
+            "after-snapshot-sha": after_sha,
+            "user-confirmed": True,
+            "notes": notes,
+        }
     path = claude_dir(project_root) / _HISTORY_NAME
     path.parent.mkdir(parents=True, exist_ok=True)
     line = json.dumps(entry, ensure_ascii=False) + "\n"

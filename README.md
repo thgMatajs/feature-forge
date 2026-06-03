@@ -70,9 +70,9 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 | Agent prompts | 10 (planning-conductor + 9 sub-agents) |
 | UX roteiros | 7 (init, plan, implement, verify, doctor, reconfigure, evolve) — todos cobrem subtypes + reuse intelligence |
 | Templates canônicos | 18 (16 produto + feature-intake-bugfix + feature-intake-refactor) |
-| Cards canônicos | 20 (8 stack + 6 Firebase + 6 REST) |
+| Cards canônicos | 22 (8 stack + 6 Firebase + 6 REST + retrofit-client + shared-preferences-prefs com `legacy-marker`); overlay local em `.claude/cards/local/<name>/` desde Gap 5 (2026-06-02) |
 | Preset | kmp-mobile (8 stack cards + 4 backend-candidates) |
-| Validators Python | 14 (+ 2 helpers) — inclui `check_no_behavior_change` para refactor |
+| Validators Python | 14 (+ 2 helpers) — inclui `check_no_behavior_change` para refactor; `validate_card_yaml` + `validate_capability_labels` ganharam overlay-awareness em Gap 5 |
 | Hooks | 9 + 1 reuse incremental (`post-edit-detect-duplications.sh`) |
 | Tests | 508 passing (unit + integration; +50 do round 2 do PR #1, +38 do round 1 bloqueadores, +36 integration do Claude Code rules system, vs baseline original v1.1.0 = 367) |
 | LOC total | ~52.200 |

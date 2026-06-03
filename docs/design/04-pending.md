@@ -593,7 +593,21 @@ existentes com novo plano gerado.
 - [ ] Novo finding type `STALE-DELIVERY-{n}` com proposed-remediation
       surfaceada em `forge evolve`
 
-### Gap 5 — Cenário D2: Stack fora do catálogo (gap grande pra portabilidade)
+### Gap 5 — Cenário D2: Stack fora do catálogo ✅ RESOLVIDO em 2026-06-02
+
+**Status:** Entregue via plan
+`docs/superpowers/plans/2026-06-02-gap5-card-local-overlay.md`. Approach A
+(cascade simples). 13 tasks, ~1910 LOC.
+
+Gaps parcialmente destravados como side-effect:
+- **Gap 9** (catálogo evolutivo): overlay dá caminho oficial pra labels
+  ainda não promovidas.
+- **Gap 14** (preset coverage): preset canônico errado fica mitigável via
+  card local enquanto preset novo não é shipado.
+
+---
+
+**Histórico original (preservado pra ADR/rationale):**
 
 **Severidade:** alta. Decisão 22 ("absorb essences, no dependencies") +
 princípio "portabilidade" (00-vision) batem de frente com catálogo fechado.
@@ -1318,10 +1332,11 @@ Itens emergidos durante o round 2 do PR #1 (30 commits aplicados sobre o que fic
 ### Resumo da fila pós-stress-test (cumulativo)
 
 Total: 18 gaps mapeados a partir de 20 cenários analisados (3 rounds).
-**4 resolvidos** (Gap 18 em 2026-05-30 manhã; Gap 2 em 2026-05-30 tarde —
+**5 resolvidos** (Gap 18 em 2026-05-30 manhã; Gap 2 em 2026-05-30 tarde —
 refactor only, spike+chore stubbed; Gap 8 em 2026-05-30 noite — schema +
 engine + manual unblock, MCP polling stubbed; Gap 1 em 2026-05-30 noite — bugfix
-subtype completo, A2 small-feature explicit non-goal) · 14 pendentes.
+subtype completo, A2 small-feature explicit non-goal; Gap 5 em 2026-06-02 —
+card local overlay Approach A, destrava parcialmente Gaps 9 + 14) · 13 pendentes.
 
 | Gap | Cenário(s) | Severidade | Esforço estimado |
 |---|---|---|---|
@@ -1329,7 +1344,7 @@ subtype completo, A2 small-feature explicit non-goal) · 14 pendentes.
 | ~~2~~ | ~~A3 + A4 — Non-product feature (spike/refactor/chore)~~ | ~~Alta~~ | ~~Novo guarda-chuva de estado + subdir + UX + 1 validator~~ — refactor ship 2026-05-30; spike+chore stubbed |
 | 3 | B1 — Migração grande | Média | 1 card + schema upgrade + retrospective patch |
 | 4 | C1 — PRD muda mid-implement | Baixa | 1 validator + doc + finding type |
-| 5 | D2 — Stack fora do catálogo | Alta | Overlay mechanism + capability ext + 4 menu options |
+| ~~5~~ | ~~D2 — Stack fora do catálogo~~ | ~~Alta~~ | ~~Overlay mechanism + capability ext + 4 menu options~~ — Approach A shipped 2026-06-02 (plan 13 tasks, ~1910 LOC); destrava parcialmente Gaps 9 + 14 |
 | 6 | E1 — Multi-dev | — (v1.1+) | Schema upgrades + ADR |
 | 7 | B2 — Feature em múltiplos releases | Média | Estado intermediário + release-group + status patch |
 | ~~8~~ | ~~B3 — Dependência externa~~ | ~~Média-alta~~ | ~~Estado novo + schema task-contract + MCP polling~~ — schema + engine + manual unblock ship 2026-05-30; MCP polling stubbed para v1.1+ |
@@ -1393,6 +1408,55 @@ Resultado a observar: forge v1 é **excelente pro happy path** (feature de
 produto Android+iOS+KMP com backend Firebase/REST, 1 dev, 5-10 tasks). Fora
 do happy path, há cobertura parcial — o roadmap v1.1+ deve preencher essa
 superfície sistematicamente.
+
+## v1.2 follow-ups (power-review PR #2 — defer-with-reason)
+
+Itens identificados no power-review do PR #2 (Gap 5 — card local overlay)
+cuja resolução é genuinamente cross-cutting OU exige brainstorm separado.
+Anotados aqui pra não procrastinar silenciosamente — cada um carrega
+fingerprint próprio que volta a aparecer em `forge graph query Q12+` se
+revisitado.
+
+- **Step 7.5 caminho 1 — re-detection inline** (N2 fix opção `a`).
+  Hoje (R1 power-review) o user-facing copy e docstring avisam que
+  cards locais entram em vigor só no próximo `forge init`. Behavior fix
+  completo exige rebind de `activated` após criar locais (chamar
+  `_load_overlay_catalog` + recomputar matches contra os novos locais).
+  Defer porque toca order-of-evaluation do pipeline init — quer
+  brainstorm + plan separado pra confirmar invariants (Step 8 merge,
+  Step 11 graph build). Onde: `engine/init.py` `_run_pipeline` Step 7.5
+  + `_surface_three_paths` caminho 1.
+
+- **ADR-suspension audit log** (N13). Quando `all_reserved=True` e user
+  escolhe "abrir ADR", a função retorna `adr-required` (exit 7) sem
+  persistir nada em disco. Próxima execução de `forge init` perde
+  contexto do que estava pendente. Fix proposto: gravar
+  `.claude/inventory/adr-suspension.yaml` listando labels que precisam
+  de promoção; init detecta e oferece resume na próxima entrada.
+  Defer porque exige schema novo + decisão sobre como `forge doctor`
+  reporta o estado pending. Onde: `engine/init.py`
+  `_surface_three_paths` + novo schema em `docs/schemas/`.
+
+- **`load_catalog` refactor pra `engine/cards/catalog_overlay.py`** (N17).
+  Hoje `engine/init.py` Step 7.5 importa `load_catalog` via lazy
+  `from validators._common import ...`. Engine consome de validators —
+  direção de dependency invertida da arquitetura canônica
+  (engine → validators é a direção única). Hoje é lazy + 1 call site,
+  baixo risco. Se proliferar, mover `load_catalog` + `CapabilityCatalog`
+  pra `engine/cards/catalog_overlay.py` e validators passam a importar
+  do engine. Defer porque exige mover + ajustar testes em duas
+  camadas — não-trivial e sem urgência observável.
+
+- **Lenient local loader** (C1). Hoje, `load_all_cards` em modo cascade
+  hard-fails se QUALQUER card local for malformado (mesma severity de
+  canon). Power-review sugere que canon mantenha fail-fast
+  (Decision 23) mas que local seja lenient (warn + skip). Defer porque
+  inverte contract testado pelo `test_cascade_raises_on_malformed_local_card_yaml`
+  e exige decisão consciente: lenient pode mascarar bugs de overlay
+  manual do time. Brainstorm: lenient default vs strict-via-flag
+  (Decision 10 — zero flags — limita opções). Provavelmente fica como
+  modo opt-in via `cleanup-bak`-style submenu em `forge reconfigure`
+  ou flag no `card.yaml` próprio do local.
 
 ## Reading order for new contributors
 

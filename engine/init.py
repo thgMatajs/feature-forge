@@ -33,7 +33,13 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    # N5: type-annotate `_check_orphan_signals(catalog)` sem ativar import
+    # eager (validators é layer-superior na arquitetura — engine consome
+    # type-only).
+    from validators._common import CapabilityCatalog  # noqa: F401
 
 from engine import __version__ as FORGE_VERSION
 from engine.cards.loader import load_all_cards, CardManifest
@@ -53,6 +59,7 @@ from engine.inventory.i18n import extract_i18n, write_i18n_inventory
 from engine.persona import mentor_calmo
 from engine.ui import progress as ui_progress
 from engine.ui import question as ui_question
+from engine.ui import question  # alias para mock-friendly access (engine.init.question.ask)
 from engine.ui import renderer
 from engine.utils.paths import (
     cards_canonical_dir,
@@ -180,6 +187,401 @@ def _eval_detection_signals(
             label = sig.get("contains") or sig.get("path") or sig.get("glob") or kind
             matched.append(f"{kind}: {label}")
     return round(score, 3), matched
+
+
+@dataclass
+class OrphanSignal:
+    """Signal que casou em scan mas não em nenhum card (canon ∪ local).
+
+    Atributos:
+      - signal_id: identificador (do detection/signals.yaml ou inline derivado)
+      - source: arquivo onde o signal casou (relativo ao project_root)
+      - suggested_capability: label que a heurística infere
+      - is_reserved: True se suggested_capability ∈ canon.reserved
+        (Step 7.5 muda o caminho 1 de "criar local" pra "abrir ADR")
+      - hit_count: número de ocorrências (qualidade do signal)
+    """
+
+    signal_id: str
+    source: str
+    suggested_capability: str
+    is_reserved: bool = False
+    hit_count: int = 0
+
+
+def _check_orphan_signals(
+    project_root: Path,
+    canonical_cards: list["CardManifest"],
+    catalog: "CapabilityCatalog",
+) -> list[OrphanSignal]:
+    """Detecta signals que bateram em scan mas não em card algum (canon ∪ local).
+
+    Heurística:
+      - Para cada card carregado, registra o set de signal contains/globs.
+      - Scan independente do project_root pega imports/anotações comuns que
+        sugerem capabilities ausentes (hilt-di, apollo-graphql, rxjava3).
+      - Cada miss vira um OrphanSignal com suggested_capability inferida
+        por lookup numa tabela `_ORPHAN_HEURISTICS` (best-effort, não exaustiva).
+      - Se suggested_capability ∈ catalog.reserved → marca is_reserved=True.
+
+    Conservador: se nenhuma heurística bate, retorna lista vazia (não inventa).
+    """
+    project = project_root.resolve()
+    matched_in_cards: set[str] = set()
+    for card in canonical_cards:
+        for sig in (card.detection or {}).get("signals") or []:
+            contains = (sig or {}).get("contains")
+            if isinstance(contains, str) and contains:
+                matched_in_cards.add(contains)
+
+    orphans: list[OrphanSignal] = []
+    for needle, suggested in _ORPHAN_HEURISTICS.items():
+        if needle in matched_in_cards:
+            continue
+        hits = _count_needle_hits(project, needle)
+        if hits == 0:
+            continue
+        is_reserved = suggested in catalog.reserved
+        orphans.append(
+            OrphanSignal(
+                signal_id=f"orphan:{needle}",
+                source=f"detected in {hits} file(s)",
+                suggested_capability=suggested,
+                is_reserved=is_reserved,
+                hit_count=hits,
+            )
+        )
+    return orphans
+
+
+# Heurística mínima — needle → suggested capability. Lista enxuta, foco em
+# casos comuns que motivam Gap 5. Expansão fica pra próximas waves.
+_ORPHAN_HEURISTICS: dict[str, str] = {
+    "@HiltAndroidApp":              "hilt-di",
+    "dagger.hilt.android":          "hilt-di",
+    "import com.apollographql":     "apollo-graphql-client",
+    "ApolloClient(":                "apollo-graphql-client",
+    "io.reactivex.rxjava3":         "rxjava3-streams",
+    "io.realm.kotlin":              "realm-local",
+}
+
+
+def _count_needle_hits(project_root: Path, needle: str, limit: int = 50) -> int:
+    """Conta arquivos .kt/.gradle* que contêm `needle`. Cap em `limit` pra
+    evitar varredura cara em monorepos grandes — qualquer valor >= 1 é
+    suficiente pra Step 7.5 surface.
+    """
+    count = 0
+    patterns = ("*.kt", "build.gradle", "build.gradle.kts", "settings.gradle*")
+    for pattern in patterns:
+        for path in project_root.rglob(pattern):
+            try:
+                parts = path.relative_to(project_root).parts
+            except ValueError:
+                continue
+            # C16: filtra dirs ocultos (.git etc.) + monorepo culprits
+            # declarados em `_SKIP_DIRS` (node_modules, build, .gradle,
+            # Pods, DerivedData, dist). Sem isso, init trava em
+            # monorepos varrendo deps/build artifacts.
+            if any(part.startswith(".") or part in _SKIP_DIRS for part in parts):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            if needle in text:
+                count += 1
+                if count >= limit:
+                    return count
+    return count
+
+
+# ── Step 7.5 — orphan signal 3-caminhos UX (Gap 5) ──────────────────────────
+
+
+@dataclass
+class InitDecision:
+    """Resultado do Step 7.5 — usado pelo loop principal pra decidir next step.
+
+    `choice` ∈ {"create-local", "adr-required", "ignore", "abort", "noop"}.
+    `exit_code` é usado quando choice="abort" (8 = orphan-signals aborted)
+    ou choice="adr-required" (7 = pending decision / suspended).
+    `note` carrega mensagem auxiliar pra render no log de init.
+    """
+
+    choice: str
+    exit_code: int = 0
+    note: str = ""
+
+
+def _surface_three_paths(
+    orphans: list[OrphanSignal],
+    project_root: Path,
+) -> InitDecision:
+    """Apresenta 3-caminhos canônicos pra signals órfãos.
+
+    Edge case reservada: se TODOS os orphans apontam capability reservada,
+    caminho 1 muda de "criar card local" pra "abrir ADR pra promoção".
+    Quando misturado (alguns reservados, outros não), caminho 1 ainda tenta
+    criar local pros não-reservados e marca ADR-required pros reservados.
+
+    Reprompt em escolha inválida (esperado [1-3], qualquer outro reabre).
+
+    Pós-condição caminho 1 (não-reservada): cards locais são gravados em
+    disco mas `activated` NÃO é recomputado nesta passagem — o catálogo
+    expandido só entra em vigor no próximo `forge init`. Mensagem
+    user-facing avisa explicitamente (N2 do power-review PR #2; behavior
+    fix completo — re-roda detection inline — fica pra v1.2).
+    """
+    if not orphans:
+        return InitDecision(choice="noop")
+
+    all_reserved = all(o.is_reserved for o in orphans)
+
+    # Header + listagem mentor calmo PT-BR
+    renderer.write("")
+    renderer.write(
+        renderer.colored(
+            "🛑  Stack ambígua — signals sem card correspondente", "yellow"
+        )
+    )
+    renderer.write("")
+    renderer.write(
+        "Detectei sinais que apontam pra capabilities sem provider declarado:"
+    )
+    renderer.write("")
+    for o in orphans:
+        reserved_tag = " (label RESERVADA no catálogo canon)" if o.is_reserved else ""
+        renderer.write(f"  · Signal {o.signal_id} ({o.source})")
+        renderer.write(f"    → capability {o.suggested_capability!r}{reserved_tag}")
+    renderer.write("")
+    renderer.write("Onde:")
+    renderer.write("  Detection cascade rodou mas não encontrou card canon nem local")
+    renderer.write("  pra estes signals.")
+    renderer.write("")
+    renderer.write("Por que importa:")
+    renderer.write("  Materializar o plan sem provider declarado deixa essas capabilities")
+    renderer.write("  como \"comportamento inventado\" — viola o princípio \"never invents\"")
+    renderer.write("  (docs/design/00-vision.md §What feature-forge is NOT) e quebra o")
+    renderer.write("  contrato com validate_no_invented_behavior na Fase 5b.")
+    renderer.write("")
+    renderer.write("Três caminhos pra resolver:")
+    renderer.write("")
+    if all_reserved:
+        renderer.write("  1) Abrir ADR pra promoção ao canon (recomendado)")
+        renderer.write("     Cria entrada em docs/design/01-decisions.md \"Revisita roadmap")
+        renderer.write("     do catálogo — promove <label> ao canon\" e suspende init até")
+        renderer.write("     PR de promoção rodar.")
+    else:
+        renderer.write("  1) Criar card local agora (recomendado pra stack atual)")
+        renderer.write("     Materializa card(s) local(is) em .claude/cards/local/ cobrindo")
+        renderer.write("     os signals órfãos. Init segue com a `activated` corrente —")
+        renderer.write("     re-rode `forge init` pra ativar com catálogo expandido.")
+    renderer.write("")
+    renderer.write("  2) Ignorar nesta init (registra decisão consciente)")
+    renderer.write("     Grava .claude/inventory/ignored-signals.yaml versionado listando")
+    renderer.write("     os signals + razão. Validators downstream respeitam o ignore.")
+    renderer.write("     Reversível: removendo a entrada, signals voltam a ser órfãos.")
+    renderer.write("")
+    renderer.write("  3) Abortar init")
+    renderer.write("     Exit code 8 (distinto de 5/7/130). Nenhum arquivo materializado.")
+    renderer.write("     Use quando o time precisa decidir arquitetura antes de seguir.")
+    renderer.write("")
+
+    while True:
+        choice = question.ask(
+            "Escolha [1-3]:",
+            {"1": "1", "2": "2", "3": "3"},
+            default="1",
+        )
+        if choice in {"1", "2", "3"}:
+            break
+        renderer.write(
+            renderer.colored("Escolha inválida — esperado 1, 2 ou 3.", "yellow")
+        )
+
+    if choice == "1":
+        if all_reserved:
+            labels = ", ".join(sorted({o.suggested_capability for o in orphans}))
+            return InitDecision(
+                choice="adr-required",
+                exit_code=7,
+                note=(
+                    f"Labels reservadas detectadas: {labels}. "
+                    "Abra ADR antes de prosseguir."
+                ),
+            )
+        # Cria local pros não-reservados; reservados saem como note.
+        # C14: agrupa por suggested_capability ANTES do loop — dois orphans
+        # mapeando pra mesma capability geram um único card local com
+        # signals consolidados (sem agrupar, o segundo write sobrescreve
+        # o primeiro silenciosamente).
+        from collections import defaultdict  # noqa: PLC0415 — lazy local
+
+        non_reserved = [o for o in orphans if not o.is_reserved]
+        reserved_labels = sorted(
+            {o.suggested_capability for o in orphans if o.is_reserved}
+        )
+        grouped: dict[str, list[OrphanSignal]] = defaultdict(list)
+        for o in non_reserved:
+            grouped[o.suggested_capability].append(o)
+        for cap_orphans in grouped.values():
+            _card_local_add_inline(project_root, cap_orphans)
+        # N2: avisa o user que catálogo expandido só entra em vigor na
+        # próxima execução. Behavior fix completo (re-detection inline)
+        # fica pra v1.2 (anotado em docs/design/04-pending.md).
+        note_parts = [
+            "Cards locais criados. Re-rode `forge init` pra ativar com "
+            "catálogo expandido."
+        ]
+        if reserved_labels:
+            note_parts.append(
+                f"Reservadas pendentes de ADR: {', '.join(reserved_labels)}. "
+                "Criados apenas os locais não-reservados."
+            )
+        return InitDecision(choice="create-local", note=" ".join(note_parts))
+
+    if choice == "2":
+        _write_ignored_signals(project_root, orphans)
+        return InitDecision(choice="ignore")
+
+    # choice == "3"
+    return InitDecision(choice="abort", exit_code=8)
+
+
+def _card_local_add_inline(
+    project_root: Path,
+    orphan_or_list: "OrphanSignal | list[OrphanSignal]",
+) -> None:
+    """Cria card local minimal cobrindo um ou mais orphan signals.
+
+    Espelha skeleton de `_card_local_add` mas pre-preenche `name`,
+    `provides`, e adiciona signals iniciais baseados no(s) orphan needle(s).
+    Usado pelo Step 7.5 quando user escolhe caminho 1.
+
+    Aceita `OrphanSignal` (legacy/backward-compat) OU `list[OrphanSignal]`
+    pra consolidar múltiplos needles que apontam pra mesma capability num
+    único card local (sem agrupar, o segundo write sobrescreveria o
+    primeiro — bug N C14/C15 do power-review PR #2).
+
+    Pressupõe que todos os orphans da lista compartilham
+    `suggested_capability` (chamador agrupa antes). Se a lista for
+    heterogênea, usa o `suggested_capability` do primeiro como referência.
+    """
+    import yaml as _yaml_lib  # noqa: PLC0415 — lazy
+    from engine.cards import LOCAL_CARD_NAME_RE  # noqa: PLC0415 — lazy
+
+    if isinstance(orphan_or_list, OrphanSignal):
+        orphans: list[OrphanSignal] = [orphan_or_list]
+    else:
+        orphans = list(orphan_or_list)
+    if not orphans:
+        return
+
+    capability = orphans[0].suggested_capability
+    base_name = capability if LOCAL_CARD_NAME_RE.match(capability) else "orphan-card"
+
+    # N3: se canon já tem card com o mesmo nome (não esperado em v1.1 — todas
+    # as capabilities órfãs apontam pra labels SEM card canon — mas defensivo
+    # caso o catálogo evolua), sufixa com `-local` pra evitar colisão silenciosa
+    # com a cascade canon×local (que faria hard fail no próximo load).
+    canon_root = project_root / ".claude" / "cards"
+    canon_names: set[str] = set()
+    if canon_root.is_dir():
+        canon_names = {
+            d.name
+            for d in canon_root.iterdir()
+            if d.is_dir() and not d.name.startswith(".") and d.name != "local"
+        }
+    name = base_name if base_name not in canon_names else f"{base_name}-local"
+
+    local_root = project_root / ".claude" / "cards" / "local" / name
+    local_root.mkdir(parents=True, exist_ok=True)
+    (local_root / "detection").mkdir(parents=True, exist_ok=True)
+
+    signals: list[dict[str, Any]] = []
+    needles_seen: list[str] = []
+    for o in orphans:
+        needle = o.signal_id.removeprefix("orphan:")
+        signals.append(
+            {
+                "type": "file-content",
+                "glob": "**/*.kt",
+                "contains": needle,
+                "confidence": 0.5,
+            }
+        )
+        needles_seen.append(needle)
+
+    card_data = {
+        "schema-version": 1,
+        "identity": {
+            "name": name,
+            "version": "0.1.0",
+            "description": (
+                f"Orphan-derived local card cobrindo {capability}."
+            ),
+            "category": "kmp",
+            "maturity": "experimental",
+            "maintainer": "team-local-auto",
+            "created-at": _today_iso_for_init(),
+            "last-updated": _today_iso_for_init(),
+        },
+        "legacy-marker": False,
+        "provides": [capability],
+        "requires": [],
+        "conflicts-with": [],
+        "contributes": {"config-defaults": {}},
+        "detection": {
+            "signals": signals,
+            "threshold": 0.5,
+        },
+        "documentation": {"readme": "README.md"},
+    }
+    (local_root / "card.yaml").write_text(
+        _yaml_lib.safe_dump(card_data, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+    needle_list = ", ".join(f"`{n}`" for n in needles_seen)
+    (local_root / "README.md").write_text(
+        f"# {name}\n\n"
+        f"Card local criado automaticamente pelo init Step 7.5 a partir "
+        f"de signal(s) órfão(s) {needle_list}. Revise threshold e signals "
+        f"adicionais em `card.yaml` antes do próximo `forge verify`.\n",
+        encoding="utf-8",
+    )
+    (local_root / "detection" / "signals.yaml").write_text(
+        "schema-version: 1\nsignals: []\nthreshold: 0.5\n", encoding="utf-8"
+    )
+
+
+def _write_ignored_signals(project_root: Path, orphans: list[OrphanSignal]) -> None:
+    """Grava `.claude/inventory/ignored-signals.yaml` versionado."""
+    import yaml as _yaml_lib  # noqa: PLC0415 — lazy
+
+    inv = project_root / ".claude" / "inventory"
+    inv.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema-version": 1,
+        "generated-by": "feature-forge init Step 7.5",
+        "ignored": [
+            {
+                "signal_id": o.signal_id,
+                "suggested_capability": o.suggested_capability,
+                "source": o.source,
+                "hit_count": o.hit_count,
+            }
+            for o in orphans
+        ],
+    }
+    (inv / "ignored-signals.yaml").write_text(
+        _yaml_lib.safe_dump(payload, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+
+
+def _today_iso_for_init() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
 
 
 def _glob_any(project_root: Path, glob: str, needle: str | None) -> bool:
@@ -720,6 +1122,45 @@ def _run_pipeline(project_root: Path) -> int:
             sha = snapshot_card(card.source_path, project_card_dir)
             card_sha_by_name[card.name] = sha
             bar.update(1)
+
+    checkpoint.step = "step-7-5-orphan-signals"
+    checkpoint.at = _utc_now_iso()
+    _save_checkpoint(checkpoint)
+
+    # ── Step 7.5 — Orphan signal handling (Gap 5) ───────────────────────────
+    from validators._common import load_catalog as _load_overlay_catalog  # noqa: PLC0415
+
+    try:
+        overlay_catalog = _load_overlay_catalog(project_root)
+    except Exception as exc:  # noqa: BLE001
+        renderer.write(
+            renderer.colored(
+                f"warn: catálogo overlay inválido ({exc}); seguindo com canon-only",
+                "yellow",
+            )
+        )
+        overlay_catalog = None
+
+    if overlay_catalog is not None:
+        orphans = _check_orphan_signals(project_root, activated, overlay_catalog)
+        if orphans:
+            decision = _surface_three_paths(orphans, project_root=project_root)
+            if decision.choice == "abort":
+                return decision.exit_code
+            if decision.choice == "adr-required":
+                renderer.write(
+                    renderer.colored(
+                        f"⚠️  {decision.note} Init suspenso — re-run após promoção.",
+                        "yellow",
+                    )
+                )
+                return decision.exit_code or 7
+            # "create-local" ou "ignore" → segue pra Step 8 com a `activated`
+            # corrente. N2: catálogo expandido (no caso de create-local) só
+            # entra em vigor no próximo `forge init` — o decision.note já
+            # avisa o user. Re-detection inline fica pra v1.2.
+            if decision.note:
+                renderer.write(renderer.colored(decision.note, "yellow"))
 
     checkpoint.step = "step-8-merge"
     checkpoint.at = _utc_now_iso()
