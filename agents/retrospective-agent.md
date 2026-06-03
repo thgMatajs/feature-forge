@@ -390,8 +390,9 @@ build on a parent's baseline that was already validated. 5-whys analyzes
 failure modes; extensions are deliberate scope additions. The right
 question is "o que herdei vs o que adicionei?".
 
-**Three focused analysis questions** (replace Phase 2's general pattern
-detection for the extension's first-class output):
+**Four focused analysis questions** (replace Phase 2's general pattern
+detection for the extension's first-class output — alinhadas com
+discipline §10, fonte canônica):
 
 1. **Reuse fidelity**: which parent artefacts did this extension genuinely
    reuse (clean: zero modification) vs require minor adjustment (which
@@ -409,6 +410,14 @@ detection for the extension's first-class output):
    - Too big — should have been its own product feature with no
      `extends-feature` link. Surface as `proposal-kind: decision-record`
      with rationale for next session's planner.
+4. **Shared-base refactor signals**: que sinais sugerem que parent +
+   extension deveriam ser refatorados pra shared base? Quando 2+
+   extensions de uma mesma pai compartilham N delta similar, promover
+   a base vira candidato natural pra L2. Quando não houver sinal,
+   declare explicitamente "nenhum sinal — extension foi delta puro"
+   pra fechar o quadro. Surface findings como
+   `proposal-kind: l2-promotion` ou `proposal-kind: decision-record`
+   (quando o refactor é maior que padrão L2).
 
 **Phase 2-4 in extension mode:**
 
@@ -439,7 +448,7 @@ between "What surprised" and "Patterns surfaced":**
   · Proposal-evolution (if too-small/too-big): P-NNN
 ```
 
-**JSON return** adds two fields when extension variant ran:
+**JSON return** adds three fields when extension variant ran:
 
 ```json
 {
@@ -447,9 +456,16 @@ between "What surprised" and "Patterns surfaced":**
   "status": "success",
   "extension-of": "{parent-slug}",
   "extension-scope-verdict": "right" | "too-small" | "too-big",
+  "refactor-to-shared-base-signals": ["{signal}", "..."],
   "...": "..."
 }
 ```
+
+`refactor-to-shared-base-signals` é array de strings (vazio quando a
+extension foi delta puro sem sinal de promoção); cobre a 4ª pergunta
+da discipline §10. Cada string é uma frase curta descrevendo o sinal
+(ex.: "ext-a e ext-b duplicam helper PushPermissionGate" ou
+"parent's data-contract repete entry em 3 extensions distintas").
 
 **Example JSON output (extension variant):**
 
@@ -463,6 +479,7 @@ between "What surprised" and "Patterns surfaced":**
   ],
   "extension-of": "lembrete-rega",
   "extension-scope-verdict": "right",
+  "refactor-to-shared-base-signals": [],
   "patterns-detected": 3,
   "patterns-cross-feature": 1,
   "proposals-appended": 2,

@@ -772,7 +772,7 @@ verified (decision 11). The retrospective scope varies by subtype:
   Parent: {parent-slug} (shipped {parent.shipped-at})
   Delta scope (from intake §Extension context): {delta-summary}
 
-  Three questions:
+  Four questions (alinhadas com discipline §10 — doc fonte vence prompt):
 
   1. What did this extension genuinely reuse from the parent?
      → Cite specific artefacts (screen Y, contract Z, helper W) and
@@ -788,11 +788,20 @@ verified (decision 11). The retrospective scope varies by subtype:
        follow-up PR) / right (genuine derived scope) / too big (should
        have been its own product feature with no extends-feature link)?
 
+  4. Que sinais sugerem que parent + extension deveriam ser refatorados
+     pra shared base?
+     → Proposed-evolution candidate: quando 2+ extensions de uma mesma
+       pai compartilham N delta similar, promover a base é candidato
+       natural pra L2. Surface como \`proposal-kind: l2-promotion\` ou
+       \`proposal-kind: decision-record\` (refactor scope > L2 padrão).
+       Diga "nenhum sinal — extension foi delta puro" quando aplicável.
+
   Emit ≥1 proposed-evolution per non-trivial answer:
     - new L2 pattern (delta added something reusable)
     - new card contribution (delta surfaced a recurring need)
     - new decision-record (fork-vs-extend tension worth documenting)
     - refinement of parent's pattern (if reuse exposed gaps)
+    - shared-base refactor candidate (question 4 affirmative)
 
   5-whys does NOT apply here — extensions are additive by design, not
   failure-mode analysis.
