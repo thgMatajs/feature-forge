@@ -1177,7 +1177,7 @@ External dependencies — Referenced from:
 
 ---
 
-## §10 Extension feature (Gap 9, 2026-06-03)
+## 10. Extension feature
 
 Feature done que ganha escopo correlato — variant, módulo paralelo,
 integração paralela — não cabe como feature standalone (perde herança do
