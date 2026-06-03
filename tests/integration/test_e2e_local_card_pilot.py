@@ -159,8 +159,9 @@ def test_pilot_canon_local_collision_hard_fails(pilot_project):
 
 def test_pilot_orphan_to_local_flow_endtoend(pilot_project, monkeypatch):
     """Fluxo completo: orphan detectado → cria local inline → re-detection cobre."""
+    # N8: removido import de _check_orphan_signals (não exercitado neste
+    # teste pilot — fluxo cobrido por tests/unit/test_init_orphan_signals).
     from engine.init import (
-        _check_orphan_signals,
         _card_local_add_inline,
         OrphanSignal,
     )

@@ -121,8 +121,12 @@ def test_cascade_raises_on_malformed_local_card_yaml(tmp_path):
         "not: a: valid: yaml: shape: at: all", encoding="utf-8"
     )
     (bad_dir / "README.md").write_text("# bad\n", encoding="utf-8")
-    with pytest.raises(CardError):
+    with pytest.raises(CardError) as exc:
         loader.load_all_cards(project)
+    # C9: garante que a mensagem carrega o path ou marca o card malformado —
+    # sem isso, um erro genérico passaria sem identificar QUAL local falhou.
+    msg = str(exc.value).lower()
+    assert "bad" in msg or "yaml" in msg
 
 
 # ── Backward compatibility ──────────────────────────────────────────────────
@@ -164,6 +168,36 @@ def test_cascade_writes_local_cards_manifest_when_local_present(tmp_path):
     # provides + conflicts-with devem ser preservados pro audit
     team_x = next(c for c in cards_block if c.get("name") == "team-x")
     assert team_x.get("provides") == ["kotlin-multiplatform"]
+
+
+def test_cascade_writes_local_cards_manifest_with_multiple_cards_sorted(tmp_path):
+    """C10: 2+ cards locais → manifest lista AMBOS, ordem canônica (sorted)."""
+    project = _make_project(tmp_path)
+    inv_dir = project / ".claude" / "inventory"
+    inv_dir.mkdir(parents=True, exist_ok=True)
+
+    _write_card_dir(project / ".claude" / "cards" / "canon-a", _valid_card_dict("canon-a"))
+    # Cria em ordem reversa pra confirmar que o sort é determinístico.
+    _write_card_dir(
+        project / ".claude" / "cards" / "local" / "team-y",
+        _valid_card_dict("team-y", provides=["kotlin-multiplatform"]),
+    )
+    _write_card_dir(
+        project / ".claude" / "cards" / "local" / "team-x",
+        _valid_card_dict("team-x", provides=["kotlin-multiplatform"]),
+    )
+
+    loader.load_all_cards(project)
+
+    manifest_path = inv_dir / "local-cards-manifest.yaml"
+    parsed = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+    cards_block = parsed.get("local-cards") or []
+    names = [c.get("name") for c in cards_block]
+    # Garante que AMBOS aparecem
+    assert set(names) == {"team-x", "team-y"}
+    # E que a ordem é canônica (sorted), pra estabilidade do manifest
+    # através de runs sucessivos (idempotência audit-friendly).
+    assert names == sorted(names)
 
 
 def test_cascade_skips_manifest_when_no_local(tmp_path):

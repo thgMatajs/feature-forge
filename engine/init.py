@@ -33,7 +33,13 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    # N5: type-annotate `_check_orphan_signals(catalog)` sem ativar import
+    # eager (validators é layer-superior na arquitetura — engine consome
+    # type-only).
+    from validators._common import CapabilityCatalog  # noqa: F401
 
 from engine import __version__ as FORGE_VERSION
 from engine.cards.loader import load_all_cards, CardManifest
@@ -206,7 +212,7 @@ class OrphanSignal:
 def _check_orphan_signals(
     project_root: Path,
     canonical_cards: list["CardManifest"],
-    catalog,
+    catalog: "CapabilityCatalog",
 ) -> list[OrphanSignal]:
     """Detecta signals que bateram em scan mas não em card algum (canon ∪ local).
 
