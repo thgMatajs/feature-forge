@@ -293,6 +293,8 @@ decisions:
   "state-since": "2026-05-28T14:23:11Z",
   "sub-state": null,
   "subtype": "product",
+  "extends-feature": null,
+  "parent-feature": null,
   "last-action": "elicitation-completed",
   "last-action-at": "2026-05-28T14:30:00Z",
   "current-task": null,
@@ -312,10 +314,13 @@ decisions:
 | `subtype` | Classifies the feature track for wave dispatch — see `docs/design/07-discipline.md §8`. Default `"product"` preserves the legacy pipeline (Waves A–E); `"refactor"` skips Wave B + §11 of tech-spec and requires `check_no_behavior_change` in Wave E; `"bugfix"` runs a compact intake with Wave B **conditional** (UI/behavioral bug → run; logic-only → skip) and a focused tech-spec; `"spike"` and `"chore"` are stubs in v1.0 (conductor surfaces 3-caminhos when chosen). | `"product"` \| `"refactor"` \| `"bugfix"` \| `"spike"` \| `"chore"`. Defaults `"product"` when field absent (forward compat for status.json written by pre-Gap-2 engines). | planning-conductor on Cena 2.5 subtype detection (or on resume from `hypothesis.yaml.subtype`); `engine.plan._initialize_status`. | planning-conductor (wave dispatch branching); tech-spec-agent (conditional section render); `forge status` (badge); `check_no_behavior_change` validator (gates only when `subtype == "refactor"`). |
 | `verify-degraded` | Last `forge verify` passed but emitted warnings (e.g., observability contract grew an entry but didn't break). Distinguishes "all green" from "green with caveats" for downstream commands. | `true` \| `false`. Defaults `false`. | `forge verify` sets at the end of a verify run. | `forge status` (badge in board); `forge implement` (refuses to advance if the previous task ended degraded and the user hasn't acknowledged). |
 | `graph-stale` | Indicates the graph DB needs rebuild before the next verify can trust queries. Set when paths or DS components mutate without an incremental graph update (rare — usually after a recovery from a corrupted graph). | `true` \| `false`. Defaults `false`. | `forge reconfigure` (sets true if config mutation invalidates graph rows); recovery scripts. | `forge verify` (refuses to run, asks user to pick "rebuild do graph" no menu de `forge reconfigure`); `forge doctor` (warns). |
+| `extends-feature` | Marks this feature as a derived extension of a shipped parent (Gap 9 — `extends-feature` mechanic). When non-null, identifies the parent slug whose context (allowed_files baseline, hypothesis.platforms, design-system snapshot) the planning-conductor inherits. Null for standalone features — the default. Pattern preserves "1 feature = 1 ship moment" while giving extensions an official path that doesn't pollute the parent's L1. | slug string (`"{parent-slug}"`) \| `null`. Defaults `null` (forward compat for status.json files written by pre-Gap-9 engines). | planning-conductor on Cena 1 when the user picks the "Estender" path on an existing done feature; `engine.plan._initialize_status` when intake declares `extends-feature`. | planning-conductor (Phase 1 step 5 — extension context import); `validate_extension_feature` validator (EXT-001..004); `forge status` (groups extensions under parent); retrospective-agent (extension-focused retro). |
+| `parent-feature` | Reverse pointer mirror of `extends-feature` — same parent slug, repeated for clarity in reverse-lookup queries that walk L1 looking for "who extends me?". Always agrees with `extends-feature` (validator enforces) or both are `null`. The redundancy is deliberate: keeps query code from having to decide which field to read. | slug string (`"{parent-slug}"`) \| `null`. Defaults `null`. Must equal `extends-feature` when non-null. | Same writers as `extends-feature` — set together, in lockstep. | `list_extensions_of(parent)` reverse-lookup helper in `engine/memory/l1.py`; `forge status` extension grouping. |
 
-All four fields are **additive**: missing the field in a file written by an
+All six fields are **additive**: missing the field in a file written by an
 older engine is treated as `null` / `false` / `"product"` for forward
-compatibility. No migration required.
+compatibility. No migration required. `extends-feature` and `parent-feature`
+both default to `null` — pre-Gap-9 status.json files parse unchanged.
 
 ##### `blocked-on-external` state semantics (discipline §9)
 
@@ -427,6 +432,15 @@ MEM-L1-008  status.json must exist and:
                 tasks/TASK-*.yaml must declare `depends-on-external` with
                 `blocking: true` and `resolved-at: null` (discipline §9 —
                 external dependencies)
+              · extends-feature must be a slug string or null (default null
+                when absent — forward compat for pre-Gap-9 files); when non-
+                null, parent slug must exist as a sibling L1 directory
+                `.claude/memory/L1/{parent-slug}/` AND parent.state == "done"
+                (Gap 9 — extends-feature mechanic; enforced by
+                `validate_extension_feature`)
+              · parent-feature must be a slug string or null and must equal
+                extends-feature when non-null (reverse pointer mirror; set in
+                lockstep)
 ```
 
 ---
