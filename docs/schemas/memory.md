@@ -316,11 +316,30 @@ decisions:
 | `graph-stale` | Indicates the graph DB needs rebuild before the next verify can trust queries. Set when paths or DS components mutate without an incremental graph update (rare — usually after a recovery from a corrupted graph). | `true` \| `false`. Defaults `false`. | `forge reconfigure` (sets true if config mutation invalidates graph rows); recovery scripts. | `forge verify` (refuses to run, asks user to pick "rebuild do graph" no menu de `forge reconfigure`); `forge doctor` (warns). |
 | `extends-feature` | Marks this feature as a derived extension of a shipped parent (Gap 9 — `extends-feature` mechanic). When non-null, identifies the parent slug whose context (allowed_files baseline, hypothesis.platforms, design-system snapshot) the planning-conductor inherits. Null for standalone features — the default. Pattern preserves "1 feature = 1 ship moment" while giving extensions an official path that doesn't pollute the parent's L1. | slug string (`"{parent-slug}"`) \| `null`. Defaults `null` (forward compat for status.json files written by pre-Gap-9 engines). | planning-conductor on Cena 1 when the user picks the "Estender" path on an existing done feature; `engine.plan._initialize_status` when intake declares `extends-feature`. | planning-conductor (Phase 1 step 5 — extension context import); `validate_extension_feature` validator (EXT-001..004); `forge status` (groups extensions under parent); retrospective-agent (extension-focused retro). |
 | `parent-feature` | Reverse pointer mirror of `extends-feature` — same parent slug, repeated for clarity in reverse-lookup queries that walk L1 looking for "who extends me?". Always agrees with `extends-feature` (validator enforces) or both are `null`. The redundancy is deliberate: keeps query code from having to decide which field to read. | slug string (`"{parent-slug}"`) \| `null`. Defaults `null`. Must equal `extends-feature` when non-null. | Same writers as `extends-feature` — set together, in lockstep. | `list_extensions_of(parent)` reverse-lookup helper in `engine/memory/l1.py`; `forge status` extension grouping. |
+| `shipped-at` | Carimbo ISO 8601 do momento em que a feature transitou para `state="done"`. Aditivo: ausente em features pre-done (planning / implementing / verifying / paused / blocked-on-external) e em features `done` pre-Gap-9 (forward-compat). Idempotente: a engine só carimba quando o campo está absent ou null — re-execução de `forge implement` em feature já `done` preserva o timestamp original. | ISO 8601 string (`"YYYY-MM-DDTHH:MM:SSZ"`) \| `null`. Defaults `null` (pre-done states e forward-compat). | `engine.implement` na transição `state="done"` (Gap 9 W-002 fix). | `engine.plan._import_parent_context` (lê pra renderizar `Parent shipped: <ISO>` no bloco §Extension context do intake); retrospective-agent (extension variant section "Parent feature ... (shipped {parent.shipped-at})"). |
 
-All six fields are **additive**: missing the field in a file written by an
-older engine is treated as `null` / `false` / `"product"` for forward
-compatibility. No migration required. `extends-feature` and `parent-feature`
-both default to `null` — pre-Gap-9 status.json files parse unchanged.
+All seven fields são **additive**: missing the field em um arquivo escrito
+por um engine mais antigo é tratado como `null` / `false` / `"product"` pra
+forward-compat. Sem migração necessária. `extends-feature`, `parent-feature`
+e `shipped-at` defaultam pra `null` — status.json pre-Gap-9 parse sem
+mudança.
+
+**Exemplo done com `shipped-at`** (estado terminal — extension reads daqui):
+
+```json
+{
+  "schema-version": 1,
+  "feature-slug": "lembrete-rega",
+  "state": "done",
+  "subtype": "product",
+  "extends-feature": null,
+  "parent-feature": null,
+  "shipped-at": "2026-05-28T18:00:00Z",
+  "last-action": "implement-completed",
+  "last-action-at": "2026-05-28T18:00:00Z",
+  "phase-lock": null
+}
+```
 
 ##### `blocked-on-external` state semantics (discipline §9)
 

@@ -665,6 +665,17 @@ def run(argv: list[str]) -> int:
             state.status = "done"
             state.last_action_kind = "implement-completed"
             state.phase_lock = None
+            # Gap 9 (W-002) — stamp shipped-at on the done transition so
+            # extension features can render `Parent shipped: <ISO>` from the
+            # parent's status.json. Lives in `raw` (additive metadata; not a
+            # canonical L1State field) so write_l1_status preserves it via
+            # the raw round-trip. Idempotent: only set when absent — re-runs
+            # of a done feature (rare; defensive) don't clobber the original
+            # ship timestamp.
+            if isinstance(state.raw, dict) and not state.raw.get("shipped-at"):
+                state.raw["shipped-at"] = datetime.now(timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                )
             write_l1_status(state, project_root)
             append_history(slug, project_root, {"event": "feature-done"})
         # Garante release do lock mesmo quando state era None ou já 'done'.

@@ -219,7 +219,7 @@ elsewhere in this agent):**
 | Field | Source | Notes |
 |---|---|---|
 | `Parent feature` | `extension-context.parent-slug` | Verbatim slug; no embellishment. |
-| `Parent shipped` | `extension-context.parent-shipped-at` | ISO 8601 from parent's `status.json.shipped-at`. If absent (parent in `done` but no `shipped-at` field), write `unknown` — never invent a date. |
+| `Parent shipped` | `extension-context.parent-shipped-at` | ISO 8601 from parent's `status.json.shipped-at`. Parents que ficaram `done` pós-Gap-9 carregam o campo automaticamente (engine carimba na transição). Se o campo for absent OU null (parent done pre-Gap-9, forward-compat), write `unknown` — never invent a date. |
 | `Scope of this extension` | `extension-context.delta-intent` | The user's answer to Cena 2's question "o que essa extension faz que a pai não fazia?". 1–2 sentences. NEVER inferred — if `delta-intent` is empty, emit Q-NNN in `open-questions.yaml` (intake gate). |
 | `Reuse from parent` | EXPLICIT list of artefacts the extension inherits. Sources: `extension-context.parent-baseline` (paths to parent's data-contract-spec, screen-analysis, tech-spec, existing-helpers) PLUS any `resolved-decisions` flagged as inherited. | Each bullet cites the parent's file by relative path. NEVER claim inheritance without a citable file. |
 | `Out-of-scope vs parent` | `resolved-decisions` entries tagged `extension-non-goal` PLUS any explicit user statement during Cena 2 drill-down. | When sources don't separate, emit an open intake question — do NOT invent non-goals. |
