@@ -199,6 +199,68 @@ def test_create_extension_l1_rejects_empty_slugs(tmp_forge_project: Path) -> Non
         plan._create_extension_l1("parent", "", tmp_forge_project)
 
 
+def _seed_parent_state(project_root: Path, slug: str, state: str) -> None:
+    """Write parent status.json com state arbitrário (não-done) — W-005 setup.
+
+    Usado pra exercitar o guard de EXT-002 no nível do helper write-time.
+    """
+    l1_dir = project_root / ".claude" / "memory" / "L1" / slug
+    l1_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema-version": 1,
+        "feature-slug": slug,
+        "state": state,
+        "subtype": "product",
+        "last-action": "seeded",
+        "last-action-at": "2026-06-03T10:00:00Z",
+        "phase-lock": None,
+    }
+    (l1_dir / "status.json").write_text(
+        json.dumps(payload, indent=2), encoding="utf-8"
+    )
+
+
+def test_create_extension_l1_rejects_parent_in_planning(
+    tmp_forge_project: Path,
+) -> None:
+    """W-005 (EXT-002 write-time guard): parent em state=planning → ValueError."""
+    _seed_parent_state(tmp_forge_project, "still-cooking", "planning")
+    with pytest.raises(ValueError, match="EXT-002"):
+        plan._create_extension_l1(
+            "still-cooking", "premature-ext", tmp_forge_project
+        )
+
+
+def test_create_extension_l1_rejects_parent_in_implementing(
+    tmp_forge_project: Path,
+) -> None:
+    """W-005 (EXT-002 write-time guard): parent em state=implementing → ValueError."""
+    _seed_parent_state(tmp_forge_project, "mid-flight", "implementing")
+    with pytest.raises(ValueError, match="EXT-002"):
+        plan._create_extension_l1(
+            "mid-flight", "mid-flight-ext", tmp_forge_project
+        )
+
+
+def test_create_extension_l1_rejects_parent_in_verifying(
+    tmp_forge_project: Path,
+) -> None:
+    """W-005 (EXT-002 write-time guard): parent em state=verifying → ValueError.
+
+    Mensagem de erro deve citar o estado real e o código EXT-002 pra
+    quem ler stack trace ter pista direta de qual invariante quebrou.
+    """
+    _seed_parent_state(tmp_forge_project, "almost-done", "verifying")
+    with pytest.raises(ValueError) as exc_info:
+        plan._create_extension_l1(
+            "almost-done", "almost-done-ext", tmp_forge_project
+        )
+    msg = str(exc_info.value)
+    assert "EXT-002" in msg
+    assert "verifying" in msg
+    assert "almost-done" in msg
+
+
 # ── _handle_done_feature_branch (4-caminhos integration) ─────────────────────
 
 

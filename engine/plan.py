@@ -797,11 +797,13 @@ def _create_extension_l1(
     this returns, per the engine's lifecycle. Does NOT write history —
     `run()` appends a ``plan-started`` entry after lock acquisition.
 
-    Sanity guards (defensive — validator EXT-003 covers semantic):
-      - ``child_slug != parent_slug`` (self-loop)
-      - parent's status.json must exist (caller is responsible for the
-        state=done check; this helper only fails if parent isn't on disk
-        at all)
+    Sanity guards (defensive — write-time enforcement reduz dependência
+    do validator runtime, que pode não estar wired no cascade default):
+      - ``child_slug != parent_slug`` (self-loop — EXT-003)
+      - parent's status.json must exist (EXT-001)
+      - ``parent_status.status == "done"`` (EXT-002 — extensions de
+        feature ainda viva poluem a L1 da pai e quebram a invariante
+        "1 feature = 1 ship moment")
     """
     if not parent_slug or not child_slug:
         raise ValueError("parent_slug and child_slug must be non-empty")
@@ -814,6 +816,11 @@ def _create_extension_l1(
         raise ValueError(
             f"parent '{parent_slug}' has no status.json on disk; "
             "cannot create extension"
+        )
+    if parent_status.status != "done":
+        raise ValueError(
+            f"parent {parent_slug!r} has state={parent_status.status!r}; "
+            "extension requires parent.state == 'done' (EXT-002)"
         )
 
     child_state = L1State(
