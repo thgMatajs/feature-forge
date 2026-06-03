@@ -10,7 +10,9 @@ Adding labels is a one-file change (the markdown table).
 
 from __future__ import annotations
 
+import os
 import re
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -759,12 +761,19 @@ def _write_local_cards_manifest(
     entries: list[dict[str, Any]] = []
     for name in sorted(local):
         card = local[name]
+        # N11: card.source_path pode não ser subpath de project_root (p.ex.
+        # ambiente de teste com paths simbólicos / fixtures). relative_to
+        # levanta ValueError nesse caso; fallback graceful pro path absoluto.
+        try:
+            rel = card.source_path.relative_to(project_root).as_posix()
+        except ValueError:
+            rel = str(card.source_path)
         entries.append(
             {
                 "name": card.name,
                 "provides": list(card.provides),
                 "conflicts-with": list(card.conflicts_with),
-                "source": str(card.source_path.relative_to(project_root)),
+                "source": rel,
             }
         )
 
@@ -773,7 +782,17 @@ def _write_local_cards_manifest(
         "generated-by": "feature-forge engine.cards.loader",
         "local-cards": entries,
     }
-    manifest_path.write_text(
-        _yaml_lib.safe_dump(payload, sort_keys=False, allow_unicode=True),
-        encoding="utf-8",
-    )
+    # C2: write atômico via tempfile + os.replace — evita manifest parcial
+    # se o processo morrer no meio do write (fast-fail discipline).
+    serialized = _yaml_lib.safe_dump(payload, sort_keys=False, allow_unicode=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=".manifest-", dir=str(inv_dir), text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(serialized)
+        os.replace(tmp_path, manifest_path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
