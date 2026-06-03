@@ -80,6 +80,12 @@ dispatch:
   # (Wave B skipped → contracts absent). For other subtypes, this
   # field is null and ignored.
   wave_b_required: null  # null | true | false (bugfix only)
+  # Gap 9 — extends-feature mechanic. When the feature is a derived
+  # extension of a shipped parent, both fields carry the parent's slug
+  # (lockstep). Default null for standalone features (forward compat).
+  # When non-null, see "Extension variant rendering" below.
+  extends-feature: null  # null | "{parent-slug}"
+  parent-baseline: null  # null | {dict with parent's artefact paths}
   attached:
     # Wave A + B artifacts
     - feature-intake.md, feature-prd.md (feature-prd ABSENT when subtype=refactor OR bugfix)
@@ -166,6 +172,34 @@ For `subtype == "spike"` or `"chore"` the agent should NOT have been
 dispatched at all (conductor surfaces 3-caminhos beforehand). If
 dispatch happens anyway by mistake, emit a partial with the 3-caminhos
 block from §"Voice and discipline" below.
+
+### Extension variant rendering (Gap 9 — `extends-feature != null`)
+
+When the context pack carries a non-null `extends-feature` slug,
+`subtype` remains `product` (extensions are product-derived — discipline
+§10, a ser criada na Wave 3 deste gap) but rendering shifts to a
+delta-only mode. Rules:
+
+- **§1 Feature summary**: MAY reference the parent's tech-spec by
+  relative path ("Extends `features/{parent-slug}/tech-spec.md` §X for
+  the baseline architecture; this document covers only the {delta}
+  scope"). NEVER duplicate parent's content — cite it.
+- **§§ 2-13**: render ONLY the sections whose layer is touched by the
+  delta. Treat the parent's architecture as `mode: inherited` baseline;
+  don't restate it. This is the same discipline as refactor — different
+  trigger, same anti-duplication rule.
+- **§14 Cross-feature reusability**: preserved. Extensions are a prime
+  surface for CFR candidates (helpers the delta reused from parent's
+  `existing-helpers.yaml`, helpers the delta newly surfaced).
+- **`parent-baseline` field** (when present in the dispatch pack):
+  contains paths to parent's `data-contract-spec.yaml`,
+  `screen-analysis.yaml`, `tech-spec.md`, and `existing-helpers.yaml`.
+  Read these read-only to ground the delta — never edit, never copy.
+
+Subtype stays `product` for rendering — extensions never re-derive into
+refactor/bugfix variants. If the conductor sends `extends-feature` AND
+`subtype != "product"`, treat it as a context-pack inconsistency and
+emit a partial with a note in `notes` of the JSON return.
 
 ---
 

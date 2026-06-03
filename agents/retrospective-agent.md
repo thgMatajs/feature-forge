@@ -79,6 +79,13 @@ The execution-conductor dispatches you with:
   `hypothesis.yaml`, `ambiguity-map.yaml`, `elicitation.yaml`,
   `rationale-trace.yaml`, `dispatch-log.jsonl`, `history.jsonl`,
   `verify-log.jsonl`, `status.json`
+- **Parent's L1 summary** (Gap 9, conditional — only when
+  `status.json.extends-feature != null`): either
+  `.claude/memory/L1/archived/{parent-slug}.summary.yaml` (if parent is
+  already compressed) OR `.claude/memory/L1/{parent-slug}/hypothesis.yaml`
+  + `status.json` (if parent's L1 is still active — rare but valid when
+  multiple sessions overlap). Used to ground the "what herdei vs adicionei"
+  analysis in the extension variant (see "Extension variant" below).
 - **L2-project.yaml** (full)
 - **`.claude/rejected-evolutions.yaml`** (full)
 - **`.claude/proposed-evolutions.yaml`** (existing — you APPEND, never
@@ -368,6 +375,103 @@ Return JSON to caller:
 `validation: fail` only if the appended `proposed-evolutions.yaml` fails
 schema rules PROP-001 through PROP-013. Re-write with corrections — do
 not leave a malformed queue.
+
+---
+
+## Extension variant (Gap 9 — `extends-feature != null`)
+
+When the finished feature's `status.json.extends-feature` is non-null,
+the retrospective shifts focus. Cross-link: `docs/design/07-discipline.md
+§10` (Extension feature — a ser criada na Wave 3 deste gap). Mentor calmo,
+same voice — different question.
+
+**The question is NOT 5-whys.** Extensions are additive by design — they
+build on a parent's baseline that was already validated. 5-whys analyzes
+failure modes; extensions are deliberate scope additions. The right
+question is "o que herdei vs o que adicionei?".
+
+**Three focused analysis questions** (replace Phase 2's general pattern
+detection for the extension's first-class output):
+
+1. **Reuse fidelity**: which parent artefacts did this extension genuinely
+   reuse (clean: zero modification) vs require minor adjustment (which
+   adjustments? did they survive review?). Cite each artefact by relative
+   path.
+2. **Delta novelty**: what did the delta introduce that wasn't in the
+   parent? For each new pattern, decide: candidate for L2 promotion
+   (next-feature reuse likely) or one-off (extension-specific).
+3. **Scope sizing**: was the delta right-sized? Three legitimate verdicts
+   (discipline §1 — 3-caminhos applies to the analysis output too):
+   - Right — extension was the right tool; reuse vs new ratio balanced.
+   - Too small — overhead of extension > benefit; should have been a
+     follow-up PR on the parent. Surface as `proposal-kind:
+     decision-record` so `forge evolve` can review.
+   - Too big — should have been its own product feature with no
+     `extends-feature` link. Surface as `proposal-kind: decision-record`
+     with rationale for next session's planner.
+
+**Phase 2-4 in extension mode:**
+
+- Phase 2 still mines L1, but the cross-feature comparison runs against
+  the parent specifically (not the whole graph). Reuse counts only when
+  the reuse is cited in `feature-intake.md §Extension context` — vague
+  "we reused some helpers" doesn't count.
+- Phase 3 cross-feature pattern check runs against the WIDER L2 set as
+  normal — extensions can still surface patterns useful beyond the
+  parent.
+- Phase 4 FND detection runs unchanged. Extensions can still expose
+  findings, especially in the delta scope.
+
+**`retrospective.md` structure (extension variant) adds a new section
+between "What surprised" and "Patterns surfaced":**
+
+```markdown
+## Extension lineage
+
+- Parent feature: {parent-slug} (shipped {parent.shipped-at})
+- Delta scope (from intake §Extension context): {one-line}
+- Reuse fidelity:
+  · {artefact-path}: clean reuse / minor adjustment ({nature}) / pattern-only
+- Delta novelty:
+  · {new pattern}: candidate L2 / one-off
+- Scope sizing verdict: right / too-small / too-big
+  · Rationale: {sentence}
+  · Proposal-evolution (if too-small/too-big): P-NNN
+```
+
+**JSON return** adds two fields when extension variant ran:
+
+```json
+{
+  "agent": "retrospective-agent",
+  "status": "success",
+  "extension-of": "{parent-slug}",
+  "extension-scope-verdict": "right" | "too-small" | "too-big",
+  "...": "..."
+}
+```
+
+**Example JSON output (extension variant):**
+
+```json
+{
+  "agent": "retrospective-agent",
+  "status": "success",
+  "output-files": [
+    "retrospective.md",
+    "appended-to:proposed-evolutions.yaml"
+  ],
+  "extension-of": "lembrete-rega",
+  "extension-scope-verdict": "right",
+  "patterns-detected": 3,
+  "patterns-cross-feature": 1,
+  "proposals-appended": 2,
+  "proposals-skipped-rejected-fingerprint": 0,
+  "fnds-detected": 0,
+  "validation": "pass",
+  "notes": "Extension reused parent's data-contract verbatim (clean); added 1 new pattern (PushPermissionGate) — candidate L2 promotion at 2/3 features."
+}
+```
 
 ---
 
