@@ -1040,7 +1040,8 @@ not bossy. Nenhum comando extra precisa ser lembrado pelo usuário.
 ### 1. Auto-resume — feature already in-flight
 
 User runs `forge plan` while `.claude/memory/L1/{some-slug}/status.json`
-shows `aborted: false` and readiness is not yet `ready`.
+shows `state ∈ {planning, planned, implementing, verifying, verified}`
+(in-flight — não feita ainda).
 
 ```
 [0:01] Detectei plano em andamento: lembrete-rega
@@ -1061,6 +1062,149 @@ shows `aborted: false` and readiness is not yet `ready`.
 
 **Note:** retomar é o caminho rápido — todas as respostas anteriores estão em
 `elicitation.yaml`, basta seguir das Waves pendentes.
+
+Quando `state == done` (feature já enviada) o conductor entra no caminho
+de **Edge case 1.5 — Extend feita (Gap 9)** logo abaixo, não nas 3-caminhos
+acima. Done é estado terminal: não cabe "retomar" nem "abortar" no sentido
+clássico.
+
+### 1.5. Feature already done — extend mechanic (Gap 9)
+
+User runs `forge plan lembrete-rega` e `.claude/memory/L1/lembrete-rega/
+status.json` está em `state == "done"`. Conductor não trata como retomar
+(não há nada pra retomar — feature shipped) nem como standalone nova
+(slug já existe). Oferece **quatro caminhos** — o caminho 3 é o novo
+"Estender" introduzido pelo Gap 9 (extends-feature mechanic).
+
+Cross-reference: discipline §10 → "Extension feature" (a ser criada na
+Wave 3 deste gap — formaliza when-applies, semantics, retro variant).
+
+#### Caso happy path — slug derivado default + confirma
+
+```
+[0:01] Detectei feature 'lembrete-rega' já feita (done desde 2026-05-28).
+       
+       Quatro caminhos:
+         1) Retomar (re-plan inteiro — descarta artefatos, recomeça)
+         2) Começar feature nova (novo slug, sem herança)
+         3) Estender feature feita (novo slug derivado herda contexto da pai)
+         4) Abortar
+       
+       O que você quer?
+       
+       > 3
+       
+[0:03] Beleza. Slug derivado proposto: lembrete-rega-extension
+       
+       Aceita ou customiza? (digite o slug ou ENTER pra aceitar)
+       
+       > lembrete-rega-push
+       
+[0:04] Vou criar lembrete-rega-push como extension de lembrete-rega.
+       
+       O que isso faz:
+         · Novo L1 em .claude/memory/L1/lembrete-rega-push/
+         · status.json.extends-feature: "lembrete-rega"
+         · status.json.parent-feature: "lembrete-rega"
+         · subtype: "product" (extension é product-derived)
+         · feature-intake.md renderiza bloco §Extension context
+         · Conductor importa contexto da pai pro context-pack:
+             - hypothesis.yaml (shape, screens, persistence)
+             - data-contract-spec.yaml (entidades, validations)
+             - screen-analysis.yaml (estados modelados)
+             - tech-spec.md (layers tocados, naming)
+             - existing-helpers.yaml (helpers já reaproveitáveis)
+         · Wave A roda intake da extension (você preenche §Extension
+           context com o delta — o que é novo, o que herda)
+         · Waves B-E focam SÓ no delta (parent supplies baseline)
+         · Retrospective rodará 'extension variant' depois do implement
+           (não é 5-whys; é "o que herdei vs o que adicionei")
+       
+       Segue?
+       
+       > sim
+       
+[0:05] Criado. Cena 2 (source inquiry) agora — me conta o delta:
+       o que essa extension faz que a pai não fazia?
+```
+
+#### Caso edge — slug derivado já existe (duplicate)
+
+User pede customização que colide com L1 já criado.
+
+```
+[0:03] Slug derivado proposto: lembrete-rega-extension
+       
+       > lembrete-rega-push
+       
+[0:04] 🛑 Slug 'lembrete-rega-push' já existe em L1 (state=planning,
+       last-action 3h atrás).
+       
+       Três caminhos:
+         1) Escolher outro slug derivado
+         2) Abortar a extension (volta pros 4 caminhos da Cena 1)
+         3) Pisar no L1 existente — descarta artefatos atuais do
+            lembrete-rega-push e cria de novo como extension
+            (raro; use só se o L1 atual foi engano)
+       
+       O que você quer?
+```
+
+Mentor calmo nunca pisa em L1 ativo sem confirmação explícita. Caminho 3
+exige `forge undo lembrete-rega-push` separado como pré-requisito —
+conductor não invoca destrutivo silenciosamente.
+
+#### Caso edge — parent não está em done (race condition)
+
+Cenário: 2 sessions paralelas. Session A está implementando lembrete-rega
+(state=implementing); session B abre `forge plan lembrete-rega` querendo
+estender. Conductor recusa o caminho 3.
+
+```
+[0:01] Detectei feature 'lembrete-rega' (state=implementing, last-action
+       4min atrás).
+       
+       O caminho 3 (Estender) exige que a pai esteja em state=done. Ela
+       ainda está em implementing — outra session pode estar trabalhando.
+       
+       Três caminhos:
+         1) Esperar a pai terminar — fecha esta session, volta quando
+            lembrete-rega for marcada done
+         2) Forçar mesmo assim — eu não recomendo, mas posso criar a
+            extension apontando pra pai não-done. validate_extension_
+            feature vai emitir EXT-002 fail no próximo forge verify, e
+            você vai ter que limpar manualmente
+         3) Abortar — saio sem criar nada
+       
+       O que você quer?
+```
+
+Note operacional: caminho 2 está disponível mas o validator
+`validate_extension_feature` (cascade em `forge verify`) emite EXT-002
+fail no próximo run. Mentor calmo é firme: oferece, mas não esconde a
+consequência.
+
+#### Note operacional
+
+- Edge case 1.5 só renderiza quando `state == "done"` no L1 da pai. Outros
+  estados terminais (`aborted`, `archived`) NÃO oferecem caminho 3 —
+  aborted virou nada, archived saiu de L1 (caminho 3 não tem o que
+  importar). Nestes casos o conductor cai em Edge case 1 ou trata como
+  feature nova.
+- `extends-feature` + `parent-feature` são gravados em **lockstep**: o
+  mesmo slug em ambos. Reverse pointer (`parent-feature`) existe pra
+  otimizar queries L1 (retrospective grouping, dedupe EXT-004).
+- Wave A do extension herda intake do delta (template já tem
+  §Extension context). Wave B-E rodam normalmente, mas o conductor
+  passa parent's artefatos no context-pack como baseline read-only —
+  sub-agents NÃO duplicam conteúdo, referenciam.
+- Slug derivado default `{parent}-extension` é heurística simples; o user
+  customiza pra refletir o delta real (ex.: `lembrete-rega-push`,
+  `bonsai-list-export`). Validador EXT-003 garante que slug derivado
+  != parent slug (sanity).
+- Retomada de extension (`forge plan lembrete-rega-push` depois de pausa):
+  conductor lê `extends-feature` do L1 da própria extension, NÃO re-
+  pergunta na Cena 1 — o caminho 3 só aparece na criação.
 
 ### 2. Greenfield feature — só descrição, sem ticket nem screenshots
 
