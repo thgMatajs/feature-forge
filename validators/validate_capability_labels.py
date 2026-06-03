@@ -44,11 +44,25 @@ def _collect_cards(project_root: Path) -> list[Path]:
     snapshot = cards_dir(project_root)
     if snapshot.is_dir():
         candidates.extend(snapshot.glob("*/card.yaml"))
+        # Inclui overlay local quando existe (cards/local/<name>/card.yaml).
+        local_root = snapshot / "local"
+        if local_root.is_dir():
+            candidates.extend(local_root.glob("*/card.yaml"))
     if not candidates:
         canonical = cards_canonical_dir()
         if canonical.is_dir():
             candidates.extend(canonical.glob("*/card.yaml"))
     return sorted(candidates)
+
+
+def _collect_known_card_names(cards: list[Path]) -> frozenset[str]:
+    """Set de nomes-de-card conhecidos (canon ∪ local), pra resolver CARD-008.
+
+    `conflicts-with` aceita label OR card-name por schema (docs/schemas/card.md).
+    O nome do card é inferido pelo nome do diretório que contém `card.yaml`,
+    espelhando a convenção de `engine.cards.loader`.
+    """
+    return frozenset(p.parent.name for p in cards)
 
 
 def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
@@ -85,6 +99,7 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
 
     active = catalog.active
     reserved = catalog.reserved
+    known_card_names = _collect_known_card_names(cards)
 
     failures: list[str] = []
     reserved_hits: list[str] = []
@@ -101,7 +116,8 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
             failures.append(f"{card_yaml.parent.name}: top-level not mapping")
             continue
 
-        for block_name in ("provides", "requires", "conflicts-with"):
+        # provides + requires: estritamente labels do catálogo.
+        for block_name in ("provides", "requires"):
             block = data.get(block_name) or []
             if not isinstance(block, list):
                 continue
@@ -116,6 +132,28 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
                     reserved_hits.append(
                         f"{card_yaml.parent.name}.{block_name}: {label!r} (reserved)"
                     )
+
+        # conflicts-with: schema CARD-008 permite label OR card-name.
+        # Aceita ambos; rejeita só quando entrada não é nenhum dos dois.
+        conflicts = data.get("conflicts-with") or []
+        if isinstance(conflicts, list):
+            for entry in conflicts:
+                if not isinstance(entry, str) or not entry:
+                    continue
+                if entry in active:
+                    if entry in reserved:
+                        reserved_hits.append(
+                            f"{card_yaml.parent.name}.conflicts-with: "
+                            f"{entry!r} (reserved)"
+                        )
+                    continue
+                if entry in known_card_names:
+                    # Card-name reference é caminho legítimo do schema.
+                    continue
+                failures.append(
+                    f"{card_yaml.parent.name}.conflicts-with: {entry!r} "
+                    "unknown label/card-name"
+                )
 
     if failures:
         return result_fail(
