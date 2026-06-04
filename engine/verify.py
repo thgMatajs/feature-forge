@@ -511,6 +511,52 @@ def _discover_validators(
                 )
             )
     out.sort(key=lambda v: (v.card_name, v.name))
+    return _default_validator_specs(project_root) + out
+
+
+# ── Default validators registry ──────────────────────────────────────────────
+#
+# Validators that ship with forge engine itself (multi-language,
+# project-agnostic) and run on every verify scope regardless of which cards
+# are active. Order is load-bearing — cascade fail-fast (Decision 23) honors
+# this sequence.
+
+_DEFAULT_VALIDATORS: list[dict[str, str]] = [
+    {
+        "name": "check_no_invented_behavior",
+        "file": "check_no_invented_behavior.py",
+        "severity": "fail",
+    },
+    {
+        "name": "check_cyclomatic_complexity",
+        "file": "check_cyclomatic_complexity.py",
+        "severity": "fail",
+    },
+]
+
+
+def _default_validator_specs(project_root: Path) -> list[_ValidatorSpec]:
+    """Build _ValidatorSpec entries for the engine's built-in validators.
+
+    Resolved relative to ``<repo>/validators/``. Skips entries whose script
+    file doesn't exist on disk (defensive — keeps verify usable durante
+    partial snapshots / first-run states).
+    """
+    validators_dir = Path(__file__).resolve().parent.parent / "validators"
+    out: list[_ValidatorSpec] = []
+    for entry in _DEFAULT_VALIDATORS:
+        script = validators_dir / entry["file"]
+        if not script.is_file():
+            continue
+        out.append(
+            _ValidatorSpec(
+                name=entry["name"],
+                script_path=script,
+                severity=entry.get("severity", "warn"),
+                card_name="<engine-default>",
+                runs_on=["verify-task", "forge-doctor"],
+            )
+        )
     return out
 
 
