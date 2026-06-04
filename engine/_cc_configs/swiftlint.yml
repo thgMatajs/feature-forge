@@ -1,0 +1,21 @@
+# Forge-managed SwiftLint config for the cyclomatic-complexity gate.
+# Single-rule: only cyclomatic_complexity is active. Threshold is passed
+# via runtime command override (see check_cyclomatic_complexity._dispatch_tool).
+
+only_rules:
+  - cyclomatic_complexity
+
+cyclomatic_complexity:
+  warning: 10
+  error: 10
+  ignores_case_statements: false
+
+# Belt-and-suspenders: disable everything else explicitly.
+disabled_rules: []
+
+excluded:
+  - Tests
+  - .build
+  - DerivedData
+
+reporter: "json"

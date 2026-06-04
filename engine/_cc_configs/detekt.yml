@@ -1,0 +1,34 @@
+# Forge-managed Detekt config for the cyclomatic-complexity gate.
+# Only the CyclomaticComplexMethod rule is active — every other Detekt
+# category is explicitly disabled so the gate emits exactly one signal.
+# Threshold is passed via CLI args at runtime (see check_cyclomatic_complexity._dispatch_tool).
+
+build:
+  maxIssues: 0
+  weights:
+    complexity: 1
+
+complexity:
+  active: true
+  CyclomaticComplexMethod:
+    active: true
+    threshold: 10  # default — overridden by CLI flag at runtime
+    ignoreSingleWhenExpression: false
+    ignoreSimpleWhenEntries: false
+    ignoreNestingFunctions: false
+
+# Disable every other category — gate is single-purpose.
+comments:
+  active: false
+empty-blocks:
+  active: false
+exceptions:
+  active: false
+naming:
+  active: false
+performance:
+  active: false
+potential-bugs:
+  active: false
+style:
+  active: false

@@ -1,0 +1,10 @@
+{
+  "_comment": "Forge-managed eslint config. Single rule (complexity). Threshold is passed via CLI --rule at runtime; the value below is a placeholder default.",
+  "parserOptions": {
+    "ecmaVersion": 2022,
+    "sourceType": "module"
+  },
+  "rules": {
+    "complexity": ["error", { "max": 15 }]
+  }
+}
