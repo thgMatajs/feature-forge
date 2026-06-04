@@ -198,7 +198,111 @@ def _parse_swiftlint(raw: str) -> list[CCResult]:
     return out
 
 
-# Subsequent tasks (5–8) append: more parsers, dispatch, override, run().
+_ESLINT_FUNC_RE = re.compile(r"['\"]?(\w+)['\"]?\s+has a complexity of (\d+)", re.IGNORECASE)
+
+
+def _parse_eslint(raw: str, *, project_root: str) -> list[CCResult]:
+    """Parse eslint --format json output (complexity rule only).
+
+    eslint emits ``[{filePath, messages: [{ruleId, line, endLine, message}], ...}]``.
+    The `complexity` rule message has the canonical shape
+    ``Function 'name' has a complexity of N. Maximum allowed is M.``;
+    we extract `name` + `N` via regex and discard the configured maximum
+    (gate uses its own threshold table, not eslint's).
+
+    Tool crash / non-JSON → ``[]`` so the orchestrator can emit
+    ``result_warn`` and keep the cascade alive (spec §3 trust-but-verify).
+    """
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, list):
+        return []
+    root_prefix = project_root.rstrip("/") + "/"
+    out: list[CCResult] = []
+    for entry in data:
+        if not isinstance(entry, dict):
+            continue
+        file_abs = str(entry.get("filePath") or "")
+        file_rel = (
+            file_abs[len(root_prefix):] if file_abs.startswith(root_prefix) else file_abs
+        )
+        for msg in entry.get("messages") or []:
+            if not isinstance(msg, dict):
+                continue
+            if msg.get("ruleId") != "complexity":
+                continue
+            text = str(msg.get("message") or "")
+            match = _ESLINT_FUNC_RE.search(text)
+            if not match:
+                continue
+            func_name = match.group(1)
+            try:
+                cc_value = int(match.group(2))
+            except (TypeError, ValueError):
+                continue
+            out.append(
+                CCResult(
+                    file=file_rel,
+                    function=func_name,
+                    line_start=int(msg.get("line") or 0),
+                    line_end=int(msg.get("endLine") or msg.get("line") or 0),
+                    cc=cc_value,
+                    language="ts",
+                    status="unchanged",
+                    cc_before=None,
+                )
+            )
+    return out
+
+
+def _parse_radon(raw: str) -> list[CCResult]:
+    """Parse ``radon cc -j`` output (per-file → list of blocks).
+
+    Shape: ``{file_path: [{type, name, lineno, endline, complexity, rank, classname?}, ...]}``.
+    Gate counts only `type == "function"` entries — class-level aggregates
+    are reported separately by radon and would double-count the methods
+    they contain.
+
+    Tool crash / non-JSON → ``[]`` (same robustness contract as the other
+    parsers; spec §3 trust-but-verify).
+    """
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, dict):
+        return []
+    out: list[CCResult] = []
+    for file_path, blocks in data.items():
+        if not isinstance(blocks, list):
+            continue
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") != "function":
+                continue  # classes / methods aggregated separately
+            try:
+                cc_value = int(block.get("complexity"))
+            except (TypeError, ValueError):
+                continue
+            out.append(
+                CCResult(
+                    file=str(file_path),
+                    function=str(block.get("name") or "<unknown>"),
+                    line_start=int(block.get("lineno") or 0),
+                    line_end=int(block.get("endline") or block.get("lineno") or 0),
+                    cc=cc_value,
+                    language="python",
+                    status="unchanged",
+                    cc_before=None,
+                )
+            )
+    return out
+
+
+# Subsequent tasks (6–8) append: dispatch, override, run().
 
 
 if __name__ == "__main__":
