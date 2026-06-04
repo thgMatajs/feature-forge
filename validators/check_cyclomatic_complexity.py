@@ -586,5 +586,400 @@ def _apply_overrides(
     return silenced, surviving
 
 
+# ── Orchestrator ─────────────────────────────────────────────────────────────
+#
+# `validate(project_root, **kwargs)` é o main entry-point — chamado tanto pelo
+# CLI runner (_common.run_cli quando o script roda standalone) quanto pelo
+# cascade do engine (forge verify) e pelo per-task hook (forge implement).
+#
+# Pipeline (per design spec §2):
+#   1. Lê workflow-config; short-circuit warn quando enabled=false.
+#   2. Coleta staged files (git diff --cached --name-only) filtrados pelas
+#      extensões suportadas (.kt .kts .swift .ts .tsx .py).
+#   3. Aplica ignore-paths (defaults pra tests + entradas do workflow-config).
+#   4. Resolve threshold por linguagem via cc_threshold_lookup (card override
+#      > workflow-config > DEFAULTS_CC).
+#   5. Extrai diff hunks pra classificar new/modified/unchanged.
+#   6. Dispatch tool per linguagem (Detekt/SwiftLint/eslint/radon) numa única
+#      invocação por batch. Tool missing/crash → warning, sem fail.
+#   7. Classifica cada função encontrada via classify_function.
+#   8. Aplica a regra: new → fail se cc > threshold; modified → fail se
+#      cc_after > cc_before (delta-rule). unchanged → ignora.
+#   9. Aplica CC-OVERRIDE silencing lendo o commit body.
+#   10. Se sobrarem violations → emit result_fail com 3-paths block.
+#   11. Senão → result_pass (ou result_warn se houve tool warnings).
+
+
+_TEST_IGNORE_DEFAULTS = [
+    r"(^|/)tests?/",
+    r"(^|/)__tests__/",
+    r"\.test\.(ts|tsx|js|jsx|kt|swift|py)$",
+    r"_test\.(kt|swift|py)$",
+]
+
+
+def _git_staged_files(project_root: Path) -> list[Path]:
+    """Return absolute paths of files in ``git diff --cached --name-only``.
+
+    Filtra pelas extensões em SUPPORTED_EXTENSIONS antes de devolver. Git
+    indisponível / não-repo / errors → lista vazia (caller trata como
+    "nenhum arquivo a checar"). Timeout 10s evita hang em repo gigante.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(project_root), "diff", "--cached", "--name-only"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return []
+    if out.returncode != 0:
+        return []
+    files: list[Path] = []
+    for line in out.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        p = project_root / line
+        if p.is_file() and p.suffix in SUPPORTED_EXTENSIONS:
+            files.append(p)
+    return files
+
+
+def _extract_diff_hunks(
+    project_root: Path, files: list[Path]
+) -> dict[str, list[dict[str, Any]]]:
+    """For each staged file, return its add hunks as line-range dicts.
+
+    Hunk shape: ``{"start": int, "end": int, "kind": "add"}``. Apenas o lado
+    "+" do diff é capturado — caller usa pra classify_function (new vs
+    modified vs unchanged). git diff -U0 dá hunks compactos sem context.
+    """
+    by_file: dict[str, list[dict[str, Any]]] = {}
+    for f in files:
+        try:
+            rel = str(f.relative_to(project_root))
+        except ValueError:
+            # Arquivo fora do project_root — skip silenciosamente.
+            continue
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(project_root), "diff", "--cached", "-U0", "--", rel],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except (subprocess.SubprocessError, OSError):
+            by_file[rel] = []
+            continue
+        hunks: list[dict[str, Any]] = []
+        for line in proc.stdout.splitlines():
+            if not line.startswith("@@"):
+                continue
+            # Hunk header: @@ -a,b +c,d @@
+            m = re.search(r"\+(\d+)(?:,(\d+))?", line)
+            if not m:
+                continue
+            start = int(m.group(1))
+            length = int(m.group(2)) if m.group(2) else 1
+            hunks.append(
+                {"start": start, "end": start + max(length - 1, 0), "kind": "add"}
+            )
+        by_file[rel] = hunks
+    return by_file
+
+
+def _read_commit_body(project_root: Path) -> str:
+    """Best-effort read do commit message body (pra detectar CC-OVERRIDE).
+
+    Ordem:
+      1. ``.git/COMMIT_EDITMSG`` — populado pelo pre-commit hook (caso
+         comum em forge implement). Lê mesmo se commit ainda não foi feito.
+      2. ``git log -1 --format=%B HEAD`` — fallback pós-commit (forge verify
+         rodando depois do commit já formado).
+
+    Não-encontrado / erro → string vazia (sem overrides aplicáveis).
+    """
+    editmsg = project_root / ".git" / "COMMIT_EDITMSG"
+    if editmsg.is_file():
+        try:
+            return editmsg.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            pass
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(project_root), "log", "-1", "--format=%B"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if proc.returncode == 0:
+            return proc.stdout
+    except (subprocess.SubprocessError, OSError):
+        pass
+    return ""
+
+
+def _load_active_cards(project_root: Path) -> list[dict[str, Any]]:
+    """Read each active card's card.yaml (snapshot) e devolve lista de dicts.
+
+    Active cards declarados em ``.claude/workflow-config.yaml`` sob
+    ``cards.active``. Para cada entrada, lê ``.claude/cards/<name>/card.yaml``.
+    Card file ausente → silenciosamente ignorado (não bloqueia o gate).
+    """
+    cfg_path = project_root / ".claude" / "workflow-config.yaml"
+    config = read_yaml_or_default(cfg_path, {}) or {}
+    cards_root = project_root / ".claude" / "cards"
+    out: list[dict[str, Any]] = []
+    cards_block = config.get("cards") if isinstance(config, dict) else None
+    active_list = (cards_block or {}).get("active") if isinstance(cards_block, dict) else None
+    for entry in active_list or []:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name") or "")
+        if not name:
+            continue
+        card_yaml = cards_root / name / "card.yaml"
+        if card_yaml.is_file():
+            out.append(read_yaml_or_default(card_yaml, {}) or {})
+    return out
+
+
+def _load_workflow_config(project_root: Path) -> dict[str, Any]:
+    """Read ``.claude/workflow-config.yaml`` ou retorna {} se ausente/inválido."""
+    cfg_path = project_root / ".claude" / "workflow-config.yaml"
+    return read_yaml_or_default(cfg_path, {}) or {}
+
+
+def _path_matches_ignore(rel_path: str, patterns: list[str]) -> bool:
+    """True se ``rel_path`` casa com QUALQUER regex em ``patterns``.
+
+    Regex inválida em patterns é silenciosamente ignorada (mensagem de erro
+    não vale interromper o cascade — caller já confiou na config).
+    """
+    for pat in patterns:
+        try:
+            if re.search(pat, rel_path):
+                return True
+        except re.error:
+            continue
+    return False
+
+
+def _run_tools_for_staged(
+    *,
+    files_by_lang: dict[str, list[str]],
+    thresholds_by_lang: dict[str, int],
+    diff_hunks: dict[str, list[dict[str, Any]]],
+    project_root: Path,
+) -> tuple[list[CCResult], list[str]]:
+    """Dispatch every per-language tool. Return ``(results, warnings)``.
+
+    Cada tool roda UMA VEZ por batch (Detekt sobre todos .kt staged, etc.) —
+    overhead amortizado mesmo em features grandes. Tool missing → warning
+    (não fail) por aquela linguagem; outras linguagens prosseguem (cascade
+    alive per spec §3 trust-but-verify).
+
+    `status` em cada CCResult é re-classificado aqui via classify_function
+    contra ``diff_hunks`` — os parsers emitem ``status="unchanged"`` por
+    default (não conhecem o diff) e o orchestrator faz o overlay correto.
+    """
+    parsers = {
+        "kotlin": lambda raw: _parse_detekt(raw),
+        "swift": lambda raw: _parse_swiftlint(raw),
+        "ts": lambda raw: _parse_eslint(raw, project_root=str(project_root)),
+        "python": lambda raw: _parse_radon(raw),
+    }
+    results: list[CCResult] = []
+    warnings: list[str] = []
+    for lang, files in files_by_lang.items():
+        if not files:
+            continue
+        threshold = thresholds_by_lang.get(lang, 10)
+        d = _dispatch_tool(
+            language=lang,
+            files=files,
+            threshold=threshold,
+            project_root=project_root,
+        )
+        if not d.tool_found:
+            warnings.append(d.error_message)
+            continue
+        if d.crashed:
+            warnings.append(d.error_message)
+            continue
+        for r in parsers[lang](d.raw_stdout):
+            hunks = diff_hunks.get(r.file, [])
+            status = classify_function((r.line_start, r.line_end), hunks)
+            results.append(
+                CCResult(
+                    file=r.file,
+                    function=r.function,
+                    line_start=r.line_start,
+                    line_end=r.line_end,
+                    cc=r.cc,
+                    language=r.language,
+                    status=status,
+                    cc_before=r.cc_before,
+                )
+            )
+    return results, warnings
+
+
+def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
+    """Main entry-point — orquestra o pipeline CC gate completo.
+
+    Args:
+        project_root: Raiz do projeto consumidor (contém .claude/).
+        **kwargs: Reservado pra extensões futuras (scope, id, etc. via run_cli).
+
+    Returns:
+        Result dict no formato canônico ``{status, message, ...}`` produzido
+        por result_pass / result_warn / result_fail (vide _common.py). Em
+        result_fail, o campo ``paths`` carrega o 3-paths block obrigatório.
+
+    Pipeline detalhado: vide bloco de cabeçalho desta seção.
+    """
+    config = _load_workflow_config(project_root)
+    cc_block = (config.get("cc-gate") or {}) if isinstance(config, dict) else {}
+    if isinstance(cc_block, dict) and cc_block.get("enabled") is False:
+        return result_warn(
+            "cc-gate disabled in workflow-config (cc-gate.enabled=false)"
+        )
+
+    staged_paths = _git_staged_files(project_root)
+    if not staged_paths:
+        return result_pass("nenhum arquivo staged — nada a checar")
+
+    ignore_patterns = list(_TEST_IGNORE_DEFAULTS)
+    extra_ignore = cc_block.get("ignore-paths") if isinstance(cc_block, dict) else None
+    if isinstance(extra_ignore, list):
+        ignore_patterns.extend(str(p) for p in extra_ignore)
+
+    files_by_lang: dict[str, list[str]] = {
+        "kotlin": [],
+        "swift": [],
+        "ts": [],
+        "python": [],
+    }
+    for p in staged_paths:
+        try:
+            rel = str(p.relative_to(project_root))
+        except ValueError:
+            continue
+        if _path_matches_ignore(rel, ignore_patterns):
+            continue
+        lang = SUPPORTED_EXTENSIONS.get(p.suffix)
+        if lang:
+            files_by_lang[lang].append(rel)
+
+    if not any(files_by_lang.values()):
+        return result_pass("no candidate files after ignore-paths filter")
+
+    active_cards = _load_active_cards(project_root)
+    thresholds_by_lang: dict[str, int] = {}
+    for lang in files_by_lang:
+        try:
+            thresholds_by_lang[lang] = cc_threshold_lookup(
+                lang, active_cards=active_cards, workflow_config=config
+            )
+        except ValueError:
+            # Linguagem fora do scope CC — não deveria acontecer (filtrada
+            # antes), mas defesa contra desvio futuro em SUPPORTED_EXTENSIONS.
+            thresholds_by_lang[lang] = 10
+
+    diff_hunks = _extract_diff_hunks(project_root, staged_paths)
+
+    results, tool_warnings = _run_tools_for_staged(
+        files_by_lang=files_by_lang,
+        thresholds_by_lang=thresholds_by_lang,
+        diff_hunks=diff_hunks,
+        project_root=project_root,
+    )
+
+    # Aplica a regra: new → cc > threshold; modified → cc_after > cc_before.
+    fails: list[CCResult] = []
+    for r in results:
+        threshold = thresholds_by_lang.get(r.language, 10)
+        if r.status == "new" and r.cc > threshold:
+            fails.append(r)
+        elif r.status == "modified":
+            if r.cc_before is not None and r.cc > r.cc_before:
+                fails.append(r)
+        # "unchanged" ou modified sem regressão → não conta.
+
+    # Override-justify aplicado antes de emitir fail (spec §4).
+    commit_body = _read_commit_body(project_root)
+    silenced, surviving = _apply_overrides(fails, commit_body)
+
+    if not surviving:
+        if tool_warnings:
+            return result_warn(
+                f"cc-gate ok ({len(silenced)} silenced via override); "
+                f"tools incompletas: " + "; ".join(tool_warnings)
+            )
+        if silenced:
+            return result_pass(
+                f"cc-gate ok ({len(results)} funções inspecionadas, "
+                f"{len(silenced)} silenced via CC-OVERRIDE)"
+            )
+        return result_pass(
+            f"cc-gate ok ({len(results)} funções inspecionadas)"
+        )
+
+    # Build canonical 3-paths message.
+    violations = [
+        {
+            "file": r.file,
+            "line": r.line_start,
+            "function": r.function,
+            "cc": r.cc,
+            "threshold": thresholds_by_lang.get(r.language, 10),
+            "status": r.status,
+            "cc_before": r.cc_before,
+            "language": r.language,
+        }
+        for r in surviving
+    ]
+    affected_thresholds = {
+        r.language: thresholds_by_lang.get(r.language, 10) for r in surviving
+    }
+    # Snapshot da mensagem 3-paths — disponível pro engine renderizar (ainda
+    # não anexamos ao dict porque result_fail já carrega o block em `paths`,
+    # mas chamar cc_format_three_paths valida que o helper aceita o input;
+    # mantemos a invocação pra parity com spec §4 e pra fail-fast em caso de
+    # snapshot drift no helper.
+    _ = cc_format_three_paths(violations, affected_thresholds)
+
+    sample = ", ".join(
+        f"{r.file}:{r.function}(cc={r.cc})" for r in surviving[:3]
+    )
+    return result_fail(
+        f"Cyclomatic Complexity gate: {len(surviving)} função(ões) acima do threshold",
+        what_failed=sample,
+        where="staged files",
+        why=[
+            "Funções com CC alto são mais difíceis de testar/revisar/evoluir.",
+            "Threshold vigente: "
+            + ", ".join(
+                f"{lang}={n}" for lang, n in sorted(affected_thresholds.items())
+            ),
+            "Hard gate da cascade (Decision 23 fail-fast).",
+        ],
+        paths=make_paths(
+            "Refatorar — quebrar em helpers menores",
+            "Extrair branches / validações / loops em métodos privados nomeados.",
+            "Override-justify no commit body — CC-OVERRIDE: <file>:<func> cc=<N> — <razão>",
+            "Use APENAS quando a complexidade é genuinamente irredutível.",
+            "Split-task — dividir a task atual em sub-tasks menores",
+            "Sintoma típico: 'task fez coisa demais'. Re-rodar `forge implement`.",
+        ),
+    )
+
+
 if __name__ == "__main__":
-    sys.exit(run_cli(__doc__ or "", lambda root, **kw: result_pass("skeleton — not wired yet")))
+    sys.exit(run_cli(__doc__ or "", validate))
