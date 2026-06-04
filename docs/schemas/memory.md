@@ -142,6 +142,38 @@ hypothesis:
     project's Firestore-default pattern (L2 confirms).
 ```
 
+#### `extension-scope` (Gap 9 — opcional)
+
+Quando o feature em questão tem `status.json.extends-feature != null`
+(extension de uma feature done — discipline §10), `hypothesis.yaml`
+ganha o campo `extension-scope`:
+
+```yaml
+schema-version: 1
+feature-slug: lembrete-rega-push
+extends-feature: lembrete-rega
+parent-feature: lembrete-rega
+extension-scope: push-notification    # opcional — string livre
+shape: extension
+subtype: product
+```
+
+| Campo | Tipo | Quando | Quem escreve | Quem lê |
+|---|---|---|---|---|
+| `extension-scope` | string \| null | Apenas em features extension | `feature-intake-agent` na Cena 2 (source inquiry) | `validators/validate_extension_feature.py` (EXT-004 dedupe) |
+
+**Semantics:** chave de dedupe pra EXT-004. Múltiplas extensions do mesmo
+parent são OK quando `extension-scope` é distinto (`android-widget` vs
+`ios-watch`); colisão de scope é bloqueada. Ausência do campo (ou null) é
+tratada como string vazia — duas extensions empty-scope do mesmo parent
+trippam EXT-004 e o validator nudga o user a declarar scope explícito em
+vez de shipping ambíguo.
+
+Forward-compat: ausência do campo em features standalone (sem
+`extends-feature`) é silenciosa — validator faz no-op nesses casos. Em
+features extension legacy sem scope, o user precisa adicionar manualmente
+na próxima edição do `hypothesis.yaml`.
+
 ### `ambiguity-map.yaml`
 
 ```yaml
