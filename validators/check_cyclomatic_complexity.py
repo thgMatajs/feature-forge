@@ -302,7 +302,188 @@ def _parse_radon(raw: str) -> list[CCResult]:
     return out
 
 
-# Subsequent tasks (6–8) append: dispatch, override, run().
+# Subsequent tasks (7–8) append: override, run().
+
+
+# ── Tool dispatch ────────────────────────────────────────────────────────────
+#
+# Per-language invocation of the 4 native CC tools (Detekt/SwiftLint/eslint/Radon).
+# Trust-but-verify de availability via shutil.which: tool missing → tool_found=False
+# (caller emits result_warn, cascade segue alive — spec §3).
+#
+# Comandos exatos batem com docs/superpowers/specs/2026-06-03-cc-gate-design.md
+# §3 tabela. Threshold passado via CLI args (não embutido em config).
+
+
+_TOOL_BIN = {
+    "kotlin": "detekt",
+    "swift": "swiftlint",
+    "ts": "eslint",
+    "python": "radon",
+}
+
+_CONFIG_DIR = Path(__file__).resolve().parent.parent / "engine" / "_cc_configs"
+
+
+@dataclass(frozen=True)
+class _DispatchResult:
+    """Outcome of a single tool invocation.
+
+    Contract:
+        tool_found=False  → tool not on PATH; caller emits result_warn with
+                            install hint. raw_stdout / crashed irrelevantes.
+        crashed=True      → non-zero exit (exceto eslint exit=1 benigno),
+                            timeout, ou OSError. error_message tem stderr
+                            snippet ou descrição. raw_stdout pode ter parcial.
+        otherwise         → raw_stdout vai para o parser correspondente
+                            (_parse_detekt / _parse_swiftlint / etc.).
+    """
+
+    language: str
+    tool_found: bool
+    crashed: bool
+    raw_stdout: str
+    error_message: str
+
+
+def _check_tool_available(tool: str) -> bool:
+    """Return True iff `tool` is on PATH (shutil.which lookup).
+
+    Não tenta executar — apenas PATH lookup. Suficiente porque tool crash
+    em runtime é tratado separadamente em _dispatch_tool.
+    """
+    return shutil.which(tool) is not None
+
+
+def _dispatch_tool(
+    *,
+    language: str,
+    files: list[str],
+    threshold: int,
+    project_root: Path,
+) -> _DispatchResult:
+    """Invoke the per-language tool over `files`. Never raises (exceto KeyError
+    para language não suportada — contrato é caller filtra por SUPPORTED_EXTENSIONS).
+
+    Per spec §3 trust-but-verify:
+      - tool not on PATH → tool_found=False, no execution attempted.
+      - subprocess timeout → crashed=True, error_message contém "timeout".
+      - OSError (ex: permissions) → crashed=True, error_message com causa.
+      - exit != 0 (exceto eslint exit=1 que é benigno por design) → crashed=True
+        com stderr snippet (cap 400 chars).
+      - exit == 0 (ou eslint exit=1) → raw_stdout entregue ao caller.
+
+    Timeout fixo 60s — tools nativas em batches razoáveis de files (poucas
+    centenas) terminam bem antes disso. Timeout maior mascararia tool hang.
+    """
+    tool = _TOOL_BIN[language]
+    if not _check_tool_available(tool):
+        return _DispatchResult(
+            language=language,
+            tool_found=False,
+            crashed=False,
+            raw_stdout="",
+            error_message=f"{tool} not installed (PATH lookup failed)",
+        )
+
+    if language == "kotlin":
+        # Detekt: --input aceita lista vírgula-separada; --report json:- escreve
+        # JSON em stdout (sem precisar tempfile). Config interno desabilita
+        # tudo exceto CyclomaticComplexMethod.
+        cmd = [
+            tool,
+            "--input", ",".join(files),
+            "--config", str(_CONFIG_DIR / "detekt.yml"),
+            "--report", "json:-",
+        ]
+    elif language == "swift":
+        # SwiftLint: subcomando `lint` + reporter json + config interno que
+        # ativa só cyclomatic_complexity. Files vão posicionalmente no final.
+        cmd = [
+            tool, "lint",
+            "--reporter", "json",
+            "--config", str(_CONFIG_DIR / "swiftlint.yml"),
+            *files,
+        ]
+    elif language == "ts":
+        # eslint: --no-eslintrc ignora config do projeto consumidor (evita
+        # interferência); --rule inline com threshold dinâmico. Format json
+        # produz array file-by-file (parseado por _parse_eslint).
+        cmd = [
+            tool,
+            "--no-eslintrc",
+            "--rule", f'{{"complexity": ["error", {{"max": {threshold}}}]}}',
+            "--format", "json",
+            *files,
+        ]
+    elif language == "python":
+        # radon cc -j: JSON output; -n F filtra só blocks com rank ≥ F (CC ≥ 41).
+        # Mas mantemos -n F porque baseline padrão; validator compara CC numérico
+        # contra threshold direto. -n F é só pra evitar ruído de funções triviais.
+        cmd = [
+            tool, "cc", "-j", "-n", "F",
+            *files,
+        ]
+    else:
+        # Inalcançável: _TOOL_BIN[language] já teria raised KeyError acima.
+        # Mantido por simetria/defesa.
+        return _DispatchResult(
+            language=language,
+            tool_found=False,
+            crashed=False,
+            raw_stdout="",
+            error_message=f"unsupported language: {language}",
+        )
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(project_root),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return _DispatchResult(
+            language=language,
+            tool_found=True,
+            crashed=True,
+            raw_stdout="",
+            error_message=f"{tool} timeout (>60s)",
+        )
+    except OSError as exc:
+        return _DispatchResult(
+            language=language,
+            tool_found=True,
+            crashed=True,
+            raw_stdout="",
+            error_message=f"{tool} OS error: {exc}",
+        )
+
+    # eslint exits 1 quando issues encontrados — NÃO é crash, é normal.
+    # Outros tools: exit != 0 é crash genuíno.
+    benign_nonzero = language == "ts" and proc.returncode == 1
+    if proc.returncode != 0 and not benign_nonzero:
+        return _DispatchResult(
+            language=language,
+            tool_found=True,
+            crashed=True,
+            raw_stdout=proc.stdout or "",
+            error_message=(proc.stderr or "").strip()[:400]
+            or f"{tool} exit={proc.returncode}",
+        )
+
+    return _DispatchResult(
+        language=language,
+        tool_found=True,
+        crashed=False,
+        raw_stdout=proc.stdout or "",
+        error_message="",
+    )
+
+
+# Subsequent tasks (7–8) append: override, run().
 
 
 if __name__ == "__main__":
