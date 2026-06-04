@@ -107,7 +107,98 @@ def classify_function(
     return "unchanged"
 
 
-# Subsequent tasks (4–8) append: parsers, dispatch, override, run().
+# ── Tool output parsers ──────────────────────────────────────────────────────
+#
+# Each parser converts the tool's native JSON output into a list of CCResult.
+# Tool crash / non-JSON → return [] so the orchestrator can emit result_warn
+# and keep the cascade alive (per spec §3 trust-but-verify).
+
+_DETEKT_FUNC_RE = re.compile(r"function\s+(\w+)\s+appears", re.IGNORECASE)
+_SWIFTLINT_FUNC_RE = re.compile(r"\bFunction\s+(\w+)\s*\(", re.IGNORECASE)
+
+
+def _parse_detekt(raw: str) -> list[CCResult]:
+    """Parse Detekt JSON report (CyclomaticComplexMethod issues only)."""
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    issues = data.get("issues") if isinstance(data, dict) else None
+    if not isinstance(issues, list):
+        return []
+    out: list[CCResult] = []
+    for it in issues:
+        if not isinstance(it, dict):
+            continue
+        if it.get("ruleName") != "CyclomaticComplexMethod":
+            continue
+        loc = it.get("location") or {}
+        pos = loc.get("position") or {}
+        end_pos = loc.get("endPosition") or {}
+        message = str(it.get("message") or "")
+        match = _DETEKT_FUNC_RE.search(message)
+        func_name = match.group(1) if match else "<unknown>"
+        try:
+            cc_value = int((it.get("metric") or {}).get("value"))
+        except (TypeError, ValueError):
+            continue
+        out.append(
+            CCResult(
+                file=str(loc.get("filePath") or ""),
+                function=func_name,
+                line_start=int(pos.get("line") or 0),
+                line_end=int(end_pos.get("line") or pos.get("line") or 0),
+                cc=cc_value,
+                language="kotlin",
+                status="unchanged",  # filled by orchestrator
+                cc_before=None,
+            )
+        )
+    return out
+
+
+def _parse_swiftlint(raw: str) -> list[CCResult]:
+    """Parse SwiftLint JSON report (cyclomatic_complexity rule only)."""
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, list):
+        return []
+    out: list[CCResult] = []
+    for it in data:
+        if not isinstance(it, dict):
+            continue
+        if it.get("rule_id") != "cyclomatic_complexity":
+            continue
+        reason = str(it.get("reason") or "")
+        match = _SWIFTLINT_FUNC_RE.search(reason)
+        func_name = match.group(1) if match else "<unknown>"
+        try:
+            cc_value = int(it.get("complexity"))
+        except (TypeError, ValueError):
+            # SwiftLint older versions don't expose `complexity` — extract from reason
+            tail = re.search(r"complexity is (\d+)", reason)
+            if not tail:
+                continue
+            cc_value = int(tail.group(1))
+        line_start = int(it.get("line") or 0)
+        out.append(
+            CCResult(
+                file=str(it.get("file") or ""),
+                function=func_name,
+                line_start=line_start,
+                line_end=line_start,  # SwiftLint doesn't emit end-line; orchestrator widens later
+                cc=cc_value,
+                language="swift",
+                status="unchanged",
+                cc_before=None,
+            )
+        )
+    return out
+
+
+# Subsequent tasks (5–8) append: more parsers, dispatch, override, run().
 
 
 if __name__ == "__main__":
