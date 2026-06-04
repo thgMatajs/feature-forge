@@ -34,7 +34,6 @@ from _common import (
     make_paths,
     result_fail,
     result_pass,
-    result_warn,
     run_cli,
 )
 
@@ -42,7 +41,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from engine.memory.l1 import L1State, list_active_features, read_l1_status  # noqa: E402
 from engine.utils.paths import memory_dir  # noqa: E402
-from engine.utils.yaml_io import read_yaml_or_default  # noqa: E402
+from engine.utils.yaml_io import YamlIOError, read_yaml_or_default  # noqa: E402
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -62,7 +61,9 @@ def _extension_scope(project_root: Path, slug: str) -> str:
         return ""
     try:
         data = read_yaml_or_default(hyp_path, {}) or {}
-    except Exception:  # noqa: BLE001 — best-effort: malformed YAML → empty scope
+    except (YamlIOError, OSError):
+        # Best-effort: malformed YAML or unreadable file → empty scope.
+        # Programming errors (AttributeError etc.) intentionally surface.
         return ""
     if not isinstance(data, dict):
         return ""
