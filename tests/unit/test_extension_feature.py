@@ -291,6 +291,34 @@ def test_validator_fail_ext_004_duplicate_scope(tmp_forge_project: Path) -> None
     assert "android-widget" in result["what-failed"]
 
 
+def test_validator_fail_ext_004_empty_scope_collision(tmp_forge_project: Path) -> None:
+    """EXT-004 (D-005): duas extensions do mesmo parent SEM hypothesis.yaml.
+
+    Both default to empty-string scope and trip dedupe. Empty-scope-collision
+    é o caso real-world mais comum — user esquece de declarar scope. Validator
+    deve falhar com EXT-004 + label '(empty)' pra deixar claro que o
+    remediation é declarar extension-scope explícito, não consolidar.
+    """
+    _write_status(tmp_forge_project, "parent", state="done")
+    _write_status(
+        tmp_forge_project, "ext-a", state="planning",
+        extends="parent", parent="parent",
+    )
+    _write_status(
+        tmp_forge_project, "ext-b", state="planning",
+        extends="parent", parent="parent",
+    )
+    # NEITHER has hypothesis.yaml → both fallback to "" → collide.
+    result = ve.validate(tmp_forge_project)
+    assert result["status"] == "fail"
+    assert "EXT-004" in result["what-failed"]
+    # Mensagem cita '(empty)' como scope_repr — pista pro user declarar.
+    assert "(empty)" in result["what-failed"]
+    # 3-caminhos canônico continua presente no fail.
+    assert "paths" in result
+    assert len(result["paths"]) == 3
+
+
 def test_validator_pass_distinct_scopes_same_parent(tmp_forge_project: Path) -> None:
     """Múltiplas extensions do mesmo parent com scopes distintos é OK."""
     _write_status(tmp_forge_project, "parent", state="done")

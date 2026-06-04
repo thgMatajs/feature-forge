@@ -174,6 +174,47 @@ def test_create_extension_l1_writes_status_and_hypothesis(
     assert hyp["subtype"] == "product"
 
 
+def test_create_extension_l1_no_orphan_status_on_hypothesis_failure(
+    tmp_forge_project: Path, monkeypatch
+) -> None:
+    """D-003: OSError em write_hypothesis NÃO deve deixar status.json órfão.
+
+    Pré-fix: status.json era escrito ANTES de hypothesis.yaml — se o segundo
+    write quebrasse, child L1 ficava com state=planning + extends-feature
+    no disco sem hypothesis.yaml, e resume futuro entrava em estado
+    incoerente.
+
+    Pós-fix: hypothesis.yaml vai primeiro como planning artefact;
+    status.json vai por último como commit point. OSError em write_hypothesis
+    aborta tudo — nada persistido (sem status.json órfão).
+    """
+    _seed_parent_done(tmp_forge_project, "lembrete-rega")
+
+    def _boom(*args, **kwargs):
+        raise OSError("disk full (simulated)")
+
+    monkeypatch.setattr("engine.plan.write_hypothesis", _boom)
+
+    with pytest.raises(OSError, match="disk full"):
+        plan._create_extension_l1(
+            "lembrete-rega", "lembrete-rega-push", tmp_forge_project
+        )
+
+    # Child status.json deve estar ausente — sem órfão de planning.
+    child_status_path = (
+        tmp_forge_project
+        / ".claude"
+        / "memory"
+        / "L1"
+        / "lembrete-rega-push"
+        / "status.json"
+    )
+    assert not child_status_path.exists(), (
+        "status.json órfão criado apesar de write_hypothesis falhar — "
+        "ordem write_hypothesis/write_l1_status quebrada"
+    )
+
+
 def test_create_extension_l1_rejects_self_loop(tmp_forge_project: Path) -> None:
     """child slug == parent slug raises (defensive — EXT-003)."""
     _seed_parent_done(tmp_forge_project, "lembrete-rega")
@@ -438,6 +479,61 @@ def test_handle_done_feature_branch_duplicate_slug_abort(
     sibling = l1.read_l1_status("lembrete-rega-push", tmp_forge_project)
     assert sibling is not None
     assert sibling.status == "planning"  # not flipped
+
+
+def test_handle_done_feature_branch_duplicate_slug_abort_message_interpolates_candidate(
+    tmp_forge_project: Path, monkeypatch, capsys
+) -> None:
+    """D-001: abort message no caminho duplicate-slug interpola o slug digitado.
+
+    Pré-fix: a mensagem usava string normal ('{slug}') + variável inexistente.
+    User via texto literal '{slug}' em vez do slug duplicado que digitou.
+    Pós-fix: f-string com 'candidate' (o slug que o user efetivamente tentou)
+    pra que a sugestão 'Use forge undo <slug>' seja acionável.
+    """
+    _seed_parent_done(tmp_forge_project, "lembrete-rega")
+    # Seed um L1 existente que vai colidir com o slug derivado escolhido.
+    other_dir = (
+        tmp_forge_project / ".claude" / "memory" / "L1" / "lembrete-rega-push"
+    )
+    other_dir.mkdir(parents=True, exist_ok=True)
+    (other_dir / "status.json").write_text(
+        json.dumps(
+            {
+                "schema-version": 1,
+                "feature-slug": "lembrete-rega-push",
+                "state": "planning",
+                "subtype": "product",
+                "last-action": "plan-started",
+                "last-action-at": "2026-06-03T07:00:00Z",
+                "phase-lock": None,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    ask_calls = iter(["3", "b"])  # 3 = Estender; b = Abortar no dup gate
+    monkeypatch.setattr("engine.plan.question.ask", lambda *a, **kw: next(ask_calls))
+    monkeypatch.setattr(
+        "engine.plan.question.ask_text",
+        lambda *a, **kw: "lembrete-rega-push",
+    )
+    monkeypatch.setattr(
+        "engine.plan.question.ask_three_paths",
+        lambda *a, **kw: "b",
+    )
+
+    resolved = plan._handle_done_feature_branch(
+        "lembrete-rega", tmp_forge_project
+    )
+    assert resolved is None
+
+    captured = capsys.readouterr()
+    # Mensagem deve citar o slug duplicado real (candidate), não o literal '{slug}'.
+    assert "forge undo lembrete-rega-push" in captured.out
+    assert "{slug}" not in captured.out
+    assert "{candidate}" not in captured.out
 
 
 def test_handle_done_feature_branch_duplicate_slug_retry(
