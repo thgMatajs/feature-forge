@@ -3,9 +3,22 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-05 (v1.2.0 + Gap 9 + /resolve-pr-comments cleanup)
-**Estado:** Gap 9 fechado — extends-feature mechanic shipado em
-`feat/gap9-extends-feature`. Pattern leve product-derived: feature done
+**Última atualização:** 2026-06-05 (v1.2.0 + Gap 9 + /resolve-pr-comments + PRD docs/product/)
+**Estado:** PRD do feature-forge entregue em `docs/product/` — 4 docs
+(~2205 LOC): `00-prd.md` consolidado (583 LOC, 13 seções) +
+`01-personas.md` (555 LOC, 8 personas em 3 camadas: Marina/Bruno/
+Sub-agente Claude dedicadas; Carlos/Lucas/Carolina variantes Marina;
+Patricia/Diego downstream read-only) + `02-scenarios.md` (679 LOC,
+6 user journeys end-to-end C1-C6) + `03-roadmap.md` (388 LOC, 3 ondas
+Autopilot/Catálogo/Inteligência + Matriz Eisenhower + anti-roadmap
+8 items). Lente produto que coexiste paralelo com `docs/design/`
+(lente arquitetura) e `docs/ux/` (roteiros) — sem mexer em
+`docs/design/00-vision.md` nem `docs/design/ROADMAP.md` (load-bearing).
+Spec: `docs/superpowers/specs/2026-06-04-prd-design.md`
+(commit `2e1a266`). Plan: `docs/superpowers/plans/2026-06-04-product-docs.md`
+(commit `4134744`). Anterior (Gap 9 + /resolve-pr-comments cleanup):
+extends-feature mechanic shipado em `feat/gap9-extends-feature` (PR #3
+merged 2026-06-05). Pattern leve product-derived: feature done
 pode ser estendida via novo slug derivado com `extends-feature:
 {parent-slug}` aditivo no status.json + intake — sem cards canon novos,
 sem mudança no enum platforms, sem upgrade de inventory schema. Cena 1

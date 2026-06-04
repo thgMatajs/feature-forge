@@ -7,6 +7,17 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (PRD docs/product/, 2026-06-04)
+
+- **`docs/product/`** — PRD consolidado do feature-forge com 4 docs (~2205 LOC totais):
+  - `docs/product/00-prd.md` (583 LOC) — porta de entrada, 13 seções (Por-quê / Vision / Princípios / Escopo IN-OUT / Personas-resumo / Scenarios-resumo / Roadmap-resumo / Success criteria / Anti-personas / Cross-refs docs técnicos / Glossary 15 termos / FAQ 9 perguntas / Risks 6 + Open questions 4).
+  - `docs/product/01-personas.md` (555 LOC) — 8 personas em 3 camadas: Marina (primária) + Bruno + Sub-agente Claude (dedicadas) / Carlos + Lucas + Carolina (variantes Marina) / Patricia + Diego (downstream read-only).
+  - `docs/product/02-scenarios.md` (679 LOC) — 6 user journeys end-to-end (C1 Brownfield init / C2 Feature product / C3 Bugfix IN-37234 / C4 Retomar pausado / C5 Extension Gap 9 / C6 Reuse intelligence).
+  - `docs/product/03-roadmap.md` (388 LOC) — 3 ondas (Autopilot v1.3-1.4 / Catálogo evolutivo v1.5-2.0 / Inteligência adaptativa v2.x) + Matriz Eisenhower + Anti-roadmap (8 items NÃO entrarão) + cross-ref bidirecional pro `docs/design/ROADMAP.md` técnico.
+- Spec fonte: `docs/superpowers/specs/2026-06-04-prd-design.md` (commit `2e1a266`).
+- Plan executado: `docs/superpowers/plans/2026-06-04-product-docs.md` (commit `4134744`).
+- Coexistência paralela com `docs/design/` (lente arquitetura) e `docs/ux/` (roteiros) — sem mexer em load-bearing (`docs/design/00-vision.md` e `docs/design/ROADMAP.md` permanecem intactos).
+
 ### Added (Gap 9 — extends-feature mechanic, 2026-06-03)
 
 - **Gap 9 resolvido — extends-feature mechanic (re-escopado 2026-06-03)** —

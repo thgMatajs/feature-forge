@@ -170,6 +170,7 @@ Hidden entrypoints (invocados por hooks, nunca tipados pelo usuário):
 
 Start here:
 
+- **`docs/product/00-prd.md`** — PRD consolidado (porta de entrada lente produto; complementa `docs/design/00-vision.md` arquitetural)
 - **`docs/design/08-session-handoff.md`** — TL;DR completo + estado por fase + limites v1
 - `docs/design/00-vision.md` — arquitetura (6 layers, capability cards)
 - `docs/design/01-decisions.md` — 27 decisões locked
@@ -185,6 +186,12 @@ Start here:
 - `agents/planning-conductor.md` — super-agent prompt (subtypes + waves)
 - `presets/kmp-mobile/README.md` — preset base v1
 - `CHANGELOG.md` — release notes v1.0.0 + v1.1.0 + v1.2.0
+
+**PRD sub-docs** (lente produto detalhada):
+
+- `docs/product/01-personas.md` — 8 personas em 3 camadas
+- `docs/product/02-scenarios.md` — 6 user journeys end-to-end
+- `docs/product/03-roadmap.md` — 3 ondas + Eisenhower + anti-roadmap
 
 ## Conhecidos limites v1.1
 
