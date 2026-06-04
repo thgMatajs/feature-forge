@@ -832,10 +832,14 @@ def _create_extension_l1(
         extends_feature=parent_slug,
         parent_feature=parent_slug,
     )
-    write_l1_status(child_state, project_root)
 
-    # Seed hypothesis.yaml so resume reads extends-feature from disk and
-    # doesn't re-render the 4-paths Cena 1 branch on the child slug.
+    # D-003: write hypothesis.yaml FIRST (planning artefact) and status.json
+    # SECOND as the commit point. If hypothesis write fails, nothing is
+    # persisted (no orphan status.json with extends-feature pointing nowhere
+    # on resume). If the status.json write fails after a successful
+    # hypothesis write, the orphan hypothesis is harmless — it has no
+    # state.json sibling so resume won't activate the child L1, and the
+    # next plan invocation overwrites it cleanly.
     write_hypothesis(
         child_slug,
         project_root,
@@ -849,6 +853,7 @@ def _create_extension_l1(
             "confidence": 0.0,  # delta intent not elicited yet
         },
     )
+    write_l1_status(child_state, project_root)
     return child_state
 
 
@@ -988,7 +993,7 @@ def _handle_done_feature_branch(
                 renderer.write("")
                 renderer.write(
                     renderer.dim(
-                        "Abortado. Nada criado. Use `forge undo {slug}` "
+                        f"Abortado. Nada criado. Use `forge undo {candidate}` "
                         "se quiser limpar o L1 existente antes de tentar."
                     )
                 )
