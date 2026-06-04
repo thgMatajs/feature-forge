@@ -34,6 +34,26 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   `tests/engine/test_*_cc_*.py`, `tests/integration/test_cc_gate_end_to_end.py`).
   Suite total cresce de 630 → 693 tests collected.
 
+### Added (CC gate refinements — final review fixes)
+
+- **Dynamic threshold propagation** for Detekt and SwiftLint: configs use
+  `__CC_THRESHOLD__` placeholder rendered per invocation via tempfile.
+  Spec §3 contract "threshold via CLI args sempre" honored — mechanism
+  differs from eslint `--rule` flag because Detekt/SwiftLint don't accept
+  CC threshold via CLI.
+- **Radon rank filter** changed from `-n F` (rank F = CC ≥ 41) to `-n A`
+  (all functions). Previous filter masked CC ∈ [11..40], making Python
+  gate effectively cc=41 instead of configured threshold.
+- **Canonical 3-caminhos render** now reaches the user: `cc_format_three_paths`
+  output stored in `result["render"]`, consumed by `engine/implement.py:_render_cc_gate_block`.
+- **Malformed override warnings** propagate from `_apply_overrides` (now
+  returns 3-tuple `(silenced, surviving, warnings)`) up to the result
+  dict so users see why their CC-OVERRIDE attempt didn't count.
+- +8 tests novos (1 dispatch radon `-n A`, 2 dispatch threshold-via-config
+  Detekt/SwiftLint, 1 validate canonical render, 1 validate warnings,
+  1 helper apply_overrides warnings, 2 implement render canonical). Suite
+  total: 682 passed, 17 skipped.
+
 ## [1.2.0] — 2026-06-03
 
 ### Added (Gap 5 — Card local overlay, 2026-06-02)

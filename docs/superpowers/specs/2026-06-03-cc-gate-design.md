@@ -303,6 +303,13 @@ Decisão deliberada: configs ficam **dentro do engine**, não em
 Threshold passado via CLI args **sempre** (não embutido no config),
 porque varia per-feature via card override.
 
+**Nota mecânica (post-review 2026-06-04):** Detekt e SwiftLint não aceitam
+threshold de CC via CLI flag. O contrato "threshold dinâmico sempre" é
+honrado via **tempfile-render**: validator substitui `__CC_THRESHOLD__`
+no template em tempo de execução e passa o tempfile com `--config`. Para
+eslint, threshold continua via `--rule` inline. Para Radon, threshold é
+filtrado em Python pós-output.
+
 ### Trust-but-verify de tool availability
 
 Tools nativas são instaladas pelo dev local (Detekt via brew/SDKMAN,

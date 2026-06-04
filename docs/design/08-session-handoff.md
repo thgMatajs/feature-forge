@@ -3,25 +3,34 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-03 (v1.2-dev — CC gate shipping)
-**Estado:** v1.2-dev — Cyclomatic Complexity gate live. 15 validators total
-(era 14); novo `check_cyclomatic_complexity` multi-language (Kotlin/Swift/
-TS/Python) dispatcha pra Detekt/SwiftLint/eslint/Radon, roda em duas
-posições: cascade de `forge verify` (após `check_no_invented_behavior`) e
-per-task em `forge implement` (entre review e commit). Threshold via
-precedência card `cc-gate-override` > workflow-config `cc-gate` > defaults
-built-in. Regra de fail: função nova `cc > N` OU função modificada
-`cc_after > cc_before`. Override-justify via linha
-`CC-OVERRIDE: <file>:<func> cc=<N> — <razão>` no commit body, auditável
-via `git log --grep='CC-OVERRIDE'`. Bypass emergencial via env
-`NO_CC_GATE=1`, logado em `.claude/state/cc-gate-bypass.jsonl`. `forge
-doctor` ganha 13ª categoria `cc-gate-tools` (status + instruções de
-install). Suite total: 693 tests collected (+~63 vs baseline pré-CC-gate).
-Sem revisitar decisões locked — Decisions 10/19/22/23 preservadas; nada
-de flag CLI, nada de runtime dep, validator multi-language único.
-Próximo: dispatch `gsd-code-reviewer` no range `HEAD~13..HEAD` + fix loop
-se findings. Histórico prévio (v1.2.0 Gap 5 + power-review PR #2 R1)
-preservado abaixo na timeline.
+**Última atualização:** 2026-06-04 (v1.2-dev — CC gate refinements)
+**Estado:** v1.2-dev — Cyclomatic Complexity gate passou final code review
+com 4 HIGH endereçados (commit `19d4348`) e está pronto pra
+finishing-branch. Refinamentos pré-merge: (H1) threshold dinâmico chega
+às tools nativas via tempfile-render (Detekt/SwiftLint não aceitam
+threshold via CLI flag — placeholder `__CC_THRESHOLD__` substituído em
+tempo de execução); (H2) Radon trocado de `-n F` (mascarava CC ∈ [11..40])
+pra `-n A` com filtragem em Python; (H3) `cc_format_three_paths` render
+canônico chega ao usuário via `result["render"]` consumido em
+`_render_cc_gate_block`; (H4) warnings de overrides malformados propagam
+via 3-tupla `(silenced, surviving, warnings)` até o result dict. 15
+validators total (era 14); novo `check_cyclomatic_complexity`
+multi-language (Kotlin/Swift/TS/Python) dispatcha pra Detekt/SwiftLint/
+eslint/Radon, roda em duas posições: cascade de `forge verify` (após
+`check_no_invented_behavior`) e per-task em `forge implement` (entre
+review e commit). Threshold via precedência card `cc-gate-override` >
+workflow-config `cc-gate` > defaults built-in. Regra de fail: função
+nova `cc > N` OU função modificada `cc_after > cc_before`. Override-
+justify via linha `CC-OVERRIDE: <file>:<func> cc=<N> — <razão>` no commit
+body, auditável via `git log --grep='CC-OVERRIDE'`. Bypass emergencial
+via env `NO_CC_GATE=1`, logado em `.claude/state/cc-gate-bypass.jsonl`.
+`forge doctor` ganha 13ª categoria `cc-gate-tools` (status + instruções
+de install). Suite total pós-refinements: 682 passed, 17 skipped (+~71
+vs baseline pré-CC-gate). Sem revisitar decisões locked — Decisions
+10/19/22/23 preservadas; nada de flag CLI, nada de runtime dep, validator
+multi-language único. Próximo: finishing-branch (merge na main) +
+doc-sync close-out se houver itens residuais. Histórico prévio (v1.2.0
+Gap 5 + power-review PR #2 R1) preservado abaixo na timeline.
 
 ### Histórico — v1.2.0 (2026-06-03)
 
