@@ -382,8 +382,7 @@ not leave a malformed queue.
 
 When the finished feature's `status.json.extends-feature` is non-null,
 the retrospective shifts focus. Cross-link: `docs/design/07-discipline.md
-§10` (Extension feature — a ser criada na Wave 3 deste gap). Mentor calmo,
-same voice — different question.
+§10` (Extension feature). Mentor calmo, same voice — different question.
 
 **The question is NOT 5-whys.** Extensions are additive by design — they
 build on a parent's baseline that was already validated. 5-whys analyzes

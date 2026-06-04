@@ -37,7 +37,11 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
     EXT-001 (parent existe), EXT-002 (parent.state == done), EXT-003
     (slug derivado != parent), EXT-004 (dedupe por `extension-scope`).
     3-caminhos canônico no fail (discipline §1). Inativo quando
-    `extends-feature` é null (no-op pass).
+    `extends-feature` é null (no-op pass). **Wiring na cascade `forge
+    verify` deferido pra v1.x+ (W-001)** — validator existe standalone +
+    coberto por testes; cascade auto-discovery (via cards/hooks) vem
+    com piloto smoke. Hoje invocação é manual ou via hook custom; ver
+    `docs/design/04-pending.md` Gap 9 TODO residual.
   - **Agents patched (4):** `planning-conductor` (Phase 1 step 5 extension
     import + Phase 4 wave dispatch variants A/B/D + Phase 6 retrospective
     variant + closing format), `feature-intake-agent` (extension block

@@ -1076,8 +1076,8 @@ status.json` está em `state == "done"`. Conductor não trata como retomar
 (slug já existe). Oferece **quatro caminhos** — o caminho 3 é o novo
 "Estender" introduzido pelo Gap 9 (extends-feature mechanic).
 
-Cross-reference: discipline §10 → "Extension feature" (a ser criada na
-Wave 3 deste gap — formaliza when-applies, semantics, retro variant).
+Cross-reference: `docs/design/07-discipline.md §10` (Extension feature) —
+formaliza when-applies, semantics, retro variant.
 
 #### Caso happy path — slug derivado default + confirma
 

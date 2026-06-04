@@ -176,8 +176,8 @@ block from §"Voice and discipline" below.
 ### Extension variant rendering (Gap 9 — `extends-feature != null`)
 
 When the context pack carries a non-null `extends-feature` slug,
-`subtype` remains `product` (extensions are product-derived — discipline
-§10, a ser criada na Wave 3 deste gap) but rendering shifts to a
+`subtype` remains `product` (extensions are product-derived — see
+`docs/design/07-discipline.md §10`) but rendering shifts to a
 delta-only mode. Rules:
 
 - **§1 Feature summary**: MAY reference the parent's tech-spec by

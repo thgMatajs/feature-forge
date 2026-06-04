@@ -157,7 +157,7 @@ Read everything available BEFORE opening your mouth. Order:
      `shape: extension` + `subtype: product`. Before opening any wave,
      you read the parent's artefacts and populate the **context-pack
      baseline**. Cross-reference: `docs/design/07-discipline.md §10`
-     (Extension feature — a ser criada na Wave 3 deste gap).
+     (Extension feature).
 
      **What to read from the parent (read-only, never edit):**
 
@@ -530,7 +530,7 @@ to detect sibling regressions in helpers).
 
 **Extension branch (`subtype=product` AND `hypothesis.extends-feature !=
 null`, Gap 9):** the dispatch is delta-only across every wave. Cross-link:
-discipline §10 (Extension feature — a ser criada na Wave 3 deste gap).
+`docs/design/07-discipline.md §10` (Extension feature).
 
 - **Wave A (abbreviated):** `feature-intake-agent` runs, but the intake
   template renders §Extension context with the parent's metadata
@@ -561,8 +561,11 @@ discipline §10 (Extension feature — a ser criada na Wave 3 deste gap).
   explicitly tags inherited paths vs delta paths so the reviewer can
   audit.
 - **Wave E (readiness review):** runs identical to product. Validator
-  `validate_extension_feature` (already in cascade) checks EXT-001..004
-  — parent exists, parent.state=done, no self-loop, no duplicate scope.
+  `validate_extension_feature` (standalone — invocação direta via
+  `validators/validate_extension_feature.py` ou via hook custom;
+  auto-discovery na cascade `forge verify` deferido pra v1.x+ — W-001)
+  checks EXT-001..004 — parent exists, parent.state=done, no self-loop,
+  no duplicate scope.
 
 Conductor proceeds to Phase 4.5 normally — the existing-helpers prefetch
 is doubly valuable for extensions because parent's helpers are likely
