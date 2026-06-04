@@ -486,5 +486,105 @@ def _dispatch_tool(
 # Subsequent tasks (7–8) append: override, run().
 
 
+# ── Override-justify ─────────────────────────────────────────────────────────
+#
+# Single-line override declared in the commit body. Anchored to start-of-line
+# (re.MULTILINE) so it can't be smuggled mid-sentence. The format is
+# load-bearing — `.claude/rules/disciplines.md §1` references it directly.
+#
+# Strict regex exige o trailing ` — <razão concreta>` (em-dash U+2014).
+# Loose regex captura tentativas malformadas (sem `—`) pra emitir warning;
+# isso mantém o gate honesto sobre tentativas de silenciar fails sem razão.
+
+_CC_OVERRIDE_RE = re.compile(
+    r"^CC-OVERRIDE:\s+(?P<file>\S+):(?P<func>\S+)\s+cc=(?P<cc>\d+)\s+—\s+(?P<reason>.+)$",
+    re.MULTILINE,
+)
+
+_CC_OVERRIDE_LOOSE_RE = re.compile(
+    r"^CC-OVERRIDE:\s+(?P<file>\S+):(?P<func>\S+)\s+cc=(?P<cc>\d+)\b",
+    re.MULTILINE,
+)
+
+
+def _parse_overrides(
+    commit_body: str,
+    *,
+    return_warnings: bool = False,
+):
+    """Parse CC-OVERRIDE lines from a commit body.
+
+    Returns a list of override dicts (file/func/cc/reason). When
+    `return_warnings=True`, returns a (overrides, warnings) tuple.
+
+    Lines starting with CC-OVERRIDE but missing the `— <reason>` tail are
+    flagged as warnings and NOT counted as valid overrides — keeps the gate
+    honest about silenced fails.
+    """
+    overrides: list[dict[str, Any]] = []
+    warnings: list[str] = []
+
+    # First pass: strict regex (must have reason).
+    valid_spans: set[tuple[int, int]] = set()
+    for m in _CC_OVERRIDE_RE.finditer(commit_body):
+        try:
+            cc = int(m.group("cc"))
+        except (TypeError, ValueError):
+            continue
+        overrides.append(
+            {
+                "file": m.group("file"),
+                "func": m.group("func"),
+                "cc": cc,
+                "reason": m.group("reason").strip(),
+            }
+        )
+        valid_spans.add(m.span())
+
+    # Second pass: loose match — anything that LOOKS like an override but
+    # didn't pass strict regex is a malformed attempt → warn.
+    for m in _CC_OVERRIDE_LOOSE_RE.finditer(commit_body):
+        if m.span() in valid_spans:
+            continue
+        # Skip if the strict regex DID match on the same line (different span).
+        nl = commit_body.find("\n", m.start())
+        line_end = nl if nl != -1 else len(commit_body)
+        line = commit_body[m.start():line_end]
+        if " — " in line:
+            continue
+        warnings.append(
+            f"CC-OVERRIDE sem razão concreta: '{line.strip()}' — adicione texto após —"
+        )
+
+    if return_warnings:
+        return overrides, warnings
+    return overrides
+
+
+def _apply_overrides(
+    fails: list[CCResult],
+    commit_body: str,
+) -> tuple[list[CCResult], list[CCResult]]:
+    """Split `fails` into (silenced, surviving) using CC-OVERRIDE lines.
+
+    Match key: (file, function). Override cobre APENAS o par (file, func)
+    declarado — sem wildcards. Cada override aplica-se a UM commit; auditoria
+    via `git log --grep='CC-OVERRIDE'`.
+    """
+    overrides = _parse_overrides(commit_body)
+    if not overrides:
+        return [], list(fails)
+
+    cover: set[tuple[str, str]] = {(o["file"], o["func"]) for o in overrides}
+    silenced: list[CCResult] = []
+    surviving: list[CCResult] = []
+    for f in fails:
+        if (f.file, f.function) in cover:
+            silenced.append(f)
+        else:
+            surviving.append(f)
+    return silenced, surviving
+
+
 if __name__ == "__main__":
     sys.exit(run_cli(__doc__ or "", lambda root, **kw: result_pass("skeleton — not wired yet")))
