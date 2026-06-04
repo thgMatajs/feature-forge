@@ -3,9 +3,30 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-03 (v1.2.0 — Gap 5 + power-review PR #2 R1 + tag release)
-**Estado:** v1.2.0 entregue. Gap 5 + power-review PR #2 R1 + schema_version
-fix merged em `main`; tags `v1.2.0` (HEAD doc-sync) e `v1.1.0` (retro em
+**Última atualização:** 2026-06-03 (v1.2-dev — CC gate shipping)
+**Estado:** v1.2-dev — Cyclomatic Complexity gate live. 15 validators total
+(era 14); novo `check_cyclomatic_complexity` multi-language (Kotlin/Swift/
+TS/Python) dispatcha pra Detekt/SwiftLint/eslint/Radon, roda em duas
+posições: cascade de `forge verify` (após `check_no_invented_behavior`) e
+per-task em `forge implement` (entre review e commit). Threshold via
+precedência card `cc-gate-override` > workflow-config `cc-gate` > defaults
+built-in. Regra de fail: função nova `cc > N` OU função modificada
+`cc_after > cc_before`. Override-justify via linha
+`CC-OVERRIDE: <file>:<func> cc=<N> — <razão>` no commit body, auditável
+via `git log --grep='CC-OVERRIDE'`. Bypass emergencial via env
+`NO_CC_GATE=1`, logado em `.claude/state/cc-gate-bypass.jsonl`. `forge
+doctor` ganha 13ª categoria `cc-gate-tools` (status + instruções de
+install). Suite total: 693 tests collected (+~63 vs baseline pré-CC-gate).
+Sem revisitar decisões locked — Decisions 10/19/22/23 preservadas; nada
+de flag CLI, nada de runtime dep, validator multi-language único.
+Próximo: dispatch `gsd-code-reviewer` no range `HEAD~13..HEAD` + fix loop
+se findings. Histórico prévio (v1.2.0 Gap 5 + power-review PR #2 R1)
+preservado abaixo na timeline.
+
+### Histórico — v1.2.0 (2026-06-03)
+
+v1.2.0 entregue. Gap 5 + power-review PR #2 R1 + schema_version fix
+merged em `main`; tags `v1.2.0` (HEAD doc-sync) e `v1.1.0` (retro em
 `859d528`) criadas. Loader cascade canon ∪ local com hard-fail em colisão;
 `validate_card_yaml` + `validate_capability_labels` overlay-aware (CARD-008
 conformity: conflicts-with aceita label OR card-name); reconfigure ganha
@@ -13,10 +34,9 @@ submenu `card-local`; init ganha Step 7.5 com 3-caminhos pra signals órfãos
 (orphans agrupados por capability, `_count_needle_hits` respeita
 `_SKIP_DIRS` — sem mais hang em monorepos). Cards canon: 20 → 22
 (`retrofit-client` + `shared-preferences-prefs` com `legacy-marker: true`).
-Nova decisão locked 28 (ADR append-only — não revisita prévia). Suite total:
-607 tests passing (rapid lane + integration/e2e). Próximo: Gap 9 (catálogo
-evolutivo) à luz do overlay e considerar Gap 14 (preset coverage). Itens
-deferred v1.2.x anotados em `04-pending.md`: lenient local loader (C1),
+Nova decisão locked 28 (ADR append-only — não revisita prévia). Suite total
+v1.2.0: 607 tests passing (rapid lane + integration/e2e). Itens deferred
+v1.2.x anotados em `04-pending.md`: lenient local loader (C1),
 re-detection inline no Step 7.5 (N2-a), ADR-suspension audit log (N13),
 catalog_overlay refactor (N17). Histórico prévio (PR #1 R3) preservado
 abaixo na timeline.
@@ -69,6 +89,7 @@ v1.1.0 release: 508 tests passing (unit + integration, PR #1 R2 baseline) · 17 
 | v1.1 — Gap 18 (reuse intelligence expansion) | ✅ shipped 2026-06-01 — 6 detection categories, schema v2, parser overhaul, gradle modules+deps, init Step 11.5+11.6, evolve dispatch, doctor check, incremental hook, forge plan integration. **+12.360 LOC, 55 arquivos, 20 unit tests novos.** |
 | **🎉 feature-forge v1.1.0 completa** | ✅ **~379 arquivos, ~50.7K LOC, 458 tests passing (rapid lane)** (2026-06-01) |
 | v1.1.0 — PR #1 bloqueadores resolvidos | ✅ shipped 2026-06-01 — 14 commits cobrindo C1–C4 (phase lock atomic O_EXCL, implement try/finally, `_reset_domain_tables` atomic, version bump 1.1.0) + A1/A2/A5/A6/A9/A12 (Swift `"""` brace counter, Groovy DSL parens, tie-breaker determinístico, root-level `test/` recognition, `forge plan` rc=130 em deferred) + review fixes (CR-01/CR-02/MD-01/HG-01/HG-02/HG-03). **+38 regression tests, total 458 (baseline 367 + 53)**. Detalhe em `CHANGELOG.md`. |
+| CC gate | ✅ live (cascade + per-task) — `check_cyclomatic_complexity` multi-language (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon); threshold per card override > workflow-config > defaults; 3-caminhos on-fail (refactor / override-justify / split-task); doctor categoria 13ª `cc-gate-tools`. 13 commits + ~63 tests novos (suite 630 → 693). |
 
 ## Conhecidos limites v1.1 (atualizado)
 

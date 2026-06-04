@@ -11,8 +11,8 @@ Skill CLI-first com 12 comandos canônicos (zero flags — toda parametrização
 1. **`forge init`** — bootstrap em qualquer projeto KMP/mobile (greenfield ou brownfield). Step 11.5 escaneia o codebase atrás de duplicações já existentes (6 categorias de finding).
 2. **`forge plan {feature-slug}`** — 5 waves (intake/PRD → screen+contracts → tech-spec → tasks → readiness) com 16 templates. Subtypes: product / refactor / bugfix / spike / chore (cada um com waves específicas).
 3. **`forge implement {feature-slug}`** — execução task-by-task com gates de scope + atomic commits
-4. **`forge verify`** — cascade de 14 validators com 3-caminhos discipline (inclui `check_no_behavior_change` para refactor)
-5. **`forge doctor`** — health check em 12 categorias (inclui reuse-intelligence findings agregados)
+4. **`forge verify`** — cascade de 15 validators com 3-caminhos discipline (inclui `check_no_behavior_change` para refactor e `check_cyclomatic_complexity` multi-language)
+5. **`forge doctor`** — health check em 13 categorias (inclui reuse-intelligence findings agregados + `cc-gate-tools`)
 6. **`forge reconfigure`** — single entrypoint pra TODA mutação post-init (cards, paths, conventions, graph rebuild que re-queue reuse proposals)
 7. Outros: `status`, `evolve` (review proposals — 16 kinds), `undo`, `graph` (Q1-Q17), `memory`, `raw`
 
@@ -72,9 +72,9 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 | Templates canônicos | 18 (16 produto + feature-intake-bugfix + feature-intake-refactor) |
 | Cards canônicos | 22 (8 stack + 6 Firebase + 6 REST + retrofit-client + shared-preferences-prefs com `legacy-marker`); overlay local em `.claude/cards/local/<name>/` desde Gap 5 (2026-06-02) |
 | Preset | kmp-mobile (8 stack cards + 4 backend-candidates) |
-| Validators Python | 14 (+ 2 helpers) — inclui `check_no_behavior_change` para refactor; `validate_card_yaml` + `validate_capability_labels` ganharam overlay-awareness em Gap 5 |
+| Validators Python | 15 (+ 2 helpers) — inclui `check_no_behavior_change` para refactor, `check_cyclomatic_complexity` multi-language (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon); `validate_card_yaml` + `validate_capability_labels` overlay-aware (Gap 5) |
 | Hooks | 9 + 1 reuse incremental (`post-edit-detect-duplications.sh`) |
-| Tests | 595 passing + 12 skipped (rapid lane + integration/e2e — todos verde; +87 vs v1.1.0 baseline de 508; cumulativo cobre PR #1 R1+R2+R3 + Gap 5 + power-review PR #2 R1) |
+| Tests | 693 collected (rapid lane + integration/e2e — +~63 vs v1.2.0 baseline; cobre CC gate end-to-end). v1.2.0 baseline 595+12 mantido na timeline. |
 | LOC total | ~52.200 |
 | Engine LOC | ~21.900 (Python) |
 | Files total | ~400 |
@@ -121,7 +121,7 @@ Requer Python 3.11+ + PyYAML (única dep externa).
   templates/                            18 canonical templates (16 + bugfix + refactor)
   cards/                                22 canonical cards (+ overlay em consumidor)
   presets/kmp-mobile/                   canonical preset v1
-  validators/                           14 validators + helpers
+  validators/                           15 validators + helpers (inclui check_cyclomatic_complexity)
   hooks/                                9 hooks + reuse incremental script
   tests/                                595 passing tests (unit + integration + e2e) + 12 skipped
 
@@ -144,11 +144,13 @@ forge plan           plan feature (waves A-E, subtype-aware)
                      · subtypes: product / refactor / bugfix / spike / chore
                      · `forge plan refactor-{slug}` lê L1 status e pula Wave A
 forge implement      execute task-by-task
-forge verify         validator cascade (14 validators)
+forge verify         validator cascade (15 validators)
                      · check_no_behavior_change gate quando subtype=refactor
+                     · check_cyclomatic_complexity gate multi-language
 forge status         read-only board
-forge doctor         health check (12 categorias)
+forge doctor         health check (13 categorias)
                      · inclui reuse-intelligence findings agregados
+                     · inclui cc-gate-tools (detekt/swiftlint/eslint/radon)
 forge reconfigure    single mutation entrypoint
                      · graph rebuild re-queue reuse proposals automaticamente
 forge graph          query graph (Q1-Q17, "r" combined view)

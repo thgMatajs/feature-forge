@@ -1409,6 +1409,85 @@ produto Android+iOS+KMP com backend Firebase/REST, 1 dev, 5-10 tasks). Fora
 do happy path, há cobertura parcial — o roadmap v1.1+ deve preencher essa
 superfície sistematicamente.
 
+## v1.2-dev follow-ups (CC gate shipping — defer-with-reason)
+
+Itens identificados durante o ship do `check_cyclomatic_complexity` gate.
+Cada um é decisão consciente de não-fazer-em-v1.2, com critério explícito
+pra reentrar. Fingerprints sha256 estáveis pra silenciar re-proposals
+sem mudança de conteúdo.
+
+### Gap CC-1 — Whitelist persistente de overrides
+
+**Categoria:** cc-gate
+**Fingerprint:** `sha256(consolidate-within-module:cc-whitelist:override-no-commit-only)`
+**Status:** deferred (v1.3+)
+
+Hoje override é por commit no body (`CC-OVERRIDE: ...`). Eventualmente
+projetos grandes podem querer "essa função tem cc=20 e é assim porque é
+parser" como anotação permanente. v1.2-dev recusa pra evitar débito
+invisível. Reentrar se ≥3 projetos consumidores pedirem em retro.
+
+### Gap CC-2 — Cognitive Complexity (Sonar) como métrica alternativa
+
+**Categoria:** cc-gate
+**Fingerprint:** `sha256(redundant-platform:cognitive-vs-cyclomatic:v1.2-uses-cc)`
+**Status:** deferred (v1.3+)
+
+CC é métrica clássica mas Cognitive Complexity (Campbell, SonarSource)
+reflete melhor leitura humana. Trocar tooling é trabalho não-trivial
+(cada tool nativa tem variação) — deferido pra v1.3+ se sinal empírico
+justificar.
+
+### Gap CC-3 — CC trending em `forge graph` (Q18+)
+
+**Categoria:** cc-gate
+**Fingerprint:** `sha256(promote-to-shared:graph-q18:cc-trend-over-history)`
+**Status:** deferred (v1.3+)
+
+Adicionar query Q18+ que tabula CC por área do código e mostra trend ao
+longo do histórico. Útil pra retrospective. Deferido pra v1.3+ junto com
+expansão geral do graph.
+
+### Gap CC-4 — Auto-suggest refactor LLM-powered (Phase 6)
+
+**Categoria:** cc-gate
+**Fingerprint:** `sha256(near-duplicate:cc-auto-refactor:phase-6-orchestration)`
+**Status:** deferred (Phase 6)
+
+Quando gate bloqueia, mostrar sugestão concreta de como refatorar (LLM
+analisa função, propõe split). Fora de escopo v1.2-dev porque toca
+subagent orchestration de forma não-trivial.
+
+### Gap CC-5 — Per-function threshold inline annotation (REJECTED)
+
+**Categoria:** cc-gate
+**Fingerprint:** `sha256(consolidate-within-module:cc-inline-suppress:rejected-by-design)`
+**Status:** rejected (não reentrar sem mudança de contexto)
+
+Proposta de `// cc-threshold: 20` no código. **Rejeitada em favor de
+override-no-commit + override-per-card**: inline espalha exceções pelo
+código, dificulta auditoria, vira whitelist invisível. Documentado aqui
+pra não reaparecer em retrospective.
+
+### Gap BOOTSTRAP-1 — `test_bootstrap_is_idempotent` falha em worktree
+
+**Categoria:** bootstrap / test infrastructure
+**Fingerprint:** `sha256(consolidate-within-module:bootstrap-test-worktree:dotgit-file-vs-dir)`
+**Status:** deferred (v1.2-dev+), pre-existing — surfaced 2026-06-03
+
+`tests/integration/test_bootstrap_is_idempotent` e scripts em
+`.claude/bootstrap.sh` + hooks assumem que `.git` é um **diretório** (não
+um arquivo). Em Claude Code worktrees (`git worktree add`), `.git` é um
+arquivo apontando pro `gitdir` do parent — o que faz `[ -d .git ]`
+falhar e os scripts tentarem reinstalar symlinks num path inexistente.
+Não bloqueia ship de feature em worktree porque o gate principal
+(pytest + forge verify rodam normal), mas degrada smoke-checklist
+quando smoke é executado dentro de worktree. Fix proposto: detectar
+worktree via `git rev-parse --git-dir` e resolver gitdir real antes de
+fazer symlink. Onde: `.claude/bootstrap.sh` +
+`tests/integration/test_bootstrap_is_idempotent.py` +
+`.claude/rules/SMOKE-CHECKLIST.md § Check 1`.
+
 ## v1.2 follow-ups (power-review PR #2 — defer-with-reason)
 
 Itens identificados no power-review do PR #2 (Gap 5 — card local overlay)

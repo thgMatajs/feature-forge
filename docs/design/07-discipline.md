@@ -214,8 +214,47 @@ decisão 10 (zero flags).
 │
 ├ check_no_invented_behavior.py          🛑 1.4s  FAIL
 │
+├ check_cyclomatic_complexity.py         — não rodado (cascade parou)
 └ check_files_in_allowed_files.py        — não rodado (cascade parou)
 ```
+
+### Posicionamento de `check_cyclomatic_complexity` (v1.2-dev+)
+
+Novo gate (`check_cyclomatic_complexity`) entra na cascade **após**
+`check_no_invented_behavior`. Justificativa: ambos são "anti-pattern
+gates" (detectam algo errado no código vs. validators de schema/artefato),
+e o CC gate é **menos crítico** que os anteriores — quando a cascade
+chega no CC, o resto do feature já está coerente. Decision 23 (fail-fast)
+preservada: validator anterior falha → CC nem roda; logged como `—` no
+output.
+
+Características operacionais do gate:
+
+- **Multi-language** — um único validator dispatcha pra Detekt (Kotlin),
+  SwiftLint (Swift), eslint (TS/JS), Radon (Python). Tools não-instaladas
+  → `result_warn`, não bloqueia (UX: dev sem swiftlint não trava em
+  Kotlin). `forge doctor § cc-gate-tools` reporta status + instruções.
+- **Regra dupla** — função `new` (não existe em HEAD) obedece threshold
+  absoluto; função `modified` aplica delta (`cc_after > cc_before` =
+  fail, mesmo abaixo do threshold). Funções `unchanged` ignoradas.
+- **Threshold lookup** — precedência card `cc-gate-override` >
+  workflow-config `cc-gate` > defaults built-in. Tudo documentado em
+  `docs/schemas/workflow-config.md § cc-gate` + `docs/schemas/card.md §
+  cc-gate-override`.
+- **Override-justify por commit** — `CC-OVERRIDE: <file>:<func> cc=<N>
+  — <razão>` no commit body silencia fail **só pra aquele commit**.
+  Auditável via `git log --grep='CC-OVERRIDE'`. NÃO é whitelist
+  persistente — pra isso existe override per-card.
+- **Bypass de emergência** — env var `NO_CC_GATE=1`, logado em
+  `.claude/state/cc-gate-bypass.jsonl`. Distinto do override-justify,
+  que é por commit; bypass é por execução, raro e auditável.
+- **3-caminhos on-fail** — render canônico conforme §1 acima
+  (refactor / override-justify / split-task). Sem auto-fix.
+
+Per-task em `forge implement` o gate roda como hook interno **entre**
+review e commit — bloqueia o atomic commit se há fail sem override válido
+no commit body já redigido. Cascade em `forge verify` roda standalone
+sobre diff staged ou diff vs HEAD.
 
 ### Exemplo de cascade com fail-fast=false
 
@@ -227,9 +266,10 @@ decisão 10 (zero flags).
 ├ validate_screen_analysis.py            ✓ 245ms
 ├ validate_backend_e2e.py                ⚠ 482ms  (3 warnings)
 ├ check_no_invented_behavior.py          🛑 1.4s   FAIL (3)
+├ check_cyclomatic_complexity.py         🛑 2.1s   FAIL (4)
 └ check_files_in_allowed_files.py        ✓ 89ms
 
-3 hard fails coletados — apresentando em ordem de aparição.
+4 hard fails coletados — apresentando em ordem de aparição.
 Resolva e re-rode.
 ```
 

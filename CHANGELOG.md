@@ -7,6 +7,33 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Cyclomatic Complexity gate (`check_cyclomatic_complexity`)** — multi-language
+  CC validator que roda no cascade de `forge verify` (após
+  `check_no_invented_behavior`) e per-task em `forge implement` (entre review e
+  commit). Threshold via precedência card `cc-gate-override` > workflow-config
+  `cc-gate` > defaults (kotlin=10, swift=10, ts=15, python=10). Dispatch pra
+  tools nativas: Detekt (Kotlin), SwiftLint (Swift), eslint (TS/JS), Radon
+  (Python). Tools NÃO instaladas pelo forge — `forge doctor` reporta na
+  categoria nova `cc-gate-tools` com instruções de install. Regra de fail:
+  função `new` com `cc > threshold` OU função `modified` com `cc_after >
+  cc_before`. Override-justify via `CC-OVERRIDE: <file>:<func> cc=<N> — <razão>`
+  no commit body silencia fail apenas pra aquele commit (auditável via
+  `git log --grep='CC-OVERRIDE'`). 3-caminhos canônico on-fail
+  (refactor / override-justify / split-task). Bypass de emergência via
+  `NO_CC_GATE=1` env var, logado em `.claude/state/cc-gate-bypass.jsonl`.
+- Helpers `cc_threshold_lookup` + `cc_format_three_paths` em `validators/_common.py`.
+- Configs internos `engine/_cc_configs/{detekt.yml,swiftlint.yml,eslint.json,radon.cfg}`
+  controlados pelo forge (versionados junto da release).
+- Doctor categoria `cc-gate-tools` (13ª categoria, full scope) com status
+  por tool (detekt/swiftlint/eslint/radon) + instruções de install pras
+  missing.
+- ~63 unit + integration tests novos (`tests/validators/test_cc_*.py`,
+  `tests/validators/test_check_cyclomatic_complexity.py`,
+  `tests/engine/test_*_cc_*.py`, `tests/integration/test_cc_gate_end_to_end.py`).
+  Suite total cresce de 630 → 693 tests collected.
+
 ## [1.2.0] — 2026-06-03
 
 ### Added (Gap 5 — Card local overlay, 2026-06-02)

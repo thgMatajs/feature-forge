@@ -431,6 +431,63 @@ Forge always reads `schema-version:` and:
 Canonical source holds **migrators** between versions. Each migrator is an
 idempotent Python script that transforms config v(n) → v(n+1).
 
+## `cc-gate` (opt-in, v1.2-dev+)
+
+Configura o validator `check_cyclomatic_complexity`. Bloco opcional — sem
+ele, o gate usa defaults built-in (kotlin=10, swift=10, ts=15, python=10).
+Resolução final de threshold respeita a precedência (mais específico vence):
+**card `cc-gate-override` > este bloco > defaults built-in**.
+
+```yaml
+cc-gate:
+  enabled: true             # default true; false desliga o validator
+                            # (warn, não fail — útil em projeto migrando)
+  kotlin: 10                # threshold absoluto por linguagem (int > 0)
+  swift: 10
+  ts: 15                    # TS tipicamente tolera CC mais alto por causa
+                            # de pattern matching exaustivo / state machines
+  python: 10
+  ignore-paths:             # lista de regexes Python (re.search)
+    - "src/test/.*"         # aplicadas após filtro de extensão
+    - ".*\\.generated\\..*" # arquivos gerados — CC alto é ruído
+    - "build/.*"
+    - "node_modules/.*"
+```
+
+### Semântica de campos
+
+| Campo | Tipo | Default | Notas |
+|---|---|---|---|
+| `enabled` | bool | `true` | `false` → validator emite warn, não bloqueia |
+| `kotlin` | int > 0 | 10 | passado via CLI args pro Detekt |
+| `swift` | int > 0 | 10 | passado via CLI args pro SwiftLint |
+| `ts` | int > 0 | 15 | passado via `--rule 'complexity: [error, {max: N}]'` pro eslint |
+| `python` | int > 0 | 10 | Radon output comparado em Python depois |
+| `ignore-paths` | lista regex | `[]` | tests/, generated, build/ ficam por conta do projeto declarar |
+
+### Regras de validação
+
+- Threshold ≤ 0 → validator interpreta como **degraded** (config errada,
+  emite warn agrupado no fim do cascade — não bloqueia, mas sinaliza).
+- `enabled: false` desliga totalmente — não invoca tools nativas, mas
+  `forge doctor` ainda reporta status das tools no categoria `cc-gate-tools`.
+- `ignore-paths` aceita regex Python; teste com `re.search` (não anchored).
+  Match em qualquer arquivo do diff → pula este arquivo do gate.
+
+### Precedência completa
+
+```
+1. card `cc-gate-override.{language}.threshold`  (mais específico)
+2. workflow-config `cc-gate.{language}`
+3. DEFAULTS = {kotlin: 10, swift: 10, ts: 15, python: 10}
+```
+
+Múltiplos cards ativos com override pra mesma linguagem: **primeiro card
+com `threshold` declarado wins** (ordem determinística do listing). Não é
+"max" nem "min" — é "primeiro", porque card listing tem semântica de
+prioridade declarada pelo usuário. Documentado também em
+`docs/schemas/card.md § cc-gate-override`.
+
 ## Deliberately OUT of config
 
 | Decision | Why not in config |
