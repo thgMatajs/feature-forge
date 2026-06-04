@@ -496,8 +496,32 @@ def _run_cc_gate(project_root: Path) -> dict[str, Any]:
 
 
 def _render_cc_gate_block(result: dict[str, Any]) -> None:
-    """Render the gate's 3-paths block when blocking."""
+    """Render the gate's 3-paths block when blocking.
+
+    Prefers the canonical `render` field (`cc_format_three_paths` output)
+    when available — it carries the load-bearing UX contract from spec §4
+    and disciplines §1 (literal header `🛑 Cyclomatic Complexity gate`,
+    sections "O que falhou:", "Onde:", "Por que importa:", "Três caminhos
+    pra resolver:"). Falls back to a per-path render when `render` is not
+    present, keeping backward compatibility with non-CC consumers.
+    """
     renderer.write("")
+    canonical = result.get("render")
+    if isinstance(canonical, str) and canonical.strip():
+        # Canonical render already includes header + sections + footer.
+        for line in canonical.splitlines():
+            renderer.write(line)
+        # Surface malformed-override warnings (H4) so the user sees why
+        # their attempted CC-OVERRIDE didn't silence the fail.
+        warnings = result.get("warnings") or []
+        if warnings:
+            renderer.write("")
+            renderer.write(renderer.dim("Avisos:"))
+            for w in warnings:
+                renderer.write(renderer.dim(f"  · {w}"))
+        return
+
+    # Fallback render — kept for results that lack the canonical block.
     renderer.write(renderer.bold(result.get("message") or "cc-gate hard fail"))
     renderer.write("")
     for p in result.get("paths") or []:

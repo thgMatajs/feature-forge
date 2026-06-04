@@ -56,7 +56,7 @@ def test_override_covers_only_declared_function() -> None:
         _make("app/foo.kt", "bar", 14),
         _make("app/foo.kt", "baz", 12),  # NOT covered — função diferente
     ]
-    silenced, surviving = v._apply_overrides(fails, body)
+    silenced, surviving, _warnings = v._apply_overrides(fails, body)
     assert len(silenced) == 1 and silenced[0].function == "bar"
     assert len(surviving) == 1 and surviving[0].function == "baz"
 
@@ -69,7 +69,7 @@ def test_override_multiple_lines_cover_independently() -> None:
         ]
     )
     fails = [_make("a.kt", "foo", 14), _make("b.kt", "bar", 11)]
-    silenced, surviving = v._apply_overrides(fails, body)
+    silenced, surviving, _warnings = v._apply_overrides(fails, body)
     assert len(silenced) == 2
     assert surviving == []
 
@@ -77,14 +77,14 @@ def test_override_multiple_lines_cover_independently() -> None:
 def test_override_file_mismatch_does_not_silence() -> None:
     body = "CC-OVERRIDE: a.kt:foo cc=14 — reason"
     fails = [_make("b.kt", "foo", 14)]  # arquivo diferente — não silencia
-    silenced, surviving = v._apply_overrides(fails, body)
+    silenced, surviving, _warnings = v._apply_overrides(fails, body)
     assert silenced == []
     assert len(surviving) == 1
 
 
 def test_override_empty_body_returns_all_as_surviving() -> None:
     fails = [_make("a.kt", "foo", 14)]
-    silenced, surviving = v._apply_overrides(fails, "")
+    silenced, surviving, _warnings = v._apply_overrides(fails, "")
     assert silenced == []
     assert surviving == fails
 
@@ -93,3 +93,39 @@ def test_override_regex_anchors_at_line_start() -> None:
     # Não deve casar quando CC-OVERRIDE aparece mid-sentence (defensivo).
     body = "see also CC-OVERRIDE: a.kt:foo cc=14 — reason"
     assert v._parse_overrides(body) == []
+
+
+def test_apply_overrides_surfaces_malformed_warnings() -> None:
+    """H4 — `_apply_overrides` must propagate malformed-override warnings.
+
+    Spec §4 step 5: malformed CC-OVERRIDE lines do NOT silence the fail,
+    AND the validator must emit a warning so the user sees why their
+    override attempt didn't count.
+    """
+    body = "\n".join(
+        [
+            "feat: refactor login",
+            "",
+            "CC-OVERRIDE: a.kt:foo cc=14 missing-dash",
+            "CC-OVERRIDE: b.kt:bar cc=11 — DSL legítimo",
+        ]
+    )
+    fails = [_make("a.kt", "foo", 14), _make("b.kt", "bar", 11)]
+    silenced, surviving, warnings = v._apply_overrides(fails, body)
+    # b.kt:bar silenced by valid override; a.kt:foo survives the malformed.
+    assert [s.function for s in silenced] == ["bar"]
+    assert [s.function for s in surviving] == ["foo"]
+    assert any("CC-OVERRIDE sem razão" in w for w in warnings), (
+        f"expected malformed warning; got {warnings!r}"
+    )
+
+
+def test_apply_overrides_no_warnings_when_all_valid() -> None:
+    """When every override is well-formed, warnings list is empty."""
+    body = "CC-OVERRIDE: a.kt:foo cc=14 — irreducible DSL"
+    silenced, surviving, warnings = v._apply_overrides(
+        [_make("a.kt", "foo", 14)], body
+    )
+    assert len(silenced) == 1
+    assert surviving == []
+    assert warnings == []

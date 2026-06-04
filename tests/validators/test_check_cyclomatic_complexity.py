@@ -97,6 +97,58 @@ def test_fail_when_new_function_exceeds_threshold(monkeypatch, fake_context):
     assert len(result["paths"]) == 3
 
 
+def test_fail_includes_canonical_three_paths_render(monkeypatch, fake_context):
+    """H3 — `validate()` must expose the canonical 3-paths render so the
+    consumer (engine.implement) can surface mentor-calmo prose to the user.
+
+    Spec §4 + disciplines §1: the literal header `🛑 Cyclomatic Complexity
+    gate` and the section `Três caminhos pra resolver:` are load-bearing
+    UX contract — they must appear in the result dict's `render` field
+    (or `message`), not only in the snapshot test.
+    """
+    monkeypatch.setattr(
+        v,
+        "_run_tools_for_staged",
+        lambda **kw: ([_mk_result(cc=14, status="new")], []),
+    )
+    result = v.validate(fake_context)
+    rendered = result.get("render") or result.get("message") or ""
+    assert "🛑 Cyclomatic Complexity gate" in rendered, (
+        f"canonical header missing from result; got: {rendered!r}"
+    )
+    assert "Três caminhos pra resolver" in rendered
+
+
+def test_fail_warnings_include_malformed_override_attempts(
+    monkeypatch, fake_context
+):
+    """H4 — malformed CC-OVERRIDE in commit body must surface as a warning
+    on the result dict (currently swallowed by `_apply_overrides`).
+
+    Spec §4 step 5: "Falta o `— <texto>` (razão concreta) → override **não
+    conta**. Validator emite warning 'CC-OVERRIDE sem razão — adicione
+    texto após —'. Mantém o fail."
+    """
+    monkeypatch.setattr(
+        v,
+        "_run_tools_for_staged",
+        lambda **kw: ([_mk_result(cc=14, status="new", function="bar")], []),
+    )
+    monkeypatch.setattr(
+        v,
+        "_read_commit_body",
+        lambda root: "feat: x\n\nCC-OVERRIDE: app/A.kt:bar cc=14 missing-dash\n",
+    )
+    result = v.validate(fake_context)
+    # The fail still surfaces (override malformed doesn't silence).
+    assert result["status"] == "fail"
+    # The warning is visible in the result (under `warnings`).
+    warnings = result.get("warnings") or []
+    assert any("CC-OVERRIDE sem razão" in w for w in warnings), (
+        f"expected malformed-override warning in result.warnings; got: {warnings!r}"
+    )
+
+
 def test_delta_rule_modified_worse_fails(monkeypatch, fake_context):
     """Modified com cc_after > cc_before (mesmo se < threshold) → fail."""
     monkeypatch.setattr(

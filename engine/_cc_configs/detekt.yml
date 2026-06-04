@@ -1,7 +1,12 @@
-# Forge-managed Detekt config for the cyclomatic-complexity gate.
+# Forge-managed Detekt config TEMPLATE for the cyclomatic-complexity gate.
 # Only the CyclomaticComplexMethod rule is active — every other Detekt
 # category is explicitly disabled so the gate emits exactly one signal.
-# Threshold is passed via CLI args at runtime (see check_cyclomatic_complexity._dispatch_tool).
+#
+# Threshold is dynamic — Detekt does not accept per-rule threshold via CLI,
+# so check_cyclomatic_complexity._dispatch_tool renders this template into
+# a tempfile, substituting __CC_THRESHOLD__ with the resolved value (card
+# override > workflow-config > DEFAULTS_CC). Spec §3: threshold via CLI
+# args **sempre** — honored here by per-invocation tempfile render.
 
 build:
   maxIssues: 0
@@ -12,7 +17,7 @@ complexity:
   active: true
   CyclomaticComplexMethod:
     active: true
-    threshold: 10  # default — overridden by CLI flag at runtime
+    threshold: __CC_THRESHOLD__  # rendered per-invocation by _dispatch_tool
     ignoreSingleWhenExpression: false
     ignoreSimpleWhenEntries: false
     ignoreNestingFunctions: false

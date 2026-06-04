@@ -121,3 +121,52 @@ def test_run_cc_gate_override_in_commit_body_permits(
     result = implement._run_cc_gate(tmp_path)
     assert result["status"] == "pass"
     assert result["blocking"] is False
+
+
+def test_render_cc_gate_block_uses_canonical_render(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """H3 — `_render_cc_gate_block` must surface the canonical 3-paths render
+    (cc_format_three_paths output) when the validator provides it.
+
+    Spec §4 + disciplines §1: the literal `🛑 Cyclomatic Complexity gate`
+    header and the `Três caminhos pra resolver` section are load-bearing
+    UX — the snapshot test alone is a blind watchdog if the render never
+    reaches the user.
+    """
+    captured: list[str] = []
+    monkeypatch.setattr(
+        implement.renderer,
+        "write",
+        lambda line="": captured.append(str(line)),
+    )
+    # Bold/dim helpers are pass-through for snapshot purposes.
+    monkeypatch.setattr(implement.renderer, "bold", lambda s: s)
+    monkeypatch.setattr(implement.renderer, "dim", lambda s: s)
+
+    canonical = (
+        "🛑 Cyclomatic Complexity gate\n"
+        "\n"
+        "O que falhou:\n"
+        "  1 funções excederam o threshold permitido.\n"
+        "\n"
+        "Três caminhos pra resolver:\n"
+        "\n"
+        "  1) Refatorar\n"
+    )
+    fake_fail = {
+        "status": "fail",
+        "message": "Cyclomatic Complexity gate: 1 função acima do limite",
+        "render": canonical,
+        "paths": [
+            {"kind": "fix", "label": "Refatorar", "motive": ""},
+            {"kind": "revert", "label": "Override-justify", "motive": ""},
+            {"kind": "split", "label": "Split-task", "motive": ""},
+        ],
+    }
+    implement._render_cc_gate_block(fake_fail)
+    out = "\n".join(captured)
+    assert "🛑 Cyclomatic Complexity gate" in out, (
+        f"canonical header missing in render output; got:\n{out}"
+    )
+    assert "Três caminhos pra resolver" in out

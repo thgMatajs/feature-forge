@@ -149,6 +149,95 @@ def test_dispatch_tool_python_calls_radon(
     assert "cc" in captured["cmd"]
     assert "-j" in captured["cmd"]
     assert "engine/cli.py" in captured["cmd"]
+    # H2 regression — `-n F` mask hides CC 11..40 from the parser. Gate
+    # must observe ALL functions and filter by threshold in Python.
+    assert "F" not in captured["cmd"], (
+        "radon must not use -n F (masks CC 11..40); use -n A or no rank filter"
+    )
+
+
+def test_dispatch_tool_kotlin_propagates_threshold_via_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """H1 — Detekt threshold must be the dynamic value, not the static 10.
+
+    Detekt does not accept a threshold via CLI; the validator therefore
+    renders a temp config file with the requested threshold and passes
+    `--config <tmpfile>`. The rendered config must contain the dynamic
+    threshold so card overrides actually tighten the gate (spec §3).
+    """
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = list(cmd)
+        # Read the config path passed via --config and snapshot its contents
+        # so the assertion can confirm the dynamic threshold reached the file.
+        if "--config" in cmd:
+            idx = cmd.index("--config")
+            cfg_path = Path(cmd[idx + 1])
+            captured["config_contents"] = cfg_path.read_text(encoding="utf-8")
+        return subprocess.CompletedProcess(
+            cmd, returncode=0, stdout='{"issues":[]}', stderr=""
+        )
+
+    monkeypatch.setattr(v.subprocess, "run", fake_run)
+    monkeypatch.setattr(v.shutil, "which", lambda name: "/usr/local/bin/detekt")
+
+    result = v._dispatch_tool(
+        language="kotlin",
+        files=["app/A.kt"],
+        threshold=5,
+        project_root=Path("/repo"),
+    )
+
+    assert result.tool_found is True
+    assert "--config" in captured["cmd"]
+    cfg = captured.get("config_contents", "")
+    assert "threshold: 5" in cfg, (
+        f"detekt config must carry dynamic threshold 5; got:\n{cfg}"
+    )
+    # And must NOT carry the hardcoded fallback when override demanded 5.
+    assert "threshold: 10" not in cfg
+
+
+def test_dispatch_tool_swift_propagates_threshold_via_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """H1 — SwiftLint threshold must be rendered into the temp config.
+
+    SwiftLint's `cyclomatic_complexity` rule reads `warning:` / `error:`
+    from the config. CLI cannot override per-rule thresholds, so the
+    validator renders the config dynamically (spec §3 threshold-via-CLI
+    contract honored by tmpfile render).
+    """
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = list(cmd)
+        if "--config" in cmd:
+            idx = cmd.index("--config")
+            cfg_path = Path(cmd[idx + 1])
+            captured["config_contents"] = cfg_path.read_text(encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, returncode=0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(v.subprocess, "run", fake_run)
+    monkeypatch.setattr(v.shutil, "which", lambda name: "/usr/local/bin/swiftlint")
+
+    result = v._dispatch_tool(
+        language="swift",
+        files=["app/Login.swift"],
+        threshold=7,
+        project_root=Path("/repo"),
+    )
+
+    assert result.tool_found is True
+    cfg = captured.get("config_contents", "")
+    assert "warning: 7" in cfg, (
+        f"swiftlint config must carry warning=7; got:\n{cfg}"
+    )
+    assert "error: 7" in cfg, (
+        f"swiftlint config must carry error=7; got:\n{cfg}"
+    )
 
 
 def test_dispatch_tool_missing_returns_not_found(

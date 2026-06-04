@@ -20,10 +20,12 @@ whitelist (auditable via `git log --grep='CC-OVERRIDE'`).
 from __future__ import annotations
 
 import json  # noqa: F401  — used by parser tasks (T4/T5)
+import os
 import re  # noqa: F401  — used by override-detect task (T7)
 import shutil  # noqa: F401  — used by tool-availability task (T6)
 import subprocess  # noqa: F401  — used by dispatch task (T6)
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -355,6 +357,26 @@ def _check_tool_available(tool: str) -> bool:
     return shutil.which(tool) is not None
 
 
+_CC_THRESHOLD_PLACEHOLDER = "__CC_THRESHOLD__"
+
+
+def _render_config_for_threshold(template_path: Path, threshold: int) -> str:
+    """Render a CC tool config template, substituting the threshold placeholder.
+
+    Spec §3 mandates "threshold passado via CLI args **sempre**" — but Detekt
+    and SwiftLint don't accept per-rule threshold via CLI flags. We honor the
+    contract by rendering the static template (`engine/_cc_configs/<tool>.yml`)
+    into a tempfile per invocation, swapping ``__CC_THRESHOLD__`` for the
+    resolved threshold. The tempfile path is passed via ``--config`` so each
+    invocation carries the correct dynamic value.
+
+    Caller is responsible for writing the rendered string to disk and cleaning
+    up the tempfile after subprocess returns.
+    """
+    raw = template_path.read_text(encoding="utf-8")
+    return raw.replace(_CC_THRESHOLD_PLACEHOLDER, str(threshold))
+
+
 def _dispatch_tool(
     *,
     language: str,
@@ -386,101 +408,145 @@ def _dispatch_tool(
             error_message=f"{tool} not installed (PATH lookup failed)",
         )
 
-    if language == "kotlin":
-        # Detekt: --input aceita lista vírgula-separada; --report json:- escreve
-        # JSON em stdout (sem precisar tempfile). Config interno desabilita
-        # tudo exceto CyclomaticComplexMethod.
-        cmd = [
-            tool,
-            "--input", ",".join(files),
-            "--config", str(_CONFIG_DIR / "detekt.yml"),
-            "--report", "json:-",
-        ]
-    elif language == "swift":
-        # SwiftLint: subcomando `lint` + reporter json + config interno que
-        # ativa só cyclomatic_complexity. Files vão posicionalmente no final.
-        cmd = [
-            tool, "lint",
-            "--reporter", "json",
-            "--config", str(_CONFIG_DIR / "swiftlint.yml"),
-            *files,
-        ]
-    elif language == "ts":
-        # eslint: --no-eslintrc ignora config do projeto consumidor (evita
-        # interferência); --rule inline com threshold dinâmico. Format json
-        # produz array file-by-file (parseado por _parse_eslint).
-        cmd = [
-            tool,
-            "--no-eslintrc",
-            "--rule", f'{{"complexity": ["error", {{"max": {threshold}}}]}}',
-            "--format", "json",
-            *files,
-        ]
-    elif language == "python":
-        # radon cc -j: JSON output; -n F filtra só blocks com rank ≥ F (CC ≥ 41).
-        # Mas mantemos -n F porque baseline padrão; validator compara CC numérico
-        # contra threshold direto. -n F é só pra evitar ruído de funções triviais.
-        cmd = [
-            tool, "cc", "-j", "-n", "F",
-            *files,
-        ]
-    else:
-        # Inalcançável: _TOOL_BIN[language] já teria raised KeyError acima.
-        # Mantido por simetria/defesa.
-        return _DispatchResult(
-            language=language,
-            tool_found=False,
-            crashed=False,
-            raw_stdout="",
-            error_message=f"unsupported language: {language}",
-        )
+    # Tempfile path is set only for languages whose tool does not accept
+    # per-rule threshold via CLI (Detekt, SwiftLint). We render the config
+    # template substituting __CC_THRESHOLD__ per invocation (spec §3), then
+    # remove the tempfile after subprocess returns regardless of outcome.
+    rendered_config: Optional[str] = None
 
     try:
-        proc = subprocess.run(
-            cmd,
-            cwd=str(project_root),
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return _DispatchResult(
-            language=language,
-            tool_found=True,
-            crashed=True,
-            raw_stdout="",
-            error_message=f"{tool} timeout (>60s)",
-        )
-    except OSError as exc:
-        return _DispatchResult(
-            language=language,
-            tool_found=True,
-            crashed=True,
-            raw_stdout="",
-            error_message=f"{tool} OS error: {exc}",
-        )
+        if language == "kotlin":
+            # Detekt: --input aceita lista vírgula-separada; --report json:- escreve
+            # JSON em stdout (sem precisar tempfile pro report). Threshold é
+            # rendered dinamicamente no config (Detekt não aceita CLI override
+            # por regra). Spec §3 threshold-via-CLI honored via tmpfile render.
+            rendered_config = tempfile.NamedTemporaryFile(
+                mode="w",
+                suffix=".yml",
+                prefix="detekt-cc-",
+                delete=False,
+                encoding="utf-8",
+            ).name
+            Path(rendered_config).write_text(
+                _render_config_for_threshold(
+                    _CONFIG_DIR / "detekt.yml", threshold
+                ),
+                encoding="utf-8",
+            )
+            cmd = [
+                tool,
+                "--input", ",".join(files),
+                "--config", rendered_config,
+                "--report", "json:-",
+            ]
+        elif language == "swift":
+            # SwiftLint: subcomando `lint` + reporter json. Threshold rendered
+            # dinamicamente no config (SwiftLint não aceita CLI override per-rule).
+            # Spec §3 threshold-via-CLI honored via tmpfile render.
+            rendered_config = tempfile.NamedTemporaryFile(
+                mode="w",
+                suffix=".yml",
+                prefix="swiftlint-cc-",
+                delete=False,
+                encoding="utf-8",
+            ).name
+            Path(rendered_config).write_text(
+                _render_config_for_threshold(
+                    _CONFIG_DIR / "swiftlint.yml", threshold
+                ),
+                encoding="utf-8",
+            )
+            cmd = [
+                tool, "lint",
+                "--reporter", "json",
+                "--config", rendered_config,
+                *files,
+            ]
+        elif language == "ts":
+            # eslint: --no-eslintrc ignora config do projeto consumidor (evita
+            # interferência); --rule inline com threshold dinâmico. Format json
+            # produz array file-by-file (parseado por _parse_eslint).
+            cmd = [
+                tool,
+                "--no-eslintrc",
+                "--rule", f'{{"complexity": ["error", {{"max": {threshold}}}]}}',
+                "--format", "json",
+                *files,
+            ]
+        elif language == "python":
+            # radon cc -j: JSON output sem rank filter (-n A é rank mínimo "A",
+            # mostra TODAS as funções). H2 fix: o flag `-n F` antigo mascarava
+            # toda função com CC ∈ [11..40] — exatamente o sweet spot do gate.
+            # Filtragem fina por threshold acontece no validator depois.
+            cmd = [
+                tool, "cc", "-j", "-n", "A",
+                *files,
+            ]
+        else:
+            # Inalcançável: _TOOL_BIN[language] já teria raised KeyError acima.
+            # Mantido por simetria/defesa.
+            return _DispatchResult(
+                language=language,
+                tool_found=False,
+                crashed=False,
+                raw_stdout="",
+                error_message=f"unsupported language: {language}",
+            )
 
-    # eslint exits 1 quando issues encontrados — NÃO é crash, é normal.
-    # Outros tools: exit != 0 é crash genuíno.
-    benign_nonzero = language == "ts" and proc.returncode == 1
-    if proc.returncode != 0 and not benign_nonzero:
+        try:
+            proc = subprocess.run(
+                cmd,
+                cwd=str(project_root),
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return _DispatchResult(
+                language=language,
+                tool_found=True,
+                crashed=True,
+                raw_stdout="",
+                error_message=f"{tool} timeout (>60s)",
+            )
+        except OSError as exc:
+            return _DispatchResult(
+                language=language,
+                tool_found=True,
+                crashed=True,
+                raw_stdout="",
+                error_message=f"{tool} OS error: {exc}",
+            )
+
+        # eslint exits 1 quando issues encontrados — NÃO é crash, é normal.
+        # Outros tools: exit != 0 é crash genuíno.
+        benign_nonzero = language == "ts" and proc.returncode == 1
+        if proc.returncode != 0 and not benign_nonzero:
+            return _DispatchResult(
+                language=language,
+                tool_found=True,
+                crashed=True,
+                raw_stdout=proc.stdout or "",
+                error_message=(proc.stderr or "").strip()[:400]
+                or f"{tool} exit={proc.returncode}",
+            )
+
         return _DispatchResult(
             language=language,
             tool_found=True,
-            crashed=True,
+            crashed=False,
             raw_stdout=proc.stdout or "",
-            error_message=(proc.stderr or "").strip()[:400]
-            or f"{tool} exit={proc.returncode}",
+            error_message="",
         )
-
-    return _DispatchResult(
-        language=language,
-        tool_found=True,
-        crashed=False,
-        raw_stdout=proc.stdout or "",
-        error_message="",
-    )
+    finally:
+        if rendered_config:
+            try:
+                os.unlink(rendered_config)
+            except OSError:
+                # Best-effort cleanup — tempfile leak is a minor leak, never
+                # a behavior bug. Don't shadow the real exception.
+                pass
 
 
 # Subsequent tasks (7–8) append: override, run().
@@ -564,16 +630,22 @@ def _parse_overrides(
 def _apply_overrides(
     fails: list[CCResult],
     commit_body: str,
-) -> tuple[list[CCResult], list[CCResult]]:
-    """Split `fails` into (silenced, surviving) using CC-OVERRIDE lines.
+) -> tuple[list[CCResult], list[CCResult], list[str]]:
+    """Split `fails` into (silenced, surviving, warnings) using CC-OVERRIDE lines.
 
     Match key: (file, function). Override cobre APENAS o par (file, func)
     declarado — sem wildcards. Cada override aplica-se a UM commit; auditoria
     via `git log --grep='CC-OVERRIDE'`.
+
+    Malformed-override warnings (lines that look like CC-OVERRIDE but miss the
+    `— <razão>` tail) are surfaced as the third tuple element so the validator
+    can include them in the final result dict (H4 fix — spec §4 step 5
+    mandates "Validator emite warning 'CC-OVERRIDE sem razão — adicione texto
+    após —'. Mantém o fail.").
     """
-    overrides = _parse_overrides(commit_body)
+    overrides, warnings = _parse_overrides(commit_body, return_warnings=True)
     if not overrides:
-        return [], list(fails)
+        return [], list(fails), warnings
 
     cover: set[tuple[str, str]] = {(o["file"], o["func"]) for o in overrides}
     silenced: list[CCResult] = []
@@ -583,7 +655,7 @@ def _apply_overrides(
             silenced.append(f)
         else:
             surviving.append(f)
-    return silenced, surviving
+    return silenced, surviving, warnings
 
 
 # ── Orchestrator ─────────────────────────────────────────────────────────────
@@ -914,14 +986,20 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
 
     # Override-justify aplicado antes de emitir fail (spec §4).
     commit_body = _read_commit_body(project_root)
-    silenced, surviving = _apply_overrides(fails, commit_body)
+    silenced, surviving, override_warnings = _apply_overrides(fails, commit_body)
+
+    # H4 — malformed CC-OVERRIDE attempts must surface as warnings even when
+    # the gate passes. Spec §4 step 5: "Validator emite warning ...".
+    all_warnings: list[str] = list(tool_warnings) + list(override_warnings)
 
     if not surviving:
-        if tool_warnings:
-            return result_warn(
+        if all_warnings:
+            res = result_warn(
                 f"cc-gate ok ({len(silenced)} silenced via override); "
-                f"tools incompletas: " + "; ".join(tool_warnings)
+                f"tools incompletas: " + "; ".join(all_warnings)
             )
+            res["warnings"] = all_warnings
+            return res
         if silenced:
             return result_pass(
                 f"cc-gate ok ({len(results)} funções inspecionadas, "
@@ -948,17 +1026,17 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
     affected_thresholds = {
         r.language: thresholds_by_lang.get(r.language, 10) for r in surviving
     }
-    # Snapshot da mensagem 3-paths — disponível pro engine renderizar (ainda
-    # não anexamos ao dict porque result_fail já carrega o block em `paths`,
-    # mas chamar cc_format_three_paths valida que o helper aceita o input;
-    # mantemos a invocação pra parity com spec §4 e pra fail-fast em caso de
-    # snapshot drift no helper.
-    _ = cc_format_three_paths(violations, affected_thresholds)
+
+    # H3 — render the canonical 3-paths block (cc_format_three_paths) AND
+    # attach it to the result dict so engine.implement._render_cc_gate_block
+    # can surface mentor-calmo prose to the user. Spec §4 + disciplines §1
+    # treat this render as load-bearing UX contract.
+    canonical_render = cc_format_three_paths(violations, affected_thresholds)
 
     sample = ", ".join(
         f"{r.file}:{r.function}(cc={r.cc})" for r in surviving[:3]
     )
-    return result_fail(
+    res = result_fail(
         f"Cyclomatic Complexity gate: {len(surviving)} função(ões) acima do threshold",
         what_failed=sample,
         where="staged files",
@@ -979,6 +1057,10 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
             "Sintoma típico: 'task fez coisa demais'. Re-rodar `forge implement`.",
         ),
     )
+    res["render"] = canonical_render
+    if all_warnings:
+        res["warnings"] = all_warnings
+    return res
 
 
 if __name__ == "__main__":
