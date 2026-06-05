@@ -3,12 +3,16 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-04 (plan-auditor — auditoria pós writing-plans)
+**Última atualização:** 2026-06-05 (PR #6 plan-auditor sync r3 + power-review fixes)
 **Estado:** Plan auditor entregue (`.claude/rules/plan-auditor.md` + 7
-touch points de integração). Em paralelo aos branches v1.2.x cumulativos.
-Próximo: smoke real do auditor contra plano futuro pra validar mapping
-de severity. Suite total inalterada (sem touch em `engine/` ou
-`validators/`).
+touch points de integração). Sync r3 aplicado em 2026-06-05 fechando
+4 findings do power-review externo PR #6 (PR-001 high + PR-002/PR-003
+medium + PR-004 low): verbatim Task 1 ≡ rule vivo, spec back-portada
+pós refinements, override dash flex (`-`/`–`/`—`/`--`), meta-finding
+§"snapshot-vs-vivo" ganha case-1 factual (contagem 1/3). Em paralelo
+aos branches v1.2.x cumulativos. Próximo: smoke real do auditor contra
+plano futuro pra validar mapping de severity. Suite total inalterada
+(sem touch em `engine/` ou `validators/`).
 
 ---
 *Histórico v1.2.0 (Gap 5 + power-review PR #2 R1 + schema_version fix) preservado em git log — `git log --oneline main..HEAD` na branch de release v1.2.0 e CHANGELOG.md §[1.2.0] mantêm o detalhe.*

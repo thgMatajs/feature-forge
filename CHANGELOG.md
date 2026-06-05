@@ -54,6 +54,22 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   hooks. F-009 (README rule count) marcado como FP — README não lista
   per-rule count.
 
+  Power-review PR #6 r3 (2026-06-05): power-review externo (mode
+  `code_review`, sonnet) pegou 4 findings pendentes além dos já
+  fixados (PR-001 high gap-spec, PR-002/PR-003 medium code-quality,
+  PR-004 low code-quality). Endereçado em 4 commits atômicos: sync
+  verbatim Task 1 ≡ rule vivo (commit `60cde77` — drift em §Verdict
+  logic, §Override mechanism, H2 trigger, H4 nota hooks, C1 cond 4);
+  back-port da spec inteira pós refinements r1/r2/ultra-review
+  (commit `3f77879` — §Fluxo decisório 4 tiers, §Output format,
+  §Integração doc-sync correcta, nota de sync ao final);
+  override mechanism aceita qualquer dash separator unicode (commit
+  `9282e88` — flex de `-`/`–`/`—`/`--`, propagado pro plan
+  verbatim); meta-finding r2 §"Tensão snapshot-vs-vivo" ganha
+  case-1 factual citando PR-001 (commit `997a21a` — contagem 1/3
+  pra threshold de revisita ficar visível). Spec passa a apontar
+  rule vivo como veredito; quando divergir de novo, rule vence.
+
 ## [1.2.0] — 2026-06-03
 
 ### Added (Gap 5 — Card local overlay, 2026-06-02)
