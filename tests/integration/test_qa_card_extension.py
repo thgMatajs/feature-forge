@@ -1,9 +1,16 @@
-"""Integration — card overlay declarando `qa-extensions` carrega no loader.
+"""Integration — card overlay declarando `qa-extensions`.
 
-Wave 7 Task 7.1: stub mínimo confirmando que o cascade load_all_cards
-exerce o hook `validate_qa_extensions` overlay-aware. Edge cases mais
-profundos (colisão canon×local em auditor name, requires capability
-ausente no catálogo) entram em Wave 8.5 com fixtures dedicadas.
+Wave 7 Task 7.1: stubs mínimos (happy path canon + colisão canon×local).
+
+Wave 8 Task 8.5: cobertura adicional do mecanismo qa-extensions:
+
+- ``extensions_disabled`` skip respeitado (Regra 4 bypass quando auditor
+  nomeado no toggle de workflow-config)
+- Card local com qa-extensions carrega + manifest preserva ``qa-extensions``
+  no raw payload (consumido pelo conductor pra registrar auditor extra)
+
+Anti-padrão: testar shape do auditor LLM em execução (delegado a fixtures
+sintéticas + Phase 4 synthesis tests). Aqui foco é loader + validator.
 
 Marker: integration (slow). Excluído da rapid CI lane.
 """
@@ -131,3 +138,91 @@ def test_canon_local_auditor_name_collision_raises(qa_ext_project: Path) -> None
 
     with pytest.raises(QAExtensionsCollisionError):
         load_all_cards(qa_ext_project)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Wave 8.5 — extensions_disabled toggle + manifest preserva qa-extensions
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def test_local_card_with_qa_extensions_loads_and_preserves_raw_payload(
+    qa_ext_project: Path,
+) -> None:
+    """Local card declara qa-extensions; manifest.raw preserva o bloco.
+
+    Contrato: conductor (Phase 1/2) lê ``manifest.raw["qa-extensions"]``
+    pra descobrir auditores extras a registrar. Sem isso, overlay vira
+    no-op — confirma round-trip canon → manifest → consumer.
+    """
+    from engine.cards.loader import load_all_cards
+
+    _write_card_with_qa_extension(
+        qa_ext_project,
+        origin="local",
+        name="local-overlay-card",
+        auditor_name="local-auditor-stub",
+        provides=["serialization-json"],
+    )
+
+    manifests = load_all_cards(qa_ext_project)
+    local_card = next(m for m in manifests if m.name == "local-overlay-card")
+    assert local_card.origin == "local"
+
+    qa_ext = local_card.raw.get("qa-extensions")
+    assert isinstance(qa_ext, dict), (
+        "manifest.raw deve preservar qa-extensions pra consumer downstream"
+    )
+    auditors = qa_ext.get("auditors", [])
+    assert len(auditors) == 1
+    assert auditors[0]["name"] == "local-auditor-stub"
+    assert auditors[0]["phase"] == "static"
+
+
+def test_validate_qa_extensions_skips_capability_check_for_disabled_auditor(
+    qa_ext_project: Path,
+) -> None:
+    """``extensions_disabled`` faz validator pular Regra 4 (capability check).
+
+    Cenário: auditor nomeado em ``qa.extensions.disabled`` no workflow-
+    config + requires uma capability INEXISTENTE no catálogo. Sem o
+    toggle, validate_qa_extensions raise. Com o toggle, retorna sem erro
+    (auditor desabilitado não precisa do catálogo coerente — ele não vai
+    rodar).
+    """
+    from validators.validate_qa_extensions import (
+        QAExtensionsValidationError,
+        validate_qa_extensions,
+    )
+
+    card_dir = _write_card_with_qa_extension(
+        qa_ext_project,
+        origin="canon",
+        name="disabled-card",
+        auditor_name="opt-out-auditor",
+        provides=["kotlin"],
+    )
+
+    # Mutate card payload: requires capability bogus que NÃO existe.
+    card_yaml = card_dir / "card.yaml"
+    data = yaml.safe_load(card_yaml.read_text(encoding="utf-8"))
+    data["qa-extensions"]["auditors"][0]["requires"] = ["bogus-capability-zzz"]
+    card_yaml.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+    # Sem disabled → Regra 4 dispara (capability inexistente)
+    with pytest.raises(QAExtensionsValidationError) as exc_info:
+        validate_qa_extensions(
+            card_path=card_yaml,
+            card_data=data,
+            other_cards={},
+            project_root=qa_ext_project,
+        )
+    assert "bogus-capability-zzz" in str(exc_info.value)
+
+    # Com disabled={opt-out-auditor} → Regra 4 pula, validator passa silencioso
+    validate_qa_extensions(
+        card_path=card_yaml,
+        card_data=data,
+        other_cards={},
+        project_root=qa_ext_project,
+        extensions_disabled={"opt-out-auditor"},
+    )  # não raise
