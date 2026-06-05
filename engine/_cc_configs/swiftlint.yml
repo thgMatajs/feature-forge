@@ -1,0 +1,27 @@
+# Forge-managed SwiftLint config TEMPLATE for the cyclomatic-complexity gate.
+# Single-rule: only cyclomatic_complexity is active.
+#
+# Threshold is dynamic — SwiftLint reads warning/error thresholds from the
+# config (CLI cannot override per-rule). check_cyclomatic_complexity.
+# _dispatch_tool renders this template into a tempfile, substituting
+# __CC_THRESHOLD__ per invocation with the resolved value (card override >
+# workflow-config > DEFAULTS_CC). Spec §3: threshold via CLI args
+# **sempre** — honored here by per-invocation tempfile render.
+
+only_rules:
+  - cyclomatic_complexity
+
+cyclomatic_complexity:
+  warning: __CC_THRESHOLD__  # rendered per-invocation by _dispatch_tool
+  error: __CC_THRESHOLD__    # rendered per-invocation by _dispatch_tool
+  ignores_case_statements: false
+
+# Belt-and-suspenders: disable everything else explicitly.
+disabled_rules: []
+
+excluded:
+  - Tests
+  - .build
+  - DerivedData
+
+reporter: "json"

@@ -1,0 +1,24 @@
+{
+  "issues": [
+    {
+      "ruleName": "CyclomaticComplexMethod",
+      "message": "The function handleLogin appears to be too complex based on Cyclomatic Complexity (14).",
+      "location": {
+        "filePath": "app/auth/LoginViewModel.kt",
+        "position": { "line": 42, "column": 5 },
+        "endPosition": { "line": 87, "column": 5 }
+      },
+      "metric": { "value": 14 }
+    },
+    {
+      "ruleName": "CyclomaticComplexMethod",
+      "message": "The function validateForm appears to be too complex based on Cyclomatic Complexity (11).",
+      "location": {
+        "filePath": "app/auth/LoginViewModel.kt",
+        "position": { "line": 88, "column": 5 },
+        "endPosition": { "line": 120, "column": 5 }
+      },
+      "metric": { "value": 11 }
+    }
+  ]
+}

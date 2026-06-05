@@ -18,6 +18,53 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 - Plan executado: `docs/superpowers/plans/2026-06-04-product-docs.md` (commit `4134744`).
 - Coexistência paralela com `docs/design/` (lente arquitetura) e `docs/ux/` (roteiros) — sem mexer em load-bearing (`docs/design/00-vision.md` e `docs/design/ROADMAP.md` permanecem intactos).
 
+### Added
+
+- **Cyclomatic Complexity gate (`check_cyclomatic_complexity`)** — multi-language
+  CC validator que roda no cascade de `forge verify` (após
+  `check_no_invented_behavior`) e per-task em `forge implement` (entre review e
+  commit). Threshold via precedência card `cc-gate-override` > workflow-config
+  `cc-gate` > defaults (kotlin=10, swift=10, ts=15, python=10). Dispatch pra
+  tools nativas: Detekt (Kotlin), SwiftLint (Swift), eslint (TS/JS), Radon
+  (Python). Tools NÃO instaladas pelo forge — `forge doctor` reporta na
+  categoria nova `cc-gate-tools` com instruções de install. Regra de fail:
+  função `new` com `cc > threshold` OU função `modified` com `cc_after >
+  cc_before`. Override-justify via `CC-OVERRIDE: <file>:<func> cc=<N> — <razão>`
+  no commit body silencia fail apenas pra aquele commit (auditável via
+  `git log --grep='CC-OVERRIDE'`). 3-caminhos canônico on-fail
+  (refactor / override-justify / split-task). Bypass de emergência via
+  `NO_CC_GATE=1` env var, logado em `.claude/state/cc-gate-bypass.jsonl`.
+- Helpers `cc_threshold_lookup` + `cc_format_three_paths` em `validators/_common.py`.
+- Configs internos `engine/_cc_configs/{detekt.yml,swiftlint.yml,eslint.json,radon.cfg}`
+  controlados pelo forge (versionados junto da release).
+- Doctor categoria `cc-gate-tools` (13ª categoria, full scope) com status
+  por tool (detekt/swiftlint/eslint/radon) + instruções de install pras
+  missing.
+- ~63 unit + integration tests novos (`tests/validators/test_cc_*.py`,
+  `tests/validators/test_check_cyclomatic_complexity.py`,
+  `tests/engine/test_*_cc_*.py`, `tests/integration/test_cc_gate_end_to_end.py`).
+  Suite total cresce de 630 → 693 tests collected.
+
+### Added (CC gate refinements — final review fixes)
+
+- **Dynamic threshold propagation** for Detekt and SwiftLint: configs use
+  `__CC_THRESHOLD__` placeholder rendered per invocation via tempfile.
+  Spec §3 contract "threshold via CLI args sempre" honored — mechanism
+  differs from eslint `--rule` flag because Detekt/SwiftLint don't accept
+  CC threshold via CLI.
+- **Radon rank filter** changed from `-n F` (rank F = CC ≥ 41) to `-n A`
+  (all functions). Previous filter masked CC ∈ [11..40], making Python
+  gate effectively cc=41 instead of configured threshold.
+- **Canonical 3-caminhos render** now reaches the user: `cc_format_three_paths`
+  output stored in `result["render"]`, consumed by `engine/implement.py:_render_cc_gate_block`.
+- **Malformed override warnings** propagate from `_apply_overrides` (now
+  returns 3-tuple `(silenced, surviving, warnings)`) up to the result
+  dict so users see why their CC-OVERRIDE attempt didn't count.
+- +8 tests novos (1 dispatch radon `-n A`, 2 dispatch threshold-via-config
+  Detekt/SwiftLint, 1 validate canonical render, 1 validate warnings,
+  1 helper apply_overrides warnings, 2 implement render canonical). Suite
+  total: 682 passed, 17 skipped.
+
 ### Added (Gap 9 — extends-feature mechanic, 2026-06-03)
 
 - **Gap 9 resolvido — extends-feature mechanic (re-escopado 2026-06-03)** —
@@ -115,6 +162,31 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   com `dict.get(kebab, dict.get(snake))` (refactor puro, sem mudança de
   comportamento) — endereça nit gemini-code-assist no PR #3 (commit
   `7313a30`).
+
+### Fixed (PR #4 review)
+
+- `_path_matches_ignore` agora emite warning quando regex inválida em
+  `cc-gate.ignore-paths` (era silently swallowed). Pré-validação via
+  helper `_compile_ignore_patterns` em `validate()`, warnings propagam
+  no result dict (`cc-gate.ignore-paths: regex inválida '<pat>' (<erro>)`)
+  — D-006.
+- `_parse_overrides` emite warning pra `CC-OVERRIDE: ... cc=N — ` com
+  reason vazia/whitespace após em-dash (era loose-skipped). Strict regex
+  ganhou guard `reason.strip() == ""` pra não aceitar reason em branco;
+  loose-pass inspeciona o tail após `—` — D-008.
+- Warnings de `_run_tools_for_staged` agora distinguem tool ausente
+  (`[<tool>] tool ausente: ...`) de tool crashada
+  (`[<tool>] tool crashou: ...`) — D-009.
+- `_git_staged_files` adiciona `-M80%` ao `git diff` pra rename detection
+  (SDD §2 — função renomeada até 20% mudança vira `modified` no delta
+  rule, não `new` + delete) — F-006.
+- Test assertions tightened: `install_hints` específico pro `eslint`
+  (filtra por `c.name == "eslint"` antes de checar substring),
+  `next()` lookup safer em `test_verify_cc_position` (default None +
+  assertion descritivo) — codereviewbot 3353045999/3353046005.
+- +6 tests novos cobrindo D-006/D-008/D-009/F-006. Suite total:
+  688 passed, 17 skipped, 1 falha pre-existing
+  (`test_bootstrap_is_idempotent` em worktree — Gap BOOTSTRAP-1).
 
 ## [1.2.0] — 2026-06-03
 
