@@ -536,6 +536,51 @@ secrets-gate:
   registra a invocação em `.claude/state/secrets-gate-bypass.jsonl`. Não é o
   caminho normal de override — pra isso existe `SECRETS-OVERRIDE` no commit body.
 
+## qa (since v1.2)
+
+Section opcional. Quando ausente, defaults aplicados (todos os campos
+opcionais).
+
+```yaml
+qa:
+  enabled: true                              # default true. false desabilita o verbo
+  auto-run-on-feature-done: false            # default false. true dispara qa pré-retrospective
+  sandbox-budget-seconds-total: 60           # budget global por run
+  agent-timeout-seconds: 15                  # timeout per-validator no sandbox
+  scope-defaults:
+    paranoid-max-features: 10                # cap pra paranoid scope
+  extensions:
+    disabled: []                             # auditor names desabilitados (canon ou local)
+  retention-days: 14                         # .planning/qa/<run-id>/ retidos
+```
+
+### Field semantics
+
+- `enabled`: bool. `false` desabilita o comando `forge qa` inteiro
+  (mensagem mentor calma na invocação: "qa está desabilitado em
+  workflow-config; rode `forge reconfigure` se quiser ativar").
+- `auto-run-on-feature-done`: bool. Quando true, `engine/implement.py`
+  Phase 6 dispara `forge qa scope=feature` antes do retrospective.
+  Verdict NÃO bloqueia retrospective (§12.2 do spec).
+- `sandbox-budget-seconds-total`: float. Budget total pra Phase 3
+  sandbox execution. Default 60s. Quando estoura, fixtures restantes
+  marcados `skipped-budget`.
+- `agent-timeout-seconds`: float. Timeout per-validator subprocess.
+  Default 15s.
+- `scope-defaults.paranoid-max-features`: int. Cap pra paranoid scope
+  pra evitar explosão. Default 10.
+- `extensions.disabled`: list[str]. Nomes de auditores (canon ou local)
+  desativados nesta instalação.
+- `retention-days`: int. `.planning/qa/<run-id>/` retidos por N dias.
+  `forge doctor` reporta runs overdue. Cleanup interativo via
+  `forge reconfigure → menu qa → opção 5`. Pattern idêntico a Decisão 24
+  (.bak retention).
+
+### Coerência
+
+`forge doctor` reporta warning se `qa.enabled: false` AND
+`qa.auto-run-on-feature-done: true` (config inconsistente).
+
 ## Deliberately OUT of config
 
 | Decision | Why not in config |
