@@ -100,6 +100,10 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   `pytest (637 tests baseline)` (fix do I-006 do REVIEW — drift pré-existente
   desde v1.1.0 + acumulado em v1.2.0 + Gap 9). Re-baselinar pra próximo
   gap saber a verdade.
+- `engine/memory/l1.py`: simplifica fallback kebab/snake em `read_l1_status`
+  com `dict.get(kebab, dict.get(snake))` (refactor puro, sem mudança de
+  comportamento) — endereça nit gemini-code-assist no PR #3 (commit
+  `7313a30`).
 
 ## [1.2.0] — 2026-06-03
 

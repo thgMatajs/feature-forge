@@ -3,7 +3,7 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-03 (v1.2.0 + Gap 9 — extends-feature mechanic ship)
+**Última atualização:** 2026-06-05 (v1.2.0 + Gap 9 + /resolve-pr-comments cleanup)
 **Estado:** Gap 9 fechado — extends-feature mechanic shipado em
 `feat/gap9-extends-feature`. Pattern leve product-derived: feature done
 pode ser estendida via novo slug derivado com `extends-feature:
