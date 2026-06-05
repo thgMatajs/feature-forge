@@ -1162,6 +1162,45 @@ def _run_pipeline(project_root: Path) -> int:
             if decision.note:
                 renderer.write(renderer.colored(decision.note, "yellow"))
 
+    checkpoint.step = "step-7-6-qa"
+    checkpoint.at = _utc_now_iso()
+    _save_checkpoint(checkpoint)
+
+    # ── Step QA — opt-in do verbo forge qa (Wave 7 — Task 7.4 / §9) ──────────
+    # Pergunta interativa mentor-calmo PT-BR: enabled (default sim — comando
+    # disponível) + auto-run-on-feature-done (default não — disparo manual).
+    # Defaults vivem aqui; user mudar depois via `forge reconfigure -> qa`.
+    renderer.write("")
+    renderer.write(
+        renderer.bold(
+            "forge qa — gate adversarial multi-agente (red-team)"
+        )
+    )
+    renderer.write(
+        "Audita artefatos do lifecycle inventando cenários hostis "
+        "(spec-vs-spec, chaos, coverage, validator-claim) e roda fixtures "
+        "sintéticos em sandbox isolado. Verdict NÃO bloqueia retrospective "
+        "nem commit — findings entram em proposed-evolutions pra forge evolve."
+    )
+    renderer.write("")
+    qa_enabled = ui_question.confirm(
+        "Ativar o comando `forge qa` neste projeto? "
+        "(s = comando disponível, sem auto-run; N = desabilita o verbo)",
+        default=True,
+    )
+    qa_auto_run = False
+    if qa_enabled:
+        qa_auto_run = ui_question.confirm(
+            "Auto-run no feature-done (rodar qa antes do retrospective)? "
+            "(s = projeto heavy-QA; N = disparo manual via `forge qa`)",
+            default=False,
+        )
+    renderer.write(
+        renderer.dim(
+            f"qa.enabled={qa_enabled} · qa.auto-run-on-feature-done={qa_auto_run}"
+        )
+    )
+
     checkpoint.step = "step-8-merge"
     checkpoint.at = _utc_now_iso()
     _save_checkpoint(checkpoint)
@@ -1306,6 +1345,8 @@ def _run_pipeline(project_root: Path) -> int:
         conv_inv=conv_inv,
         preset=preset,
         backend_choice=checkpoint.backend_choice or "unknown",
+        qa_enabled=qa_enabled,
+        qa_auto_run=qa_auto_run,
     )
     write_yaml(workflow_config_path(project_root), config, atomic=True)
 
@@ -1428,6 +1469,8 @@ def _build_workflow_config(
     conv_inv: Any,
     preset: dict[str, Any],
     backend_choice: str,
+    qa_enabled: bool = True,
+    qa_auto_run: bool = False,
 ) -> dict[str, Any]:
     """Assemble the workflow-config.yaml dict (schema v1).
 
@@ -1521,6 +1564,22 @@ def _build_workflow_config(
         },
         "workflow": {
             "readiness-strictness": "standard",
+        },
+        # Wave 7 Task 7.4 / spec §9 — bloco qa: completo com defaults.
+        # User mexe via `forge reconfigure -> qa` (5 opções) ou edita
+        # diretamente este arquivo. Schema canônico em §9 da spec.
+        "qa": {
+            "enabled": bool(qa_enabled),
+            "auto-run-on-feature-done": bool(qa_auto_run),
+            "sandbox-budget-seconds-total": 60,
+            "agent-timeout-seconds": 15,
+            "scope-defaults": {
+                "paranoid-max-features": 10,
+            },
+            "extensions": {
+                "disabled": [],
+            },
+            "retention-days": 14,
         },
     }
     return config
