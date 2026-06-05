@@ -3,6 +3,16 @@
 What still needs to be drafted, in dependency order. Use this as the
 checklist for next sessions.
 
+## Fechado em [Unreleased]
+
+- **Auditoria pós-plano** — gap identificado em 2026-06-04 (não estava
+  listado em `04-pending.md` antes, mas surgiu no fluxo: o
+  `superpowers:writing-plans` Self-Review é leve demais pra capturar
+  load-bearing edits sem justificativa, ausência de "Revisita decisão
+  N", doc-sync gaps, reuse-first ignorado, voz quebrada). Resolvido via
+  `.claude/rules/plan-auditor.md` + integração — ver CHANGELOG
+  `[Unreleased]`. Spec: `docs/superpowers/specs/2026-06-04-plan-auditor-design.md`.
+
 ## Phase 1 — Espinha dorsal (schemas + estrutura)
 
 - [x] workflow-config.yaml schema → `docs/schemas/workflow-config.md`

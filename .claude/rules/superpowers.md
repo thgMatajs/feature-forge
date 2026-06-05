@@ -17,6 +17,7 @@ runtime import** — skills são recurso humano + Claude Code (Decision 22).
 | `superpowers:receiving-code-review` | quando reviewer subagent retorna REVIEW.md | sim |
 | `superpowers:executing-plans` | quando há plan escrito a seguir (modo inline alternativo ao subagent-driven) | recomendado |
 | `superpowers:verification-before-completion` | antes de claim "pronto/implementado/feito" | sim — hard gate antes de commit final |
+| `plan-auditor` (rule local) | pós writing-plans terminal-state, antes do execution-handoff | **sim — critical findings bloqueiam** |
 
 ## Skills NÃO ativadas (deliberadamente)
 
@@ -34,6 +35,17 @@ Quando padrão emergir e justificar, entrar via:
 1. `forge evolve` propõe addition
 2. Brainstorm de revisita
 3. Update neste rule + CLAUDE.md superpowers map
+
+## Extensão local: plan-auditor
+
+`plan-auditor` não é skill do superpowers — é rule deste projeto
+(`.claude/rules/plan-auditor.md`). Estende o terminal-state do
+`superpowers:writing-plans`: antes do "Execution Handoff" do SKILL.md,
+o orquestrador OBRIGATORIAMENTE dispatcha `gsd-code-reviewer` com o
+prompt do auditor. Critical findings bloqueiam o handoff até fix-dispatch
+resolver.
+
+Detalhe completo: `.claude/rules/plan-auditor.md`.
 
 ## Hierarquia de prioridade (per superpowers contract)
 

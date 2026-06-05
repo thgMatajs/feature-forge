@@ -14,6 +14,7 @@ Como despachar bem. Mandamento 0 diz QUE despacha; este doc diz COMO.
 | Pesquisa multi-step | `general-purpose` | catch-all sem disciplina específica |
 | Edição de docs (sync, handoff, README) | `gsd-doc-writer` ou `general-purpose` | gsd-doc-writer se houver doc_assignment block; senão general |
 | Plano de feature/refactor | `gsd-planner` (via skill writing-plans) | writing-plans skill é o caminho canônico — não dispatch direto |
+| Auditar plano pós writing-plans | `gsd-code-reviewer` | prompt em `.claude/rules/plan-auditor.md`; produz `PLAN-REVIEW.md` com 12 checks classificados |
 
 ## Despacho em paralelo
 

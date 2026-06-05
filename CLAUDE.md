@@ -130,9 +130,9 @@ Detalhe + template: `.claude/rules/orchestrator-persona.md §Não-procrastinaç�
 
 | Vou… | Skills (orchestrator invoca) | Quem executa |
 |---|---|---|
-| Adicionar feature/recurso | `brainstorming` → `writing-plans` → `subagent-driven-development` | `gsd-executor` + review subagent |
+| Adicionar feature/recurso | `brainstorming` → `writing-plans` → plan-auditor (dispatched) → `subagent-driven-development` | `gsd-executor` + review subagent |
 | Resolver bug | `systematic-debugging` → `subagent-driven-development` | `gsd-executor` + review subagent |
-| Refatorar | `brainstorming` → `writing-plans` (no-behavior) → `subagent-driven-development` | `gsd-executor` + review (check_no_behavior_change) |
+| Refatorar | `brainstorming` → `writing-plans` (no-behavior) → plan-auditor (dispatched) → `subagent-driven-development` | `gsd-executor` + review (check_no_behavior_change) |
 | Editar locked decision | `brainstorming` (revisitar N) | `gsd-executor` edita com histórico preservado |
 | Editar schema/template | `writing-plans` → `subagent-driven-development` | `gsd-executor` + review |
 | Finalizar qualquer mudança | `verification-before-completion` + doc-sync | subagent verifica + subagent atualiza docs |

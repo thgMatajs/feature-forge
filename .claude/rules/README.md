@@ -18,6 +18,7 @@ Voz: mentor calmo. Não duplica `docs/design/*` — adiciona camada operacional.
 | [reuse.md](reuse.md) | `forge graph` antes de criar helper novo | antes de Write em código novo |
 | [superpowers.md](superpowers.md) | 10 skills com triggers e bloqueios | quando dúvida de skill ativar |
 | [doc-sync.md](doc-sync.md) | Matriz código→docs, checklist pré-commit | em todo commit que toca código "vivo" |
+| [plan-auditor.md](plan-auditor.md) | Prompt + 12 checks pra auditoria pós writing-plans | antes/depois de dispatch do auditor |
 | [project-anatomy.md](project-anatomy.md) | Mapa "se procura X, vai em Y" + smoke tests | navegação inicial |
 | [SMOKE-CHECKLIST.md](SMOKE-CHECKLIST.md) | 5 verificações manuais pós-bootstrap | one-time após instalar |
 

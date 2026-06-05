@@ -7,6 +7,22 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Plan auditor** — `.claude/rules/plan-auditor.md` define prompt
+  determinístico + 12 checks com severity (2 Critical / 4 High / 3
+  Medium / 3 Low) pra auditoria pós-`superpowers:writing-plans`.
+  Orquestrador dispatcha `gsd-code-reviewer` com este prompt antes do
+  "Execution Handoff" do SKILL.md; Critical findings bloqueiam o handoff
+  até fix-dispatch resolver. Output em `.planning/plan-reviews/<plan-slug>-review-r<N>.md`
+  (gitignored). Re-audit cap em 3 rodadas, override inline via
+  `<!-- audit-override: C-XXX — razão -->` no topo do plano. Integração
+  documentada em `CLAUDE.md` §Workflow por verbo,
+  `.claude/rules/superpowers.md`, `.claude/rules/subagent-workflow.md`,
+  `.claude/rules/README.md`. Spec:
+  `docs/superpowers/specs/2026-06-04-plan-auditor-design.md`. Plano:
+  `docs/superpowers/plans/2026-06-04-plan-auditor.md`.
+
 ## [1.2.0] — 2026-06-03
 
 ### Added (Gap 5 — Card local overlay, 2026-06-02)
