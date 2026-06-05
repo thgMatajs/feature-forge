@@ -60,6 +60,16 @@ pra revisita quando padrão recorrer em smokes futuros (precisamos de
   registrar como decisão direcional em `docs/design/01-decisions.md`
   com ADR-style commit note.
 
+  > **Case-1 (2026-06-05, power-review PR #6):** finding PR-001 [high
+  > gap-spec] confirmou o gap factualmente — bloco verbatim Task 1 do
+  > plano divergiu do rule vivo depois de 3 commits de refinement
+  > (`b4676dd`, `95aa5a2`, `0d43b394`) que o sync r2 declarou cobrir
+  > mas só patcheou parcialmente. Resolução nesta PR (commit `60cde77`)
+  > sincronizou os blocos divergentes; gap permanece aberto pra
+  > mecanismo preventivo (Caminhos B "verbatim → referência" ou C
+  > "isenção H1 quando refinement registrado em CHANGELOG" do meta #1
+  > r2). **Contagem: 1/3 (case-1).**
+
 Target: contínuo (sem versão fixa — gatilho é dados de mais smokes).
 
 ## Phase 1 — Espinha dorsal (schemas + estrutura)
