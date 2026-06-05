@@ -7,6 +7,25 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed (Phase 0 — gate-infra extraction)
+
+- **Reusable gate infrastructure** extracted from CC gate into:
+  - `validators/_gate_infra.py` — `DispatchResult`, `check_tool_available`,
+    `dispatch_native_tool` (cmd_builder param), `render_config_with_placeholders`,
+    `parse_overrides`, `apply_overrides` (prefix/key_pattern/extractor params).
+  - `validators/_diff.py` — `DiffHunk`, `classify_range_against_hunks`,
+    `extract_diff_hunks`, `git_staged_files`, `read_commit_body`.
+- **Renamed in `validators/_common.py`:** `cc_threshold_lookup` →
+  `gate_threshold_lookup`, `cc_format_three_paths` → `format_three_paths_message`.
+  `DEFAULTS_CC` preserved (CC-specific).
+- **`check_cyclomatic_complexity.py`** refactored to compose from `_gate_infra`
+  + `_diff` + renamed `_common` helpers. ~1127 LOC → ~840 LOC. No behavior
+  change (suite delta: -1 test, justified — removed test of internal
+  `_TOOL_BIN[lang]` lookup that no longer exists post-refactor).
+- **Unblocks Wave R1+** (check_secrets, check_deps_cve, check_duplication,
+  check_cognitive_complexity, check_dead_code, check_arch_rules,
+  check_function_length_and_nesting): gates compõem em vez de copiar a infra.
+
 ### Added
 
 - **Cyclomatic Complexity gate (`check_cyclomatic_complexity`)** — multi-language

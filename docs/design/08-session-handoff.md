@@ -3,10 +3,24 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-05 (v1.2.0 + Gap 9 + PR #4 CC gate review fixes + merge main)
-**Estado:** branch `worktree-feat+cc-gate` mescla `origin/main` (Gap 9
-ship + /resolve-pr-comments cleanup) com PR #4 (Cyclomatic Complexity
-gate + review fixes). Duas linhas de trabalho convivem no Unreleased:
+**Última atualização:** 2026-06-05 (v1.2-dev — Phase 0 gate-infra extraction)
+**Estado:** branch `worktree-feat+gate-infra-extract` consolida Phase 0 do
+roadmap de quality-gates expansion — refactor estrito (no-behavior-change)
+extrai infra reusável do CC gate em `validators/_gate_infra.py` +
+`validators/_diff.py` + rename de helpers em `validators/_common.py`. CC
+validator caiu de ~1127 LOC para ~840 LOC compondo helpers públicos.
+Suite 750 verde (baseline 751 - 1 justificado em T4: removed test do
+lookup `_TOOL_BIN[lang]` interno que não existe pós-refactor). Próximo
+passo: push + PR + Wave R1.1 `check_secrets` consume `_gate_infra` em
+vez de copiar — primeiro consumer real do helper extraído valida a
+generalização e pode disparar Gap GATE-INFRA-1 (parametrizar
+`gate_threshold_lookup` + `format_three_paths_message` quando 2º consumer
+chegar). Três linhas de trabalho convivem no Unreleased:
+
+- **Phase 0 (gate-infra-extract)** — refactor estrito: 7 commits de
+  extração + 1 doc-sync. Sem behavior change, sem decisão locked tocada,
+  sem novo validator. Apenas reorganização que destrava Wave R1+ (gates
+  pendentes compõem do shared em vez de copiar).
 
 - **PR #4 — Cyclomatic Complexity gate** (em review) — `check_cyclomatic_complexity`
   multi-language (Kotlin/Swift/TS/Python) dispatcha pra Detekt/SwiftLint/
@@ -46,11 +60,14 @@ gate + review fixes). Duas linhas de trabalho convivem no Unreleased:
   Gap 9 baseline: **637 passing + 12 skipped** (+42 desde v1.2.0: 37 Gap 9
   + 5 fix loop).
 
-Após merge, a suite cumulativa esperada na branch é ~700 collected
-(637 Gap 9 + ~63 CC gate). Próximo: finishing-branch PR #4 + doc-sync
-close-out; considerar Gap 14 (preset coverage) e itens deferred v1.2.x em
-`04-pending.md` (lenient local loader C1, re-detection inline no Step 7.5
-N2-a, ADR-suspension audit log N13, catalog_overlay refactor N17).
+Após Phase 0 (gate-infra-extract), suite cumulativa na branch fica em
+**750 collected** (baseline 751 - 1 justificado em T4). Próximo: push
++ PR Phase 0 + Wave R1.1 `check_secrets` (primeiro consumer real do
+`_gate_infra` extraído). Considerar Gap 14 (preset coverage) e itens
+deferred v1.2.x em `04-pending.md` (lenient local loader C1, re-detection
+inline no Step 7.5 N2-a, ADR-suspension audit log N13, catalog_overlay
+refactor N17, Gap GATE-INFRA-1 parametrização quando 2º consumer
+chegar, Gap BOOTSTRAP-1 worktree-aware bootstrap).
 
 ### Histórico — v1.2.0 (2026-06-03)
 
@@ -121,6 +138,7 @@ v1.2.0 + Gap 9 + PR #4 CC gate cumulativo: ~700 tests collected (688 passed + 17
 | v1.2 — Gap 5 (card local overlay) | ✅ shipped 2026-06-02 — Approach A: cascade canon ∪ local com hard-fail em colisão; validators overlay-aware; reconfigure submenu `card-local`; init Step 7.5 com 3-caminhos pra signals órfãos; cards canon 20 → 22 (`retrofit-client` + `shared-preferences-prefs` com `legacy-marker`). Decisão locked 28 nova (ADR append-only). Suite: 595 passing + 12 skipped. |
 | v1.2 — Gap 9 (extends-feature mechanic) | ✅ shipped 2026-06-03 — re-escopado: extends-feature pattern leve product-derived (sem cards canon novos, sem mudança em platforms enum, sem upgrade de inventory schema); 4º caminho "Estender" em `forge plan` Cena 1; validator EXT-001..004; discipline §10 formaliza semantics; `shipped-at` writer em transição state=done. Multi-target watchOS/Wear/TV movido pra out-of-scope permanente. **+42 tests cumulativo (37 Gap 9 + 5 fix loop); total 637 passing + 12 skipped**. Detalhe em `CHANGELOG.md`. |
 | v1.2-dev — CC gate (PR #4) | 🔄 em review — `check_cyclomatic_complexity` multi-language (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon); threshold per card override > workflow-config > defaults; 3-caminhos on-fail (refactor / override-justify / split-task); doctor categoria 13ª `cc-gate-tools`. 13 commits + ~63 tests novos (suite 630 → 693 collected pré-merge; 682 passed + 17 skipped pós-refinements; 688 passed + 17 skipped pós PR #4 review fixes D-006/D-008/D-009/F-006). |
+| v1.2-dev — Phase 0 (gate-infra-extract) | ✅ extracted (`_gate_infra.py` + `_diff.py`) 2026-06-05 — refactor estrito sem behavior change: 7 commits extraem `DispatchResult`/`check_tool_available`/`dispatch_native_tool`/`render_config_with_placeholders`/`parse_overrides`/`apply_overrides` em `_gate_infra.py` + `DiffHunk`/`classify_range_against_hunks`/`extract_diff_hunks`/`git_staged_files`/`read_commit_body` em `_diff.py`; rename `cc_threshold_lookup` → `gate_threshold_lookup` e `cc_format_three_paths` → `format_three_paths_message` em `_common.py` (DEFAULTS_CC preservado). CC validator ~1127 → ~840 LOC compondo helpers. Suite 750 (baseline 751 - 1 justificado em T4). Destrava Wave R1+ (check_secrets/check_deps_cve/check_duplication/check_cognitive_complexity/check_dead_code/check_arch_rules/check_function_length_and_nesting). |
 
 ## Conhecidos limites v1.1 (atualizado)
 

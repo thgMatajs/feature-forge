@@ -1796,6 +1796,38 @@ revisitado.
   modo opt-in via `cleanup-bak`-style submenu em `forge reconfigure`
   ou flag no `card.yaml` próprio do local.
 
+## Phase 0 follow-ups (gate-infra extraction — 2026-06-05)
+
+### Gap GATE-INFRA-1 — Parametrize gate_threshold_lookup + format_three_paths_message
+
+**Categoria:** gate-infra
+**Severidade:** baixa (YAGNI — não bloqueia até 2º consumer)
+**Status:** deferred (resolver quando R1.1 check_secrets ou outro gate consumir)
+
+`gate_threshold_lookup` ainda hardcoda `"cc-gate-override"` / `"cc-gate"` /
+`DEFAULTS_CC` internamente. Nome foi generalizado mas implementação permanece
+CC-específica. Quando 2º gate consumer arriver (provavelmente `check_secrets`),
+parametrizar via novos kwargs: `card_override_key` / `workflow_block_key` /
+`defaults` / `gate_title` / `why_lines`. Similar pra `format_three_paths_message`
+(parametrizar `gate_title`, `format_annotation`).
+
+Razão pra deferir: YAGNI — sem 2º consumer concreto, parametrização vira
+abstração especulativa. `forge graph` Q12/Q14 vão detectar near-duplicate
+quando R1.1 copiar o helper.
+
+### Gap BOOTSTRAP-1 — test_bootstrap_is_idempotent falha em worktree context
+
+**Categoria:** test-infra
+**Severidade:** baixa (environmental, não regressão)
+**Status:** deferred
+
+`tests/integration/test_claude_rules_system.py::test_bootstrap_is_idempotent`
+falha em qualquer worktree porque `.git` é arquivo (não diretório) — bootstrap
+script tenta `ln .git/hooks/pre-commit` que falha com "Not a directory".
+
+Fix: `bootstrap.sh` detectar worktree via `git rev-parse --git-dir` antes de
+criar symlink — resolve gitdir real. Out-of-scope Phase 0; valid follow-up.
+
 ## Reading order for new contributors
 
 **For a fresh session retomando o projeto, use o handoff:**

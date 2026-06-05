@@ -72,7 +72,7 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 | Templates canônicos | 18 (16 produto + feature-intake-bugfix + feature-intake-refactor) |
 | Cards canônicos | 22 (8 stack + 6 Firebase + 6 REST + retrofit-client + shared-preferences-prefs com `legacy-marker`); overlay local em `.claude/cards/local/<name>/` desde Gap 5 (2026-06-02) |
 | Preset | kmp-mobile (8 stack cards + 4 backend-candidates) |
-| Validators Python | 15 (+ 2 helpers) — inclui `check_no_behavior_change` para refactor, `check_cyclomatic_complexity` multi-language (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon); `validate_card_yaml` + `validate_capability_labels` overlay-aware (Gap 5); `validate_extension_feature` novo em Gap 9 (EXT-001..004, cross-cutting) |
+| Validators Python | 15 (+ 4 helper modules: `_common.py`, `_gate_infra.py`, `_diff.py`, `__init__.py`) — inclui `check_no_behavior_change` para refactor, `check_cyclomatic_complexity` multi-language (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon) refatorado em Phase 0 (v1.2-dev) pra compor de `_gate_infra` + `_diff`; `validate_card_yaml` + `validate_capability_labels` overlay-aware (Gap 5); `validate_extension_feature` novo em Gap 9 (EXT-001..004, cross-cutting) |
 | Hooks | 9 + 1 reuse incremental (`post-edit-detect-duplications.sh`) |
 | Tests | ~700 collected (rapid lane + integration/e2e — Gap 9 +42 (37 ship + 5 fix loop) + CC gate +~63; cumulativo cobre PR #1 R1+R2+R3 + Gap 5 + power-review PR #2 R1 + Gap 9 + PR #4 CC gate). v1.2.0 baseline 595+12 e Gap 9 baseline 637+12 preservados na timeline. |
 | LOC total | ~52.500 |
