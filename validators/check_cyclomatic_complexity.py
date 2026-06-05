@@ -24,7 +24,6 @@ import os
 import re  # noqa: F401  — used by override-detect task (T7)
 import subprocess  # noqa: F401  — used by dispatch task (T6)
 import sys
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -38,7 +37,11 @@ from _common import (
     result_warn,  # noqa: F401  — wired in T6/T8
     run_cli,
 )
-from _gate_infra import DispatchResult, check_tool_available
+from _gate_infra import (
+    DispatchResult,
+    check_tool_available,
+    render_config_with_placeholders,
+)
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -327,26 +330,6 @@ _TOOL_BIN = {
 _CONFIG_DIR = Path(__file__).resolve().parent.parent / "engine" / "_cc_configs"
 
 
-_CC_THRESHOLD_PLACEHOLDER = "__CC_THRESHOLD__"
-
-
-def _render_config_for_threshold(template_path: Path, threshold: int) -> str:
-    """Render a CC tool config template, substituting the threshold placeholder.
-
-    Spec §3 mandates "threshold passado via CLI args **sempre**" — but Detekt
-    and SwiftLint don't accept per-rule threshold via CLI flags. We honor the
-    contract by rendering the static template (`engine/_cc_configs/<tool>.yml`)
-    into a tempfile per invocation, swapping ``__CC_THRESHOLD__`` for the
-    resolved threshold. The tempfile path is passed via ``--config`` so each
-    invocation carries the correct dynamic value.
-
-    Caller is responsible for writing the rendered string to disk and cleaning
-    up the tempfile after subprocess returns.
-    """
-    raw = template_path.read_text(encoding="utf-8")
-    return raw.replace(_CC_THRESHOLD_PLACEHOLDER, str(threshold))
-
-
 def _dispatch_tool(
     *,
     language: str,
@@ -390,18 +373,9 @@ def _dispatch_tool(
             # JSON em stdout (sem precisar tempfile pro report). Threshold é
             # rendered dinamicamente no config (Detekt não aceita CLI override
             # por regra). Spec §3 threshold-via-CLI honored via tmpfile render.
-            rendered_config = tempfile.NamedTemporaryFile(
-                mode="w",
-                suffix=".yml",
-                prefix="detekt-cc-",
-                delete=False,
-                encoding="utf-8",
-            ).name
-            Path(rendered_config).write_text(
-                _render_config_for_threshold(
-                    _CONFIG_DIR / "detekt.yml", threshold
-                ),
-                encoding="utf-8",
+            rendered_config = render_config_with_placeholders(
+                _CONFIG_DIR / "detekt.yml",
+                {"__CC_THRESHOLD__": str(threshold)},
             )
             cmd = [
                 tool,
@@ -413,18 +387,9 @@ def _dispatch_tool(
             # SwiftLint: subcomando `lint` + reporter json. Threshold rendered
             # dinamicamente no config (SwiftLint não aceita CLI override per-rule).
             # Spec §3 threshold-via-CLI honored via tmpfile render.
-            rendered_config = tempfile.NamedTemporaryFile(
-                mode="w",
-                suffix=".yml",
-                prefix="swiftlint-cc-",
-                delete=False,
-                encoding="utf-8",
-            ).name
-            Path(rendered_config).write_text(
-                _render_config_for_threshold(
-                    _CONFIG_DIR / "swiftlint.yml", threshold
-                ),
-                encoding="utf-8",
+            rendered_config = render_config_with_placeholders(
+                _CONFIG_DIR / "swiftlint.yml",
+                {"__CC_THRESHOLD__": str(threshold)},
             )
             cmd = [
                 tool, "lint",
