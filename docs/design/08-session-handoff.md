@@ -3,8 +3,21 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-08 (v1.2-dev — merge origin/main + Phase 0 gate-infra-extract + R1.1 secrets gate in-flight)
-**Estado:** v1.2.0 feito + Gap 9 cumulativo + CC gate v1 (PR #4) + PRD docs/product/ (PR #5) + plan-auditor (PR #6) tudo em `main`. Branch `worktree-feat+gate-infra-extract` agora consolida (após merge de origin/main) Phase 0 do roadmap de quality-gates expansion — refactor estrito (no-behavior-change) extrai infra reusável do CC gate em `validators/_gate_infra.py` + `validators/_diff.py` + rename de helpers em `validators/_common.py`. CC validator caiu de ~1127 LOC para ~840 LOC compondo helpers públicos. Phase 0 suite verde (baseline 751 - 1 justificado em T4: removed test do lookup `_TOOL_BIN[lang]` interno que não existe pós-refactor). Wave R1.1 `check_secrets` shipping na mesma branch — primeiro consumer real do helper extraído valida a generalização e fechou Gap GATE-INFRA-1 (parametrização de `gate_threshold_lookup` + `format_three_paths_message`); Gap GATE-INFRA-2 (kw-only `cmd_builder` API) registrado pra próximo consumer. Próximo passo: PR #7 mergeable + Wave R1.1 verde + considerar Gap 14 (preset coverage) + itens deferred v1.2.x. Várias linhas de trabalho convivem no Unreleased:
+**Última atualização:** 2026-06-08 (v1.2-dev — merge origin/main + Phase 0 gate-infra-extract + R1.1 secrets gate in-flight + forge qa branch in-flight)
+**Estado:** v1.2.0 feito + Gap 9 cumulativo + CC gate v1 (PR #4) + PRD docs/product/ (PR #5) + plan-auditor (PR #6) tudo em `main`. Branch `worktree-feat+gate-infra-extract` agora consolida (após merge de origin/main) Phase 0 do roadmap de quality-gates expansion — refactor estrito (no-behavior-change) extrai infra reusável do CC gate em `validators/_gate_infra.py` + `validators/_diff.py` + rename de helpers em `validators/_common.py`. CC validator caiu de ~1127 LOC para ~840 LOC compondo helpers públicos. Phase 0 suite verde (baseline 751 - 1 justificado em T4: removed test do lookup `_TOOL_BIN[lang]` interno que não existe pós-refactor). Wave R1.1 `check_secrets` shipping na mesma branch — primeiro consumer real do helper extraído valida a generalização e fechou Gap GATE-INFRA-1 (parametrização de `gate_threshold_lookup` + `format_three_paths_message`); Gap GATE-INFRA-2 (kw-only `cmd_builder` API) registrado pra próximo consumer.
+
+Linha paralela: branch `worktree-forge-qa` (PR #8, in-flight contra
+`main` pós-rebase) carrega `forge qa` como 13º comando (red-team
+adversarial gate). 4 attack vectors (spec-vs-spec, chaos, coverage,
+validator-claim) × 4 scope targets (feature / screen / task / paranoid).
+Sandbox isolado em `.planning/qa/<run-id>/fixtures/` (Decisão 30).
+Verdict informativo (BLOCK / FLAG / PASS) — não bloqueia
+retrospective/commit (Decisão 5 preservada via discipline §11 nova).
+Findings desaguam em `forge evolve` como `proposal-kind: qa-finding`.
+Spec: `docs/superpowers/specs/2026-06-05-forge-qa-design.md`. Plano
+executado: `docs/superpowers/plans/2026-06-05-forge-qa.md`.
+
+Próximo passo: PR #7 mergeable + Wave R1.1 verde + considerar Gap 14 (preset coverage) + itens deferred v1.2.x. Várias linhas de trabalho convivem no Unreleased:
 
 - **Phase 0 (gate-infra-extract) — esta branch** — refactor estrito: 7 commits de
   extração + 1 doc-sync + 4 robustness fixes pós-power-review (render_config,
@@ -151,6 +164,7 @@ v1.2.0 + Gap 9 + PR #4 CC gate + Phase 0 + R1.1 secrets cumulativo: ~730 tests c
 | v1.1.0 — PR #1 bloqueadores resolvidos | ✅ shipped 2026-06-01 — 14 commits cobrindo C1–C4 (phase lock atomic O_EXCL, implement try/finally, `_reset_domain_tables` atomic, version bump 1.1.0) + A1/A2/A5/A6/A9/A12 (Swift `"""` brace counter, Groovy DSL parens, tie-breaker determinístico, root-level `test/` recognition, `forge plan` rc=130 em deferred) + review fixes (CR-01/CR-02/MD-01/HG-01/HG-02/HG-03). **+38 regression tests, total 458 (baseline 367 + 53)**. Detalhe em `CHANGELOG.md`. |
 | v1.2 — Gap 5 (card local overlay) | ✅ shipped 2026-06-02 — Approach A: cascade canon ∪ local com hard-fail em colisão; validators overlay-aware; reconfigure submenu `card-local`; init Step 7.5 com 3-caminhos pra signals órfãos; cards canon 20 → 22 (`retrofit-client` + `shared-preferences-prefs` com `legacy-marker`). Decisão locked 28 nova (ADR append-only). Suite: 595 passing + 12 skipped. |
 | v1.2 — Gap 9 (extends-feature mechanic) | ✅ shipped 2026-06-03 — re-escopado: extends-feature pattern leve product-derived (sem cards canon novos, sem mudança em platforms enum, sem upgrade de inventory schema); 4º caminho "Estender" em `forge plan` Cena 1; validator EXT-001..004; discipline §10 formaliza semantics; `shipped-at` writer em transição state=done. Multi-target watchOS/Wear/TV movido pra out-of-scope permanente. **+42 tests cumulativo (37 Gap 9 + 5 fix loop); total 637 passing + 12 skipped**. Detalhe em `CHANGELOG.md`. |
+| forge qa (13º comando) | ✓ — entregue v1.2, 4 attack vectors + 4 scope targets + sandbox isolado |
 | v1.2-dev — CC gate (PR #4) | 🔄 em review — `check_cyclomatic_complexity` multi-language (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon); threshold per card override > workflow-config > defaults; 3-caminhos on-fail (refactor / override-justify / split-task); doctor categoria 13ª `cc-gate-tools`. 13 commits + ~63 tests novos (suite 630 → 693 collected pré-merge; 682 passed + 17 skipped pós-refinements; 688 passed + 17 skipped pós PR #4 review fixes D-006/D-008/D-009/F-006). |
 | v1.2-dev — Phase 0 (gate-infra-extract) | ✅ extracted (`_gate_infra.py` + `_diff.py`) 2026-06-05 — refactor estrito sem behavior change: 7 commits extraem `DispatchResult`/`check_tool_available`/`dispatch_native_tool`/`render_config_with_placeholders`/`parse_overrides`/`apply_overrides` em `_gate_infra.py` + `DiffHunk`/`classify_range_against_hunks`/`extract_diff_hunks`/`git_staged_files`/`read_commit_body` em `_diff.py`; rename `cc_threshold_lookup` → `gate_threshold_lookup` e `cc_format_three_paths` → `format_three_paths_message` em `_common.py` (DEFAULTS_CC preservado). CC validator ~1127 → ~840 LOC compondo helpers. Suite 750 (baseline 751 - 1 justificado em T4). Destrava Wave R1+ (check_secrets/check_deps_cve/check_duplication/check_cognitive_complexity/check_dead_code/check_arch_rules/check_function_length_and_nesting). |
 | v1.2-dev — Secrets gate (R1.1) | 🚀 shipping 2026-06-05 — `check_secrets` per-stage split: gitleaks no per-task hook de `forge implement`, trufflehog `--only-verified` na cascade de `forge verify`. Posicionado após `check_cyclomatic_complexity` (fail-fast Decision 23 preservado). Override via `SECRETS-OVERRIDE: <file>:<line> kind=<token-type> — <razão>` no commit body. Hard-fail sempre; tool missing → warn; bypass `NO_SECRETS_GATE=1` logado em `.claude/state/secrets-gate-bypass.jsonl`. Composto inteiro da infra Phase 0 (2º consumer, prova que a extração paga). Validators 15→16, doctor 13→14 categorias (`secrets-tools`). 6 commits + ~30 tests novos. |
@@ -258,6 +272,22 @@ permanente (Gap 9 revisita 2026-06-03):**
   overlay)** — não expansão prescritiva do canon. Demanda real teria
   que reabrir a revisita Gap 9 inteira. Documentado em
   `docs/design/04-pending.md §Gap 9 §OUT-OF-SCOPE explícito`.
+
+**forge qa (13º comando) surfaced (2026-06-05) — não bloqueia ship,
+target v1.2.x+:**
+
+- **Auditores LLM dependem de Claude Code dispatch** — Phase 2 (generative
+  auditors: spec-vs-spec, chaos, coverage, validator-claim) é invocada via
+  Agent tool em contexto Claude Code. Engine standalone fora desse contexto
+  não roda os 4 auditores LLM — só os auditores estáticos (Phase 1).
+  Decisão arquitetural alinhada a "LLM hookup real é Phase 6" (v1.0 herdado),
+  não bug. Documentado em `docs/superpowers/specs/2026-06-05-forge-qa-design.md`
+  §6.2.
+- **Greenfield retorna mensagem honesta sem 3-caminhos** — `forge qa` em
+  projeto sem features planejadas retorna `state=greenfield, verdict=n/a`
+  e explica que QA requer scope auditável (feature / screen / task /
+  paranoid sobre algo concreto). Não oferece 3-caminhos porque "rodar QA
+  vazio" não é caminho legítimo — é estado inicial honesto.
 
 **Gap 9 (extends-feature mechanic) surfaced (2026-06-03) — não bloqueia
 merge, target v1.2.x:**
