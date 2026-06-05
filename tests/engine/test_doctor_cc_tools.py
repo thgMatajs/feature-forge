@@ -38,7 +38,14 @@ def test_cc_gate_tools_marks_missing_with_install_instructions(
         assert check.remediation  # must include install hint
     install_hints = " ".join(c.remediation for c in cat.checks)
     assert "brew install swiftlint" in install_hints
-    assert "npm install" in install_hints or "npm i" in install_hints
+    # Asserção específica pro tool eslint — antes "npm install" podia bater
+    # com hint de qualquer outra tool e o teste passaria mesmo se a hint
+    # de eslint estivesse errada (codereviewbot 3353045999).
+    assert any(
+        "npm install" in c.remediation or "npm i" in c.remediation
+        for c in cat.checks
+        if c.name == "eslint"
+    )
     assert "pip install radon" in install_hints
 
 
