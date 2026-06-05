@@ -242,12 +242,12 @@ def read_l1_status(feature_slug: str, project_root: Path) -> Optional[L1State]:
     # null; valores não-string (dict, int, list) são rejeitados pra não
     # propagar lixo silenciosamente. Pre-Gap-9 files: missing → None.
     extends_feature = _coerce_optional_slug(
-        data.get("extends-feature") if "extends-feature" in data else data.get("extends_feature"),
+        data.get("extends-feature", data.get("extends_feature")),
         field_name="extends-feature",
         where=str(path),
     )
     parent_feature = _coerce_optional_slug(
-        data.get("parent-feature") if "parent-feature" in data else data.get("parent_feature"),
+        data.get("parent-feature", data.get("parent_feature")),
         field_name="parent-feature",
         where=str(path),
     )
