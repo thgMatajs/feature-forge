@@ -1797,6 +1797,273 @@ scope.
 rule F-001 ou similar) faz piggyback do refactor com test count + baseline
 preserved.
 
+## forge qa (v1.2 — entregue) — gaps deferred pra v1.x+
+
+`forge qa` shipou na v1.2 como 13º comando (red-team adversarial gate).
+Spec: `docs/superpowers/specs/2026-06-05-forge-qa-design.md`. Plano
+executado: `docs/superpowers/plans/2026-06-05-forge-qa.md`. 6 itens
+out-of-scope §17 do spec viraram gaps aqui + 7 deviations descobertos
+durante implementação. Padrão consistente com Gap CC-* (fingerprint +
+status + razão concreta pra defer).
+
+### Gap QA-1 — Visual fidelity / a11y DOM auditors
+
+**Categoria:** qa-extensions / opt-in
+**Fingerprint:** `sha256(promote-to-shared:qa-visual-fidelity-auditor:dom-snapshot)`
+**Status:** deferred (v1.x) — surfaced em §17.1 do spec qa-design
+
+Auditor que faz snapshot de DOM/UI e compara com design-spec foge do
+recorte v1 (audit de artefatos textuais). Vem como card opt-in em v1.x
+(`qa-extensions: auditors: [{name: visual-fidelity, ...}]`).
+
+**Por que defer:** card terá heavy deps (puppeteer/playwright) e expõe
+matiz "QA visual" que merece release dedicado — mistura mal com a slice
+textual de v1. Cumpre Decisão 22 ao manter deps pesados em card opt-in,
+não no engine.
+
+**Condição pra revisitar:** projeto consumidor pede explicitamente
+auditoria visual; brainstorm separado pra escolher tooling + decidir
+quando snapshot diff vira finding `qa-visual-drift` vs warning.
+
+### Gap QA-2 — Convergence loop automatizado
+
+**Categoria:** qa-flow
+**Fingerprint:** `sha256(redundant-platform:qa-convergence-loop:auto-reqa)`
+**Status:** deferred (YAGNI guard) — surfaced em §17.2 do spec qa-design
+
+v1 = manual: user roda `forge qa` → revê findings em `forge evolve` apply
+→ re-roda `forge qa` pra ver se sumiu. Loop automático "qa → evolve
+apply → qa" é tentação YAGNI.
+
+**Por que defer:** `forge evolve` é single-by-single (Decisão 26); tirar
+o gate humano do meio quebra a disciplina. Loop "automatizado" só faz
+sentido se houver custo real percebido — sem dado, é over-eng prematuro.
+
+**Condição pra revisitar:** user reportar fricção concreta (ex.:
+"rodei 5 vezes pra ver se sumiu, queria 1 comando"); então brainstorm
+pra desenhar loop que preserva gate humano em cada apply.
+
+### Gap QA-3 — CI / non-interactive mode
+
+**Categoria:** qa-interface
+**Fingerprint:** `sha256(promote-to-shared:qa-ci-mode:headless-output)`
+**Status:** deferred (decisão 10 vale) — surfaced em §17.3 do spec qa-design
+
+Decisão 10 vale — sem flags, sem `--ci`, sem `--quiet`. CI integration é
+pattern emergente em v1.x quando alguém pedir; até lá, `forge qa` é
+puramente conversacional.
+
+**Por que defer:** adicionar `--ci` agora quebraria Decisão 10 (zero
+flags) sem demanda concreta; CI run sem prompt interativo + render JSON
+estruturado seria contrato novo de saída.
+
+**Condição pra revisitar:** projeto consumidor pede integração em
+pipeline (GitHub Actions / Jenkins). Brainstorm: como entregar
+non-interactive sem flag? Provavelmente via hidden entrypoint (pattern
+de `forge ingest`) acionado por hook CI, não comando typed pelo user.
+
+### Gap QA-4 — Cross-project audit
+
+**Categoria:** qa-scope
+**Fingerprint:** `sha256(redundant-platform:qa-cross-project-audit:multi-inventory)`
+**Status:** deferred (Decisão 14 vale) — surfaced em §17.4 do spec qa-design
+
+Inventory + memory são per-project (Decisão 14). Auditar correlações
+cross-project (ex.: 2 projetos compartilham backend e o spec deles
+diverge) está fora do scope da skill standalone.
+
+**Por que defer:** Decisão 14 (config scope = um workflow-config por
+sub-projeto) é load-bearing. Cross-project audit exigiria registry
+externo de specs + protocolo de sync — fora do escopo da skill que vive
+dentro de cada projeto.
+
+**Condição pra revisitar:** ferramenta separada de "spec consistency
+across N projects" emerge como produto distinto; `forge qa` ganha hook
+pra exportar findings num formato que essa ferramenta consome (não o
+contrário).
+
+### Gap QA-5 — Diff-aware mode
+
+**Categoria:** qa-performance
+**Fingerprint:** `sha256(promote-to-shared:qa-diff-aware:scope-since-last-run)`
+**Status:** deferred (sem baseline de runtime) — surfaced em §17.5 do spec qa-design
+
+v1 sempre audita o scope completo. "Auditar só o que mudou desde o
+último run" é otimização de performance que ainda não tem dado pra
+justificar (sem baseline de runtime real).
+
+**Por que defer:** YAGNI até `forge qa` rodar lento o suficiente pra
+incomodar. Diff-aware exige snapshot de inventory + tracking de mtime
+por artefato — complexidade que multiplica edge cases (artefato deletado
+e re-criado, rename, etc.).
+
+**Condição pra revisitar:** user reportar `forge qa` lento numa codebase
+real (>2min por scope=feature, por exemplo); então benchmark + decisão
+sobre granularidade do diff (file-level vs spec-level).
+
+### Gap QA-6 — Custom rubric per project
+
+**Categoria:** qa-governance
+**Fingerprint:** `sha256(consolidate-within-module:qa-custom-rubric:threshold-override)`
+**Status:** deferred (guard-rail intencional) — surfaced em §17.6 do spec qa-design
+
+Rubric (§5.4 do spec) é hardcoded em v1. Permitir overrides do threshold
+BLOCK/FLAG/PASS via workflow-config abre porta pra "we don't fail on
+critical" — anti-pattern.
+
+**Por que defer:** rubric fixa é guard-rail intencional — alinhado com
+Mandamento 4 (escopo contido). Permitir override por projeto é exatamente
+o caminho pra erodir a disciplina que o gate existe pra proteger.
+
+**Condição pra revisitar:** caso real onde rubric default produz falsos
+positivos sistematicamente num projeto legítimo. Brainstorm pra distinguir
+"override de threshold" (anti-pattern) de "auditor opt-out via card"
+(legítimo via `qa-extensions`).
+
+### Gap QA-7 — Plan template fix: PYTHONSTARTUP → sitecustomize.py
+
+**Categoria:** qa-plan-template
+**Fingerprint:** `sha256(consolidate-within-module:qa-sandbox-env-bootstrap:pythonstartup-vs-sitecustomize)`
+**Status:** deferred (plan template) — surfaced 2026-06-05 durante exec da Task 3.3
+
+Plan template (Task 3.3 sandbox) instruía usar `PYTHONSTARTUP` pra
+injetar hooks no subprocess Python sandbox. Em subprocess
+não-interativo o `PYTHONSTARTUP` é silenciado pelo CPython — não dispara.
+Executor aplicou o fix correto durante implementação: `sitecustomize.py`
+montado via `PYTHONPATH` (mecanismo que o CPython respeita sempre, em
+qualquer modo de invocação).
+
+**Por que defer:** o fix já está aplicado no código real. O plan template
+ainda contém a instrução errada — revisão futura do plan precisa refletir
+o caminho correto. Não é bug em produção, é divergência plan↔code.
+
+**Condição pra revisitar:** próxima revisita do plan
+`docs/superpowers/plans/2026-06-05-forge-qa.md` Task 3.3 — atualizar
+instrução pra `sitecustomize.py` via `PYTHONPATH`.
+
+### Gap QA-8 — Plan template fix: engine/qa.py → engine/qa/__init__.py
+
+**Categoria:** qa-plan-template
+**Fingerprint:** `sha256(consolidate-within-module:qa-engine-module-layout:flat-vs-package)`
+**Status:** deferred (plan template) — surfaced 2026-06-05 durante exec da Task 4.1
+
+Plan template (Task 4.1) instruía criar `engine/qa.py` flat, mas
+`engine/qa/` já é package estruturado em Wave 3 (com submódulos
+`auditors/`, `phases/`, `sandbox/`, etc.). Executor moveu o handler do
+comando pra `engine/qa/__init__.py` durante implementação — caminho
+canônico pra package Python.
+
+**Por que defer:** o fix já está aplicado. Plan template ainda diz
+"flat module"; revisão futura precisa refletir layout real.
+
+**Condição pra revisitar:** próxima revisita do plan Task 4.1 —
+atualizar instrução pra `engine/qa/__init__.py` (package handler).
+
+### Gap QA-9 — Plan template obsoleto: Task 4.3 bin/forge verb list
+
+**Categoria:** qa-plan-template
+**Fingerprint:** `sha256(consolidate-within-module:qa-bin-forge-shim:verb-list-obsoleta)`
+**Status:** deferred (plan template) — surfaced 2026-06-05 durante exec da Task 4.3
+
+Plan instruía adicionar `qa` na verb list do `bin/forge`. Mas `bin/forge`
+é shim "boring" (Decisão 19 — Bash dispatcher minimal, sem verb list
+hardcoded; dispatcha tudo via `engine.cli`). Task 4.3 ficou funcionalmente
+satisfeita por Task 4.2 (handler registrado em `engine/cli.py`), sem
+mudança em `bin/forge` necessária.
+
+**Por que defer:** o estado atual está correto (no-op em `bin/forge`).
+Plan template ainda lista Task 4.3 como ação distinta; revisão futura
+deve marcar Task 4.3 como obsoleta ou mergeá-la em Task 4.2.
+
+**Condição pra revisitar:** próxima revisita do plan Task 4.3 —
+remover ou marcar como "n/a (Decisão 19 — shim sem verb list)".
+
+### Gap QA-10 — qa-finding `id` regex inconsistência (T/Z uppercase vs lowercase-only)
+
+**Categoria:** qa-validator / qa-schema
+**Fingerprint:** `sha256(consolidate-within-module:qa-finding-id-regex:case-mismatch)`
+**Status:** open (decisão pendente) — surfaced 2026-06-05 durante exec das Tasks 2.2 + 3.4
+
+`_ID_RE` em `validators/validate_qa_finding.py` aceita apenas lowercase.
+`run.id` em `qa-report.json` é renderizado com `T`/`Z` uppercase (formato
+ISO 8601 canônico). Dois pontos do mesmo sistema discordam sobre
+case-sensitivity de IDs.
+
+**Por que defer:** exige decisão consciente entre 2 caminhos —
+(a) flexibilizar `_ID_RE` pra aceitar uppercase em segmentos timestamp,
+(b) mudar `run.id` format pra lowercase pré-render. Ambos quebram alguma
+expectativa (testes existentes vs convenção ISO 8601). Brainstorm
+necessário.
+
+**Condição pra revisitar:** brainstorm dedicado decidir o caminho.
+Provavelmente (a) — ISO 8601 com `T`/`Z` é canônico e flexibilizar
+regex é fix localizado.
+
+### Gap QA-11 — Sandbox env hardening (allowlist vs blocklist)
+
+**Categoria:** qa-sandbox / security
+**Fingerprint:** `sha256(promote-to-shared:qa-sandbox-env-isolation:allowlist-vs-blocklist)`
+**Status:** open (brainstorm pendente) — surfaced em IN-02 da Task 3.3
+
+Sandbox subprocess (Phase 3 do `forge qa`) herda env completo do processo
+pai, incluindo possíveis secrets (`AWS_*`, `GITHUB_TOKEN`, etc.). Allowlist
+estrita quebraria validators canon que dependem de `PATH` + `HOME` +
+`LANG`. Blocklist exigiria consenso sobre o conjunto exato de variáveis
+"perigosas" — moving target.
+
+**Por que defer:** decisão de segurança não-trivial. Exige brainstorm
+dedicado mapeando (a) lista mínima de env vars que validators canon
+precisam, (b) política de blocklist com pattern `*_TOKEN`, `*_SECRET`,
+`*_KEY`, (c) override per-project via workflow-config (com cautela —
+ver Gap QA-6).
+
+**Condição pra revisitar:** brainstorm sobre threat model do sandbox.
+Provavelmente caminho híbrido: allowlist core + blocklist regex
+configurável.
+
+### Gap QA-12 — Pause/resume implementation (Decisão 27 + §16 edge 6)
+
+**Categoria:** qa-flow / state
+**Fingerprint:** `sha256(consolidate-within-module:qa-pause-resume:checkpoint-json)`
+**Status:** deferred (3 tests aspirational @pytest.mark.skip) — surfaced em Task 8.6
+
+`engine.qa` é atualmente stateless. Decisão 27 (pause = `deferred`
+auto-resumable; abort = 2-step via `forge undo`) + §16 edge 6 do spec
+qa-design exigem `checkpoint.json` + resume logic. 3 tests em
+`tests/qa/test_qa_pause_resume.py` marcados `@pytest.mark.skip` aguardam
+implementação.
+
+**Por que defer:** implementação envolve serializar estado parcial das
+6 phases (ingest/static/generative/sandbox/synthesis/emit) — Phase 2
+(generative) e Phase 3 (sandbox) têm side effects que precisam
+idempotência cuidadosa. Brainstorm + plan separados.
+
+**Condição pra revisitar:** plan dedicado pra implementar checkpoint
+schema + resume contract phase-by-phase. Tests aspirational viram
+gate "verde antes de pronto" do plan.
+
+### Gap QA-13 — Paranoid scope state filter
+
+**Categoria:** qa-scope
+**Fingerprint:** `sha256(consolidate-within-module:qa-paranoid-state-filter:feature-state)`
+**Status:** open (depende de feature state file padrão) — surfaced em Task 8.3
+
+`_list_features_for_paranoid` em `engine/qa/scope.py` enumera todos os
+diretórios de feature sem filtrar por `state`. Spec §5.0 declara filter
+state ∈ {planning, implementing, blocked-on-external, done} — paranoid
+ignora `aborted` + `archived`.
+
+**Por que defer:** padrão de feature state file (`status.json`) varia
+por subtype + state machine (Gap 8 introduziu `blocked-on-external`).
+Implementar filtro exige walkthrough cuidadoso da semantics atual de
+`L1State` + `current_subtype` + edge cases (status.json malformado,
+state legacy pre-Gap-8).
+
+**Condição pra revisitar:** quando `L1State` ganha API estável
+`list_features(filter_states=[...])` — momento natural pra plugar
+filter aqui. Provavelmente piggyback de Gap 6 (multi-dev `active-tasks`
+expansion) ou Gap 7 (partial-released state).
+
 ### Gap BOOTSTRAP-1 — `test_bootstrap_is_idempotent` falha em worktree
 
 **Categoria:** bootstrap / test infrastructure
