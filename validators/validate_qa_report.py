@@ -5,6 +5,7 @@ Schema fonte: docs/schemas/qa-report.md.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
@@ -16,12 +17,18 @@ _VALID_VERDICTS = {"BLOCK", "FLAG", "PASS"}
 _VALID_SCOPE_TYPES = {"feature", "screen", "task", "paranoid"}
 _REQUIRED_SEVERITY_KEYS = {"critical", "high", "medium", "low", "info"}
 _REQUIRED_VECTOR_KEYS = {"spec-vs-spec", "coverage", "chaos", "validator-claim"}
+_RUN_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z-[0-9a-f]{4}$")
 
 
 def validate_qa_report(data: dict[str, Any]) -> None:
     """Valida o dict carregado do qa-report.json. Raise em qualquer desvio.
 
     Política mentor-calma: mensagem de erro nomeia o campo + o que esperava.
+
+    Interface: library raise-based (não CLI cascade). Este validator é consumido
+    diretamente por engine/qa/synthesis.py (Phase 4); idioma raise é apropriado.
+    Validators de cascade (forge verify) usam pattern result_fail/result_pass via
+    _common.py — não aplicável aqui.
     """
     if not isinstance(data, dict):
         raise QAReportValidationError("qa-report deve ser dict no topo")
@@ -52,9 +59,15 @@ def validate_qa_report(data: dict[str, Any]) -> None:
     run = data["run"]
     if not isinstance(run, dict):
         raise QAReportValidationError("run deve ser dict")
-    for required in ("id", "scope", "started_at", "finished_at", "duration_s"):
+    for required in ("id", "scope", "config_snapshot", "started_at", "finished_at", "duration_s"):
         if required not in run:
             raise QAReportValidationError(f"run.{required} ausente")
+
+    if not _RUN_ID_RE.match(run["id"]):
+        raise QAReportValidationError(
+            f"run.id formato inválido: {run['id']!r}. "
+            f"Esperado YYYY-MM-DDTHH-MM-SSZ-<4-char-hex>."
+        )
 
     scope = run["scope"]
     if not isinstance(scope, dict):
@@ -68,12 +81,23 @@ def validate_qa_report(data: dict[str, Any]) -> None:
         )
 
     summary = data["summary"]
+    if not isinstance(summary, dict):
+        raise QAReportValidationError(
+            f"summary deve ser dict, recebido tipo {type(summary).__name__}"
+        )
+
     by_sev = summary.get("by_severity", {})
     if set(by_sev.keys()) != _REQUIRED_SEVERITY_KEYS:
         raise QAReportValidationError(
             f"summary.by_severity precisa de keys {sorted(_REQUIRED_SEVERITY_KEYS)}; "
             f"recebido: {sorted(by_sev.keys())}"
         )
+
+    for sev_key, sev_val in by_sev.items():
+        if not isinstance(sev_val, int):
+            raise QAReportValidationError(
+                f"summary.by_severity[{sev_key!r}] deve ser int, recebido {type(sev_val).__name__}"
+            )
 
     by_vec = summary.get("by_vector", {})
     if not _REQUIRED_VECTOR_KEYS.issubset(by_vec.keys()):
@@ -82,7 +106,14 @@ def validate_qa_report(data: dict[str, Any]) -> None:
             f"recebido: {sorted(by_vec.keys())}"
         )
 
-    total = summary.get("total_findings", 0)
+    if "total_findings" not in summary:
+        raise QAReportValidationError("summary.total_findings ausente")
+    total = summary["total_findings"]
+    if not isinstance(total, int):
+        raise QAReportValidationError(
+            f"summary.total_findings deve ser int, recebido {type(total).__name__}"
+        )
+
     sev_sum = sum(by_sev.values())
     if sev_sum != total:
         raise QAReportValidationError(

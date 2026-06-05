@@ -90,3 +90,75 @@ def test_findings_must_be_list_not_string():
     report["findings"] = "vazio"  # string em vez de list
     with pytest.raises(QAReportValidationError, match="findings"):
         validate_qa_report(report)
+
+
+def test_summary_must_be_dict():
+    """ME-01: summary não-dict (string) deve raise QAReportValidationError, não AttributeError."""
+    report = _minimal_valid_report()
+    report["summary"] = "vazio"  # string em vez de dict
+    with pytest.raises(QAReportValidationError, match="summary"):
+        validate_qa_report(report)
+
+
+def test_total_findings_missing_fails():
+    """ME-02: ausência de summary.total_findings não pode ser inferida como 0."""
+    report = _minimal_valid_report()
+    del report["summary"]["total_findings"]
+    with pytest.raises(QAReportValidationError, match="total_findings"):
+        validate_qa_report(report)
+
+
+def test_total_findings_must_be_int():
+    """ME-02: summary.total_findings precisa ser int, não string."""
+    report = _minimal_valid_report()
+    report["summary"]["total_findings"] = "0"  # string em vez de int
+    with pytest.raises(QAReportValidationError, match="total_findings"):
+        validate_qa_report(report)
+
+
+def test_by_severity_values_must_be_int():
+    """ME-03: by_severity[k] precisa ser int, não string."""
+    report = _minimal_valid_report()
+    report["summary"]["by_severity"]["critical"] = "1"  # string em vez de int
+    with pytest.raises(QAReportValidationError, match="by_severity"):
+        validate_qa_report(report)
+
+
+def test_run_config_snapshot_required():
+    """ME-04: run.config_snapshot é required (load-bearing pra reprodução de veredito)."""
+    report = _minimal_valid_report()
+    del report["run"]["config_snapshot"]
+    with pytest.raises(QAReportValidationError, match="config_snapshot"):
+        validate_qa_report(report)
+
+
+def test_scope_type_invalid_enum():
+    """ME-05: run.scope.type fora do enum {feature, screen, task, paranoid} deve raise."""
+    report = _minimal_valid_report()
+    report["run"]["scope"]["type"] = "global"  # fora do enum
+    with pytest.raises(QAReportValidationError, match="scope.type"):
+        validate_qa_report(report)
+
+
+def test_by_severity_missing_key():
+    """ME-05: by_severity sem 'critical' deve raise — keys obrigatórias completas."""
+    report = _minimal_valid_report()
+    del report["summary"]["by_severity"]["critical"]
+    with pytest.raises(QAReportValidationError, match="by_severity"):
+        validate_qa_report(report)
+
+
+def test_by_vector_missing_required_key():
+    """ME-05: by_vector sem 'chaos' deve raise — subset _REQUIRED_VECTOR_KEYS exigido."""
+    report = _minimal_valid_report()
+    del report["summary"]["by_vector"]["chaos"]
+    with pytest.raises(QAReportValidationError, match="by_vector"):
+        validate_qa_report(report)
+
+
+def test_run_id_format_invalid():
+    """LO-01: run.id fora do regex YYYY-MM-DDTHH-MM-SSZ-<4hex> deve raise."""
+    report = _minimal_valid_report()
+    report["run"]["id"] = "not-a-valid-id"
+    with pytest.raises(QAReportValidationError, match="run.id"):
+        validate_qa_report(report)
