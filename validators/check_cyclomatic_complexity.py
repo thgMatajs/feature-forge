@@ -39,6 +39,7 @@ from _common import (
     result_warn,  # noqa: F401  — wired in T6/T8
     run_cli,
 )
+from _gate_infra import DispatchResult
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -327,27 +328,6 @@ _TOOL_BIN = {
 _CONFIG_DIR = Path(__file__).resolve().parent.parent / "engine" / "_cc_configs"
 
 
-@dataclass(frozen=True)
-class _DispatchResult:
-    """Outcome of a single tool invocation.
-
-    Contract:
-        tool_found=False  → tool not on PATH; caller emits result_warn with
-                            install hint. raw_stdout / crashed irrelevantes.
-        crashed=True      → non-zero exit (exceto eslint exit=1 benigno),
-                            timeout, ou OSError. error_message tem stderr
-                            snippet ou descrição. raw_stdout pode ter parcial.
-        otherwise         → raw_stdout vai para o parser correspondente
-                            (_parse_detekt / _parse_swiftlint / etc.).
-    """
-
-    language: str
-    tool_found: bool
-    crashed: bool
-    raw_stdout: str
-    error_message: str
-
-
 def _check_tool_available(tool: str) -> bool:
     """Return True iff `tool` is on PATH (shutil.which lookup).
 
@@ -383,7 +363,7 @@ def _dispatch_tool(
     files: list[str],
     threshold: int,
     project_root: Path,
-) -> _DispatchResult:
+) -> DispatchResult:
     """Invoke the per-language tool over `files`. Never raises (exceto KeyError
     para language não suportada — contrato é caller filtra por SUPPORTED_EXTENSIONS).
 
@@ -400,7 +380,7 @@ def _dispatch_tool(
     """
     tool = _TOOL_BIN[language]
     if not _check_tool_available(tool):
-        return _DispatchResult(
+        return DispatchResult(
             language=language,
             tool_found=False,
             crashed=False,
@@ -485,7 +465,7 @@ def _dispatch_tool(
         else:
             # Inalcançável: _TOOL_BIN[language] já teria raised KeyError acima.
             # Mantido por simetria/defesa.
-            return _DispatchResult(
+            return DispatchResult(
                 language=language,
                 tool_found=False,
                 crashed=False,
@@ -503,7 +483,7 @@ def _dispatch_tool(
                 check=False,
             )
         except subprocess.TimeoutExpired:
-            return _DispatchResult(
+            return DispatchResult(
                 language=language,
                 tool_found=True,
                 crashed=True,
@@ -511,7 +491,7 @@ def _dispatch_tool(
                 error_message=f"{tool} timeout (>60s)",
             )
         except OSError as exc:
-            return _DispatchResult(
+            return DispatchResult(
                 language=language,
                 tool_found=True,
                 crashed=True,
@@ -523,7 +503,7 @@ def _dispatch_tool(
         # Outros tools: exit != 0 é crash genuíno.
         benign_nonzero = language == "ts" and proc.returncode == 1
         if proc.returncode != 0 and not benign_nonzero:
-            return _DispatchResult(
+            return DispatchResult(
                 language=language,
                 tool_found=True,
                 crashed=True,
@@ -532,7 +512,7 @@ def _dispatch_tool(
                 or f"{tool} exit={proc.returncode}",
             )
 
-        return _DispatchResult(
+        return DispatchResult(
             language=language,
             tool_found=True,
             crashed=False,

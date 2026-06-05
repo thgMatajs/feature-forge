@@ -303,7 +303,7 @@ def test_run_tools_for_staged_distinguishes_missing_from_crashed(monkeypatch):
 
     def _fake_dispatch(*, language, files, threshold, project_root):
         if language == "kotlin":
-            return v._DispatchResult(
+            return v.DispatchResult(
                 language=language,
                 tool_found=False,
                 crashed=False,
@@ -311,7 +311,7 @@ def test_run_tools_for_staged_distinguishes_missing_from_crashed(monkeypatch):
                 error_message="detekt not installed (PATH lookup failed)",
             )
         # python — crashou em runtime
-        return v._DispatchResult(
+        return v.DispatchResult(
             language=language,
             tool_found=True,
             crashed=True,
