@@ -111,20 +111,31 @@ em vez de criar versão paralela.
 Exemplo de composição (CC gate pós-Phase 0):
 
 ```python
+from pathlib import Path
+from typing import Optional
+
 from validators._gate_infra import dispatch_native_tool, apply_overrides
 from validators._diff import git_staged_files, extract_diff_hunks
 from validators._common import gate_threshold_lookup, format_three_paths_message
 
-def _build_my_tool_cmd(*, rendered_config, files):
-    return ["my-tool", "--config", rendered_config, *map(str, files)]
+# cmd_builder é invocado posicionalmente por dispatch_native_tool:
+#   cmd_builder(tool_bin, files, rendered_config)
+# Declarar kw-only (*, ...) estoura TypeError em runtime.
+def _build_my_tool_cmd(
+    tool_bin: str, files: list[str], rendered_config: Optional[str]
+) -> list[str]:
+    return [tool_bin, "--config", str(rendered_config), *files]
 
-def validate(project_root, **kwargs):
-    files = git_staged_files(project_root, extensions={".kt", ".swift"})
+def validate(project_root: Path, **kwargs):
+    files = [str(p) for p in git_staged_files(project_root, extensions={".kt", ".swift"})]
     hunks = extract_diff_hunks(project_root, files)
     threshold = gate_threshold_lookup("kotlin", cards, wf_config)
     result = dispatch_native_tool(
-        language="kotlin", files=files,
+        language="kotlin",
+        files=files,
         cmd_builder=_build_my_tool_cmd,
+        project_root=project_root,
+        tool_bin="my-tool",
         config_template=MY_TOOL_CONFIG,
         placeholders={"__THRESHOLD__": str(threshold)},
     )

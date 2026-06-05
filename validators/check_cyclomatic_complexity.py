@@ -19,8 +19,8 @@ whitelist (auditable via `git log --grep='CC-OVERRIDE'`).
 
 from __future__ import annotations
 
-import json  # noqa: F401  — used by parser tasks (T4/T5)
-import re  # noqa: F401  — used by override-detect task (T7)
+import json
+import re
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -28,16 +28,16 @@ from pathlib import Path
 from typing import Any, Optional
 
 from _common import (
-    format_three_paths_message,  # noqa: F401  — wired in T8 validate()
-    gate_threshold_lookup,  # noqa: F401  — wired in T8 validate()
-    make_paths,  # noqa: F401  — wired in T8 validate()
-    result_fail,  # noqa: F401  — wired in T8 validate()
+    format_three_paths_message,
+    gate_threshold_lookup,
+    make_paths,
+    result_fail,
     result_pass,
-    result_warn,  # noqa: F401  — wired in T6/T8
+    result_warn,
     run_cli,
 )
 from _diff import (
-    DiffHunk,  # noqa: F401  — re-exported for back-compat in tests
+    DiffHunk,
     classify_range_against_hunks,
     extract_diff_hunks,
     git_staged_files,
@@ -54,8 +54,7 @@ from _gate_infra import (
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from engine.utils.paths import feature_dir  # noqa: E402,F401  — wired in T8
-from engine.utils.yaml_io import read_yaml_or_default  # noqa: E402,F401  — wired in T8
+from engine.utils.yaml_io import read_yaml_or_default  # noqa: E402
 
 
 SUPPORTED_EXTENSIONS = {
