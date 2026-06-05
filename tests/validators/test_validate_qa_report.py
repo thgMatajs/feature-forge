@@ -59,3 +59,34 @@ def test_by_severity_sum_must_match_total():
     # by_severity sum is 0, mismatch
     with pytest.raises(QAReportValidationError, match="total_findings"):
         validate_qa_report(report)
+
+
+def test_scope_must_be_dict_not_string():
+    """Regression for HI-01: run.scope=string deve raise QAReportValidationError, não AttributeError."""
+    report = _minimal_valid_report()
+    report["run"]["scope"] = "feature"  # string em vez de dict
+    with pytest.raises(QAReportValidationError, match="run.scope"):
+        validate_qa_report(report)
+
+
+def test_findings_count_must_match_total_findings():
+    """Regression for HI-02: len(findings) precisa bater com summary.total_findings.
+
+    Cenário: total_findings=0 e by_severity zerado (cross-check com by_severity passa),
+    mas findings tem 1 entry. Cross-check len(findings) vs total_findings deve raise.
+    """
+    report = _minimal_valid_report()
+    report["findings"] = [
+        {"id": "F-001", "severity": "info", "title": "ghost finding"}
+    ]
+    # total_findings ainda é 0; by_severity ainda soma 0; só len(findings) discorda
+    with pytest.raises(QAReportValidationError, match="findings"):
+        validate_qa_report(report)
+
+
+def test_findings_must_be_list_not_string():
+    """Regression for HI-03: findings=string deve raise QAReportValidationError."""
+    report = _minimal_valid_report()
+    report["findings"] = "vazio"  # string em vez de list
+    with pytest.raises(QAReportValidationError, match="findings"):
+        validate_qa_report(report)
