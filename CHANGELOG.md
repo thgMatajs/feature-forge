@@ -297,6 +297,11 @@ worktree environment).
   comportamento) — endereça nit gemini-code-assist no PR #3 (commit
   `7313a30`).
 
+### Changed (load-bearing)
+
+- Revisita decisão 9: command surface 12 → 13 subcomandos — adiciona `forge qa` (adversarial red-team gate). Design completo em `docs/superpowers/specs/2026-06-05-forge-qa-design.md`. Locked at 12 histórico preservado em `docs/design/01-decisions.md` linha 9; novo lock em linha 29.
+- Adiciona decisão 30: sandbox isolation pra `forge qa` Phase 3 — subprocess CWD dedicado em `.planning/qa/<run-id>/fixtures/`, SandboxBreachError em writes fora, budget global configurável.
+
 ### Fixed (PR #4 review)
 
 - `_path_matches_ignore` agora emite warning quando regex inválida em
