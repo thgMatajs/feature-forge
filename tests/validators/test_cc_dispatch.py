@@ -1,8 +1,13 @@
-"""Unit tests for _check_tool_available and _dispatch_tool.
+"""Unit tests for check_tool_available and _dispatch_tool.
 
 Cobre Task 6 do plan cc-gate: dispatcher per-language das 4 tools
 nativas (Detekt/SwiftLint/eslint/Radon) + trust-but-verify de
 availability via shutil.which.
+
+`check_tool_available` vive em `validators/_gate_infra.py` desde Phase 0
+(gate-infra-extract Task 2); patches de `shutil.which` apontam para esse
+módulo. CC validator re-exporta o helper via import, preservando o
+contrato observável.
 
 Spec source: `docs/superpowers/specs/2026-06-03-cc-gate-design.md §3`
 (tabela tools + trust-but-verify de tool availability + edge cases).
@@ -22,21 +27,22 @@ from unittest import mock  # noqa: F401  — kept for parity with plan template
 
 import pytest
 
+import _gate_infra
 import check_cyclomatic_complexity as v
 
 
 def test_check_tool_available_returns_true_when_on_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(v.shutil, "which", lambda name: "/usr/local/bin/" + name)
-    assert v._check_tool_available("detekt") is True
+    monkeypatch.setattr(_gate_infra.shutil, "which", lambda name: "/usr/local/bin/" + name)
+    assert v.check_tool_available("detekt") is True
 
 
 def test_check_tool_available_returns_false_when_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(v.shutil, "which", lambda name: None)
-    assert v._check_tool_available("swiftlint") is False
+    monkeypatch.setattr(_gate_infra.shutil, "which", lambda name: None)
+    assert v.check_tool_available("swiftlint") is False
 
 
 def test_dispatch_tool_kotlin_builds_correct_command(
@@ -51,7 +57,7 @@ def test_dispatch_tool_kotlin_builds_correct_command(
         )
 
     monkeypatch.setattr(v.subprocess, "run", fake_run)
-    monkeypatch.setattr(v.shutil, "which", lambda name: "/usr/local/bin/" + name)
+    monkeypatch.setattr(_gate_infra.shutil, "which", lambda name: "/usr/local/bin/" + name)
 
     result = v._dispatch_tool(
         language="kotlin",
@@ -79,7 +85,7 @@ def test_dispatch_tool_swift_builds_correct_command(
         return subprocess.CompletedProcess(cmd, returncode=0, stdout="[]", stderr="")
 
     monkeypatch.setattr(v.subprocess, "run", fake_run)
-    monkeypatch.setattr(v.shutil, "which", lambda name: "/usr/local/bin/swiftlint")
+    monkeypatch.setattr(_gate_infra.shutil, "which", lambda name: "/usr/local/bin/swiftlint")
 
     result = v._dispatch_tool(
         language="swift",
@@ -106,7 +112,7 @@ def test_dispatch_tool_ts_builds_correct_command(
         return subprocess.CompletedProcess(cmd, returncode=1, stdout="[]", stderr="")
 
     monkeypatch.setattr(v.subprocess, "run", fake_run)
-    monkeypatch.setattr(v.shutil, "which", lambda name: "/usr/local/bin/eslint")
+    monkeypatch.setattr(_gate_infra.shutil, "which", lambda name: "/usr/local/bin/eslint")
 
     result = v._dispatch_tool(
         language="ts",
@@ -136,7 +142,7 @@ def test_dispatch_tool_python_calls_radon(
         return subprocess.CompletedProcess(cmd, returncode=0, stdout="{}", stderr="")
 
     monkeypatch.setattr(v.subprocess, "run", fake_run)
-    monkeypatch.setattr(v.shutil, "which", lambda name: "/usr/local/bin/radon")
+    monkeypatch.setattr(_gate_infra.shutil, "which", lambda name: "/usr/local/bin/radon")
 
     result = v._dispatch_tool(
         language="python",
@@ -181,7 +187,7 @@ def test_dispatch_tool_kotlin_propagates_threshold_via_config(
         )
 
     monkeypatch.setattr(v.subprocess, "run", fake_run)
-    monkeypatch.setattr(v.shutil, "which", lambda name: "/usr/local/bin/detekt")
+    monkeypatch.setattr(_gate_infra.shutil, "which", lambda name: "/usr/local/bin/detekt")
 
     result = v._dispatch_tool(
         language="kotlin",
@@ -221,7 +227,7 @@ def test_dispatch_tool_swift_propagates_threshold_via_config(
         return subprocess.CompletedProcess(cmd, returncode=0, stdout="[]", stderr="")
 
     monkeypatch.setattr(v.subprocess, "run", fake_run)
-    monkeypatch.setattr(v.shutil, "which", lambda name: "/usr/local/bin/swiftlint")
+    monkeypatch.setattr(_gate_infra.shutil, "which", lambda name: "/usr/local/bin/swiftlint")
 
     result = v._dispatch_tool(
         language="swift",
@@ -243,7 +249,7 @@ def test_dispatch_tool_swift_propagates_threshold_via_config(
 def test_dispatch_tool_missing_returns_not_found(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(v.shutil, "which", lambda name: None)
+    monkeypatch.setattr(_gate_infra.shutil, "which", lambda name: None)
 
     result = v._dispatch_tool(
         language="kotlin",
@@ -269,7 +275,7 @@ def test_dispatch_tool_crash_returns_error_with_stderr(
         )
 
     monkeypatch.setattr(v.subprocess, "run", fake_run)
-    monkeypatch.setattr(v.shutil, "which", lambda name: "/usr/local/bin/detekt")
+    monkeypatch.setattr(_gate_infra.shutil, "which", lambda name: "/usr/local/bin/detekt")
 
     result = v._dispatch_tool(
         language="kotlin",
@@ -289,7 +295,7 @@ def test_dispatch_tool_timeout_returns_crashed(
         raise subprocess.TimeoutExpired(cmd=cmd, timeout=60)
 
     monkeypatch.setattr(v.subprocess, "run", fake_run)
-    monkeypatch.setattr(v.shutil, "which", lambda name: "/usr/local/bin/detekt")
+    monkeypatch.setattr(_gate_infra.shutil, "which", lambda name: "/usr/local/bin/detekt")
 
     result = v._dispatch_tool(
         language="kotlin",
@@ -307,7 +313,7 @@ def test_dispatch_tool_unsupported_language_returns_not_found(
 ) -> None:
     # Defensive: even though caller filters by SUPPORTED_EXTENSIONS, dispatcher
     # must not raise when given an unknown language — emit a clean not_found.
-    monkeypatch.setattr(v.shutil, "which", lambda name: "/usr/local/bin/whatever")
+    monkeypatch.setattr(_gate_infra.shutil, "which", lambda name: "/usr/local/bin/whatever")
 
     with pytest.raises(KeyError):
         # _TOOL_BIN lookup falha pra lang desconhecida; este é o contrato:

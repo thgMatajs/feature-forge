@@ -15,6 +15,7 @@ sinalizam intenção de reuso pelos próximos gates. Em conflito, a spec vence.
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
 
 
@@ -39,3 +40,14 @@ class DispatchResult:
     crashed: bool
     raw_stdout: str
     error_message: str
+
+
+def check_tool_available(tool: str) -> bool:
+    """Return True iff `tool` is on PATH (uses shutil.which).
+
+    Não tenta executar — apenas PATH lookup. Suficiente porque tool crash
+    em runtime é tratado separadamente em `dispatch_native_tool` (próxima
+    extração). Gate-agnóstico: caller passa o binário esperado, sem
+    referência à linguagem.
+    """
+    return shutil.which(tool) is not None

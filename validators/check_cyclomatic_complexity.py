@@ -22,7 +22,6 @@ from __future__ import annotations
 import json  # noqa: F401  — used by parser tasks (T4/T5)
 import os
 import re  # noqa: F401  — used by override-detect task (T7)
-import shutil  # noqa: F401  — used by tool-availability task (T6)
 import subprocess  # noqa: F401  — used by dispatch task (T6)
 import sys
 import tempfile
@@ -39,7 +38,7 @@ from _common import (
     result_warn,  # noqa: F401  — wired in T6/T8
     run_cli,
 )
-from _gate_infra import DispatchResult
+from _gate_infra import DispatchResult, check_tool_available
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -328,15 +327,6 @@ _TOOL_BIN = {
 _CONFIG_DIR = Path(__file__).resolve().parent.parent / "engine" / "_cc_configs"
 
 
-def _check_tool_available(tool: str) -> bool:
-    """Return True iff `tool` is on PATH (shutil.which lookup).
-
-    Não tenta executar — apenas PATH lookup. Suficiente porque tool crash
-    em runtime é tratado separadamente em _dispatch_tool.
-    """
-    return shutil.which(tool) is not None
-
-
 _CC_THRESHOLD_PLACEHOLDER = "__CC_THRESHOLD__"
 
 
@@ -379,7 +369,7 @@ def _dispatch_tool(
     centenas) terminam bem antes disso. Timeout maior mascararia tool hang.
     """
     tool = _TOOL_BIN[language]
-    if not _check_tool_available(tool):
+    if not check_tool_available(tool):
         return DispatchResult(
             language=language,
             tool_found=False,
