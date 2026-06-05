@@ -86,6 +86,10 @@ projeto). Sem voz corporativa, sem hedging ("vou tentar", "considere",
    (substituindo N pelo número)?
 3. Se encontrado, busque: o commit message especificado em alguma task
    contém "Revisita decisão N"?
+4. Confirme que N no texto encontrado é um número inteiro real, não o
+   literal "N" do template. Texto "Revisita decisão N" sem substituição
+   numérica = falha da condição 2 (efetivamente template não
+   instanciado).
 
 **Falha:** alguma das 3 condições não satisfeita.
 
@@ -142,7 +146,7 @@ sem finding — a intenção é canônica pelo Goal.
 
 **Trigger:** plano toca diretórios de código vivo: `engine/`,
 `validators/`, `hooks/`, `templates/`, `cards/`, `presets/`,
-`docs/schemas/`.
+`docs/schemas/`, `.claude/rules/**`.
 
 **Detecção:**
 1. Liste tasks que tocam esses diretórios.
@@ -187,6 +191,10 @@ no-behavior validator.
 
 **Nota:** planos puramente documentais (sem touch em `engine/` ou
 `validators/`) não disparam H4.
+
+**Nota hooks:** `hooks/*.sh` e `.claude/hooks/*.sh` também não disparam
+H4 — testabilidade de hooks é verificada via `SMOKE-CHECKLIST.md`
+manual, não pytest automatizado. Omissão intencional.
 
 ### Medium (informativo, fix recomendado)
 
@@ -279,6 +287,13 @@ Pra cada match:
 - Lista na seção "Acknowledged overrides" do output, preservando a
   razão textual.
 
+**Validação de check-ID no override:** se o ID referenciado não
+corresponde a nenhum dos 12 checks (C1, C2, H1-H4, M1-M3, L1-L3), o
+override é INVÁLIDO. Liste na seção "Acknowledged overrides" como
+`[ID] — override inválido: check não existe no rule v1` e NÃO aplique
+reclassificação. O finding original (se existir com outro ID) mantém
+severity original. Override inválido NÃO conta como acknowledged.
+
 ## Verdict logic
 
 Após processar 12 checks:
@@ -295,12 +310,22 @@ Após processar 12 checks:
 **Distinção operacional:**
 - `PASS_WITH_WARNINGS` = findings genuínos pedindo decisão do user
 - `PASS_WITH_NOTES` = findings reais pela letra do rule mas com mitigação
-  contextual escrita; orquestrador informa o user mas não exige
-  3-caminhos pra cada um
+  contextual baseada em exceção documentada; orquestrador informa o user
+  mas não exige 3-caminhos pra cada um
 
-O reviewer DECIDE pelo tier ao escrever cada finding: se ele consegue
-articular convincentemente o argumento de mitigação no Caminho C, é
-NOTES. Senão, é WARNINGS.
+**Critério determinístico pra NOTES (não subjetivo):**
+
+Um finding qualifica pra `PASS_WITH_NOTES` apenas se o Caminho C cita
+EXPLICITAMENTE:
+(a) uma exceção documentada neste rule (ex.: H1 "Exceção
+    chicken-and-egg", L2 "Exceção verbatim", H4 nota "planos puramente
+    documentais"), OU
+(b) um mandamento numerado (Mandamento #N) ou decisão (Decisão N) do
+    projeto que isenta o check pra este contexto.
+
+Ausente referência concreta a (a) ou (b) → o finding é
+`PASS_WITH_WARNINGS` obrigatório. O reviewer NÃO improvisa mitigação
+contextual fora dessas duas categorias.
 
 ## Output format
 
@@ -311,7 +336,7 @@ Escreva em `.planning/plan-reviews/<plan-slug>-review-r<N>.md`:
 **Plano:** docs/superpowers/plans/<...>.md
 **Spec:** docs/superpowers/specs/<...>.md
 **Rodada:** N/3
-**Verdict:** BLOCK | PASS_WITH_WARNINGS | PASS
+**Verdict:** BLOCK | PASS_WITH_WARNINGS | PASS_WITH_NOTES | PASS
 
 ## Critical (N) — bloqueia execution-handoff
 - [C-001] {check ID}: {finding curto} — task #M, linha L
