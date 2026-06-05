@@ -280,6 +280,20 @@ Antes de aplicar checks, leia o topo do plano (primeiras 50 linhas) por:
 <!-- audit-override: C-XXX — razão concreta -->
 ```
 
+**Separador flex:** o traço entre o check-ID e a razão aceita qualquer
+variação Unicode — hífen ASCII (`-`), en-dash (`–`), em-dash (`—`), ou
+múltiplos hífens (`--`). Pattern conceitual:
+`<!-- audit-override:\s*<CHECK-ID>\s*[-–—]+\s*<razão>\s*-->`. Tolerância
+prevê diferenças de keyboard layout e auto-replace; todas as formas
+abaixo são equivalentes e válidas:
+
+```html
+<!-- audit-override: C1 — chicken-and-egg, plano cria o próprio rule -->
+<!-- audit-override: C1 – chicken-and-egg, plano cria o próprio rule -->
+<!-- audit-override: C1 - chicken-and-egg, plano cria o próprio rule -->
+<!-- audit-override: C1 -- chicken-and-egg, plano cria o próprio rule -->
+```
+
 Pra cada match:
 - Marque o finding correspondente como `acknowledged`.
 - Não bloqueia mais (re-classifica como Low independente da severity
