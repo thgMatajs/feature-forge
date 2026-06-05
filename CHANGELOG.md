@@ -23,6 +23,14 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   `docs/superpowers/specs/2026-06-04-plan-auditor-design.md`. Plano:
   `docs/superpowers/plans/2026-06-04-plan-auditor.md`.
 
+  Refinements pós-smoke r1 (2026-06-04): H1 chicken-and-egg exception
+  quando task cria target do plano; nova seção "Triggers que não
+  dispararam" no output pra distinguir no-trigger de trigger-passou;
+  M2 esclarece que anti-goals do spec contam; L2 exceção pra placeholders
+  em blocos verbatim; novo verdict tier `PASS_WITH_NOTES` entre
+  `PASS_WITH_WARNINGS` e `PASS` pra findings com mitigação contextual
+  escrita.
+
 ## [1.2.0] — 2026-06-03
 
 ### Added (Gap 5 — Card local overlay, 2026-06-02)

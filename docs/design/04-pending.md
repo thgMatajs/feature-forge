@@ -13,6 +13,22 @@ checklist for next sessions.
   `.claude/rules/plan-auditor.md` + integração — ver CHANGELOG
   `[Unreleased]`. Spec: `docs/superpowers/specs/2026-06-04-plan-auditor-design.md`.
 
+### Gaps abertos pós plan-auditor v1
+
+Deferidos no spec `docs/superpowers/specs/2026-06-04-plan-auditor-design.md`
+§"Considerações futuras (fora do v1)":
+
+- **`forge plan-audit` CLI wrapper** — comando first-class que invoca o
+  auditor sem dependência do fluxo writing-plans. Implementação só se
+  o auditor provar valor em uso recorrente. Target: v1.2+.
+- **Refinamento do severity mapping baseado em smoke real** — após 5-10
+  smokes em planos genuínos, avaliar se algum check mudou de severity
+  por padrão observado. Inicial: 2 Critical / 4 High / 3 Medium / 3 Low.
+  Target: contínuo (sem versão fixa — gatilho é frequência de dados).
+- **Tracking estatístico** — coletar contagem média de rodadas por
+  auditoria, quais checks disparam mais, distribuição de overrides
+  aceitos. Target: v1.2+ se `forge plan-audit` materializar.
+
 ## Phase 1 — Espinha dorsal (schemas + estrutura)
 
 - [x] workflow-config.yaml schema → `docs/schemas/workflow-config.md`

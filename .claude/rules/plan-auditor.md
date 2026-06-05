@@ -90,6 +90,12 @@ prose da task palavras-chave de justificativa: "porque", "necessário",
 "alinha com", "revisita", "consequência de", "mandamento", "decisão N",
 "escopo da tarefa". Se nenhuma justificativa textual → finding.
 
+**Exceção chicken-and-egg:** quando a task **cria** o próprio arquivo
+que figura no Goal do plano (ex.: plano cuja meta É entregar
+`.claude/rules/X.md`), a justificativa textual pode estar no §Goal ou
+§Architecture do plano em vez de na prose da task. Nesse caso, aceitar
+sem finding — a intenção é canônica pelo Goal.
+
 #### H2. Doc-sync coverage (Mandamento #6)
 
 **Trigger:** plano toca diretórios de código vivo: `engine/`,
@@ -163,6 +169,13 @@ Modify/Create sem path explícito → finding.
 
 **Falha:** gap fechado sem atualização OU gap novo sem anotação.
 
+**Escopo:** anti-goals e deferred items declarados no spec referenciado
+contam pra M2 quando o plano não os endereça explicitamente.
+Anti-goals declarados no próprio plano também contam (campo §Anti-goals
+ou §"Considerações futuras"). Em ambos os casos, espera-se task que
+anota em `04-pending.md` ou justificativa explícita de por que não
+anotar.
+
 #### M3. Subagent dispatchability
 
 **Trigger:** sempre.
@@ -194,6 +207,14 @@ context-pack do subagent? Verifique presença de:
 - "..." em blocos de código (não em prose)
 - "implement here", "fill in", "similar to Task N" sem repetição inline
 
+**Exceção verbatim:** placeholders como `<plan-slug>`, `<N>`, `<...>`,
+`[...mesma forma...]` que aparecem dentro de blocos verbatim
+(conteúdo de arquivos sendo CRIADOS por tasks Create) NÃO contam — são
+sintaxe de template do arquivo destino, não placeholder do plano em si.
+Verifique o contexto: se o bloco code-fenced é parte de uma task Create
+e representa o conteúdo do arquivo a criar, placeholders dentro dele
+são esperados.
+
 #### L3. Type/name consistency
 
 **Detecção:** colete todas as referências a funções/classes/arquivos
@@ -221,8 +242,23 @@ Pra cada match:
 Após processar 12 checks:
 
 - Se `count(Critical não-acknowledged) > 0` → **BLOCK**
+- Senão, se `count(High) + count(Medium) > 0` E TODOS os findings têm
+  caminho C (override) com argumento de mitigação CONTEXTUAL explicitamente
+  escrito pelo reviewer → **PASS_WITH_NOTES** (orquestrador apresenta as
+  notes ao user mas SEM o ritual de 3-caminhos triage — basta acknowledge)
 - Senão, se `count(High) + count(Medium) > 0` → **PASS_WITH_WARNINGS**
+  (orquestrador apresenta 3-caminhos ao user pra cada finding)
 - Senão (0 findings ou só Low) → **PASS**
+
+**Distinção operacional:**
+- `PASS_WITH_WARNINGS` = findings genuínos pedindo decisão do user
+- `PASS_WITH_NOTES` = findings reais pela letra do rule mas com mitigação
+  contextual escrita; orquestrador informa o user mas não exige
+  3-caminhos pra cada um
+
+O reviewer DECIDE pelo tier ao escrever cada finding: se ele consegue
+articular convincentemente o argumento de mitigação no Caminho C, é
+NOTES. Senão, é WARNINGS.
 
 ## Output format
 
@@ -251,9 +287,20 @@ Escreva em `.planning/plan-reviews/<plan-slug>-review-r<N>.md`:
 ## Low (N)
 [...mesma forma...]
 
+## Triggers que não dispararam
+- C1: <razão (ex.: plano não toca 01-decisions.md)>
+- H2/H3/H4: <razão (ex.: plano doc-only, sem touch em engine/validators)>
+- M2: <razão se aplicável>
+
 ## Acknowledged overrides
 - C-XXX: <razão textual do override inline>
 ```
+
+A seção "Triggers que não dispararam" registra **no-triggers** (checks
+cujo gatilho nunca foi atingido) separados de **triggers-que-passaram**
+(checks cujo gatilho foi atingido mas o plano cumpriu a regra). Sem essa
+distinção, "0 findings" fica ambíguo entre "não testou" e "testou e
+passou". Use-a sempre que aplicável.
 
 Se uma severity tem 0 findings, mantenha a seção com `(0 findings)` em
 vez de omitir — facilita parsing.

@@ -336,6 +336,11 @@ Planos quick-fix podem não ter spec. Nesse caso:
 - Demais checks rodam normalmente.
 ````
 
+**Justificativa load-bearing:** este rule é o artefato canônico do
+auditor pós-plano (escopo da tarefa). Sem este arquivo, o dispatch
+documentado em CLAUDE.md (Task 2) e superpowers.md (Task 3) não tem
+prompt pra carregar.
+
 - [ ] **Step 1.2: Verificar conteúdo escrito**
 
 Run: `cd .claude/worktrees/plan-auditor && wc -l .claude/rules/plan-auditor.md`
@@ -376,6 +381,10 @@ orquestrador não sabe que precisa dispatch.
 
 Run: `cd .claude/worktrees/plan-auditor && grep -c "plan-auditor (dispatched)" CLAUDE.md`
 Expected: 2 (uma por row alterada).
+
+**NÃO fazer:** editar arquivos fora de **Files** acima; refator
+não-solicitado em outras seções do arquivo; quebrar formatação
+tabela/estrutura existente.
 
 ---
 
@@ -419,6 +428,10 @@ Expected: ≥ 3 (linha da tabela + nota + referência).
 Justificativa load-bearing: este rule documenta o conjunto de skills
 ativas; auditor é skill local que precisa estar listada.
 
+**NÃO fazer:** editar arquivos fora de **Files** acima; refator
+não-solicitado em outras seções do arquivo; quebrar formatação
+tabela/estrutura existente.
+
 ---
 
 ## Task 4: Atualizar `.claude/rules/subagent-workflow.md`
@@ -442,6 +455,10 @@ Expected: ≥ 1.
 Justificativa load-bearing: este rule é o mapa "qual subagent_type pra
 quê"; auditor reusa `gsd-code-reviewer` mas com prompt diferente — precisa
 ser listado pra orquestrador encontrar.
+
+**NÃO fazer:** editar arquivos fora de **Files** acima; refator
+não-solicitado em outras seções do arquivo; quebrar formatação
+tabela/estrutura existente.
 
 ---
 
@@ -467,6 +484,10 @@ Expected: ≥ 1.
 Justificativa load-bearing: README é o index oficial dos rules; novo rule
 sem entrada aqui é invisível pra navegação.
 
+**NÃO fazer:** editar arquivos fora de **Files** acima; refator
+não-solicitado em outras seções do arquivo; quebrar formatação
+tabela/estrutura existente.
+
 ---
 
 ## Task 6: Atualizar `.gitignore`
@@ -489,6 +510,10 @@ após a linha `!.claude/state/.gitkeep`, adicionar:
 
 Run: `cd .claude/worktrees/plan-auditor && grep -c "plan-reviews" .gitignore`
 Expected: 1.
+
+**NÃO fazer:** editar arquivos fora de **Files** acima; refator
+não-solicitado em outras seções do arquivo; quebrar formatação
+tabela/estrutura existente.
 
 ---
 
@@ -524,6 +549,10 @@ Sob `## [Unreleased]` (que hoje está vazia), adicionar:
 Run: `cd .claude/worktrees/plan-auditor && grep -A2 "## \[Unreleased\]" CHANGELOG.md | head -5`
 Expected: mostra a seção Added preenchida.
 
+**NÃO fazer:** editar arquivos fora de **Files** acima; refator
+não-solicitado em outras seções do arquivo; quebrar formatação
+tabela/estrutura existente.
+
 ---
 
 ## Task 8: Atualizar `docs/design/04-pending.md`
@@ -556,6 +585,10 @@ dela.
 
 Run: `cd .claude/worktrees/plan-auditor && grep -c "Auditoria pós-plano" docs/design/04-pending.md`
 Expected: ≥ 1.
+
+**NÃO fazer:** editar arquivos fora de **Files** acima; refator
+não-solicitado em outras seções do arquivo; quebrar formatação
+tabela/estrutura existente.
 
 ---
 
@@ -594,6 +627,10 @@ Expected: contém "2026-06-04".
 Justificativa load-bearing: handoff é o doc canônico de estado da
 sessão; toda mudança que entrega artefato precisa atualizar aqui
 (mandamento #6).
+
+**NÃO fazer:** editar arquivos fora de **Files** acima; refator
+não-solicitado em outras seções do arquivo; quebrar formatação
+tabela/estrutura existente.
 
 ---
 
