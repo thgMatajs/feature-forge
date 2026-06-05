@@ -698,6 +698,181 @@ def _prompt_out_of_scope_paths(
         )
 
 
+# ── QA auto-run hook (Phase 6 pre-retrospective, §12.1) ────────────────────
+
+
+def _maybe_run_qa_pre_retrospective(
+    feature_slug: str,
+    project_root: Path,
+) -> None:
+    """Dispara `forge qa` antes do retrospective quando opt-in está ativo.
+
+    Spec §12.1 — workflow-config `qa.auto-run-on-feature-done: true`
+    aciona este hook na transição feature → done (Phase 6 do execution
+    conductor). Verdict NÃO bloqueia (§12.2): findings entram como
+    insumo, decisão fica com o user via `forge evolve`.
+
+    Args:
+        feature_slug: slug da feature recém-concluída (passado pra
+            `engine.qa.run_qa` como scope=feature target).
+        project_root: raiz do projeto consumidor.
+
+    Behavior:
+        - Lê `workflow-config.yaml` → `qa:`
+        - Se `qa.enabled: false` OR `qa.auto-run-on-feature-done: false`,
+          retorna silenciosamente (no-op é o comportamento esperado;
+          default config tem auto-run desligado).
+        - Caso ambos true: 3-caminhos (run / skip / disable). Verdict
+          é informativo — não levanta SystemExit nem propaga retorno.
+        - Falhas ao rodar qa são logadas em history mas não bloqueiam
+          o fluxo da feature-done.
+
+    Reuso (mandamento #3):
+        - `ask_three_paths` + `three_paths_block` (engine.persona + ui)
+        - `append_history` (engine.memory.l1) — pattern já usado em
+          out-of-scope finding flow acima.
+        - `run_qa` (engine.qa) — import lazy pra evitar circular dep
+          (engine.qa importa nada de implement, mas chain de imports
+          do package qa puxa engine.cards/graph que indiretamente toca
+          este módulo via memory/L1; lazy import é defesa idiomática).
+    """
+    cfg = read_yaml_or_default(workflow_config_path(project_root), {})
+    if not isinstance(cfg, dict):
+        return
+    qa_cfg = cfg.get("qa") or {}
+    if not isinstance(qa_cfg, dict):
+        return
+    if not qa_cfg.get("enabled", True):
+        return
+    if not qa_cfg.get("auto-run-on-feature-done", False):
+        return
+
+    # 3-caminhos antes do dispatch — discipline §1, pattern já usado em
+    # _prompt_out_of_scope_paths acima. Bloco visual + ask_three_paths
+    # casados em par canônico.
+    block = mentor_calmo.three_paths_block(
+        gate_name="qa.auto-run-on-feature-done",
+        what_failed=(
+            "qa.auto-run-on-feature-done está ativo e a feature acaba "
+            "de fechar — rodar forge qa antes do retrospective?"
+        ),
+        where=str(workflow_config_path(project_root).relative_to(project_root)),
+        why=[
+            "verdict QA é insumo pro retrospective (não bloqueia — §12.2)",
+            "contexto fresco vale mais barato agora que depois",
+        ],
+        paths=[
+            {
+                "label": "Rodar agora (recomendado — contexto fresco)",
+                "motive": "feature acabou; findings entram no retrospective",
+            },
+            {
+                "label": "Pular nesta feature (registra em history)",
+                "motive": "decisão consciente — auditoria preservada",
+            },
+            {
+                "label": "Desativar auto-run permanentemente",
+                "motive": "toggle em workflow-config qa.auto-run-on-feature-done",
+            },
+        ],
+    )
+    renderer.write("")
+    renderer.write(block)
+
+    try:
+        choice = question.ask_three_paths(
+            "qa.auto-run-on-feature-done",
+            [
+                {"label": "Rodar agora", "motive": ""},
+                {"label": "Pular nesta feature", "motive": ""},
+                {"label": "Desativar auto-run", "motive": ""},
+            ],
+        )
+    except PromptAbortedError:
+        # Pausa pelo user — registra como skipped e segue. Mandamento #4
+        # (scope contido): hook não pode aumentar o blast radius da
+        # interrupção do user.
+        append_history(
+            feature_slug,
+            project_root,
+            {"event": "qa-auto-run-skipped", "reason": "user-pause"},
+        )
+        return
+
+    if choice == "a":
+        from engine.qa import run_qa  # noqa: PLC0415 — lazy
+
+        try:
+            exit_code = run_qa(
+                feature_slug,
+                project_root=project_root,
+                workflow_config=cfg,
+            )
+        except Exception as exc:  # noqa: BLE001 — verdict não bloqueia
+            renderer.write(
+                renderer.colored(
+                    f"qa auto-run falhou ({type(exc).__name__}: {exc}); "
+                    "seguindo pro retrospective sem findings.",
+                    "yellow",
+                )
+            )
+            append_history(
+                feature_slug,
+                project_root,
+                {
+                    "event": "qa-auto-run-error",
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc),
+                },
+            )
+            return
+        append_history(
+            feature_slug,
+            project_root,
+            {"event": "qa-auto-run-completed", "exit_code": exit_code},
+        )
+    elif choice == "b":
+        append_history(
+            feature_slug,
+            project_root,
+            {"event": "qa-auto-run-skipped", "reason": "user-choice"},
+        )
+        renderer.write(renderer.dim("ok, pulando qa nesta feature."))
+    else:  # "c" — disable permanently
+        _toggle_qa_auto_run_off(project_root)
+        append_history(
+            feature_slug,
+            project_root,
+            {"event": "qa-auto-run-disabled-by-user"},
+        )
+        renderer.write(
+            renderer.dim(
+                "auto-run desativado em workflow-config (qa.auto-run-on-feature-done=false)."
+            )
+        )
+
+
+def _toggle_qa_auto_run_off(project_root: Path) -> None:
+    """Persiste `qa.auto-run-on-feature-done: false` em workflow-config.
+
+    Helper isolado pra facilitar mock em testes (Wave 8.4) sem precisar
+    interceptar file I/O do write_yaml. Idempotente — se já estiver
+    false, escreve mesmo assim (custo desprezível, evita branch dupla).
+    """
+    from engine.utils.yaml_io import write_yaml  # noqa: PLC0415 — lazy
+
+    cfg_path = workflow_config_path(project_root)
+    cfg = read_yaml_or_default(cfg_path, {})
+    if not isinstance(cfg, dict):
+        cfg = {}
+    qa_cfg = cfg.get("qa") or {}
+    if not isinstance(qa_cfg, dict):
+        qa_cfg = {}
+    qa_cfg["auto-run-on-feature-done"] = False
+    cfg["qa"] = qa_cfg
+    write_yaml(cfg_path, cfg, atomic=True)
+
+
 # ── Slug elicitation ─────────────────────────────────────────────────────────
 
 
@@ -792,6 +967,13 @@ def run(argv: list[str]) -> int:
         # Mark feature done if everything closed.
         state = read_l1_status(slug, project_root)
         if state and state.status != "done":
+            # §12.1 — pre-retrospective hook. Dispara forge qa quando opt-in
+            # ativo. Verdict NÃO bloqueia (§12.2): findings entram como
+            # insumo pro retrospective (futuro), sem alterar a transição
+            # done aqui. Hook é no-op default — auto-run-on-feature-done
+            # tem default false.
+            _maybe_run_qa_pre_retrospective(slug, project_root)
+
             state.status = "done"
             state.last_action_kind = "implement-completed"
             state.phase_lock = None
