@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import json  # noqa: F401  — used by parser tasks (T4/T5)
 import re  # noqa: F401  — used by override-detect task (T7)
-import subprocess  # noqa: F401  — used by dispatch task (T6)
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -36,6 +35,13 @@ from _common import (
     result_pass,
     result_warn,  # noqa: F401  — wired in T6/T8
     run_cli,
+)
+from _diff import (
+    DiffHunk,  # noqa: F401  — re-exported for back-compat in tests
+    classify_range_against_hunks,
+    extract_diff_hunks,
+    git_staged_files,
+    read_commit_body,
 )
 from _gate_infra import (
     DispatchResult,
@@ -68,7 +74,7 @@ class CCResult:
 
     Emitted by the per-tool parsers (_parse_detekt, _parse_swiftlint,
     _parse_eslint, _parse_radon) and consumed by the rule-application
-    step (run + classify_function).
+    step (run + classify_range_against_hunks).
     """
 
     file: str           # path relative to project root
@@ -79,40 +85,6 @@ class CCResult:
     language: str       # "kotlin" | "swift" | "ts" | "python"
     status: str         # "new" | "modified" | "unchanged"
     cc_before: Optional[int]  # None when status == "new" or unknown
-
-
-def classify_function(
-    func_range: tuple[int, int],
-    diff_hunks: list[dict[str, Any]],
-) -> str:
-    """Classify a function as new | modified | unchanged using diff hunks.
-
-    Args:
-        func_range: (line_start, line_end) inclusive, 1-indexed.
-        diff_hunks: list of {"start": int, "end": int, "kind": "add"|"del"|"ctx"}.
-
-    Rules (per design spec §2 step 9):
-        - new       — entire func_range falls inside an "add" hunk
-        - modified  — func_range intersects any hunk (partial overlap)
-        - unchanged — no overlap with any hunk
-    """
-    if not diff_hunks:
-        return "unchanged"
-
-    f_start, f_end = func_range
-    add_hunks = [h for h in diff_hunks if h.get("kind", "add") == "add"]
-
-    # "new" — entire function range contained within a single add hunk
-    for h in add_hunks:
-        if h["start"] <= f_start and h["end"] >= f_end:
-            return "new"
-
-    # "modified" — any intersection
-    for h in diff_hunks:
-        if h["start"] <= f_end and h["end"] >= f_start:
-            return "modified"
-
-    return "unchanged"
 
 
 # ── Tool output parsers ──────────────────────────────────────────────────────
@@ -498,7 +470,7 @@ def apply_overrides(
 #   5. Extrai diff hunks pra classificar new/modified/unchanged.
 #   6. Dispatch tool per linguagem (Detekt/SwiftLint/eslint/radon) numa única
 #      invocação por batch. Tool missing/crash → warning, sem fail.
-#   7. Classifica cada função encontrada via classify_function.
+#   7. Classifica cada função encontrada via classify_range_against_hunks.
 #   8. Aplica a regra: new → fail se cc > threshold; modified → fail se
 #      cc_after > cc_before (delta-rule). unchanged → ignora.
 #   9. Aplica CC-OVERRIDE silencing lendo o commit body.
@@ -512,116 +484,6 @@ _TEST_IGNORE_DEFAULTS = [
     r"\.test\.(ts|tsx|js|jsx|kt|swift|py)$",
     r"_test\.(kt|swift|py)$",
 ]
-
-
-def _git_staged_files(project_root: Path) -> list[Path]:
-    """Return absolute paths of files in ``git diff --cached --name-only``.
-
-    Filtra pelas extensões em SUPPORTED_EXTENSIONS antes de devolver. Git
-    indisponível / não-repo / errors → lista vazia (caller trata como
-    "nenhum arquivo a checar"). Timeout 10s evita hang em repo gigante.
-    """
-    try:
-        # `-M80%`: rename detection per SDD §2 — função renomeada (até 20% de
-        # mudança) é classificada como "modified" pelo delta rule (cf. F-001),
-        # não como "new" + delete. Sem isso, renames viram falso-positivo de
-        # função nova com absolute-rule.
-        out = subprocess.run(
-            ["git", "-C", str(project_root), "diff", "--cached", "-M80%", "--name-only"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except (subprocess.SubprocessError, OSError):
-        return []
-    if out.returncode != 0:
-        return []
-    files: list[Path] = []
-    for line in out.stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        p = project_root / line
-        if p.is_file() and p.suffix in SUPPORTED_EXTENSIONS:
-            files.append(p)
-    return files
-
-
-def _extract_diff_hunks(
-    project_root: Path, files: list[Path]
-) -> dict[str, list[dict[str, Any]]]:
-    """For each staged file, return its add hunks as line-range dicts.
-
-    Hunk shape: ``{"start": int, "end": int, "kind": "add"}``. Apenas o lado
-    "+" do diff é capturado — caller usa pra classify_function (new vs
-    modified vs unchanged). git diff -U0 dá hunks compactos sem context.
-    """
-    by_file: dict[str, list[dict[str, Any]]] = {}
-    for f in files:
-        try:
-            rel = str(f.relative_to(project_root))
-        except ValueError:
-            # Arquivo fora do project_root — skip silenciosamente.
-            continue
-        try:
-            proc = subprocess.run(
-                ["git", "-C", str(project_root), "diff", "--cached", "-U0", "--", rel],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-        except (subprocess.SubprocessError, OSError):
-            by_file[rel] = []
-            continue
-        hunks: list[dict[str, Any]] = []
-        for line in proc.stdout.splitlines():
-            if not line.startswith("@@"):
-                continue
-            # Hunk header: @@ -a,b +c,d @@
-            m = re.search(r"\+(\d+)(?:,(\d+))?", line)
-            if not m:
-                continue
-            start = int(m.group(1))
-            length = int(m.group(2)) if m.group(2) else 1
-            hunks.append(
-                {"start": start, "end": start + max(length - 1, 0), "kind": "add"}
-            )
-        by_file[rel] = hunks
-    return by_file
-
-
-def _read_commit_body(project_root: Path) -> str:
-    """Best-effort read do commit message body (pra detectar CC-OVERRIDE).
-
-    Ordem:
-      1. ``.git/COMMIT_EDITMSG`` — populado pelo pre-commit hook (caso
-         comum em forge implement). Lê mesmo se commit ainda não foi feito.
-      2. ``git log -1 --format=%B HEAD`` — fallback pós-commit (forge verify
-         rodando depois do commit já formado).
-
-    Não-encontrado / erro → string vazia (sem overrides aplicáveis).
-    """
-    editmsg = project_root / ".git" / "COMMIT_EDITMSG"
-    if editmsg.is_file():
-        try:
-            return editmsg.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            pass
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(project_root), "log", "-1", "--format=%B"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if proc.returncode == 0:
-            return proc.stdout
-    except (subprocess.SubprocessError, OSError):
-        pass
-    return ""
 
 
 def _load_active_cards(project_root: Path) -> list[dict[str, Any]]:
@@ -702,7 +564,7 @@ def _run_tools_for_staged(
     *,
     files_by_lang: dict[str, list[str]],
     thresholds_by_lang: dict[str, int],
-    diff_hunks: dict[str, list[dict[str, Any]]],
+    diff_hunks: dict[str, list[DiffHunk]],
     project_root: Path,
 ) -> tuple[list[CCResult], list[str]]:
     """Dispatch every per-language tool. Return ``(results, warnings)``.
@@ -712,9 +574,10 @@ def _run_tools_for_staged(
     (não fail) por aquela linguagem; outras linguagens prosseguem (cascade
     alive per spec §3 trust-but-verify).
 
-    `status` em cada CCResult é re-classificado aqui via classify_function
-    contra ``diff_hunks`` — os parsers emitem ``status="unchanged"`` por
-    default (não conhecem o diff) e o orchestrator faz o overlay correto.
+    `status` em cada CCResult é re-classificado aqui via
+    ``classify_range_against_hunks`` contra ``diff_hunks`` — os parsers
+    emitem ``status="unchanged"`` por default (não conhecem o diff) e o
+    orchestrator faz o overlay correto.
     """
     parsers = {
         "kotlin": lambda raw: _parse_detekt(raw),
@@ -783,7 +646,7 @@ def _run_tools_for_staged(
             continue
         for r in parsers[lang](d.raw_stdout):
             hunks = diff_hunks.get(r.file, [])
-            status = classify_function((r.line_start, r.line_end), hunks)
+            status = classify_range_against_hunks((r.line_start, r.line_end), hunks)
             results.append(
                 CCResult(
                     file=r.file,
@@ -820,7 +683,9 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
             "cc-gate disabled in workflow-config (cc-gate.enabled=false)"
         )
 
-    staged_paths = _git_staged_files(project_root)
+    staged_paths = git_staged_files(
+        project_root, extensions=set(SUPPORTED_EXTENSIONS)
+    )
     if not staged_paths:
         return result_pass("nenhum arquivo staged — nada a checar")
 
@@ -868,7 +733,7 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
             # antes), mas defesa contra desvio futuro em SUPPORTED_EXTENSIONS.
             thresholds_by_lang[lang] = 10
 
-    diff_hunks = _extract_diff_hunks(project_root, staged_paths)
+    diff_hunks = extract_diff_hunks(project_root, staged_paths)
 
     results, tool_warnings = _run_tools_for_staged(
         files_by_lang=files_by_lang,
@@ -889,7 +754,7 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
         # "unchanged" ou modified sem regressão → não conta.
 
     # Override-justify aplicado antes de emitir fail (spec §4).
-    commit_body = _read_commit_body(project_root)
+    commit_body = read_commit_body(project_root)
     silenced, surviving, override_warnings = apply_overrides(fails, commit_body)
 
     # H4 — malformed CC-OVERRIDE attempts must surface as warnings even when
