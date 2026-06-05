@@ -1375,6 +1375,34 @@ Extension feature — Referenced from:
 
 ---
 
+## §11 — QA verdict não-bloqueante (since v1.2)
+
+`forge qa` emite verdict BLOCK / FLAG / PASS (rubric em
+`docs/superpowers/specs/2026-06-05-forge-qa-design.md §5.4`). **O verdict
+não bloqueia retrospective, não bloqueia commit, não bloqueia `forge
+implement` advancing.**
+
+Razão: bloquear retrospective com base em verdict de QA agressivo invade
+o papel de code review humano (Decisão 5 explícita: code review final é
+out-of-scope da forge). Findings são insumo pro user; user decide via
+`forge evolve` o que aplicar (Decisão 26 single-by-single).
+
+Esta disciplina alinha:
+
+- **Decisão 5** — out-of-scope code review final.
+- **Decisão 26** — single-by-single em evolve (gate humano).
+- **§1 (3-caminhos)** — auto-run hook em implement Phase 6 apresenta
+  run/skip/disable, não força execução.
+
+Onde o verdict importa:
+
+- Exit code `8` quando BLOCK (distinto de `0` para PASS/FLAG) sinaliza ao
+  user/CI o severity — mas não é leitura forçada.
+- `forge evolve` consome findings actionable (severity >= medium) via
+  proposed-evolutions, **único caminho de ação derivada**.
+
+---
+
 ## Cheat-sheet operacional
 
 Quando você (agente, humano, future-self) estiver escrevendo roteiro novo
@@ -1392,6 +1420,7 @@ ou agent-prompt e bater num dos sete pontos:
 | "Esta feature é refactor/spike/chore?" | §8 — non-product feature track |
 | "Esperando endpoint do backend — pode rodar a task?" | §9 — external dependencies |
 | "User pediu pra adicionar X a feature done?" | §10 — extension feature |
+| "`forge qa` cuspiu BLOCK — bloqueia o retrospective?" | §11 — QA verdict não-bloqueante |
 
 Quando o que você quer escrever contradiz alguma disciplina, **pare** e
 abra issue. Mentor calmo é firme nas bordas — disciplina universal é
