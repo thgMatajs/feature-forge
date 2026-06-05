@@ -1,0 +1,27 @@
+{
+  "id": "{{finding_id}}",
+  "fingerprint": "{{fingerprint_sha256}}",
+  "vector": "{{vector}}",
+  "severity": "{{severity}}",
+  "title": "{{title}}",
+  "description": "{{description}}",
+  "scope": {
+    "feature": "{{feature_slug}}",
+    "task": "{{task_id}}",
+    "files": []
+  },
+  "evidence": {
+    "fixture_path": "{{fixture_path}}",
+    "sandbox_result": null,
+    "expected_exit_code": null,
+    "auditor": "{{auditor_name}}",
+    "auditor_reasoning": "{{reasoning}}"
+  },
+  "proposed_evolution": {
+    "type": "qa-finding-{{vector_slug}}",
+    "target": "{{target_path}}",
+    "summary": "{{evolution_summary}}",
+    "actionable": true
+  },
+  "created_at": "{{created_at}}"
+}
