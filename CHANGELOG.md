@@ -9,6 +9,26 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Added
 
+- `forge qa` — 13º comando (adversarial red-team gate). 4 attack vectors
+  (spec-vs-spec, chaos, coverage, validator-claim), 4 scope targets
+  (feature / screen / task / paranoid), 6 phases (ingest → static →
+  generative → sandbox → synthesis → emit), sandbox isolado (Decisão 30).
+  Spec: `docs/superpowers/specs/2026-06-05-forge-qa-design.md`.
+- Cards podem estender qa via campo aditivo `qa-extensions:` em
+  `card.yaml` (schema-version permanece 1; overlay-aware Gap 5).
+- Schemas novos: `docs/schemas/qa-report.md`, `docs/schemas/qa-finding.md`,
+  `docs/schemas/qa-extensions.md`.
+- Workflow-config ganha section `qa:` com 7 campos configuráveis.
+- `forge init` Step QA novo (após Step 7.5 do Gap 5).
+- `forge reconfigure` menu `[ ] qa` com 5 opções.
+- `forge doctor` categoria `qa-coherence` (13ª).
+- `forge implement` Phase 6 hook auto-run pré-retrospective (opt-in via
+  `qa.auto-run-on-feature-done`).
+- Roteiro UX: `docs/ux/forge-qa-roteiro.md` (8 cenas).
+- §11 nova em `docs/design/07-discipline.md` — "QA verdict não-bloqueante".
+
+### Added (CC gate)
+
 - **Cyclomatic Complexity gate (`check_cyclomatic_complexity`)** — multi-language
   CC validator que roda no cascade de `forge verify` (após
   `check_no_invented_behavior`) e per-task em `forge implement` (entre review e
