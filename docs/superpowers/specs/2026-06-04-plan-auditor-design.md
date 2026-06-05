@@ -46,7 +46,8 @@ Override do "Execution Handoff" do `superpowers:writing-plans` SKILL.md:
 Após auditor produzir `PLAN-REVIEW.md` com verdict:
 
 - **PASS** (0 findings ou só Low) → orquestrador segue pro execution-handoff original.
-- **PASS_WITH_WARNINGS** (High/Medium, sem Critical) → orquestrador apresenta findings ao user no formato 3-caminhos (✅ implementar / ⏭️ não implementar / 🤔 investigar). User decide cada finding. Findings aceitos → dispatch `gsd-code-fixer` no plano (não no código — fixer recebe prompt "atualiza o plano aplicando findings X, Y, Z").
+- **PASS_WITH_NOTES** (High/Medium com mitigação contextual baseada em exceção documentada do rule ou mandamento/decisão do projeto) → orquestrador apresenta as notes ao user mas SEM ritual de 3-caminhos triage — basta acknowledge. Critério é determinístico: o Caminho C de cada finding precisa citar EXPLICITAMENTE uma exceção do rule (ex.: H1 "Exceção chicken-and-egg", L2 "Exceção verbatim", H4 nota "planos puramente documentais") OU um mandamento/decisão numerado. Sem essa referência concreta, o finding cai obrigatoriamente em `PASS_WITH_WARNINGS`.
+- **PASS_WITH_WARNINGS** (High/Medium, sem Critical, sem mitigação documentada) → orquestrador apresenta findings ao user no formato 3-caminhos (✅ implementar / ⏭️ não implementar / 🤔 investigar). User decide cada finding. Findings aceitos → dispatch `gsd-code-fixer` no plano (não no código — fixer recebe prompt "atualiza o plano aplicando findings X, Y, Z").
 - **BLOCK** (1+ Critical) → execution-handoff NÃO oferecido. Apresenta criticals ao user, dispatcha fix no plano, re-audita.
 
 ### Re-audit policy
@@ -65,7 +66,11 @@ User pode aceitar plano com Critical pendente registrando override em comentári
 <!-- audit-override: C-001 — razão concreta da aceitação -->
 ```
 
+O separador entre check-ID e razão aceita qualquer variação de traço Unicode: hífen ASCII (`-`), en-dash (`–`), em-dash (`—`), ou múltiplos hífens (`--`). Pattern conceitual: `<!-- audit-override:\s*<CHECK-ID>\s*[-–—]+\s*<razão>\s*-->`. Tolerância prevê diferenças de keyboard layout e auto-replace.
+
 Auditor na próxima rodada lê override e re-classifica esse finding como `acknowledged` (não bloqueia mais, mas é listado na seção "Acknowledged overrides").
+
+**Validação de check-ID:** se o ID referenciado não corresponde a nenhum dos 12 checks (C1, C2, H1-H4, M1-M3, L1-L3), o override é INVÁLIDO. O auditor lista na seção "Acknowledged overrides" como `[ID] — override inválido: check não existe no rule v1` e NÃO aplica reclassificação. Override inválido NÃO conta como acknowledged.
 
 ## Os 12 checks com severity mapping
 
@@ -108,7 +113,7 @@ Falha aqui = polish, não correctness.
 **Plano:** docs/superpowers/plans/<...>.md
 **Spec:** docs/superpowers/specs/<...>.md
 **Rodada:** N/3
-**Verdict:** BLOCK | PASS_WITH_WARNINGS | PASS
+**Verdict:** BLOCK | PASS_WITH_WARNINGS | PASS_WITH_NOTES | PASS
 
 ## Critical (N) — bloqueia execution-handoff
 - [C-001] {check ID}: {finding curto} — task #M, linha L
@@ -131,8 +136,8 @@ Falha aqui = polish, não correctness.
 
 Updates obrigatórios no mesmo commit que entrega o auditor:
 
-- `CLAUDE.md` §Workflow por verbo — coluna "Skills" das linhas "Adicionar feature/recurso" e "Refatorar" ganha `+ plan-auditor (dispatched)` após `writing-plans`.
-- `.claude/rules/superpowers.md` — tabela "Superpowers map" ganha row `plan-auditor` com Trigger "pós writing-plans terminal-state" e Bloqueia "sim — critical findings".
+- `CLAUDE.md` §Workflow por verbo — coluna "Skills (orchestrator invoca)" das linhas "Adicionar feature/recurso", "Refatorar" e "Editar schema/template" ganha `→ plan-auditor (dispatched)` no fluxo (ultra-review F-004: a row "Editar schema/template" também dispara writing-plans + plan-auditor).
+- `.claude/rules/superpowers.md` — NOVA seção `## Extensão local: plan-auditor` (ultra-review F-005, Decision 22: plan-auditor é rule local deste projeto, NÃO skill do superpowers — não entra na tabela "Superpowers map"). Documenta que estende o terminal-state do `superpowers:writing-plans` antes do "Execution Handoff".
 - `.claude/rules/subagent-workflow.md` §"Qual subagent_type pra quê" — row novo: "Auditar plano pós-writing-plans" → `gsd-code-reviewer` com prompt `.claude/rules/plan-auditor.md`.
 - `CHANGELOG.md` — entrada `## [Unreleased] ### Added — plan auditor (.claude/rules/plan-auditor.md) + integração pós writing-plans`.
 - `docs/design/08-session-handoff.md` — "Última atualização" + estado.
@@ -164,3 +169,16 @@ Sem mudança em `engine/`, sem validator Python novo, sem hook novo. Tudo é rul
 - `forge plan-audit` CLI wrapper, se o auditor provar valor em uso real (alternativa C rejeitada no brainstorm).
 - Refinamento do severity mapping baseado em quais checks pegam bug real ao longo do tempo.
 - Tracking estatístico: rodadas médias por auditoria, quais checks disparam mais.
+
+---
+
+> **Sync 2026-06-05:** spec back-portada pós-refinements (r1/r2/ultra-review +
+> power-review PR #6). Drift original: spec era snapshot do design aprovado
+> (commit `8c28229`) e o rule evoluiu nos commits `b4676dd` (r1: tier
+> `PASS_WITH_NOTES` + exceção chicken-and-egg + L2 exceção verbatim + nota
+> H4 hooks), `95aa5a2` (r2: sync parcial + meta-findings), `0d43b394`
+> (ultra-review F-001..F-011: critério determinístico de NOTES, validação
+> de check-ID inválido, doc-sync expandido). Veredito vigente segue
+> `.claude/rules/plan-auditor.md` (artefato vivo). Esta spec passa a ser
+> contrato histórico + reflexo do rule atual; quando divergir de novo, o
+> rule vence.
