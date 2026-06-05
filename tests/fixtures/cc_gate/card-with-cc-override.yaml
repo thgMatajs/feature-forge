@@ -1,0 +1,6 @@
+name: composable-screens
+version: 1.0.0
+cc-gate-override:
+  kotlin:
+    threshold: 15
+    justification: "Composable functions com DSL aninhado inflacionam CC"

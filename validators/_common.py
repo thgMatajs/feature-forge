@@ -297,3 +297,145 @@ def load_catalog(project_root: Path) -> CapabilityCatalog:
         canon_reserved=reserved,
         local_added=frozenset(added_names),
     )
+
+
+# ── Cyclomatic Complexity helpers ────────────────────────────────────────────
+#
+# Usados por `validators/check_cyclomatic_complexity.py`. Vivem em _common
+# pra serem testáveis isoladamente e pra deixar o validator principal mais
+# enxuto. Sem I/O — pura lookup + string formatting.
+
+DEFAULTS_CC: dict[str, int] = {
+    "kotlin": 10,
+    "swift": 10,
+    "ts": 15,
+    "python": 10,
+}
+
+
+def cc_threshold_lookup(
+    language: str,
+    active_cards: list[dict[str, Any]],
+    workflow_config: dict[str, Any],
+) -> int:
+    """Resolve CC threshold for a language.
+
+    Precedence: card cc-gate-override > workflow-config cc-gate > DEFAULTS_CC.
+
+    Multiple cards conflicting: first card with a `threshold` key wins
+    (deterministic, matches declaration order). Card override entries
+    without an explicit `threshold` field fall through to the next layer.
+
+    Note:
+        Threshold ≤ 0 (configuração degenerada) é repassado raw pro caller.
+        Helper é dumb-lookup; semântica "degraded" fica no validator caller
+        (Task 8 — check_cyclomatic_complexity.validate()).
+    """
+    for card in active_cards:
+        if not isinstance(card, dict):
+            continue
+        override = card.get("cc-gate-override") or {}
+        if not isinstance(override, dict):
+            continue
+        lang_block = override.get(language)
+        if not isinstance(lang_block, dict):
+            continue
+        if "threshold" in lang_block:
+            try:
+                return int(lang_block["threshold"])
+            except (TypeError, ValueError):
+                continue
+
+    cc_block = workflow_config.get("cc-gate") or {}
+    if isinstance(cc_block, dict) and language in cc_block:
+        try:
+            return int(cc_block[language])
+        except (TypeError, ValueError):
+            pass
+
+    if language not in DEFAULTS_CC:
+        raise ValueError(
+            f"language {language!r} not in CC gate scope; "
+            f"supported: {sorted(DEFAULTS_CC)}"
+        )
+    return DEFAULTS_CC[language]
+
+
+def cc_format_three_paths(
+    violations: list[dict[str, Any]],
+    thresholds: dict[str, int],
+) -> str:
+    """Render the canonical 3-paths message for a CC failure.
+
+    Snapshot in tests — keep wording stable. See
+    `.claude/rules/disciplines.md §1` for the template contract and
+    `docs/superpowers/specs/2026-06-03-cc-gate-design.md §4` for the
+    CC-specific instance.
+    """
+    if not violations:
+        raise ValueError("cc_format_three_paths requires at least one violation")
+    lines: list[str] = []
+    lines.append("🛑 Cyclomatic Complexity gate")
+    lines.append("")
+    lines.append("O que falhou:")
+    lines.append(f"  {len(violations)} funções excederam o threshold permitido.")
+    lines.append("")
+    lines.append("Onde:")
+    for v in violations:
+        annotation = ""
+        if v.get("status") == "new":
+            annotation = " [new]"
+        elif v.get("status") == "modified" and v.get("cc_before") is not None:
+            annotation = f"  ↑ de cc={v['cc_before']} [modified]"
+        lines.append(
+            f"  · {v['file']}:{v['line']} — {v['function']}()"
+            f"        cc={v['cc']}  (limite: {v['threshold']}){annotation}"
+        )
+    lines.append("")
+    lines.append("Por que importa:")
+    lines.append(
+        "  · Funções com CC alto são mais difíceis de testar, revisar e evoluir."
+    )
+    th_str = ", ".join(f"{lang}={n}" for lang, n in sorted(thresholds.items()))
+    lines.append(f"  · Threshold vigente: {th_str} (workflow-config.yaml)")
+    lines.append("  · Decision 23 — cascade fail-fast; CC é gate hard.")
+    lines.append("")
+    lines.append("Três caminhos pra resolver:")
+    lines.append("")
+    lines.append("  1) Refatorar")
+    lines.append(
+        "     Quebra a função em helpers menores. Tipicamente: extrair branches"
+    )
+    lines.append(
+        "     condicionais, validações, ou loops em métodos privados nomeados."
+    )
+    lines.append("     Re-rodar `forge verify` confirma.")
+    lines.append("")
+    lines.append("  2) Override-justify (commit body)")
+    lines.append(
+        "     Se a complexidade é genuinamente irredutível (state machine, parser,"
+    )
+    lines.append(
+        "     DSL), adicionar ao commit body — EXATAMENTE este formato:"
+    )
+    lines.append("")
+    lines.append("         CC-OVERRIDE: <file>:<func> cc=<N> — <razão concreta>")
+    lines.append("")
+    lines.append(
+        "     Validator detecta a linha no commit body e libera APENAS este commit."
+    )
+    lines.append(
+        "     Auditável via `git log --grep='CC-OVERRIDE'`. NÃO é whitelist persistente."
+    )
+    lines.append("")
+    lines.append("  3) Split-task")
+    lines.append(
+        "     Dividir a task atual em sub-tasks menores. Tipicamente o sintoma é"
+    )
+    lines.append(
+        "     \"task fez coisa demais\" — split via `forge implement` reabrindo"
+    )
+    lines.append("     task-breakdown.")
+    lines.append("")
+    lines.append("Sem auto-fix aqui — escolha humana.")
+    return "\n".join(lines)

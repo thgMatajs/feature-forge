@@ -1,0 +1,17 @@
+[
+  {
+    "filePath": "/repo/src/checkout/CartService.ts",
+    "messages": [
+      {
+        "ruleId": "complexity",
+        "severity": 2,
+        "message": "Function 'computeTotal' has a complexity of 18. Maximum allowed is 15.",
+        "line": 24,
+        "endLine": 95,
+        "column": 1
+      }
+    ],
+    "errorCount": 1,
+    "warningCount": 0
+  }
+]

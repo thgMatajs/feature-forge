@@ -1,0 +1,15 @@
+schema-version: 1
+identity:
+  project-slug: cc-gate-fixture
+  preset: kmp-mobile
+cc-gate:
+  enabled: true
+  kotlin: 10
+  swift: 10
+  ts: 15
+  python: 10
+  ignore-paths:
+    - "src/test/.*"
+    - ".*\\.generated\\..*"
+cards:
+  active: []

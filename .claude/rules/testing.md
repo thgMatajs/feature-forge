@@ -103,6 +103,31 @@ Novo validator em `validators/` exige:
    severity level)
 4. Update `pyproject.toml` se introduzir marker novo
 
+### Validators ativos (v1.2-dev)
+
+15 validators no cascade. Novos desde v1.1:
+
+- `check_no_behavior_change` (v1.1+) — gate refactor (Gap 2). Tests em
+  `tests/validators/test_check_no_behavior_change_*.py`.
+- `check_cyclomatic_complexity` (v1.2-dev+) — multi-language gate
+  (Kotlin/Swift/TS/Python). Dispatcha pra Detekt/SwiftLint/eslint/Radon
+  por linguagem; normaliza output pra `CCResult`; aplica regra `new` (cc
+  > threshold) + `modified` (cc_after > cc_before). Threshold via
+  precedência card `cc-gate-override` > workflow-config `cc-gate` >
+  defaults built-in (kotlin=10, swift=10, ts=15, python=10).
+  Override-justify via linha `CC-OVERRIDE: <file>:<func> cc=<N> — <razão>`
+  no commit body (transiente, por commit). Bypass emergencial via env
+  `NO_CC_GATE=1`, logado em `.claude/state/cc-gate-bypass.jsonl`.
+  Tests em:
+  - `tests/validators/test_check_cyclomatic_complexity.py` (validator main entry)
+  - `tests/validators/test_cc_parsers_*.py` (parsers per-tool)
+  - `tests/validators/test_cc_dispatch.py` (tool dispatch + availability)
+  - `tests/validators/test_cc_override_justify.py` (regex + scope rules)
+  - `tests/validators/test_common_cc_helpers.py` (`cc_threshold_lookup`
+    + `cc_format_three_paths` em `validators/_common.py`)
+  - `tests/integration/test_cc_gate_end_to_end.py` (marker `integration`,
+    skip per-language quando tool nativa missing — usa `@pytest.mark.skipif`).
+
 ## Gates de "pronto"
 
 Você só pode reportar trabalho "concluído" se TODOS:

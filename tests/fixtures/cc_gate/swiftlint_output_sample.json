@@ -1,0 +1,12 @@
+[
+  {
+    "rule_id": "cyclomatic_complexity",
+    "reason": "Function performLogin() should have complexity 10 or less; currently complexity is 12",
+    "file": "ios/Auth/LoginCoordinator.swift",
+    "line": 67,
+    "character": 5,
+    "severity": "Error",
+    "type": "Cyclomatic Complexity",
+    "complexity": 12
+  }
+]

@@ -739,8 +739,65 @@ the reconfigure menu when the lock is in `paused` state.
 - **Card-level i18n** — card descriptions and prompts are EN/PT-BR mixed,
   not formally translated
 
+## `cc-gate-override` (opt-in, v1.2-dev+)
+
+Override per-card do threshold do `check_cyclomatic_complexity`. Use quando
+o escopo do card inflaciona CC por design (DSL, state machine, generated
+code, parser, Compose function aninhada).
+
+```yaml
+# em cards/<card-name>/card.yaml
+cc-gate-override:
+  kotlin:
+    threshold: 15
+    justification: "Composable functions com DSL aninhado inflacionam CC"
+  swift:
+    threshold: 14
+    justification: "Combine publishers + switch exhaustive em ViewModel"
+```
+
+### Regras
+
+- **`threshold`** — inteiro positivo. Substitui o threshold de
+  `workflow-config.yaml § cc-gate.{language}` para esta linguagem em
+  features que ativam este card.
+- **`justification`** — **obrigatória** quando override é declarado. Sem
+  justification → validator emite warning "override sem rationale —
+  adicione justification ou remova". Auditável via
+  `grep -r 'cc-gate-override' cards/`.
+- Múltiplos cards ativos com override para a mesma linguagem: **primeiro
+  card com `threshold` declarado wins** (ordem determinística do listing).
+  Não é "max" nem "min" — é "primeiro", porque card listing tem semântica
+  de prioridade declarada pelo usuário.
+
+### Precedência
+
+```
+1. card cc-gate-override.{language}.threshold    ← este campo
+2. workflow-config cc-gate.{language}
+3. DEFAULTS built-in (kotlin=10, swift=10, ts=15, python=10)
+```
+
+### Auditoria
+
+Override per-card é declaração **persistente** (vive no card.yaml,
+commitado). Distinguir do override-por-commit (`CC-OVERRIDE: ...` no
+commit body), que é **transiente** e silencia apenas um commit. Pra um
+inventário rápido de overrides ativos:
+
+```bash
+grep -rn 'cc-gate-override' cards/
+```
+
+Recomendação: revisitar overrides em retrospective — se threshold inflated
+deixou de ser justificado (refactor removeu o DSL, simplificação removeu
+o state machine), remover o override. Override sem rationale ativo vira
+débito invisível.
+
 ## Related schemas
 
 - `workflow-config.yaml` — references active cards, sha256, version
+- `workflow-config.yaml § cc-gate` — bloco global que `cc-gate-override`
+  per-card sobrescreve
 - (future) Card resolver internal state — not exposed
 - (future) Agent extension-points spec — referenced here, formalized later
