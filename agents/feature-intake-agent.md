@@ -43,6 +43,12 @@ The conductor sends a YAML pack containing:
 - `memory-L2-slice` — `decisions-frozen`, `naming-extras`
 - `hypothesis` — conductor's working shape (feature kind, screens count)
 - `resolved-decisions` — anything Phase 3 elicitation already locked
+- `extension-context` (Gap 9, optional) — present ONLY when
+  `hypothesis.extends-feature != null`. Carries `parent-slug`,
+  `parent-shipped-at`, `parent-baseline` (parent's hypothesis +
+  artefact paths read-only), and `delta-intent` (the user's answer to
+  Cena 2 of the extension run). Absent → feature is standalone; the
+  §Extension context block in the template MUST be removed (see below).
 
 You read the pack. You do NOT fetch new sources (no Atlassian MCP, no graph
 queries). Missing field → open question, never a guess.
@@ -189,6 +195,47 @@ Write to `open-questions.yaml` (append, do not overwrite):
 ```
 
 If you produce no open questions, do not touch `open-questions.yaml`.
+
+---
+
+## Extension block (Gap 9, conditional)
+
+When the context pack carries `extension-context` (i.e., the conductor
+dispatched you from Cena 1 caminho 3 "Estender"), the intake template
+ships with an `EXTENSION-CONTEXT-BLOCK` between HTML markers. Your job
+during rendering:
+
+- **`extension-context` present** → KEEP the section, FILL the 5 fields
+  below, and REMOVE only the `<!-- EXTENSION-CONTEXT-BLOCK BEGIN -->`
+  and `<!-- EXTENSION-CONTEXT-BLOCK END -->` marker comments.
+- **`extension-context` absent (standalone feature)** → REMOVE the
+  entire block between (and including) the BEGIN/END markers. The
+  resulting intake looks exactly as a pre-Gap-9 feature would (zero
+  ruído).
+
+**Field-by-field sourcing (cite the source — same discipline as
+elsewhere in this agent):**
+
+| Field | Source | Notes |
+|---|---|---|
+| `Parent feature` | `extension-context.parent-slug` | Verbatim slug; no embellishment. |
+| `Parent shipped` | `extension-context.parent-shipped-at` | ISO 8601 from parent's `status.json.shipped-at`. Parents que ficaram `done` pós-Gap-9 carregam o campo automaticamente (engine carimba na transição). Se o campo for absent OU null (parent done pre-Gap-9, forward-compat), write `unknown` — never invent a date. |
+| `Scope of this extension` | `extension-context.delta-intent` | The user's answer to Cena 2's question "o que essa extension faz que a pai não fazia?". 1–2 sentences. NEVER inferred — if `delta-intent` is empty, emit Q-NNN in `open-questions.yaml` (intake gate). |
+| `Reuse from parent` | EXPLICIT list of artefacts the extension inherits. Sources: `extension-context.parent-baseline` (paths to parent's data-contract-spec, screen-analysis, tech-spec, existing-helpers) PLUS any `resolved-decisions` flagged as inherited. | Each bullet cites the parent's file by relative path. NEVER claim inheritance without a citable file. |
+| `Out-of-scope vs parent` | `resolved-decisions` entries tagged `extension-non-goal` PLUS any explicit user statement during Cena 2 drill-down. | When sources don't separate, emit an open intake question — do NOT invent non-goals. |
+
+**Anti-patterns (extension-specific, beyond the project-wide ones):**
+
+- Do not duplicate the parent's hypothesis into the child's intake. The
+  child inherits BY REFERENCE — cite paths, never paste content.
+- Do not claim "we'll reuse everything from {parent}" — list explicitly.
+  Vague reuse erodes the validator's ability to check EXT-004 (dedupe).
+- Do not write the `Out-of-scope vs parent` section as "TBD" or
+  "depends" — vague non-goals create scope creep later. Open question.
+
+**Voice (extension variant):** mentor calmo, identical to the standalone
+intake. The extension block is matter-of-fact metadata, not marketing —
+"Parent shipped: 2026-05-28" not "Building on the success of...".
 
 ---
 

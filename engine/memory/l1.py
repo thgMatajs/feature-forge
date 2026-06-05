@@ -77,6 +77,13 @@ class L1State:
     (product | refactor | spike | chore). Defaults to "product" — read paths
     treat a missing field on disk as "product" so older status.json files keep
     working unchanged.
+
+    `extends_feature` / `parent_feature` (Gap 9 — extends-feature mechanic):
+    when this feature is a derived extension of a shipped parent, both fields
+    carry the parent slug. They are set together, in lockstep, and validated
+    by `validate_extension_feature`. Default `None` on both — standalone
+    features stay exactly as before (forward compat for pre-Gap-9 status.json
+    files; the field is a no-op pass when null).
     """
 
     feature_slug: str
@@ -85,6 +92,8 @@ class L1State:
     last_action_kind: str
     phase_lock: Optional[str] = None
     subtype: str = _DEFAULT_SUBTYPE
+    extends_feature: Optional[str] = None
+    parent_feature: Optional[str] = None
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -94,6 +103,28 @@ class L1State:
 def _utc_now_iso() -> str:
     """ISO 8601 UTC with second precision and trailing Z."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _coerce_optional_slug(
+    value: Any, *, field_name: str, where: str
+) -> Optional[str]:
+    """Coerce a status.json field to ``Optional[str]`` with validation.
+
+    Gap 9 — extends-feature mechanic. Both ``extends-feature`` and
+    ``parent-feature`` accept exactly a slug string or null. Any other type
+    (dict, list, int, bool) is rejected with a MemoryError pointing at the
+    file — silent coercion would hide schema drift. Empty strings are treated
+    as null (forward-compat with engines that write "" instead of omitting).
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    raise MemoryError(
+        f"{field_name} must be a slug string or null at {where}; "
+        f"got {type(value).__name__}"
+    )
 
 
 def _l1_dir(project_root: Path, feature_slug: str) -> Path:
@@ -207,6 +238,20 @@ def read_l1_status(feature_slug: str, project_root: Path) -> Optional[L1State]:
     raw_subtype = data.get("subtype")
     subtype = raw_subtype if raw_subtype in _VALID_SUBTYPES else _DEFAULT_SUBTYPE
 
+    # extends-feature / parent-feature are additive (Gap 9). Aceita string ou
+    # null; valores não-string (dict, int, list) são rejeitados pra não
+    # propagar lixo silenciosamente. Pre-Gap-9 files: missing → None.
+    extends_feature = _coerce_optional_slug(
+        data.get("extends-feature", data.get("extends_feature")),
+        field_name="extends-feature",
+        where=str(path),
+    )
+    parent_feature = _coerce_optional_slug(
+        data.get("parent-feature", data.get("parent_feature")),
+        field_name="parent-feature",
+        where=str(path),
+    )
+
     return L1State(
         feature_slug=str(data.get("feature-slug", feature_slug)),
         status=str(data.get("state", data.get("status", "not-started"))),
@@ -214,6 +259,8 @@ def read_l1_status(feature_slug: str, project_root: Path) -> Optional[L1State]:
         last_action_kind=str(data.get("last-action") or data.get("last_action_kind") or ""),
         phase_lock=data.get("phase-lock") or data.get("phase_lock"),
         subtype=subtype,
+        extends_feature=extends_feature,
+        parent_feature=parent_feature,
         raw=data,
     )
 
@@ -233,6 +280,20 @@ def write_l1_status(state: L1State, project_root: Path) -> None:
             f"invalid subtype '{state.subtype}'; must be one of {sorted(_VALID_SUBTYPES)} "
             "(discipline §8 — non-product feature track)"
         )
+    # Gap 9 — extends-feature / parent-feature. Aceita None ou string não-
+    # vazia; outros tipos sinalizam corrupção do caller. validate_extension
+    # _feature roda no cascade pra checagens semânticas (parent existe,
+    # state=done, sem self-loop, sem duplicate scope).
+    if state.extends_feature is not None and not isinstance(state.extends_feature, str):
+        raise MemoryError(
+            f"extends_feature must be a slug string or None; "
+            f"got {type(state.extends_feature).__name__}"
+        )
+    if state.parent_feature is not None and not isinstance(state.parent_feature, str):
+        raise MemoryError(
+            f"parent_feature must be a slug string or None; "
+            f"got {type(state.parent_feature).__name__}"
+        )
     if not state.last_action_at:
         state.last_action_at = _utc_now_iso()
 
@@ -243,6 +304,8 @@ def write_l1_status(state: L1State, project_root: Path) -> None:
             "feature-slug": state.feature_slug,
             "state": state.status,
             "subtype": state.subtype,
+            "extends-feature": state.extends_feature,
+            "parent-feature": state.parent_feature,
             "last-action": state.last_action_kind,
             "last-action-at": state.last_action_at,
             "phase-lock": state.phase_lock,
@@ -820,6 +883,56 @@ def set_subtype(feature_slug: str, project_root: Path, subtype: str) -> None:
     write_l1_status(state, project_root)
 
 
+# ── extends-feature mechanic (Gap 9) ─────────────────────────────────────────
+
+
+def parent_state(feature_slug: str, project_root: Path) -> Optional[str]:
+    """Return the parent's current `state` for an extension feature, else None.
+
+    Gap 9 — extends-feature mechanic. Reads ``{feature_slug}/status.json``,
+    follows ``extends-feature`` to the parent, and returns parent's state.
+
+    Returns ``None`` when:
+      - feature_slug has no status.json on disk
+      - feature is NOT an extension (``extends-feature`` is null)
+      - parent slug does not exist as a sibling L1 directory
+
+    The "parent missing" case is a legitimate validator failure (EXT-001) —
+    callers that need to distinguish "not an extension" from "parent missing"
+    should read ``extends_feature`` directly first.
+    """
+    state = read_l1_status(feature_slug, project_root)
+    if state is None or not state.extends_feature:
+        return None
+    parent = read_l1_status(state.extends_feature, project_root)
+    return parent.status if parent else None
+
+
+def list_extensions_of(parent_slug: str, project_root: Path) -> list[str]:
+    """Reverse lookup — slugs in L1 that extend a given parent.
+
+    Gap 9 — extends-feature mechanic. Scans active L1 features, reads each
+    ``status.json``, and returns the sorted slugs whose ``extends-feature``
+    points at ``parent_slug``. Used by retrospective grouping, dedupe checks
+    (EXT-004), and status board to render extensions clustered under parent.
+
+    Empty list when no extensions exist — the common case for shipped
+    features that never grew sub-scope.
+    """
+    if not parent_slug:
+        return []
+    out: list[str] = []
+    for slug in list_active_features(project_root):
+        if slug == parent_slug:
+            continue
+        state = read_l1_status(slug, project_root)
+        if state is None:
+            continue
+        if state.extends_feature == parent_slug:
+            out.append(slug)
+    return sorted(out)
+
+
 # ── verify-log.jsonl (bonus — symmetry with history) ─────────────────────────
 
 
@@ -922,6 +1035,8 @@ __all__ = [
     "set_subtype",
     "is_blocked",
     "blocking_deps",
+    "parent_state",
+    "list_extensions_of",
     "append_verify_log",
 ]
 

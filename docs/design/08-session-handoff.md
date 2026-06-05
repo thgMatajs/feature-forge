@@ -3,23 +3,29 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-03 (v1.2.0 — Gap 5 + power-review PR #2 R1 + tag release)
-**Estado:** v1.2.0 entregue. Gap 5 + power-review PR #2 R1 + schema_version
-fix merged em `main`; tags `v1.2.0` (HEAD doc-sync) e `v1.1.0` (retro em
-`859d528`) criadas. Loader cascade canon ∪ local com hard-fail em colisão;
-`validate_card_yaml` + `validate_capability_labels` overlay-aware (CARD-008
-conformity: conflicts-with aceita label OR card-name); reconfigure ganha
-submenu `card-local`; init ganha Step 7.5 com 3-caminhos pra signals órfãos
-(orphans agrupados por capability, `_count_needle_hits` respeita
-`_SKIP_DIRS` — sem mais hang em monorepos). Cards canon: 20 → 22
-(`retrofit-client` + `shared-preferences-prefs` com `legacy-marker: true`).
-Nova decisão locked 28 (ADR append-only — não revisita prévia). Suite total:
-607 tests passing (rapid lane + integration/e2e). Próximo: Gap 9 (catálogo
-evolutivo) à luz do overlay e considerar Gap 14 (preset coverage). Itens
-deferred v1.2.x anotados em `04-pending.md`: lenient local loader (C1),
-re-detection inline no Step 7.5 (N2-a), ADR-suspension audit log (N13),
-catalog_overlay refactor (N17). Histórico prévio (PR #1 R3) preservado
-abaixo na timeline.
+**Última atualização:** 2026-06-05 (v1.2.0 + Gap 9 + /resolve-pr-comments cleanup)
+**Estado:** Gap 9 fechado — extends-feature mechanic shipado em
+`feat/gap9-extends-feature`. Pattern leve product-derived: feature done
+pode ser estendida via novo slug derivado com `extends-feature:
+{parent-slug}` aditivo no status.json + intake — sem cards canon novos,
+sem mudança no enum platforms, sem upgrade de inventory schema. Cena 1
+do `forge plan` ganha 4º caminho "Estender" (conditional state=done);
+validator novo EXT-001..004 (cross-cutting); discipline §10 formaliza
+semantics. **Multi-target retroativo (watchOS / Wear OS / tvOS) movido
+pra out-of-scope permanente** — feature-forge cobre mobile (Android +
+iOS + KMP); plataforma exótica futura entra via Gap 5 overlay local,
+não via canon expansion. Suite total: **637 tests passing + 12 skipped**
+(+42 desde v1.2.0: 37 Gap 9 + 5 fix loop). Pré-Gap 9 ainda válido:
+v1.2.0 entregue (Gap 5 + power-review PR #2 R1 + schema_version fix
+merged em `main`); tags `v1.2.0` (HEAD doc-sync) e `v1.1.0` (retro em
+`859d528`) criadas. Loader cascade canon ∪ local com hard-fail em
+colisão; `validate_card_yaml` + `validate_capability_labels` overlay-
+aware; reconfigure ganha submenu `card-local`; init ganha Step 7.5 com
+3-caminhos pra signals órfãos. Cards canon: 22. Decisão locked 28
+(ADR append-only — não revisita prévia). Próximo: considerar Gap 14
+(preset coverage) e itens deferred v1.2.x em `04-pending.md` (lenient
+local loader C1, re-detection inline no Step 7.5 N2-a, ADR-suspension
+audit log N13, catalog_overlay refactor N17).
 
 ---
 
@@ -43,8 +49,8 @@ Depois siga as instruções. Estou na Fase {N}.
 ## Estado atual (anchors)
 
 ```
-~379 arquivos · ~50,700 linhas · 27 decisões locked + 7 direcionais (Fase 3.5)
-v1.1.0 release: 508 tests passing (unit + integration, PR #1 R2 baseline) · 17 graph queries · 16 proposal kinds
+~400 arquivos · ~52,500 linhas · 27 decisões locked + 7 direcionais (Fase 3.5) + 1 ADR append-only (Decisão 28, Gap 5)
+v1.2.0 + Gap 9 cumulativo: 637 tests passing + 12 skipped · 17 graph queries · 16 proposal kinds · 15 validators · 22 cards canon (+ overlay local)
 ```
 
 | Categoria | Status |
@@ -69,6 +75,8 @@ v1.1.0 release: 508 tests passing (unit + integration, PR #1 R2 baseline) · 17 
 | v1.1 — Gap 18 (reuse intelligence expansion) | ✅ shipped 2026-06-01 — 6 detection categories, schema v2, parser overhaul, gradle modules+deps, init Step 11.5+11.6, evolve dispatch, doctor check, incremental hook, forge plan integration. **+12.360 LOC, 55 arquivos, 20 unit tests novos.** |
 | **🎉 feature-forge v1.1.0 completa** | ✅ **~379 arquivos, ~50.7K LOC, 458 tests passing (rapid lane)** (2026-06-01) |
 | v1.1.0 — PR #1 bloqueadores resolvidos | ✅ shipped 2026-06-01 — 14 commits cobrindo C1–C4 (phase lock atomic O_EXCL, implement try/finally, `_reset_domain_tables` atomic, version bump 1.1.0) + A1/A2/A5/A6/A9/A12 (Swift `"""` brace counter, Groovy DSL parens, tie-breaker determinístico, root-level `test/` recognition, `forge plan` rc=130 em deferred) + review fixes (CR-01/CR-02/MD-01/HG-01/HG-02/HG-03). **+38 regression tests, total 458 (baseline 367 + 53)**. Detalhe em `CHANGELOG.md`. |
+| v1.2 — Gap 5 (card local overlay) | ✅ shipped 2026-06-02 — Approach A: cascade canon ∪ local com hard-fail em colisão; validators overlay-aware; reconfigure submenu `card-local`; init Step 7.5 com 3-caminhos pra signals órfãos; cards canon 20 → 22 (`retrofit-client` + `shared-preferences-prefs` com `legacy-marker`). Decisão locked 28 nova (ADR append-only). Suite: 595 passing + 12 skipped. |
+| v1.2 — Gap 9 (extends-feature mechanic) | ✅ shipped 2026-06-03 — re-escopado: extends-feature pattern leve product-derived (sem cards canon novos, sem mudança em platforms enum, sem upgrade de inventory schema); 4º caminho "Estender" em `forge plan` Cena 1; validator EXT-001..004; discipline §10 formaliza semantics; `shipped-at` writer em transição state=done. Multi-target watchOS/Wear/TV movido pra out-of-scope permanente. **+42 tests cumulativo (37 Gap 9 + 5 fix loop); total 637 passing + 12 skipped**. Detalhe em `CHANGELOG.md`. |
 
 ## Conhecidos limites v1.1 (atualizado)
 
@@ -140,6 +148,47 @@ restantes ficam pra v1.2+ ou v2/Phase 6:
   oferece 3-caminhos (rename / abort / listar) mas o "rename" não reabre
   o prompt do nome — encerra a operação. Gap pra v1.2; documentado em
   `docs/design/04-pending.md`.
+
+**feature-forge cobre mobile (Android + iOS + KMP) — scope-out
+permanente (Gap 9 revisita 2026-06-03):**
+
+- **watchOS, Wear OS, tvOS e multi-target retroativo são explicitamente
+  out-of-scope permanente.** Não é "v1.x+" — é decisão arquitetural
+  consciente, não TODO residual. Cards canon `watchos-screens`,
+  `watchos-navigation`, `wear-os-screens`, `tv-screens` não virão; enum
+  `workflow-config.platforms.active` permanece `[android, ios, kmp, web]`;
+  `inventory.design-system.components.platforms` field não agrega valor
+  sem multi-target; labels `watchos-*` / `wear-os-*` / `tv-*` não entram
+  no catálogo nem como Reservada; `forge extend-feature {slug}` como
+  verbo novo não vem (Decision 9 preservada — "estender" vive dentro de
+  `forge plan` via 4º caminho conditional em Cena 1). Quando demanda
+  improvável surgir, o caminho oficial é via **Gap 5 (card local
+  overlay)** — não expansão prescritiva do canon. Demanda real teria
+  que reabrir a revisita Gap 9 inteira. Documentado em
+  `docs/design/04-pending.md §Gap 9 §OUT-OF-SCOPE explícito`.
+
+**Gap 9 (extends-feature mechanic) surfaced (2026-06-03) — não bloqueia
+merge, target v1.2.x:**
+
+- **`validate_extension_feature` wiring na cascade `forge verify`** —
+  validator existe + roda standalone + 19 testes verdes, mas não está
+  cadastrado em `engine/verify.py` cascade explícita. Decisão consciente
+  no ship: cross-cutting validator com apenas 1 caso até hoje; cascade
+  automatic em `forge verify` é refinamento que entra em v1.2.x quando
+  o pattern "cross-cutting validator" tiver 2+ casos. Workaround atual:
+  invocação manual ou smoke test. Documentado em
+  `docs/design/04-pending.md §Gap 9 §TODO residual`.
+- **Wave A skipping logic completo no conductor** — agent prompt da
+  `planning-conductor` foi patchado (Phase 1 step 5 extension context
+  import), mas execução real do skip de elicit no conductor (não
+  re-perguntar user value / business outcome / persona herdados da pai)
+  só é exercitada com piloto E2E real. Refinamento de prompt esperado
+  pós-piloto.
+- **Smoke test E2E real** — Mandamento "verde antes de pronto" cumprido
+  via unit + integration (637 passing). E2E real (dummy parent feature
+  done + `forge plan` + escolher Estender + verificar L1 + intake +
+  validator) seria refinamento de fixture pra v1.2.x. Smoke manual
+  documentado em `04-pending.md §Gap 9 §Validation pendente`.
 
 ## Fase 4 — completa (resumo)
 

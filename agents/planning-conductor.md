@@ -150,6 +150,74 @@ Read everything available BEFORE opening your mouth. Order:
      ONLY case in the codebase where a sub-question dictates wave
      dispatch beyond the subtype itself. Discipline §8 documents the
      criteria; don't litigate them again in conversation.
+   - **Extension context import (Gap 9, conditional).** When this run was
+     entered via Cena 1 caminho 3 ("Estender"), `engine.plan` already
+     created the child L1 with `extends-feature` + `parent-feature`
+     pointing at the parent's slug, and seeded `hypothesis.yaml` with
+     `shape: extension` + `subtype: product`. Before opening any wave,
+     you read the parent's artefacts and populate the **context-pack
+     baseline**. Cross-reference: `docs/design/07-discipline.md §10`
+     (Extension feature).
+
+     **What to read from the parent (read-only, never edit):**
+
+     - `.claude/memory/L1/{parent}/status.json` → `shipped-at`, `subtype`
+     - `.claude/memory/L1/{parent}/hypothesis.yaml` → `shape`, `screens`,
+       `persistence`, `identified-components`, `new-components-needed`
+     - `.claude/memory/L1/{parent}/elicitation.yaml` → resolved Q/A pairs
+       (especially `external-deps` if any propagate)
+     - `docs/feature-implementation-workflow/features/{parent}/data-contract-spec.yaml`
+       → entities, validations, persistence layers
+     - `docs/feature-implementation-workflow/features/{parent}/screen-analysis.yaml`
+       → modeled states + transitions
+     - `docs/feature-implementation-workflow/features/{parent}/tech-spec.md`
+       → layers touched, naming conventions, helper references
+     - `.claude/memory/L1/{parent}/existing-helpers.yaml` → reusable helpers
+       already identified in the parent's Wave 4.5
+
+     **What to populate in the child's context-pack:**
+
+     ```yaml
+     extension-context:
+       extends-feature: {parent-slug}
+       parent-state: done                  # validator EXT-002 guarantees
+       parent-shipped-at: {ISO8601}
+       parent-baseline:
+         hypothesis: {parent.hypothesis.yaml verbatim}
+         data-contract-spec-ref: {relative path}
+         screen-analysis-ref: {relative path}
+         tech-spec-ref: {relative path}
+         existing-helpers-ref: {relative path}
+       delta-intent: null                  # filled in Cena 2 (source inquiry)
+                                           # of the extension's run
+     ```
+
+     **Effect on subsequent waves (extension variant):**
+
+     - **Cena 2 (source inquiry)**: ask the user the DELTA — "o que essa
+       extension faz que a pai não fazia?". Do NOT re-ask the parent's
+       shape/persistence/auth — those are inherited.
+     - **Cena 9 (elicitation)**: ambiguity-map starts from parent's
+       resolved decisions (treat them as `confidence=1.0` defaults). Only
+       elicit nodes the delta actually changes. Most extensions have ≤ 2
+       unresolved nodes (vs 4 typical for greenfield).
+     - **Phase 4 wave dispatch matrix** below documents the abbreviation
+       per wave.
+
+     **Anti-patterns (do NOT do):**
+
+     - Do not re-ask parent's persistence strategy — it's locked in.
+     - Do not duplicate parent's data-contract-spec in the child. The
+       child references parent's spec by path and adds delta-only entries.
+     - Do not invent inheritance — every reused artefact is listed
+       explicitly in feature-intake.md §Extension context (Reuse from
+       parent). If you can't cite the parent's file, you can't claim
+       inheritance.
+
+     **Resume:** when an extension is resumed (`forge plan {child}` after
+     a pause), this step re-runs — the parent's artefacts are read again
+     from disk. There is no caching layer; deterministic-context discipline
+     holds.
 5. If ticket provided: fetch via Atlassian MCP. Pull summary, description,
    acceptance criteria, attachments (download to `features/{slug}/screenshots/`
    or `non-product/{slug}/screenshots/` per subtype), linked tickets.
@@ -373,6 +441,7 @@ on `status.json.subtype` (discipline §8)**:
 | `product` (default) | A · B · C · D · E | Full pipeline — sections below describe each wave |
 | `refactor` | A · C · D · E | **Wave B skipped entirely** — see "Refactor branch" below |
 | `bugfix` | A · (**B conditional**) · C · D · E | Wave B runs IFF `hypothesis.wave_b_required == true` (UI/observable bug); skipped when logic-only. Wave C focused (§§ 1 · 2 · 3-7 touched · 13 · 14; §11 only when new analytics). Wave D defaults to 1 task; split on dev request. Wave E readiness relaxed (no Wave-B-artifact gating when skipped). See "Bugfix branch" below. |
+| `product` + `extends-feature != null` (Gap 9) | A (abbreviated) · B (delta-focused) · C (delta-focused) · D (baseline + delta `allowed_files`) · E | **Extension variant** — subtype stays `product` but the dispatch is delta-only. Wave A intake renders §Extension context (parent slug, shipped-at, reuse list, non-goals). Wave B focuses ONLY on screens/contracts the delta touches (parent supplies the baseline modeled states; sub-agents reference parent's spec by path, never duplicate). Wave D `allowed_files` whitelist herda parent's set + adds delta scope explicitly. Wave E readiness check is identical to product. See "Extension branch" below. |
 | `spike` | (stub) | Surface 3-caminhos before dispatching anything |
 | `chore` | (stub) | Surface 3-caminhos before dispatching anything |
 
@@ -458,6 +527,49 @@ a sub-question beyond the subtype itself. Discipline §8 documents the
 criteria; do NOT re-litigate in conversation. Conductor proceeds to
 Phase 4.5 in both cases (existing-helpers prefetch is useful for bugfix
 to detect sibling regressions in helpers).
+
+**Extension branch (`subtype=product` AND `hypothesis.extends-feature !=
+null`, Gap 9):** the dispatch is delta-only across every wave. Cross-link:
+`docs/design/07-discipline.md §10` (Extension feature).
+
+- **Wave A (abbreviated):** `feature-intake-agent` runs, but the intake
+  template renders §Extension context with the parent's metadata
+  (slug, shipped-at, reuse list, non-goals). `feature-prd-agent` runs
+  exactly as product — extension still has user value, just inheriting
+  baseline scope from the parent.
+- **Wave B (delta-focused):** `screen-analysis-agent` and
+  `contract-planner-agent` run, but their context packs include the
+  parent's `screen-analysis.yaml` + `data-contract-spec.yaml` as
+  `parent-baseline` (read-only references). Sub-agents are instructed
+  to model ONLY the screens/contracts the delta introduces, and to
+  reference parent's spec by relative path for any state/entity the
+  delta doesn't change. NEVER duplicate parent content.
+- **Phase 4.5 (reusability prefetch):** runs the standard graph query
+  PLUS reads parent's `existing-helpers.yaml`. The merged result feeds
+  Wave C — extension sub-agents see helpers the parent already surfaced
+  AND any new helpers the delta could reuse.
+- **Wave C (tech-spec focused):** `tech-spec-agent` renders the full
+  product structure (extension is product-derived) BUT §1 motivation
+  cites parent's tech-spec by relative path ("extends `features/{parent}/
+  tech-spec.md` §X"). The agent MUST NOT duplicate parent's content —
+  only the architectural delta is rendered fresh. Other sections render
+  ONLY when the layer is actually touched by the delta.
+- **Wave D (baseline + delta `allowed_files`):** `task-contract-writer`
+  receives BOTH the parent's `allowed_files` whitelist (treated as
+  read-only baseline) AND the delta scope captured in Wave A. The writer
+  emits tasks whose `allowed_files` is the union — but each task contract
+  explicitly tags inherited paths vs delta paths so the reviewer can
+  audit.
+- **Wave E (readiness review):** runs identical to product. Validator
+  `validate_extension_feature` (standalone — invocação direta via
+  `validators/validate_extension_feature.py` ou via hook custom;
+  auto-discovery na cascade `forge verify` deferido pra v1.x+ — W-001)
+  checks EXT-001..004 — parent exists, parent.state=done, no self-loop,
+  no duplicate scope.
+
+Conductor proceeds to Phase 4.5 normally — the existing-helpers prefetch
+is doubly valuable for extensions because parent's helpers are likely
+candidates for delta reuse.
 
 **Phase 4.5 — Reusability prefetch (silent, between Wave B and Wave C, ~1s):**
 
@@ -638,6 +750,64 @@ verified (decision 11). The retrospective scope varies by subtype:
   Empty proposals ("be more careful") are NOT valid. If the analysis
   stops at "valid trade-off", emit a `proposal-kind: decision-record`
   documenting the trade-off so future eyes don't reopen it.
+  ```
+
+- **product + extends-feature** (Gap 9 — extension variant): retrospective
+  runs but with **focused scope** — the question is "o que herdei vs o que
+  adicionei?", NOT "what would have prevented this" (that's the bugfix
+  5-whys). The retrospective-agent receives a context pack with the parent's
+  `summary.yaml` (or `hypothesis.yaml` if parent isn't archived yet) + the
+  child's delta artefacts, and emits proposed evolutions answering:
+
+  - Which parts of the parent's pattern were genuinely reused (signal for
+    L2 promotion — "this pattern proved cross-feature").
+  - Which parts of the delta turned into NEW patterns (candidates for
+    next-feature reuse).
+  - Whether the extension surfaces a fork-vs-extend tension — sometimes
+    "this extension is so big it should have been its own product"; the
+    retrospective flags that as a proposed-evolution `proposal-kind:
+    decision-record` for `forge evolve` review.
+
+  Template prompt for retrospective-agent (extension variant):
+
+  ```
+  Extension: {child-slug}
+  Parent: {parent-slug} (shipped {parent.shipped-at})
+  Delta scope (from intake §Extension context): {delta-summary}
+
+  Four questions (alinhadas com discipline §10 — doc fonte vence prompt):
+
+  1. What did this extension genuinely reuse from the parent?
+     → Cite specific artefacts (screen Y, contract Z, helper W) and
+       whether the reuse was clean (zero modification) or required minor
+       adjustment.
+
+  2. What did the delta add that's new?
+     → Identify patterns that didn't exist in the parent. Are any of them
+       candidates for promotion to L2 (next feature could reuse)?
+
+  3. Was the delta scope right-sized?
+     → Too small (overhead of extension > benefit; should have been a
+       follow-up PR) / right (genuine derived scope) / too big (should
+       have been its own product feature with no extends-feature link)?
+
+  4. Que sinais sugerem que parent + extension deveriam ser refatorados
+     pra shared base?
+     → Proposed-evolution candidate: quando 2+ extensions de uma mesma
+       pai compartilham N delta similar, promover a base é candidato
+       natural pra L2. Surface como \`proposal-kind: l2-promotion\` ou
+       \`proposal-kind: decision-record\` (refactor scope > L2 padrão).
+       Diga "nenhum sinal — extension foi delta puro" quando aplicável.
+
+  Emit ≥1 proposed-evolution per non-trivial answer:
+    - new L2 pattern (delta added something reusable)
+    - new card contribution (delta surfaced a recurring need)
+    - new decision-record (fork-vs-extend tension worth documenting)
+    - refinement of parent's pattern (if reuse exposed gaps)
+    - shared-base refactor candidate (question 4 affirmative)
+
+  5-whys does NOT apply here — extensions are additive by design, not
+  failure-mode analysis.
   ```
 
 - **spike / chore** (v1.0 stubs): retrospective does NOT run for these
@@ -825,6 +995,32 @@ variant reflects the leaner artifact set per discipline §8.
    
    Próximo:
      forge implement TASK-0001
+```
+
+**Extension variant (Gap 9 — `extends-feature != null`):**
+
+When the run was entered via Cena 1 caminho 3 ("Estender") and the
+child's `hypothesis.yaml.extends-feature` points at a parent in
+`state=done`, append the extension block to whichever subtype-variant
+above applies (extension is product-derived; the product/refactor/bugfix
+closing renders first, then this overlay):
+
+```text
+   Extension of:    {parent-slug} (shipped {parent.shipped-at})
+   Delta scope:     {one-line summary from intake §Extension context}
+   Inherited from parent:
+     · {artefact 1} (cited at intake §Extension context "Reuse from parent")
+     · {artefact 2}
+   Out-of-scope vs parent:
+     · {non-goal 1}
+     · {non-goal 2}
+   
+   Validator:       validate_extension_feature pass
+                    (EXT-001 parent exists · EXT-002 parent.state=done ·
+                     EXT-003 no self-loop · EXT-004 no duplicate scope)
+   
+   Retrospective:   extension variant (não 5-whys) — "o que herdei vs
+                    o que adicionei" rodará depois do implement.
 ```
 
 **Ready-with-blocks (discipline §9):**
