@@ -22,7 +22,9 @@ class QAFindingValidationError(ValueError):
 
 _VALID_SEVERITY = {"critical", "high", "medium", "low", "info"}
 _CORE_VECTORS = {"spec-vs-spec", "coverage", "chaos", "validator-claim"}
-_FINGERPRINT_RE = re.compile(r"^[0-9a-f]{64}$")
+_FINGERPRINT_RE = re.compile(r"[0-9a-f]{64}")
+_ISO_UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$")
+_ID_RE = re.compile(r"^[a-z][a-z0-9-]*-\d{4}$")
 _REQUIRED_TOP = {
     "id",
     "fingerprint",
@@ -63,8 +65,15 @@ def validate_qa_finding(
             f"finding com campos obrigatórios ausentes: {sorted(missing)}"
         )
 
+    finding_id = data["id"]
+    if not isinstance(finding_id, str) or not _ID_RE.fullmatch(finding_id):
+        raise QAFindingValidationError(
+            f"id inválido (esperado '<slug>-NNNN' lowercase, ex.: "
+            f"'qa-<run-id>-0007' ou '<auditor>-0001'): {finding_id!r}"
+        )
+
     fingerprint = data["fingerprint"]
-    if not isinstance(fingerprint, str) or not _FINGERPRINT_RE.match(fingerprint):
+    if not isinstance(fingerprint, str) or not _FINGERPRINT_RE.fullmatch(fingerprint):
         raise QAFindingValidationError(
             f"fingerprint inválido (esperado sha256 hex lowercase 64-char): "
             f"{fingerprint!r}"
@@ -79,9 +88,28 @@ def validate_qa_finding(
     vector = data["vector"]
     valid_vectors = _CORE_VECTORS | (known_extension_vectors or set())
     if vector not in valid_vectors:
+        msg = f"vector={vector!r} inválido. Core: {sorted(_CORE_VECTORS)}."
+        if known_extension_vectors:
+            msg += f" Extensions registrados: {sorted(known_extension_vectors)}."
+        raise QAFindingValidationError(msg)
+
+    scope = data["scope"]
+    if not isinstance(scope, dict):
         raise QAFindingValidationError(
-            f"vector={vector!r} inválido. Core: {sorted(_CORE_VECTORS)}. "
-            f"Extension registrados: {sorted(known_extension_vectors or [])}"
+            f"scope deve ser dict, recebido tipo {type(scope).__name__}"
+        )
+    if "files" not in scope:
+        raise QAFindingValidationError("scope.files ausente (required)")
+    files = scope["files"]
+    if not isinstance(files, list) or not all(isinstance(f, str) for f in files):
+        raise QAFindingValidationError(
+            "scope.files deve ser list[str], "
+            f"recebido tipo {type(files).__name__}"
+        )
+    if "feature" in scope and not isinstance(scope["feature"], str):
+        raise QAFindingValidationError(
+            f"scope.feature deve ser str, recebido tipo "
+            f"{type(scope['feature']).__name__}"
         )
 
     evidence = data["evidence"]
@@ -90,11 +118,44 @@ def validate_qa_finding(
             f"evidence deve ser dict, recebido tipo {type(evidence).__name__}"
         )
 
-    if vector == "validator-claim" and "sandbox_result" not in evidence:
-        raise QAFindingValidationError(
-            "vector=validator-claim exige evidence.sandbox_result "
-            "(subprocess executado no sandbox)"
-        )
+    for evidence_required in ("auditor", "auditor_reasoning"):
+        if evidence_required not in evidence:
+            raise QAFindingValidationError(
+                f"evidence.{evidence_required} ausente (required pra todo vector)"
+            )
+        if not isinstance(evidence[evidence_required], str):
+            raise QAFindingValidationError(
+                f"evidence.{evidence_required} deve ser str, recebido tipo "
+                f"{type(evidence[evidence_required]).__name__}"
+            )
+
+    if vector == "validator-claim":
+        if "sandbox_result" not in evidence:
+            raise QAFindingValidationError(
+                "vector=validator-claim exige evidence.sandbox_result "
+                "(subprocess executado no sandbox)"
+            )
+        sr = evidence["sandbox_result"]
+        if not isinstance(sr, dict):
+            raise QAFindingValidationError(
+                f"evidence.sandbox_result deve ser dict, recebido tipo "
+                f"{type(sr).__name__}"
+            )
+        for sr_required, expected_type, type_name in (
+            ("exit_code", int, "int"),
+            ("stdout", str, "str"),
+            ("stderr", str, "str"),
+            ("duration_s", (int, float), "number"),
+        ):
+            if sr_required not in sr:
+                raise QAFindingValidationError(
+                    f"evidence.sandbox_result.{sr_required} ausente (required)"
+                )
+            if not isinstance(sr[sr_required], expected_type):
+                raise QAFindingValidationError(
+                    f"evidence.sandbox_result.{sr_required} deve ser {type_name}, "
+                    f"recebido tipo {type(sr[sr_required]).__name__}"
+                )
 
     pe = data["proposed_evolution"]
     if not isinstance(pe, dict):
@@ -108,4 +169,24 @@ def validate_qa_finding(
         raise QAFindingValidationError(
             f"proposed_evolution.type deve começar com 'qa-finding-'; "
             f"recebido {pe_type!r}"
+        )
+    if "summary" not in pe:
+        raise QAFindingValidationError("proposed_evolution.summary ausente")
+    if not isinstance(pe["summary"], str):
+        raise QAFindingValidationError(
+            f"proposed_evolution.summary deve ser str, recebido tipo "
+            f"{type(pe['summary']).__name__}"
+        )
+    if "actionable" not in pe:
+        raise QAFindingValidationError("proposed_evolution.actionable ausente")
+    if type(pe["actionable"]) is not bool:
+        raise QAFindingValidationError(
+            f"proposed_evolution.actionable deve ser bool, recebido tipo "
+            f"{type(pe['actionable']).__name__}"
+        )
+
+    created_at = data["created_at"]
+    if not isinstance(created_at, str) or not _ISO_UTC_RE.fullmatch(created_at):
+        raise QAFindingValidationError(
+            f"created_at deve ser ISO-8601 UTC com sufixo Z; recebido {created_at!r}"
         )
