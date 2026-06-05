@@ -21,6 +21,18 @@ script.py`` não-interativo, é silenciosamente ignorado. Usamos
 ``sitecustomize.py`` posicionado via ``PYTHONPATH``, que é importado por
 ``site.py`` em qualquer invocação que não use ``-S``. Este é o mecanismo
 canônico do CPython para customização per-environment.
+
+Trade-off colateral (IN-01): o ``guard_dir`` prepended ao ``PYTHONPATH``
+precede qualquer ``sitecustomize.py`` instalado no environment base
+(conda activate, pyenv, virtualenv custom). Validators rodam num ambiente
+onde apenas o nosso sitecustomize é executado — o do conda/pyenv/etc.
+não dispara. Aceitável porque validators são determinísticos e não devem
+depender de hooks de ambiente externo; mencionado aqui pra evitar
+surpresa em debugging.
+
+O guard cobre ``os.chdir`` E ``os.fchdir`` (defense-in-depth, WR-04).
+Ambos são canais de mudança de CWD e violariam a invariante "CWD setado
+externamente é imutável".
 """
 
 from __future__ import annotations
@@ -34,8 +46,10 @@ from pathlib import Path
 from typing import Literal
 
 _CHDIR_GUARD = """\
-# sitecustomize.py preload — bloqueia os.chdir no subprocess do sandbox forge qa.
+# sitecustomize.py preload — bloqueia mudança de CWD no subprocess do sandbox.
 # Decisão 30: CWD foi setado externamente pelo orchestrator e é imutável.
+# Cobre os.chdir E os.fchdir (defense-in-depth, WR-04). Ambos canais de
+# mudança de CWD violariam a invariante.
 import os as _forge_qa_os
 
 
@@ -46,7 +60,15 @@ def _forge_qa_blocked_chdir(_p, *_a, **_kw):
     )
 
 
+def _forge_qa_blocked_fchdir(_fd):
+    raise RuntimeError(
+        "os.fchdir bloqueado pelo sandbox forge qa (Decisão 30). "
+        "CWD foi setado externamente e é imutável."
+    )
+
+
 _forge_qa_os.chdir = _forge_qa_blocked_chdir
+_forge_qa_os.fchdir = _forge_qa_blocked_fchdir
 """
 
 
@@ -70,7 +92,6 @@ class Fixture:
     name: str
     input_path: Path
     validator_path: Path
-    executable: bool = True
 
 
 SandboxStatus = Literal["ok", "timeout", "skipped-budget", "sandbox-breach", "error"]
@@ -194,6 +215,20 @@ def run_sandbox(
             results.append(SandboxResult(fixture=fixture, status="skipped-budget"))
             continue
 
+        # IN-04: validator_path inexistente vira status=error com mensagem
+        # nomeada — sem isso, OSError genérico no catch dificulta debug.
+        if not fixture.validator_path.is_file():
+            results.append(
+                SandboxResult(
+                    fixture=fixture,
+                    status="error",
+                    error=(
+                        f"validator_path não é arquivo: {fixture.validator_path}"
+                    ),
+                )
+            )
+            continue
+
         try:
             _validate_paths_inside_sandbox(fixture, sandbox_cwd)
         except SandboxBreachError as exc:
@@ -202,7 +237,18 @@ def run_sandbox(
             )
             continue
 
+        # WR-01: status semantics na fronteira budget/timeout. Quando
+        # remaining < ~50ms (spawn overhead do interpreter), o subprocess
+        # nem ia conseguir começar trabalho útil — marca como
+        # skipped-budget em vez de deixar o subprocess.run(timeout=tiny)
+        # disparar TimeoutExpired e cair em status=timeout. Phase 4
+        # synthesis depende dessa distinção (timeout = validator lento;
+        # skipped-budget = orchestrator decidiu pular).
         remaining = min(per_validator_s, budget_total_s - elapsed)
+        if remaining < 0.05:
+            results.append(SandboxResult(fixture=fixture, status="skipped-budget"))
+            continue
+
         t0 = time.monotonic()
         try:
             proc = subprocess.run(
