@@ -1,4 +1,4 @@
-# Command surface — locked at 12
+# Command surface — locked at 13 (após Revisita Decisão 9 em 2026-06-05)
 
 This document is the formal mapping between **every lifecycle operation** the
 engine performs and **which of the 12 canonical subcommands** hosts it. It
@@ -21,7 +21,7 @@ dedicated PR. Silent expansion is forbidden.
 
 ---
 
-## The 12 subcomandos (canonical purpose)
+## The 13 subcomandos (canonical purpose)
 
 | # | Command | Canonical purpose |
 |---|---|---|
@@ -37,6 +37,7 @@ dedicated PR. Silent expansion is forbidden.
 | 10 | `forge evolve` | Review and apply / reject proposed evolutions queued by retrospective-agent. |
 | 11 | `forge undo` | Revert the last state-mutating action (task commit, reconfigure apply, init). Interactive prompt picks target if ambiguous — `last` is not a CLI suffix, é a opção default no menu. |
 | 12 | `forge raw` | Escape hatch. Direct invocation of internal scripts (`migrator-N-to-M`, `verify-card`, `edit-config`, `rebuild-templates`). Documented per-script. **NÃO** é uma porta pra inventar novos comandos via raw — é a porta pra operações pontuais sem UX. |
+| 13 | `forge qa` | Adversarial red-team gate. Audita artefatos do lifecycle inventando cenários hostis (4 attack vectors: spec-vs-spec, chaos, coverage, validator-claim), executa fixtures sintéticos em sandbox isolado, emite findings actionable em proposed-evolutions. Scope: feature / screen / task / paranoid (cross-feature). Trigger: manual + opt-in auto via `qa.auto-run-on-feature-done`. Verdict (BLOCK/FLAG/PASS) NÃO bloqueia retrospective nem commit — alinha Decisão 5 (code review final out-of-scope). |
 
 ---
 
@@ -68,6 +69,9 @@ dedicated PR. Silent expansion is forbidden.
 | **Resume plan / implement** | `forge plan {slug}` / `forge implement {slug}` — auto-resume do checkpoint | Sem flag `--resume`. |
 | **Amend plan (mid-implement)** | Abortar o plan corrente (digitar `para`), rodar `forge plan {slug}` de novo — auto-resume parte do checkpoint mais recente, usuário corrige onde precisa. | Sem flag `--amend`. |
 | **Undo last action** | `forge undo` (sem sufixo) | `last` aparece como opção default do menu interativo dentro de `forge undo`, não como argumento CLI. |
+| **QA: rodar audit adversarial** | `forge qa` (direto) | `forge qa` pergunta scope conversacionalmente (feature / screen / task / paranoid). Sem flag. |
+| **QA: ativar/desativar comando + auto-run** | `forge reconfigure` → menu `[ ] qa` | Toggle interativo. Sem flag. |
+| **QA: aplicar findings** | `forge evolve` → escolher proposta tipo `qa-finding-{vector-slug}` → "aplicar" | Reusa Decisão 26 single-by-single. QA não tem `--apply` próprio. |
 | **Ship / open PR** | Out-of-scope para v1. | Não tem `forge ship`. |
 
 ---
