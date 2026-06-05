@@ -16,7 +16,7 @@ from validators.validate_qa_finding import (
 def _minimal_valid_finding() -> dict:
     """Finding completo válido per docs/schemas/qa-finding.md."""
     return {
-        "id": "qa-2026-06-05T14-32-08Z-a1b2-0007",
+        "id": "qa-auditor-spec-vs-spec-0001",
         "fingerprint": "7a3f4d2c1b9e8a0f" * 4,  # 64-char hex lowercase
         "vector": "validator-claim",
         "severity": "critical",
@@ -158,4 +158,143 @@ def test_proposed_evolution_type_prefix():
     finding = _minimal_valid_finding()
     finding["proposed_evolution"]["type"] = "random-prefix-validator-claim"
     with pytest.raises(QAFindingValidationError, match="qa-finding-"):
+        validate_qa_finding(finding)
+
+
+# --- HI-01: evidence.auditor + evidence.auditor_reasoning required (str) ---
+
+
+def test_evidence_auditor_missing():
+    """evidence sem 'auditor' deve raise (required pra todo vector — schema §evidence)."""
+    finding = _minimal_valid_finding()
+    del finding["evidence"]["auditor"]
+    with pytest.raises(QAFindingValidationError, match="evidence.auditor ausente"):
+        validate_qa_finding(finding)
+
+
+def test_evidence_auditor_not_str():
+    """evidence.auditor não-string deve raise nomeando tipo recebido."""
+    finding = _minimal_valid_finding()
+    finding["evidence"]["auditor"] = 42
+    with pytest.raises(QAFindingValidationError, match="evidence.auditor deve ser str"):
+        validate_qa_finding(finding)
+
+
+def test_evidence_auditor_reasoning_missing():
+    """evidence sem 'auditor_reasoning' deve raise (load-bearing pra revisão humana)."""
+    finding = _minimal_valid_finding()
+    del finding["evidence"]["auditor_reasoning"]
+    with pytest.raises(
+        QAFindingValidationError, match="evidence.auditor_reasoning ausente"
+    ):
+        validate_qa_finding(finding)
+
+
+# --- HI-02: proposed_evolution.summary + .actionable required ---
+
+
+def test_proposed_evolution_summary_missing():
+    """proposed_evolution sem 'summary' deve raise (UX em forge evolve depende)."""
+    finding = _minimal_valid_finding()
+    del finding["proposed_evolution"]["summary"]
+    with pytest.raises(
+        QAFindingValidationError, match="proposed_evolution.summary ausente"
+    ):
+        validate_qa_finding(finding)
+
+
+def test_proposed_evolution_actionable_missing():
+    """proposed_evolution sem 'actionable' deve raise (load-bearing pra Phase 5 emit)."""
+    finding = _minimal_valid_finding()
+    del finding["proposed_evolution"]["actionable"]
+    with pytest.raises(
+        QAFindingValidationError, match="proposed_evolution.actionable ausente"
+    ):
+        validate_qa_finding(finding)
+
+
+def test_proposed_evolution_actionable_must_be_bool():
+    """actionable='true' (string) deve raise — strict bool, não permite coerção."""
+    finding = _minimal_valid_finding()
+    finding["proposed_evolution"]["actionable"] = "true"
+    with pytest.raises(
+        QAFindingValidationError, match="proposed_evolution.actionable deve ser bool"
+    ):
+        validate_qa_finding(finding)
+
+
+# --- HI-03: scope type guard + scope.files ---
+
+
+def test_scope_must_be_dict():
+    """Defensive: scope=string deve raise (reincidência da lição Task 2.1 HI-01)."""
+    finding = _minimal_valid_finding()
+    finding["scope"] = "feature-x"
+    with pytest.raises(QAFindingValidationError, match="scope deve ser dict"):
+        validate_qa_finding(finding)
+
+
+def test_scope_files_missing():
+    """scope sem 'files' deve raise (required per schema §scope)."""
+    finding = _minimal_valid_finding()
+    del finding["scope"]["files"]
+    with pytest.raises(QAFindingValidationError, match="scope.files ausente"):
+        validate_qa_finding(finding)
+
+
+def test_scope_files_must_be_list_of_str():
+    """scope.files=string (não-lista) deve raise."""
+    finding = _minimal_valid_finding()
+    finding["scope"]["files"] = "not a list"
+    with pytest.raises(
+        QAFindingValidationError, match=r"scope.files deve ser list\[str\]"
+    ):
+        validate_qa_finding(finding)
+
+
+# --- ME-01: sandbox_result subkeys (apenas quando validator-claim) ---
+
+
+def test_sandbox_result_must_be_dict():
+    """sandbox_result=string quando validator-claim deve raise."""
+    finding = _minimal_valid_finding()
+    finding["evidence"]["sandbox_result"] = "ran ok"
+    with pytest.raises(
+        QAFindingValidationError, match="evidence.sandbox_result deve ser dict"
+    ):
+        validate_qa_finding(finding)
+
+
+def test_sandbox_result_exit_code_must_be_int():
+    """sandbox_result.exit_code não-int deve raise (schema declara int required)."""
+    finding = _minimal_valid_finding()
+    finding["evidence"]["sandbox_result"]["exit_code"] = "0"
+    with pytest.raises(
+        QAFindingValidationError,
+        match="evidence.sandbox_result.exit_code deve ser int",
+    ):
+        validate_qa_finding(finding)
+
+
+# --- ME-03: created_at ISO-8601 UTC Z ---
+
+
+def test_created_at_format_invalid():
+    """created_at sem sufixo Z (ou formato inválido) deve raise."""
+    finding = _minimal_valid_finding()
+    finding["created_at"] = "ontem"
+    with pytest.raises(
+        QAFindingValidationError, match="created_at deve ser ISO-8601 UTC"
+    ):
+        validate_qa_finding(finding)
+
+
+# --- ME-04: id formato regex permissivo ---
+
+
+def test_id_format_invalid():
+    """id fora do formato '<slug>-NNNN' lowercase deve raise."""
+    finding = _minimal_valid_finding()
+    finding["id"] = "INVALID-ID-FORMAT"
+    with pytest.raises(QAFindingValidationError, match="id inválido"):
         validate_qa_finding(finding)
