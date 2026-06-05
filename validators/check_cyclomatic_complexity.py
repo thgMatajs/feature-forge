@@ -20,10 +20,10 @@ whitelist (auditable via `git log --grep='CC-OVERRIDE'`).
 from __future__ import annotations
 
 import json  # noqa: F401  — used by parser tasks (T4/T5)
-import os
 import re  # noqa: F401  — used by override-detect task (T7)
 import subprocess  # noqa: F401  — used by dispatch task (T6)
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -39,8 +39,9 @@ from _common import (
 )
 from _gate_infra import (
     DispatchResult,
-    check_tool_available,
-    render_config_with_placeholders,
+    check_tool_available,  # noqa: F401  — re-exported for back-compat in tests
+    dispatch_native_tool,
+    render_config_with_placeholders,  # noqa: F401  — re-exported (cmd_builders use it indirectly via dispatch_native_tool)
 )
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -330,158 +331,83 @@ _TOOL_BIN = {
 _CONFIG_DIR = Path(__file__).resolve().parent.parent / "engine" / "_cc_configs"
 
 
-def _dispatch_tool(
-    *,
-    language: str,
-    files: list[str],
-    threshold: int,
-    project_root: Path,
-) -> DispatchResult:
-    """Invoke the per-language tool over `files`. Never raises (exceto KeyError
-    para language não suportada — contrato é caller filtra por SUPPORTED_EXTENSIONS).
+# ── Command builders (per-language cmd construction) ────────────────────────
+#
+# Cada cmd_builder recebe `(tool_bin, files, rendered_config_path)` e devolve
+# o cmd final pro subprocess.run em `dispatch_native_tool`. Builders ficam
+# aqui (CC-específicos pelas tools nativas que conhecem) enquanto o dispatch
+# canônico vive em `_gate_infra`. Próximos gates definem seus próprios
+# builders sem duplicar a lógica de subprocess / cleanup / error handling.
 
-    Per spec §3 trust-but-verify:
-      - tool not on PATH → tool_found=False, no execution attempted.
-      - subprocess timeout → crashed=True, error_message contém "timeout".
-      - OSError (ex: permissions) → crashed=True, error_message com causa.
-      - exit != 0 (exceto eslint exit=1 que é benigno por design) → crashed=True
-        com stderr snippet (cap 400 chars).
-      - exit == 0 (ou eslint exit=1) → raw_stdout entregue ao caller.
 
-    Timeout fixo 60s — tools nativas em batches razoáveis de files (poucas
-    centenas) terminam bem antes disso. Timeout maior mascararia tool hang.
+def _build_detekt_cmd(
+    tool_bin: str, files: list[str], rendered_config: Optional[str]
+) -> list[str]:
+    """Detekt: --input vírgula-separado + --config (rendered) + --report json:-.
+
+    Threshold é rendered dinamicamente no config (Detekt não aceita CLI
+    override por regra). Spec §3 threshold-via-CLI honored via tmpfile render
+    feito por `dispatch_native_tool` antes de chamar este builder.
     """
-    tool = _TOOL_BIN[language]
-    if not check_tool_available(tool):
-        return DispatchResult(
-            language=language,
-            tool_found=False,
-            crashed=False,
-            raw_stdout="",
-            error_message=f"{tool} not installed (PATH lookup failed)",
-        )
+    return [
+        tool_bin,
+        "--input", ",".join(files),
+        "--config", str(rendered_config),
+        "--report", "json:-",
+    ]
 
-    # Tempfile path is set only for languages whose tool does not accept
-    # per-rule threshold via CLI (Detekt, SwiftLint). We render the config
-    # template substituting __CC_THRESHOLD__ per invocation (spec §3), then
-    # remove the tempfile after subprocess returns regardless of outcome.
-    rendered_config: Optional[str] = None
 
-    try:
-        if language == "kotlin":
-            # Detekt: --input aceita lista vírgula-separada; --report json:- escreve
-            # JSON em stdout (sem precisar tempfile pro report). Threshold é
-            # rendered dinamicamente no config (Detekt não aceita CLI override
-            # por regra). Spec §3 threshold-via-CLI honored via tmpfile render.
-            rendered_config = render_config_with_placeholders(
-                _CONFIG_DIR / "detekt.yml",
-                {"__CC_THRESHOLD__": str(threshold)},
-            )
-            cmd = [
-                tool,
-                "--input", ",".join(files),
-                "--config", rendered_config,
-                "--report", "json:-",
-            ]
-        elif language == "swift":
-            # SwiftLint: subcomando `lint` + reporter json. Threshold rendered
-            # dinamicamente no config (SwiftLint não aceita CLI override per-rule).
-            # Spec §3 threshold-via-CLI honored via tmpfile render.
-            rendered_config = render_config_with_placeholders(
-                _CONFIG_DIR / "swiftlint.yml",
-                {"__CC_THRESHOLD__": str(threshold)},
-            )
-            cmd = [
-                tool, "lint",
-                "--reporter", "json",
-                "--config", rendered_config,
-                *files,
-            ]
-        elif language == "ts":
-            # eslint: --no-eslintrc ignora config do projeto consumidor (evita
-            # interferência); --rule inline com threshold dinâmico. Format json
-            # produz array file-by-file (parseado por _parse_eslint).
-            cmd = [
-                tool,
-                "--no-eslintrc",
-                "--rule", f'{{"complexity": ["error", {{"max": {threshold}}}]}}',
-                "--format", "json",
-                *files,
-            ]
-        elif language == "python":
-            # radon cc -j: JSON output sem rank filter (-n A é rank mínimo "A",
-            # mostra TODAS as funções). H2 fix: o flag `-n F` antigo mascarava
-            # toda função com CC ∈ [11..40] — exatamente o sweet spot do gate.
-            # Filtragem fina por threshold acontece no validator depois.
-            cmd = [
-                tool, "cc", "-j", "-n", "A",
-                *files,
-            ]
-        else:
-            # Inalcançável: _TOOL_BIN[language] já teria raised KeyError acima.
-            # Mantido por simetria/defesa.
-            return DispatchResult(
-                language=language,
-                tool_found=False,
-                crashed=False,
-                raw_stdout="",
-                error_message=f"unsupported language: {language}",
-            )
+def _build_swiftlint_cmd(
+    tool_bin: str, files: list[str], rendered_config: Optional[str]
+) -> list[str]:
+    """SwiftLint: `lint` subcomando + --reporter json + --config (rendered).
 
-        try:
-            proc = subprocess.run(
-                cmd,
-                cwd=str(project_root),
-                capture_output=True,
-                text=True,
-                timeout=60,
-                check=False,
-            )
-        except subprocess.TimeoutExpired:
-            return DispatchResult(
-                language=language,
-                tool_found=True,
-                crashed=True,
-                raw_stdout="",
-                error_message=f"{tool} timeout (>60s)",
-            )
-        except OSError as exc:
-            return DispatchResult(
-                language=language,
-                tool_found=True,
-                crashed=True,
-                raw_stdout="",
-                error_message=f"{tool} OS error: {exc}",
-            )
+    Threshold rendered dinamicamente no config (SwiftLint não aceita CLI
+    override per-rule). Spec §3 threshold-via-CLI honored via tmpfile render.
+    """
+    return [
+        tool_bin, "lint",
+        "--reporter", "json",
+        "--config", str(rendered_config),
+        *files,
+    ]
 
-        # eslint exits 1 quando issues encontrados — NÃO é crash, é normal.
-        # Outros tools: exit != 0 é crash genuíno.
-        benign_nonzero = language == "ts" and proc.returncode == 1
-        if proc.returncode != 0 and not benign_nonzero:
-            return DispatchResult(
-                language=language,
-                tool_found=True,
-                crashed=True,
-                raw_stdout=proc.stdout or "",
-                error_message=(proc.stderr or "").strip()[:400]
-                or f"{tool} exit={proc.returncode}",
-            )
 
-        return DispatchResult(
-            language=language,
-            tool_found=True,
-            crashed=False,
-            raw_stdout=proc.stdout or "",
-            error_message="",
-        )
-    finally:
-        if rendered_config:
-            try:
-                os.unlink(rendered_config)
-            except OSError:
-                # Best-effort cleanup — tempfile leak is a minor leak, never
-                # a behavior bug. Don't shadow the real exception.
-                pass
+def _build_eslint_cmd_factory(threshold: int) -> Callable[
+    [str, list[str], Optional[str]], list[str]
+]:
+    """Factory para o cmd_builder do eslint (threshold via closure).
+
+    eslint aceita threshold via `--rule` inline, então não precisa render de
+    config (config_template fica None em `dispatch_native_tool`). Factory
+    captura o threshold no scope da iteração de `_run_tools_for_staged`.
+    """
+
+    def _build(
+        tool_bin: str, files: list[str], rendered_config: Optional[str]
+    ) -> list[str]:
+        return [
+            tool_bin,
+            "--no-eslintrc",
+            "--rule", f'{{"complexity": ["error", {{"max": {threshold}}}]}}',
+            "--format", "json",
+            *files,
+        ]
+
+    return _build
+
+
+def _build_radon_cmd(
+    tool_bin: str, files: list[str], rendered_config: Optional[str]
+) -> list[str]:
+    """radon cc -j -n A: JSON output, rank mínimo "A" (mostra TODAS as funções).
+
+    H2 regression guard — flag `-n F` antigo mascarava CC ∈ [11..40], o sweet
+    spot do gate. Filtragem fina por threshold acontece no validator depois.
+    Threshold via CLI não aplicável (radon não aceita override per-tool aqui),
+    e gate filtra Python por threshold após parsing.
+    """
+    return [tool_bin, "cc", "-j", "-n", "A", *files]
 
 
 # Subsequent tasks (7–8) append: override, run().
@@ -851,17 +777,53 @@ def _run_tools_for_staged(
         if not files:
             continue
         threshold = thresholds_by_lang.get(lang, 10)
-        d = _dispatch_tool(
-            language=lang,
-            files=files,
-            threshold=threshold,
-            project_root=project_root,
-        )
+        tool_bin = _TOOL_BIN[lang]
+        if lang == "kotlin":
+            d = dispatch_native_tool(
+                language=lang,
+                files=files,
+                cmd_builder=_build_detekt_cmd,
+                project_root=project_root,
+                tool_bin=tool_bin,
+                config_template=_CONFIG_DIR / "detekt.yml",
+                placeholders={"__CC_THRESHOLD__": str(threshold)},
+            )
+        elif lang == "swift":
+            d = dispatch_native_tool(
+                language=lang,
+                files=files,
+                cmd_builder=_build_swiftlint_cmd,
+                project_root=project_root,
+                tool_bin=tool_bin,
+                config_template=_CONFIG_DIR / "swiftlint.yml",
+                placeholders={"__CC_THRESHOLD__": str(threshold)},
+            )
+        elif lang == "ts":
+            d = dispatch_native_tool(
+                language=lang,
+                files=files,
+                cmd_builder=_build_eslint_cmd_factory(threshold),
+                project_root=project_root,
+                tool_bin=tool_bin,
+                benign_nonzero_codes=(1,),
+            )
+        elif lang == "python":
+            d = dispatch_native_tool(
+                language=lang,
+                files=files,
+                cmd_builder=_build_radon_cmd,
+                project_root=project_root,
+                tool_bin=tool_bin,
+            )
+        else:
+            # Unsupported language — caller (validate) filters by
+            # SUPPORTED_EXTENSIONS so this branch is defensive only.
+            continue
         # D-009 — antes ambos casos emitiam `d.error_message` cru, indistinguíveis
         # do ponto de vista do usuário. Prefixo `[<tool>] tool ausente:` vs
         # `[<tool>] tool crashou:` deixa claro o que aconteceu sem perder a
         # mensagem original (que ainda traz o caminho/snippet do stderr).
-        tool_bin = _TOOL_BIN[lang]
+        # `tool_bin` já foi resolvido antes do dispatch (linha acima).
         if not d.tool_found:
             warnings.append(f"[{tool_bin}] tool ausente: {d.error_message}")
             continue

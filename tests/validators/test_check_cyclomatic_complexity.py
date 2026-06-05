@@ -301,7 +301,11 @@ def test_compile_ignore_patterns_drops_invalid_and_keeps_valid():
 def test_run_tools_for_staged_distinguishes_missing_from_crashed(monkeypatch):
     """As duas mensagens de warning devem ter prefixos distintos."""
 
-    def _fake_dispatch(*, language, files, threshold, project_root):
+    def _fake_dispatch(**kwargs):
+        # Aceita a assinatura nova de `dispatch_native_tool` (kw-only). Olha
+        # só `language` — o resto (cmd_builder, tool_bin, etc.) é ignorado
+        # pelo fake porque ele já decide o outcome por linguagem.
+        language = kwargs["language"]
         if language == "kotlin":
             return v.DispatchResult(
                 language=language,
@@ -319,7 +323,7 @@ def test_run_tools_for_staged_distinguishes_missing_from_crashed(monkeypatch):
             error_message="radon stderr: boom",
         )
 
-    monkeypatch.setattr(v, "_dispatch_tool", _fake_dispatch)
+    monkeypatch.setattr(v, "dispatch_native_tool", _fake_dispatch)
     _, warnings = v._run_tools_for_staged(
         files_by_lang={"kotlin": ["a.kt"], "python": ["b.py"]},
         thresholds_by_lang={"kotlin": 10, "python": 10},

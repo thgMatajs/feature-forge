@@ -1,21 +1,26 @@
-"""Unit tests for check_tool_available and _dispatch_tool.
+"""Unit tests for check_tool_available and dispatch_native_tool.
 
 Cobre Task 6 do plan cc-gate: dispatcher per-language das 4 tools
 nativas (Detekt/SwiftLint/eslint/Radon) + trust-but-verify de
 availability via shutil.which.
 
-`check_tool_available` vive em `validators/_gate_infra.py` desde Phase 0
-(gate-infra-extract Task 2); patches de `shutil.which` apontam para esse
-módulo. CC validator re-exporta o helper via import, preservando o
-contrato observável.
+`check_tool_available` e `dispatch_native_tool` vivem em
+`validators/_gate_infra.py` desde Phase 0 (gate-infra-extract Tasks 2+4);
+patches de `shutil.which` e `subprocess.run` apontam para esse módulo. CC
+validator compõe via cmd_builders locais (`_build_detekt_cmd` etc.) — o
+contrato observável (cmd shape, error_message prefixes, benign exit=1
+pro eslint) permanece byte-a-byte idêntico.
 
 Spec source: `docs/superpowers/specs/2026-06-03-cc-gate-design.md §3`
-(tabela tools + trust-but-verify de tool availability + edge cases).
+(tabela tools + trust-but-verify de tool availability + edge cases) +
+`docs/superpowers/specs/2026-06-04-gate-infra-extract-design.md §1`
+(extração com cmd_builder parametrizado).
 
 Disciplina de robustez:
   - tool missing → DispatchResult(tool_found=False)
   - tool crash (non-zero exit / timeout / OSError) → DispatchResult(crashed=True)
-  - eslint exit=1 (issues encontrados) NÃO é crash — exit 1 é benign
+  - eslint exit=1 (issues encontrados) NÃO é crash — passamos
+    `benign_nonzero_codes=(1,)` no dispatch ts
   - dispatcher nunca raise: caller emite result_warn e mantém cascade.
 """
 
@@ -56,14 +61,17 @@ def test_dispatch_tool_kotlin_builds_correct_command(
             cmd, returncode=0, stdout='{"issues":[]}', stderr=""
         )
 
-    monkeypatch.setattr(v.subprocess, "run", fake_run)
+    monkeypatch.setattr(_gate_infra.subprocess, "run", fake_run)
     monkeypatch.setattr(_gate_infra.shutil, "which", lambda name: "/usr/local/bin/" + name)
 
-    result = v._dispatch_tool(
+    result = v.dispatch_native_tool(
         language="kotlin",
         files=["app/A.kt", "app/B.kt"],
-        threshold=10,
+        cmd_builder=v._build_detekt_cmd,
         project_root=Path("/repo"),
+        tool_bin="detekt",
+        config_template=v._CONFIG_DIR / "detekt.yml",
+        placeholders={"__CC_THRESHOLD__": "10"},
     )
 
     assert result.tool_found is True
@@ -84,14 +92,17 @@ def test_dispatch_tool_swift_builds_correct_command(
         captured["cmd"] = list(cmd)
         return subprocess.CompletedProcess(cmd, returncode=0, stdout="[]", stderr="")
 
-    monkeypatch.setattr(v.subprocess, "run", fake_run)
+    monkeypatch.setattr(_gate_infra.subprocess, "run", fake_run)
     monkeypatch.setattr(_gate_infra.shutil, "which", lambda name: "/usr/local/bin/swiftlint")
 
-    result = v._dispatch_tool(
+    result = v.dispatch_native_tool(
         language="swift",
         files=["app/Login.swift"],
-        threshold=10,
+        cmd_builder=v._build_swiftlint_cmd,
         project_root=Path("/repo"),
+        tool_bin="swiftlint",
+        config_template=v._CONFIG_DIR / "swiftlint.yml",
+        placeholders={"__CC_THRESHOLD__": "10"},
     )
 
     assert result.tool_found is True
@@ -111,14 +122,16 @@ def test_dispatch_tool_ts_builds_correct_command(
         # eslint emits exit=1 quando acha issue — NÃO é crash, é normal
         return subprocess.CompletedProcess(cmd, returncode=1, stdout="[]", stderr="")
 
-    monkeypatch.setattr(v.subprocess, "run", fake_run)
+    monkeypatch.setattr(_gate_infra.subprocess, "run", fake_run)
     monkeypatch.setattr(_gate_infra.shutil, "which", lambda name: "/usr/local/bin/eslint")
 
-    result = v._dispatch_tool(
+    result = v.dispatch_native_tool(
         language="ts",
         files=["src/foo.ts"],
-        threshold=15,
+        cmd_builder=v._build_eslint_cmd_factory(15),
         project_root=Path("/repo"),
+        tool_bin="eslint",
+        benign_nonzero_codes=(1,),
     )
 
     # benign exit=1 → NOT crashed
@@ -141,14 +154,15 @@ def test_dispatch_tool_python_calls_radon(
         captured["cmd"] = list(cmd)
         return subprocess.CompletedProcess(cmd, returncode=0, stdout="{}", stderr="")
 
-    monkeypatch.setattr(v.subprocess, "run", fake_run)
+    monkeypatch.setattr(_gate_infra.subprocess, "run", fake_run)
     monkeypatch.setattr(_gate_infra.shutil, "which", lambda name: "/usr/local/bin/radon")
 
-    result = v._dispatch_tool(
+    result = v.dispatch_native_tool(
         language="python",
         files=["engine/cli.py"],
-        threshold=10,
+        cmd_builder=v._build_radon_cmd,
         project_root=Path("/repo"),
+        tool_bin="radon",
     )
     assert result.tool_found is True
     assert captured["cmd"][0] == "radon"
@@ -167,10 +181,10 @@ def test_dispatch_tool_kotlin_propagates_threshold_via_config(
 ) -> None:
     """H1 — Detekt threshold must be the dynamic value, not the static 10.
 
-    Detekt does not accept a threshold via CLI; the validator therefore
-    renders a temp config file with the requested threshold and passes
-    `--config <tmpfile>`. The rendered config must contain the dynamic
-    threshold so card overrides actually tighten the gate (spec §3).
+    Detekt does not accept a threshold via CLI; o validator portanto renderiza
+    um config temp com o threshold pedido e passa `--config <tmpfile>`. O
+    config rendered deve conter o threshold dinâmico pra que card overrides
+    realmente apertem o gate (spec §3).
     """
     captured: dict[str, list[str]] = {}
 
@@ -186,14 +200,17 @@ def test_dispatch_tool_kotlin_propagates_threshold_via_config(
             cmd, returncode=0, stdout='{"issues":[]}', stderr=""
         )
 
-    monkeypatch.setattr(v.subprocess, "run", fake_run)
+    monkeypatch.setattr(_gate_infra.subprocess, "run", fake_run)
     monkeypatch.setattr(_gate_infra.shutil, "which", lambda name: "/usr/local/bin/detekt")
 
-    result = v._dispatch_tool(
+    result = v.dispatch_native_tool(
         language="kotlin",
         files=["app/A.kt"],
-        threshold=5,
+        cmd_builder=v._build_detekt_cmd,
         project_root=Path("/repo"),
+        tool_bin="detekt",
+        config_template=v._CONFIG_DIR / "detekt.yml",
+        placeholders={"__CC_THRESHOLD__": "5"},
     )
 
     assert result.tool_found is True
@@ -226,14 +243,17 @@ def test_dispatch_tool_swift_propagates_threshold_via_config(
             captured["config_contents"] = cfg_path.read_text(encoding="utf-8")
         return subprocess.CompletedProcess(cmd, returncode=0, stdout="[]", stderr="")
 
-    monkeypatch.setattr(v.subprocess, "run", fake_run)
+    monkeypatch.setattr(_gate_infra.subprocess, "run", fake_run)
     monkeypatch.setattr(_gate_infra.shutil, "which", lambda name: "/usr/local/bin/swiftlint")
 
-    result = v._dispatch_tool(
+    result = v.dispatch_native_tool(
         language="swift",
         files=["app/Login.swift"],
-        threshold=7,
+        cmd_builder=v._build_swiftlint_cmd,
         project_root=Path("/repo"),
+        tool_bin="swiftlint",
+        config_template=v._CONFIG_DIR / "swiftlint.yml",
+        placeholders={"__CC_THRESHOLD__": "7"},
     )
 
     assert result.tool_found is True
@@ -251,11 +271,14 @@ def test_dispatch_tool_missing_returns_not_found(
 ) -> None:
     monkeypatch.setattr(_gate_infra.shutil, "which", lambda name: None)
 
-    result = v._dispatch_tool(
+    result = v.dispatch_native_tool(
         language="kotlin",
         files=["app/A.kt"],
-        threshold=10,
+        cmd_builder=v._build_detekt_cmd,
         project_root=Path("/repo"),
+        tool_bin="detekt",
+        config_template=v._CONFIG_DIR / "detekt.yml",
+        placeholders={"__CC_THRESHOLD__": "10"},
     )
     assert result.tool_found is False
     assert result.raw_stdout == ""
@@ -274,14 +297,17 @@ def test_dispatch_tool_crash_returns_error_with_stderr(
             cmd, returncode=2, stdout="", stderr="boom: tool exploded"
         )
 
-    monkeypatch.setattr(v.subprocess, "run", fake_run)
+    monkeypatch.setattr(_gate_infra.subprocess, "run", fake_run)
     monkeypatch.setattr(_gate_infra.shutil, "which", lambda name: "/usr/local/bin/detekt")
 
-    result = v._dispatch_tool(
+    result = v.dispatch_native_tool(
         language="kotlin",
         files=["app/A.kt"],
-        threshold=10,
+        cmd_builder=v._build_detekt_cmd,
         project_root=Path("/repo"),
+        tool_bin="detekt",
+        config_template=v._CONFIG_DIR / "detekt.yml",
+        placeholders={"__CC_THRESHOLD__": "10"},
     )
     assert result.tool_found is True
     assert result.crashed is True
@@ -294,33 +320,18 @@ def test_dispatch_tool_timeout_returns_crashed(
     def fake_run(cmd, **kwargs):
         raise subprocess.TimeoutExpired(cmd=cmd, timeout=60)
 
-    monkeypatch.setattr(v.subprocess, "run", fake_run)
+    monkeypatch.setattr(_gate_infra.subprocess, "run", fake_run)
     monkeypatch.setattr(_gate_infra.shutil, "which", lambda name: "/usr/local/bin/detekt")
 
-    result = v._dispatch_tool(
+    result = v.dispatch_native_tool(
         language="kotlin",
         files=["app/A.kt"],
-        threshold=10,
+        cmd_builder=v._build_detekt_cmd,
         project_root=Path("/repo"),
+        tool_bin="detekt",
+        config_template=v._CONFIG_DIR / "detekt.yml",
+        placeholders={"__CC_THRESHOLD__": "10"},
     )
     assert result.tool_found is True
     assert result.crashed is True
     assert "timeout" in result.error_message.lower()
-
-
-def test_dispatch_tool_unsupported_language_returns_not_found(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Defensive: even though caller filters by SUPPORTED_EXTENSIONS, dispatcher
-    # must not raise when given an unknown language — emit a clean not_found.
-    monkeypatch.setattr(_gate_infra.shutil, "which", lambda name: "/usr/local/bin/whatever")
-
-    with pytest.raises(KeyError):
-        # _TOOL_BIN lookup falha pra lang desconhecida; este é o contrato:
-        # caller deve garantir language ∈ {kotlin, swift, ts, python}.
-        v._dispatch_tool(
-            language="rust",
-            files=["src/lib.rs"],
-            threshold=10,
-            project_root=Path("/repo"),
-        )
