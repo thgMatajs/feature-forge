@@ -3,7 +3,7 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-04 (v1.2-dev — CC gate refinements)
+**Última atualização:** 2026-06-04 (v1.2-dev — CC gate refinements + PR #4 review fixes)
 **Estado:** v1.2-dev — Cyclomatic Complexity gate passou final code review
 com 4 HIGH endereçados (commit `19d4348`) e está pronto pra
 finishing-branch. Refinamentos pré-merge: (H1) threshold dinâmico chega
@@ -170,6 +170,21 @@ restantes ficam pra v1.2+ ou v2/Phase 6:
   oferece 3-caminhos (rename / abort / listar) mas o "rename" não reabre
   o prompt do nome — encerra a operação. Gap pra v1.2; documentado em
   `docs/design/04-pending.md`.
+
+**CC gate v1.2-dev surfaced (2026-06-04) — não bloqueia merge, target v1.2.1+:**
+
+- **CC gate delta rule é structural-only (F-001)** — `CCResult.cc_before`
+  existe como campo, mas todos os parsers seteam `cc_before=None`. A regra
+  `cc_after > cc_before` nunca dispara. Implementar exige `git show
+  <parent>:<file>` + re-run das 4 tools nativas sobre o estado anterior.
+  Pré-requisito F-006 (rename detection `-M80%`) já está aplicado nesta
+  Unreleased. Gap em `docs/design/04-pending.md § Gap CC-6`.
+- **CC validator LOC bloat (F-003)** —
+  `validators/check_cyclomatic_complexity.py` em 1067 LOC contra spec
+  target 350-450 (≈2.4x). Refactor cross-cutting (extrair `_parsers/`,
+  `_dispatch.py`, `_override.py`, `_classifier.py`) deferido pra
+  piggyback na próxima feature substantial do validator. Gap em
+  `docs/design/04-pending.md § Gap CC-7`.
 
 ## Fase 4 — completa (resumo)
 

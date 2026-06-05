@@ -1469,6 +1469,46 @@ override-no-commit + override-per-card**: inline espalha exceções pelo
 código, dificulta auditoria, vira whitelist invisível. Documentado aqui
 pra não reaparecer em retrospective.
 
+### Gap CC-6 — CC gate delta rule (`cc_before` unpopulated) [F-001]
+
+**Categoria:** cc-gate
+**Fingerprint:** `sha256(consolidate-within-module:cc-delta-rule:cc-before-none)`
+**Status:** deferred (v1.2.1+) — surfaced em PR #4 review (2026-06-04)
+
+Estrutural presente (`CCResult.cc_before` field exists) mas funcionalmente
+inerte — todos os parsers seteam `cc_before=None`. A regra `cc_after >
+cc_before` nunca dispara, então funções modificadas só pegam a absolute
+rule (`cc > threshold`), perdendo o sinal de regressão local.
+
+**Por que defer:** implementar exige `git show <parent>:<file>` + re-run
+de cada tool (Detekt/SwiftLint/eslint/Radon) sobre o estado anterior do
+arquivo, parsing e diff. Não é fix de comentário — é feature substancial.
+Roadmap provável v1.2.1 ou v1.3.
+
+**Pré-requisito:** F-006 (rename detection `-M80%`) — JÁ aplicado no
+Unreleased; sem rename detection, função renomeada vira `new` com absolute
+rule e o delta nem é avaliado.
+
+### Gap CC-7 — CC validator LOC bloat [F-003]
+
+**Categoria:** cc-gate
+**Fingerprint:** `sha256(promote-to-shared:cc-validator-split:loc-bloat)`
+**Status:** deferred (próxima feature substantial do validator) — surfaced
+em PR #4 review (2026-06-04)
+
+`validators/check_cyclomatic_complexity.py` em 1067 LOC; SDD target
+350-450 LOC (≈2.4x bloat).
+
+**Por que defer:** refactor cross-cutting — extrair `_parsers/` (Detekt,
+SwiftLint, eslint, Radon), `_dispatch.py`, `_override.py`,
+`_classifier.py` módulos. Precisa de brainstorming + writing-plans + plano
+de testes pra garantir zero behavior change. Não cabe em comment-resolution
+scope.
+
+**Sugestão:** próxima feature substancial no validator (Gap CC-6 / delta
+rule F-001 ou similar) faz piggyback do refactor com test count + baseline
+preserved.
+
 ### Gap BOOTSTRAP-1 — `test_bootstrap_is_idempotent` falha em worktree
 
 **Categoria:** bootstrap / test infrastructure

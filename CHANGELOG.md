@@ -54,6 +54,31 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   1 helper apply_overrides warnings, 2 implement render canonical). Suite
   total: 682 passed, 17 skipped.
 
+### Fixed (PR #4 review)
+
+- `_path_matches_ignore` agora emite warning quando regex inválida em
+  `cc-gate.ignore-paths` (era silently swallowed). Pré-validação via
+  helper `_compile_ignore_patterns` em `validate()`, warnings propagam
+  no result dict (`cc-gate.ignore-paths: regex inválida '<pat>' (<erro>)`)
+  — D-006.
+- `_parse_overrides` emite warning pra `CC-OVERRIDE: ... cc=N — ` com
+  reason vazia/whitespace após em-dash (era loose-skipped). Strict regex
+  ganhou guard `reason.strip() == ""` pra não aceitar reason em branco;
+  loose-pass inspeciona o tail após `—` — D-008.
+- Warnings de `_run_tools_for_staged` agora distinguem tool ausente
+  (`[<tool>] tool ausente: ...`) de tool crashada
+  (`[<tool>] tool crashou: ...`) — D-009.
+- `_git_staged_files` adiciona `-M80%` ao `git diff` pra rename detection
+  (SDD §2 — função renomeada até 20% mudança vira `modified` no delta
+  rule, não `new` + delete) — F-006.
+- Test assertions tightened: `install_hints` específico pro `eslint`
+  (filtra por `c.name == "eslint"` antes de checar substring),
+  `next()` lookup safer em `test_verify_cc_position` (default None +
+  assertion descritivo) — codereviewbot 3353045999/3353046005.
+- +6 tests novos cobrindo D-006/D-008/D-009/F-006. Suite total:
+  688 passed, 17 skipped, 1 falha pre-existing
+  (`test_bootstrap_is_idempotent` em worktree — Gap BOOTSTRAP-1).
+
 ## [1.2.0] — 2026-06-03
 
 ### Added (Gap 5 — Card local overlay, 2026-06-02)
