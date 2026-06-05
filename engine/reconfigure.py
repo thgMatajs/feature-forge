@@ -210,6 +210,7 @@ def _choose_categories() -> list[str]:
         "graph":          "rebuild full",
         "cleanup-bak":    "remover .bak overdue",
         "external-deps":  "marcar dep externa como resolvida",
+        "qa":             "ativar/auto-run/budgets/auditores/retention",
     }
     return question.ask_multi(
         "O que mudar? (multi-select, vazio = sair sem mudar)",
@@ -435,6 +436,193 @@ def _handle_card_local(
     elif action == "remove":
         _card_local_remove(project_root, working)
     # "back" = no-op
+
+
+# ── qa submenu (Wave 7 — Task 7.3 / §9) ─────────────────────────────────────
+
+
+def _handle_qa(
+    project_root: Path, current: dict[str, Any], working: dict[str, Any]
+) -> None:
+    """Submenu qa — 5 opções §9 da spec forge-qa.
+
+    Opções:
+        1. Ativar/desativar comando inteiro (toggle qa.enabled)
+        2. Ligar/desligar auto-run on feature-done
+        3. Ajustar budgets (sandbox + per-validator)
+        4. Listar/desativar auditores (canon ∪ local)
+        5. Ajustar retention-days
+        0. Voltar (no-op)
+
+    Mutações ficam no dict ``working`` — gravadas em workflow-config.yaml
+    pelo loop principal (`_apply_changes`) quando o user confirmar.
+    Pattern idêntico ao submenu card-local (Gap 5 opção 11).
+    """
+    del current, project_root  # working já reflete o estado vigente
+    action = question.ask(
+        "qa — qual ação?",
+        {
+            "enable":     "1. ativar/desativar comando inteiro",
+            "auto-run":   "2. ligar/desligar auto-run on feature-done",
+            "budgets":    "3. ajustar budgets (sandbox + per-validator)",
+            "auditors":   "4. listar/desativar auditores",
+            "retention":  "5. ajustar retention-days",
+            "back":       "0. voltar",
+        },
+        default="enable",
+    )
+    if action == "enable":
+        _qa_toggle_enabled(working)
+    elif action == "auto-run":
+        _qa_toggle_auto_run(working)
+    elif action == "budgets":
+        _qa_adjust_budgets(working)
+    elif action == "auditors":
+        _qa_list_disable_auditors(working)
+    elif action == "retention":
+        _qa_adjust_retention(working)
+    # "back" = no-op
+
+
+def _qa_block(working: dict[str, Any]) -> dict[str, Any]:
+    """Retorna (e cria se ausente) o bloco ``qa:`` em working config."""
+    block = working.get("qa")
+    if not isinstance(block, dict):
+        block = {}
+        working["qa"] = block
+    return block
+
+
+def _qa_toggle_enabled(working: dict[str, Any]) -> None:
+    """Opção 1 — toggle qa.enabled."""
+    block = _qa_block(working)
+    current = bool(block.get("enabled", True))
+    new = question.confirm(
+        f"qa.enabled atualmente = {current}. Ativar?",
+        default=current,
+    )
+    block["enabled"] = new
+    renderer.write(renderer.dim(f"qa.enabled = {new}"))
+
+
+def _qa_toggle_auto_run(working: dict[str, Any]) -> None:
+    """Opção 2 — toggle qa.auto-run-on-feature-done."""
+    block = _qa_block(working)
+    current = bool(block.get("auto-run-on-feature-done", False))
+    new = question.confirm(
+        f"qa.auto-run-on-feature-done atualmente = {current}. Ativar?",
+        default=current,
+    )
+    block["auto-run-on-feature-done"] = new
+    renderer.write(renderer.dim(f"qa.auto-run-on-feature-done = {new}"))
+
+
+def _qa_adjust_budgets(working: dict[str, Any]) -> None:
+    """Opção 3 — ajusta sandbox-budget-seconds-total + agent-timeout-seconds."""
+    block = _qa_block(working)
+    current_total = int(block.get("sandbox-budget-seconds-total", 60))
+    current_per = int(block.get("agent-timeout-seconds", 15))
+
+    total_str = question.ask_text(
+        f"sandbox-budget-seconds-total (atual {current_total}, ENTER mantém):",
+    ).strip()
+    if total_str:
+        try:
+            block["sandbox-budget-seconds-total"] = int(total_str)
+        except ValueError:
+            renderer.write(
+                renderer.colored(
+                    f"valor inválido {total_str!r} — mantendo {current_total}",
+                    "yellow",
+                )
+            )
+
+    per_str = question.ask_text(
+        f"agent-timeout-seconds (atual {current_per}, ENTER mantém):",
+    ).strip()
+    if per_str:
+        try:
+            block["agent-timeout-seconds"] = int(per_str)
+        except ValueError:
+            renderer.write(
+                renderer.colored(
+                    f"valor inválido {per_str!r} — mantendo {current_per}",
+                    "yellow",
+                )
+            )
+
+
+def _qa_list_disable_auditors(working: dict[str, Any]) -> None:
+    """Opção 4 — lista canon ∪ local auditores com toggle disable.
+
+    Canon = 4 auditores fixos (spec-vs-spec, chaos, coverage, validator-
+    claim). Local = auditores declarados em cards via `qa-extensions`
+    (visíveis após card load). v1 lista apenas canon; auditores locais
+    são consultados em runtime via card extensions.
+    """
+    block = _qa_block(working)
+    extensions = block.get("extensions") or {}
+    if not isinstance(extensions, dict):
+        extensions = {}
+    disabled = extensions.get("disabled") or []
+    if not isinstance(disabled, list):
+        disabled = []
+
+    canon_auditors = [
+        "qa-auditor-spec-vs-spec",
+        "qa-auditor-chaos",
+        "qa-auditor-coverage",
+        "qa-auditor-validator-claim",
+    ]
+    opts = {
+        name: ("desativado" if name in disabled else "ativo")
+        for name in canon_auditors
+    }
+    renderer.write("")
+    renderer.write("Auditores canon (4 fixos):")
+    for name, status in opts.items():
+        renderer.write(f"  · {name:<32} {status}")
+    renderer.write("")
+    renderer.write(renderer.dim(
+        "Auditores locais (qa-extensions em cards) são gerenciados via "
+        "card.yaml `qa-extensions.auditors[].name`."
+    ))
+
+    picked = question.ask_multi(
+        "Auditores a desativar (multi-select; ENTER vazio = sem mudança):",
+        {name: name for name in canon_auditors},
+        min_selected=0,
+    )
+    if picked:
+        # Union com disabled atual — toggle aditivo conservador.
+        new_disabled = sorted(set(disabled) | set(picked))
+        extensions["disabled"] = new_disabled
+        block["extensions"] = extensions
+        renderer.write(renderer.dim(
+            f"qa.extensions.disabled = {new_disabled}"
+        ))
+
+
+def _qa_adjust_retention(working: dict[str, Any]) -> None:
+    """Opção 5 — ajusta qa.retention-days (default 14)."""
+    block = _qa_block(working)
+    current = int(block.get("retention-days", 14))
+    val_str = question.ask_text(
+        f"qa.retention-days (atual {current}, ENTER mantém):",
+    ).strip()
+    if val_str:
+        try:
+            block["retention-days"] = int(val_str)
+            renderer.write(renderer.dim(
+                f"qa.retention-days = {block['retention-days']}"
+            ))
+        except ValueError:
+            renderer.write(
+                renderer.colored(
+                    f"valor inválido {val_str!r} — mantendo {current}",
+                    "yellow",
+                )
+            )
 
 
 def _card_local_root(project_root: Path) -> Path:
@@ -1223,6 +1411,7 @@ _CATEGORY_HANDLERS = {
     "graph":         _handle_graph,
     "cleanup-bak":   _handle_cleanup_bak,
     "external-deps": _handle_external_deps,
+    "qa":            _handle_qa,
 }
 
 
