@@ -366,3 +366,160 @@ def test_extensions_disabled_still_enforces_structural_guards(
             project_root=tmp_path,
             extensions_disabled={"visual-fidelity"},
         )
+
+
+# --- WR-01: Regra 1 intra-card collision ------------------------------------
+
+
+def test_intra_card_name_collision_fails(tmp_path: Path):
+    """Mesmo `name` declarado 2x no MESMO card → QAExtensionsCollisionError.
+
+    Spec §6.3: "name único cross canon ∪ local" — cross inclui intra-card
+    como subset trivial. Regra 1 deve fechar este buraco antes do loader
+    Task 7.1.
+    """
+    card_dir = _card_dir(tmp_path)
+    _agent_file(card_dir)
+    card = card_dir / "card.yaml"
+    data = {
+        "identity": {"name": "screens-defined"},
+        "qa-extensions": {
+            "auditors": [
+                {
+                    "name": "visual-fidelity",
+                    "phase": "static",
+                    "contributes": {"agents": ["auditor-visual-fidelity.md"]},
+                    "requires": [],
+                },
+                {
+                    "name": "visual-fidelity",
+                    "phase": "generative",
+                    "contributes": {"agents": ["auditor-visual-fidelity.md"]},
+                    "requires": [],
+                },
+            ]
+        },
+    }
+    with pytest.raises(QAExtensionsCollisionError, match="intra-card"):
+        validate_qa_extensions(card, data, project_root=tmp_path)
+
+
+# --- WR-02: Regra 3 — contributes/agents required ---------------------------
+
+
+def test_auditor_without_contributes_fails(tmp_path: Path):
+    """Auditor sem campo `contributes` → raise (não default silencioso).
+
+    Reincidência da lição Task 2.2 HI-01..03: required subfields validados
+    explicitamente, não assumidos como `{}`.
+    """
+    card_dir = _card_dir(tmp_path)
+    _agent_file(card_dir)
+    card = card_dir / "card.yaml"
+    data = _minimal_card_data()
+    del data["qa-extensions"]["auditors"][0]["contributes"]
+    with pytest.raises(
+        QAExtensionsValidationError, match="sem campo `contributes`"
+    ):
+        validate_qa_extensions(card, data, project_root=tmp_path)
+
+
+def test_auditor_without_contributes_agents_fails(tmp_path: Path):
+    """contributes presente mas sem chave `agents` → raise."""
+    card_dir = _card_dir(tmp_path)
+    _agent_file(card_dir)
+    card = card_dir / "card.yaml"
+    data = _minimal_card_data()
+    data["qa-extensions"]["auditors"][0]["contributes"] = {}
+    with pytest.raises(
+        QAExtensionsValidationError, match="sem campo `contributes.agents`"
+    ):
+        validate_qa_extensions(card, data, project_root=tmp_path)
+
+
+def test_auditor_with_empty_agents_list_fails(tmp_path: Path):
+    """contributes.agents = [] → raise ('auditor sem prompt é inutilizável')."""
+    card_dir = _card_dir(tmp_path)
+    _agent_file(card_dir)
+    card = card_dir / "card.yaml"
+    data = _minimal_card_data()
+    data["qa-extensions"]["auditors"][0]["contributes"]["agents"] = []
+    with pytest.raises(
+        QAExtensionsValidationError, match="lista vazia"
+    ):
+        validate_qa_extensions(card, data, project_root=tmp_path)
+
+
+# --- IN-01: simetria local→canon (espelha test existente) -------------------
+
+
+def test_collision_local_to_canon_direction(tmp_path: Path):
+    """Simetria: local_card sujeito, canon_card em other_cards → mesma colisão.
+
+    Documenta que a Regra 1 não tem assimetria intrínseca; ordem de
+    iteração do loader não muda o veredito.
+    """
+    canon_card_dir = _card_dir(tmp_path, name="screens-defined")
+    _agent_file(canon_card_dir)
+    canon_card = canon_card_dir / "card.yaml"
+
+    local_card_dir = _card_dir(tmp_path, name="custom-screens")
+    _agent_file(local_card_dir)
+    local_card = local_card_dir / "card.yaml"
+
+    canon_data = _minimal_card_data(name="visual-fidelity")
+    local_data = _minimal_card_data(name="visual-fidelity")
+
+    # Swap: agora local_card é o sujeito, canon_card está em other_cards.
+    other_cards = {str(canon_card): canon_data}
+
+    with pytest.raises(QAExtensionsCollisionError) as excinfo:
+        validate_qa_extensions(
+            local_card, local_data, other_cards=other_cards, project_root=tmp_path
+        )
+
+    msg = str(excinfo.value)
+    assert "visual-fidelity" in msg
+    assert str(canon_card) in msg
+    assert str(local_card) in msg
+
+
+# --- IN-02: other_cards Path-key normalization ------------------------------
+
+
+def test_other_cards_with_path_key_does_not_self_collide(tmp_path: Path):
+    """Caller esquece `str()`: passa `Path` como chave em other_cards.
+
+    Antes do fix: `Path == str(card_path)` retorna False → card aparece
+    em other_cards como se fosse OUTRO card → spurious self-collision.
+    Após fix: normalização garante que o próprio card seja filtrado
+    mesmo com chave Path.
+    """
+    card_dir = _card_dir(tmp_path)
+    _agent_file(card_dir)
+    card = card_dir / "card.yaml"
+    data = _minimal_card_data(name="visual-fidelity")
+
+    # Chave Path (em vez de str(card)): exercita o bug latente.
+    other_cards = {card: data}  # type: ignore[dict-item]
+
+    # Não deve raise — é o próprio card, normalização filtra.
+    validate_qa_extensions(
+        card, data, other_cards=other_cards, project_root=tmp_path
+    )
+
+
+# --- IN-03: CatalogOverlayError documentação ---------------------------------
+
+
+def test_docstring_documents_catalog_overlay_error_propagation():
+    """Docstring `Raises:` menciona propagação de CatalogOverlayError.
+
+    Caller que faça `except QAExtensionsValidationError:` precisa saber
+    que CatalogOverlayError NÃO é capturado (sobe direto do _common).
+    """
+    doc = validate_qa_extensions.__doc__ or ""
+    assert "CatalogOverlayError" in doc, (
+        "docstring deve mencionar propagação de CatalogOverlayError "
+        "do _common.load_catalog (IN-03)"
+    )
