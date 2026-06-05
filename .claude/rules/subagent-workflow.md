@@ -75,6 +75,16 @@ Protocolo canônico após implementação:
 4. Após fix-dispatch: re-review SE mudanças substanciais; senão segue
 5. Verification SEMPRE rola depois (mesmo sem findings)
 
+## Loop pós-plano (plan-auditor)
+
+Para o loop de auditoria pré-execution-handoff, ver
+`.claude/rules/plan-auditor.md` §Re-audit. Diferenças chave do loop
+pós-impl acima:
+- Fixer atua no PLANO (não no código)
+- Cap de 3 rodadas
+- Rodada 4 → verdict `ESCALATE` pro orquestrador apresentar 3-caminhos
+  ao user
+
 ## Trust-but-verify
 
 Antes de aceitar diff do subagent como "feito":

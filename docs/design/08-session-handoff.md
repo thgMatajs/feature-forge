@@ -11,6 +11,9 @@ de severity. Suite total inalterada (sem touch em `engine/` ou
 `validators/`).
 
 ---
+*Histórico v1.2.0 (Gap 5 + power-review PR #2 R1 + schema_version fix) preservado em git log — `git log --oneline main..HEAD` na branch de release v1.2.0 e CHANGELOG.md §[1.2.0] mantêm o detalhe.*
+
+---
 
 ## TL;DR pra nova sessão
 

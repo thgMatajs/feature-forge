@@ -17,7 +17,6 @@ runtime import** — skills são recurso humano + Claude Code (Decision 22).
 | `superpowers:receiving-code-review` | quando reviewer subagent retorna REVIEW.md | sim |
 | `superpowers:executing-plans` | quando há plan escrito a seguir (modo inline alternativo ao subagent-driven) | recomendado |
 | `superpowers:verification-before-completion` | antes de claim "pronto/implementado/feito" | sim — hard gate antes de commit final |
-| `plan-auditor` (rule local) | pós writing-plans terminal-state, antes do execution-handoff | **sim — critical findings bloqueiam** |
 
 ## Skills NÃO ativadas (deliberadamente)
 

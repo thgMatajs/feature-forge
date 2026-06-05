@@ -38,6 +38,22 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   (refinements pra plan-auditor v1.1)" como gaps deferidos pra revisita
   quando padrão recorrer em smokes futuros.
 
+  Ultra-review r1 (2026-06-05): engine externo (`ultra-review-deep`) pegou
+  11 findings que a dogfood interna de 3 rounds não viu (bias confirmação
+  LLM-auditing-LLM — exatamente F-001 articulado). 10 fixes aplicados
+  nesta rodada: §Verdict logic ganha critério determinístico pra
+  PASS_WITH_NOTES (cita exceção ou mandamento; sem isso é WARNINGS); §Override
+  mechanism trata check-ID inválido explicitamente; template `**Verdict:**`
+  lista 4 tiers (incluía só 3); CLAUDE.md row "Editar schema/template"
+  ganha plan-auditor (coverage consistente); linha de plan-auditor
+  removida da tabela "Skills do superpowers" (Decision 22: skills ≠ rules
+  locais — info preservada em §Extensão local); handoff ganha ref ao
+  histórico v1.2.0 em git; §C1 valida que N é número real (não literal
+  template); §H2 trigger inclui `.claude/rules/**`; subagent-workflow
+  ganha cross-ref §"Loop pós-plano (plan-auditor)"; §H4 ganha nota sobre
+  hooks. F-009 (README rule count) marcado como FP — README não lista
+  per-rule count.
+
 ## [1.2.0] — 2026-06-03
 
 ### Added (Gap 5 — Card local overlay, 2026-06-02)

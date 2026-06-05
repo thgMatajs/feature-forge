@@ -134,7 +134,7 @@ Detalhe + template: `.claude/rules/orchestrator-persona.md §Não-procrastinaç�
 | Resolver bug | `systematic-debugging` → `subagent-driven-development` | `gsd-executor` + review subagent |
 | Refatorar | `brainstorming` → `writing-plans` (no-behavior) → plan-auditor (dispatched) → `subagent-driven-development` | `gsd-executor` + review (check_no_behavior_change) |
 | Editar locked decision | `brainstorming` (revisitar N) | `gsd-executor` edita com histórico preservado |
-| Editar schema/template | `writing-plans` → `subagent-driven-development` | `gsd-executor` + review |
+| Editar schema/template | `writing-plans` → plan-auditor (dispatched) → `subagent-driven-development` | `gsd-executor` + review |
 | Finalizar qualquer mudança | `verification-before-completion` + doc-sync | subagent verifica + subagent atualiza docs |
 | Typo / 1-char fix / espaço | — | `gsd-code-fixer` com prompt minimal (zero exceção inline) |
 
