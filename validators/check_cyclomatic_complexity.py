@@ -11,7 +11,7 @@ Runs in two contexts (per design spec §2):
 Threshold precedence (per design spec §2 + helpers in _common):
     card cc-gate-override > workflow-config cc-gate > DEFAULTS_CC
 
-On fail, emits the canonical 3-paths block (see _common.cc_format_three_paths).
+On fail, emits the canonical 3-paths block (see _common.format_three_paths_message).
 Override-justify: `CC-OVERRIDE: <file>:<func> cc=<N> — <reason>` in the commit
 body silences a specific function for THAT commit only — no persistent
 whitelist (auditable via `git log --grep='CC-OVERRIDE'`).
@@ -28,8 +28,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 from _common import (
-    cc_format_three_paths,  # noqa: F401  — wired in T8 validate()
-    cc_threshold_lookup,  # noqa: F401  — wired in T8 validate()
+    format_three_paths_message,  # noqa: F401  — wired in T8 validate()
+    gate_threshold_lookup,  # noqa: F401  — wired in T8 validate()
     make_paths,  # noqa: F401  — wired in T8 validate()
     result_fail,  # noqa: F401  — wired in T8 validate()
     result_pass,
@@ -465,7 +465,7 @@ def apply_overrides(
 #   2. Coleta staged files (git diff --cached --name-only) filtrados pelas
 #      extensões suportadas (.kt .kts .swift .ts .tsx .py).
 #   3. Aplica ignore-paths (defaults pra tests + entradas do workflow-config).
-#   4. Resolve threshold por linguagem via cc_threshold_lookup (card override
+#   4. Resolve threshold por linguagem via gate_threshold_lookup (card override
 #      > workflow-config > DEFAULTS_CC).
 #   5. Extrai diff hunks pra classificar new/modified/unchanged.
 #   6. Dispatch tool per linguagem (Detekt/SwiftLint/eslint/radon) numa única
@@ -725,7 +725,7 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
     thresholds_by_lang: dict[str, int] = {}
     for lang in files_by_lang:
         try:
-            thresholds_by_lang[lang] = cc_threshold_lookup(
+            thresholds_by_lang[lang] = gate_threshold_lookup(
                 lang, active_cards=active_cards, workflow_config=config
             )
         except ValueError:
@@ -800,11 +800,11 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
         r.language: thresholds_by_lang.get(r.language, 10) for r in surviving
     }
 
-    # H3 — render the canonical 3-paths block (cc_format_three_paths) AND
+    # H3 — render the canonical 3-paths block (format_three_paths_message) AND
     # attach it to the result dict so engine.implement._render_cc_gate_block
     # can surface mentor-calmo prose to the user. Spec §4 + disciplines §1
     # treat this render as load-bearing UX contract.
-    canonical_render = cc_format_three_paths(violations, affected_thresholds)
+    canonical_render = format_three_paths_message(violations, affected_thresholds)
 
     sample = ", ".join(
         f"{r.file}:{r.function}(cc={r.cc})" for r in surviving[:3]

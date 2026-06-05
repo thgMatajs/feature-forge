@@ -1,4 +1,4 @@
-"""Unit tests for cc_threshold_lookup + cc_format_three_paths helpers."""
+"""Unit tests for gate_threshold_lookup + format_three_paths_message helpers."""
 
 from __future__ import annotations
 
@@ -6,28 +6,28 @@ import pytest
 
 from _common import (
     DEFAULTS_CC,
-    cc_format_three_paths,
-    cc_threshold_lookup,
+    format_three_paths_message,
+    gate_threshold_lookup,
 )
 
 
 def test_lookup_default_when_no_config_and_no_cards() -> None:
-    assert cc_threshold_lookup("kotlin", active_cards=[], workflow_config={}) == 10
-    assert cc_threshold_lookup("ts", active_cards=[], workflow_config={}) == 15
+    assert gate_threshold_lookup("kotlin", active_cards=[], workflow_config={}) == 10
+    assert gate_threshold_lookup("ts", active_cards=[], workflow_config={}) == 15
 
 
 def test_lookup_workflow_config_overrides_default() -> None:
     cfg = {"cc-gate": {"kotlin": 12, "ts": 20}}
-    assert cc_threshold_lookup("kotlin", active_cards=[], workflow_config=cfg) == 12
-    assert cc_threshold_lookup("ts", active_cards=[], workflow_config=cfg) == 20
+    assert gate_threshold_lookup("kotlin", active_cards=[], workflow_config=cfg) == 12
+    assert gate_threshold_lookup("ts", active_cards=[], workflow_config=cfg) == 20
     # Unspecified language falls back to default
-    assert cc_threshold_lookup("swift", active_cards=[], workflow_config=cfg) == 10
+    assert gate_threshold_lookup("swift", active_cards=[], workflow_config=cfg) == 10
 
 
 def test_lookup_card_override_wins_over_workflow_config() -> None:
     cards = [{"cc-gate-override": {"kotlin": {"threshold": 15, "justification": "DSL"}}}]
     cfg = {"cc-gate": {"kotlin": 12}}
-    assert cc_threshold_lookup("kotlin", active_cards=cards, workflow_config=cfg) == 15
+    assert gate_threshold_lookup("kotlin", active_cards=cards, workflow_config=cfg) == 15
 
 
 def test_lookup_multiple_cards_first_wins() -> None:
@@ -35,13 +35,13 @@ def test_lookup_multiple_cards_first_wins() -> None:
         {"cc-gate-override": {"kotlin": {"threshold": 15, "justification": "DSL"}}},
         {"cc-gate-override": {"kotlin": {"threshold": 20, "justification": "Other"}}},
     ]
-    assert cc_threshold_lookup("kotlin", active_cards=cards, workflow_config={}) == 15
+    assert gate_threshold_lookup("kotlin", active_cards=cards, workflow_config={}) == 15
 
 
 def test_lookup_card_without_threshold_field_falls_through() -> None:
     cards = [{"cc-gate-override": {"kotlin": {"justification": "missing threshold"}}}]
     cfg = {"cc-gate": {"kotlin": 12}}
-    assert cc_threshold_lookup("kotlin", active_cards=cards, workflow_config=cfg) == 12
+    assert gate_threshold_lookup("kotlin", active_cards=cards, workflow_config=cfg) == 12
 
 
 def test_defaults_table_is_canonical() -> None:
@@ -49,7 +49,7 @@ def test_defaults_table_is_canonical() -> None:
 
 
 def test_format_three_paths_snapshot() -> None:
-    rendered = cc_format_three_paths(
+    rendered = format_three_paths_message(
         violations=[
             {
                 "file": "app/auth/LoginViewModel.kt",
@@ -82,7 +82,7 @@ def test_format_three_paths_snapshot() -> None:
 
 
 def test_format_three_paths_new_function_annotation() -> None:
-    rendered = cc_format_three_paths(
+    rendered = format_three_paths_message(
         violations=[
             {
                 "file": "app/A.kt",
@@ -104,16 +104,16 @@ def test_format_three_paths_new_function_annotation() -> None:
 def test_format_three_paths_empty_violations_raises() -> None:
     """Empty violations list é programming error; falha alto."""
     with pytest.raises(ValueError, match="at least one violation"):
-        cc_format_three_paths([], {"kotlin": 10})
+        format_three_paths_message([], {"kotlin": 10})
 
 
 def test_lookup_unsupported_language_raises() -> None:
     """Language fora do scope CC vira ValueError, não KeyError raw."""
     with pytest.raises(ValueError, match="not in CC gate scope"):
-        cc_threshold_lookup("rust", [], {})
+        gate_threshold_lookup("rust", [], {})
 
 
 def test_lookup_threshold_zero_or_negative_passes_through() -> None:
     """Threshold ≤ 0 é semântica degraded; helper repassa raw."""
-    assert cc_threshold_lookup("kotlin", [], {"cc-gate": {"kotlin": 0}}) == 0
-    assert cc_threshold_lookup("kotlin", [], {"cc-gate": {"kotlin": -5}}) == -5
+    assert gate_threshold_lookup("kotlin", [], {"cc-gate": {"kotlin": 0}}) == 0
+    assert gate_threshold_lookup("kotlin", [], {"cc-gate": {"kotlin": -5}}) == -5

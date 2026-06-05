@@ -299,11 +299,12 @@ def load_catalog(project_root: Path) -> CapabilityCatalog:
     )
 
 
-# ── Cyclomatic Complexity helpers ────────────────────────────────────────────
+# ── Gate helpers (threshold lookup + 3-paths render) ─────────────────────────
 #
-# Usados por `validators/check_cyclomatic_complexity.py`. Vivem em _common
-# pra serem testáveis isoladamente e pra deixar o validator principal mais
-# enxuto. Sem I/O — pura lookup + string formatting.
+# Usados hoje por `validators/check_cyclomatic_complexity.py`. Vivem em
+# _common pra serem testáveis isoladamente e pra deixar o validator principal
+# mais enxuto. Sem I/O — pura lookup + string formatting. Outros gates
+# (planejado: secrets, etc.) reusam mesma forma.
 
 DEFAULTS_CC: dict[str, int] = {
     "kotlin": 10,
@@ -313,12 +314,12 @@ DEFAULTS_CC: dict[str, int] = {
 }
 
 
-def cc_threshold_lookup(
+def gate_threshold_lookup(
     language: str,
     active_cards: list[dict[str, Any]],
     workflow_config: dict[str, Any],
 ) -> int:
-    """Resolve CC threshold for a language.
+    """Resolve gate threshold for a language (currently CC; reusable).
 
     Precedence: card cc-gate-override > workflow-config cc-gate > DEFAULTS_CC.
 
@@ -329,7 +330,7 @@ def cc_threshold_lookup(
     Note:
         Threshold ≤ 0 (configuração degenerada) é repassado raw pro caller.
         Helper é dumb-lookup; semântica "degraded" fica no validator caller
-        (Task 8 — check_cyclomatic_complexity.validate()).
+        (check_cyclomatic_complexity.validate() e equivalentes).
     """
     for card in active_cards:
         if not isinstance(card, dict):
@@ -361,19 +362,22 @@ def cc_threshold_lookup(
     return DEFAULTS_CC[language]
 
 
-def cc_format_three_paths(
+def format_three_paths_message(
     violations: list[dict[str, Any]],
     thresholds: dict[str, int],
 ) -> str:
-    """Render the canonical 3-paths message for a CC failure.
+    """Render the canonical 3-paths message (currently CC; reusable shape).
 
     Snapshot in tests — keep wording stable. See
     `.claude/rules/disciplines.md §1` for the template contract and
     `docs/superpowers/specs/2026-06-03-cc-gate-design.md §4` for the
-    CC-specific instance.
+    CC-specific instance. Outros gates (planejado: secrets, etc.) reusam
+    a mesma forma.
     """
     if not violations:
-        raise ValueError("cc_format_three_paths requires at least one violation")
+        raise ValueError(
+            "format_three_paths_message requires at least one violation"
+        )
     lines: list[str] = []
     lines.append("🛑 Cyclomatic Complexity gate")
     lines.append("")

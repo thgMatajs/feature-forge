@@ -498,7 +498,7 @@ def _run_cc_gate(project_root: Path) -> dict[str, Any]:
 def _render_cc_gate_block(result: dict[str, Any]) -> None:
     """Render the gate's 3-paths block when blocking.
 
-    Prefers the canonical `render` field (`cc_format_three_paths` output)
+    Prefers the canonical `render` field (`format_three_paths_message` output)
     when available — it carries the load-bearing UX contract from spec §4
     and disciplines §1 (literal header `🛑 Cyclomatic Complexity gate`,
     sections "O que falhou:", "Onde:", "Por que importa:", "Três caminhos
