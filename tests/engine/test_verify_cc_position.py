@@ -65,7 +65,12 @@ def test_cc_gate_skipped_when_no_invented_behavior_fails_failfast(
     results = verify._run_cascade(
         specs, fail_fast=True, project_root=tmp_path, interactive=False
     )
-    cc_result = next(r for r in results if r.name == "check_cyclomatic_complexity")
+    cc_result = next(
+        (r for r in results if r.name == "check_cyclomatic_complexity"), None
+    )
+    assert cc_result is not None, (
+        "Result for check_cyclomatic_complexity not found"
+    )
     assert cc_result.status == "skipped"
     # CC nem foi invocado — fail-fast respeitado
     assert "check_cyclomatic_complexity" not in captured
