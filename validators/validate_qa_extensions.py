@@ -70,8 +70,13 @@ def validate_qa_extensions(
     Raises:
         QAExtensionsValidationError: shape inválido (Regras 2, 3, 4 +
             defensive type guards).
-        QAExtensionsCollisionError: colisão de `name` entre cards
-            (subclass de QAExtensionsValidationError; Regra 1).
+        QAExtensionsCollisionError: colisão de `name` entre cards OU
+            intra-card (subclass de QAExtensionsValidationError; Regra 1).
+        CatalogOverlayError: propagado de `_common.load_catalog` quando
+            o overlay local está malformado (não capturado aqui — overlay
+            é pré-condição da cascade; caller que precisa diferenciar
+            deve catchar `CatalogOverlayError` antes de
+            `QAExtensionsValidationError`).
 
     Returns:
         None em sucesso (campo opcional → ausência também passa).
@@ -109,6 +114,25 @@ def validate_qa_extensions(
                 catalog_active = cat.active
         return catalog_active
 
+    # IN-02: normaliza chaves de other_cards pra str e filtra o próprio
+    # card aqui, em vez de comparar `Path == str(card_path)` dentro do
+    # loop (que retorna False silenciosamente quando caller esquece
+    # `str()` na chave, causando self-collision spurious).
+    normalized_others: dict[str, dict[str, Any]] = {}
+    if other_cards:
+        self_key = str(card_path)
+        for other_path, other_data in other_cards.items():
+            other_key = str(other_path)
+            if other_key == self_key:
+                continue
+            normalized_others[other_key] = other_data
+
+    # WR-01: tracking de nomes vistos DENTRO deste card pra detectar
+    # colisão intra-card (mesmo `name` 2x na mesma `auditors[]`).
+    # Spec §6.3: "name único cross canon ∪ local" — cross inclui o caso
+    # trivial intra-card como subset.
+    seen_names_local: set[str] = set()
+
     for idx, aud in enumerate(auditors):
         if not isinstance(aud, dict):
             raise QAExtensionsValidationError(
@@ -132,17 +156,36 @@ def validate_qa_extensions(
             )
 
         # Regra 3 — agents existem (sempre, mesmo se disabled).
-        contributes = aud.get("contributes", {})
+        # WR-02: `contributes` + `contributes.agents` são REQUIRED por
+        # schema (docs/schemas/qa-extensions.md §86). Validar explícita-
+        # mente, não defaultar pra `{}`/`[]` — auditor sem prompt é
+        # auditor inutilizável. Reincidência da lição Task 2.2 HI-01..03.
+        if "contributes" not in aud:
+            raise QAExtensionsValidationError(
+                f"{card_path}: auditor {name!r} sem campo `contributes` "
+                f"(required: contributes.agents[])"
+            )
+        contributes = aud["contributes"]
         if not isinstance(contributes, dict):
             raise QAExtensionsValidationError(
                 f"{card_path}: auditor {name!r} contributes deve ser mapping, "
                 f"got {type(contributes).__name__}"
             )
-        agents = contributes.get("agents", [])
+        if "agents" not in contributes:
+            raise QAExtensionsValidationError(
+                f"{card_path}: auditor {name!r} sem campo `contributes.agents` "
+                f"(required: lista de paths .md relativos ao card)"
+            )
+        agents = contributes["agents"]
         if not isinstance(agents, list):
             raise QAExtensionsValidationError(
                 f"{card_path}: auditor {name!r} contributes.agents deve ser lista, "
                 f"got {type(agents).__name__}"
+            )
+        if not agents:
+            raise QAExtensionsValidationError(
+                f"{card_path}: auditor {name!r} contributes.agents lista vazia — "
+                f"auditor sem prompt é inutilizável"
             )
         for agent_rel in agents:
             if not isinstance(agent_rel, str) or not agent_rel:
@@ -179,13 +222,24 @@ def validate_qa_extensions(
                         f"ou .claude/inventory/capability-labels.local.yaml (overlay)."
                     )
 
-        # Regra 1 — colisão cross-card (sempre, mesmo se disabled — shape).
-        # Disabled é runtime toggle; colisão estrutural é load-bearing
-        # pra integridade do pool de auditores.
-        if other_cards:
-            for other_path, other_data in other_cards.items():
-                if other_path == str(card_path):
-                    continue
+        # Regra 1 (parte a) — colisão intra-card (mesmo `name` 2x na
+        # mesma `auditors[]`). Spec §6.3 "name único cross canon ∪ local"
+        # cobre cross-card; intra-card é subset trivial. Fechar este
+        # buraco aqui evita pressão futura no loader (Task 7.1).
+        if name in seen_names_local:
+            raise QAExtensionsCollisionError(
+                f"qa-extensions name collision intra-card: auditor name "
+                f"{name!r} duplicado dentro do mesmo card {card_path}. "
+                f"Approach A (Decisão 28): hard fail sem merge silencioso. "
+                f"Renomeie ou remova o auditor duplicado."
+            )
+        seen_names_local.add(name)
+
+        # Regra 1 (parte b) — colisão cross-card (sempre, mesmo se
+        # disabled — shape). Disabled é runtime toggle; colisão
+        # estrutural é load-bearing pra integridade do pool de auditores.
+        if normalized_others:
+            for other_path, other_data in normalized_others.items():
                 other_ext = other_data.get("qa-extensions") or {}
                 if not isinstance(other_ext, dict):
                     continue
