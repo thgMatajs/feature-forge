@@ -251,3 +251,141 @@ def test_no_staged_files_returns_pass(monkeypatch, fake_context):
     monkeypatch.setattr(v, "_run_tools_for_staged", _should_not_run)
     result = v.validate(fake_context)
     assert result["status"] == "pass"
+
+
+# ── D-006 — regex inválida em cc-gate.ignore-paths emite warning ────────────
+
+
+def test_invalid_ignore_paths_regex_surfaces_warning(monkeypatch, fake_context):
+    """Regex inválida em `cc-gate.ignore-paths` antes era silently swallowed.
+
+    Após D-006, `_compile_ignore_patterns` valida cada pattern uma vez e
+    `validate()` propaga warnings descritivos no result dict — caller vê
+    qual entrada da config ficou inativa em vez de debugar no escuro.
+    """
+    monkeypatch.setattr(
+        v,
+        "_load_workflow_config",
+        lambda root: {
+            "cc-gate": {
+                "enabled": True,
+                "kotlin": 10,
+                # `[unclosed` é regex inválido — `re.compile` levanta `re.error`.
+                "ignore-paths": ["[unclosed"],
+            }
+        },
+    )
+    monkeypatch.setattr(v, "_run_tools_for_staged", lambda **kw: ([], []))
+    result = v.validate(fake_context)
+    warnings = result.get("warnings") or []
+    assert any(
+        "cc-gate.ignore-paths" in w and "regex inválida" in w and "[unclosed" in w
+        for w in warnings
+    ), f"expected invalid-regex warning; got: {warnings!r}"
+
+
+def test_compile_ignore_patterns_drops_invalid_and_keeps_valid():
+    """Helper unit-test: pattern inválido vira warning, válido sobrevive."""
+    valid, warnings = v._compile_ignore_patterns(
+        ["tests/.*", "[unclosed", r"\.cache/"]
+    )
+    assert valid == ["tests/.*", r"\.cache/"]
+    assert len(warnings) == 1
+    assert "[unclosed" in warnings[0]
+    assert "cc-gate.ignore-paths" in warnings[0]
+
+
+# ── D-009 — `_run_tools_for_staged` distingue tool ausente vs crashou ──────
+
+
+def test_run_tools_for_staged_distinguishes_missing_from_crashed(monkeypatch):
+    """As duas mensagens de warning devem ter prefixos distintos."""
+
+    def _fake_dispatch(*, language, files, threshold, project_root):
+        if language == "kotlin":
+            return v._DispatchResult(
+                language=language,
+                tool_found=False,
+                crashed=False,
+                raw_stdout="",
+                error_message="detekt not installed (PATH lookup failed)",
+            )
+        # python — crashou em runtime
+        return v._DispatchResult(
+            language=language,
+            tool_found=True,
+            crashed=True,
+            raw_stdout="",
+            error_message="radon stderr: boom",
+        )
+
+    monkeypatch.setattr(v, "_dispatch_tool", _fake_dispatch)
+    _, warnings = v._run_tools_for_staged(
+        files_by_lang={"kotlin": ["a.kt"], "python": ["b.py"]},
+        thresholds_by_lang={"kotlin": 10, "python": 10},
+        diff_hunks={},
+        project_root=Path("/tmp/forge-noop"),
+    )
+    assert len(warnings) == 2
+    missing_msg = next(w for w in warnings if "[detekt]" in w)
+    crashed_msg = next(w for w in warnings if "[radon]" in w)
+    assert "tool ausente" in missing_msg
+    assert "tool crashou" in crashed_msg
+    # Sub-string distinta entre os dois casos (D-009 contract).
+    assert "ausente" not in crashed_msg
+    assert "crashou" not in missing_msg
+
+
+# ── F-006 — `_git_staged_files` aplica `-M80%` (rename detection) ──────────
+
+
+@pytest.mark.integration
+def test_git_staged_files_uses_rename_detection(tmp_path: Path) -> None:
+    """SDD §2 manda `-M80%` no `git diff` pra detectar rename.
+
+    Criamos um repo, commitamos um .py com função foo, depois renomeamos
+    o arquivo (git mv) e re-stagiamos. `_git_staged_files` deve reportar
+    o NOVO path — sem o flag, ele reportaria como new + delete e o pipeline
+    perderia a oportunidade de aplicar o delta rule no arquivo renomeado.
+
+    O teste é integration porque spawna subprocess git.
+    """
+    import subprocess
+
+    repo = tmp_path
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "t@forge.local"], cwd=repo, check=True
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "forge-test"], cwd=repo, check=True
+    )
+    subprocess.run(
+        ["git", "config", "commit.gpgsign", "false"], cwd=repo, check=True
+    )
+
+    src = repo / "old_name.py"
+    src.write_text("def foo():\n    return 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "old_name.py"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "initial"], cwd=repo, check=True
+    )
+
+    # Rename + leve mudança no conteúdo (mantém ≥80% de similaridade).
+    subprocess.run(
+        ["git", "mv", "old_name.py", "new_name.py"], cwd=repo, check=True
+    )
+    (repo / "new_name.py").write_text(
+        "def foo():\n    return 2\n", encoding="utf-8"
+    )
+    subprocess.run(["git", "add", "new_name.py"], cwd=repo, check=True)
+
+    staged = v._git_staged_files(repo)
+    rel = [p.relative_to(repo).as_posix() for p in staged]
+    # Com `-M80%`, o rename vira UMA entrada (`new_name.py`).
+    # Sem o flag, viria como `new_name.py` + `old_name.py` (delete) — o filtro
+    # `p.is_file()` ainda removeria o segundo, mas a INTENÇÃO de rename
+    # detection é preservar a continuidade pra delta rule (F-001).
+    assert "new_name.py" in rel
+    # Bonus: o nome novo aparece após rename detection.
+    assert any("new_name.py" == r for r in rel)

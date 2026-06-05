@@ -597,12 +597,18 @@ def _parse_overrides(
             cc = int(m.group("cc"))
         except (TypeError, ValueError):
             continue
+        reason = m.group("reason").strip()
+        # D-008 — `.+` no regex casa whitespace puro após `—`. Sem este guard,
+        # `CC-OVERRIDE: foo:bar cc=11 —    ` viraria override válido com
+        # reason="". Skipa pro loose-pass, que emite o warning canônico.
+        if not reason:
+            continue
         overrides.append(
             {
                 "file": m.group("file"),
                 "func": m.group("func"),
                 "cc": cc,
-                "reason": m.group("reason").strip(),
+                "reason": reason,
             }
         )
         valid_spans.add(m.span())
@@ -616,8 +622,14 @@ def _parse_overrides(
         nl = commit_body.find("\n", m.start())
         line_end = nl if nl != -1 else len(commit_body)
         line = commit_body[m.start():line_end]
+        # Detect the em-dash and inspect what follows: a concrete reason after
+        # ` — ` means the strict regex already accepted it (skip); a trailing
+        # em-dash with empty/whitespace tail is still malformed and must warn
+        # (D-008 — the previous `if " — " in line: continue` swallowed these).
         if " — " in line:
-            continue
+            _, _, tail = line.partition(" — ")
+            if tail.strip():
+                continue
         warnings.append(
             f"CC-OVERRIDE sem razão concreta: '{line.strip()}' — adicione texto após —"
         )
@@ -698,8 +710,12 @@ def _git_staged_files(project_root: Path) -> list[Path]:
     "nenhum arquivo a checar"). Timeout 10s evita hang em repo gigante.
     """
     try:
+        # `-M80%`: rename detection per SDD §2 — função renomeada (até 20% de
+        # mudança) é classificada como "modified" pelo delta rule (cf. F-001),
+        # não como "new" + delete. Sem isso, renames viram falso-positivo de
+        # função nova com absolute-rule.
         out = subprocess.run(
-            ["git", "-C", str(project_root), "diff", "--cached", "--name-only"],
+            ["git", "-C", str(project_root), "diff", "--cached", "-M80%", "--name-only"],
             check=False,
             capture_output=True,
             text=True,
@@ -827,11 +843,39 @@ def _load_workflow_config(project_root: Path) -> dict[str, Any]:
     return read_yaml_or_default(cfg_path, {}) or {}
 
 
+def _compile_ignore_patterns(patterns: list[str]) -> tuple[list[str], list[str]]:
+    """Valida cada regex em ``patterns`` uma única vez.
+
+    Retorna ``(valid_patterns, warnings)``:
+      - ``valid_patterns`` contém apenas regex que compilam sem erro;
+      - ``warnings`` lista mensagens descritivas pra cada pattern inválido
+        (formato canônico: "cc-gate.ignore-paths: regex inválida '<pat>' (<erro>)").
+
+    Caller (``validate``) emite a lista no result dict — assim o user vê o
+    motivo de o filtro ter ignorado a entrada da config dele em vez de
+    debugar silenciosamente (fix D-006).
+    """
+    valid: list[str] = []
+    warnings: list[str] = []
+    for pat in patterns:
+        try:
+            re.compile(pat)
+        except re.error as e:
+            warnings.append(
+                f"cc-gate.ignore-paths: regex inválida '{pat}' ({e})"
+            )
+            continue
+        valid.append(pat)
+    return valid, warnings
+
+
 def _path_matches_ignore(rel_path: str, patterns: list[str]) -> bool:
     """True se ``rel_path`` casa com QUALQUER regex em ``patterns``.
 
-    Regex inválida em patterns é silenciosamente ignorada (mensagem de erro
-    não vale interromper o cascade — caller já confiou na config).
+    Espera ``patterns`` pré-validados via ``_compile_ignore_patterns`` (caller
+    é ``validate``). A blindagem ``re.error → continue`` aqui é belt-and-
+    suspenders pra caller que entregue regex bruto (testes diretos, callers
+    futuros).
     """
     for pat in patterns:
         try:
@@ -878,11 +922,16 @@ def _run_tools_for_staged(
             threshold=threshold,
             project_root=project_root,
         )
+        # D-009 — antes ambos casos emitiam `d.error_message` cru, indistinguíveis
+        # do ponto de vista do usuário. Prefixo `[<tool>] tool ausente:` vs
+        # `[<tool>] tool crashou:` deixa claro o que aconteceu sem perder a
+        # mensagem original (que ainda traz o caminho/snippet do stderr).
+        tool_bin = _TOOL_BIN[lang]
         if not d.tool_found:
-            warnings.append(d.error_message)
+            warnings.append(f"[{tool_bin}] tool ausente: {d.error_message}")
             continue
         if d.crashed:
-            warnings.append(d.error_message)
+            warnings.append(f"[{tool_bin}] tool crashou: {d.error_message}")
             continue
         for r in parsers[lang](d.raw_stdout):
             hunks = diff_hunks.get(r.file, [])
@@ -931,6 +980,10 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
     extra_ignore = cc_block.get("ignore-paths") if isinstance(cc_block, dict) else None
     if isinstance(extra_ignore, list):
         ignore_patterns.extend(str(p) for p in extra_ignore)
+    # Pre-valida regex uma vez (D-006): patterns inválidas em config viram
+    # warnings concretos no result em vez de serem silenciosamente engolidas
+    # toda vez que `_path_matches_ignore` itera.
+    ignore_patterns, ignore_warnings = _compile_ignore_patterns(ignore_patterns)
 
     files_by_lang: dict[str, list[str]] = {
         "kotlin": [],
@@ -950,7 +1003,10 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
             files_by_lang[lang].append(rel)
 
     if not any(files_by_lang.values()):
-        return result_pass("no candidate files after ignore-paths filter")
+        res = result_pass("no candidate files after ignore-paths filter")
+        if ignore_warnings:
+            res["warnings"] = list(ignore_warnings)
+        return res
 
     active_cards = _load_active_cards(project_root)
     thresholds_by_lang: dict[str, int] = {}
@@ -990,7 +1046,11 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
 
     # H4 — malformed CC-OVERRIDE attempts must surface as warnings even when
     # the gate passes. Spec §4 step 5: "Validator emite warning ...".
-    all_warnings: list[str] = list(tool_warnings) + list(override_warnings)
+    # D-006 — patterns regex inválidas em `cc-gate.ignore-paths` também
+    # propagam (antes silently swallowed em `_path_matches_ignore`).
+    all_warnings: list[str] = (
+        list(ignore_warnings) + list(tool_warnings) + list(override_warnings)
+    )
 
     if not surviving:
         if all_warnings:

@@ -129,3 +129,29 @@ def test_apply_overrides_no_warnings_when_all_valid() -> None:
     assert len(silenced) == 1
     assert surviving == []
     assert warnings == []
+
+
+def test_override_trailing_dash_empty_reason_warns() -> None:
+    """D-008 — `CC-OVERRIDE: ... cc=N — ` (em-dash com tail vazio) é malformado.
+
+    Antes do fix, o loose-pass fazia `if " — " in line: continue` e engolia
+    o warning. Agora a parte após o `—` é inspecionada; tail vazio cai no
+    `warnings.append`.
+    """
+    body = "feat: x\n\nCC-OVERRIDE: app/foo.kt:bar cc=12 — \n"
+    overrides, warnings = v._parse_overrides(body, return_warnings=True)
+    # Strict regex exige reason concreta — não conta como override válido.
+    assert overrides == []
+    # Loose-pass agora detecta o tail vazio e emite warning (D-008).
+    assert len(warnings) == 1
+    assert "CC-OVERRIDE sem razão" in warnings[0]
+    assert "app/foo.kt:bar" in warnings[0]
+
+
+def test_override_trailing_dash_whitespace_only_reason_warns() -> None:
+    """Variação D-008: vários espaços após `—` continuam sendo razão vazia."""
+    body = "CC-OVERRIDE: x.py:y cc=11 —    \n"
+    overrides, warnings = v._parse_overrides(body, return_warnings=True)
+    assert overrides == []
+    assert len(warnings) == 1
+    assert "CC-OVERRIDE sem razão" in warnings[0]
