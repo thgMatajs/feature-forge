@@ -36,8 +36,15 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
+
+from _gate_infra import (
+    DispatchResult,
+    dispatch_native_tool,
+)
 
 
 @dataclass(frozen=True)
@@ -208,3 +215,139 @@ def _parse_trufflehog_json(raw: str) -> list[SecretFinding]:
             )
         )
     return findings
+
+
+# ── Tool dispatch (Task 3) ───────────────────────────────────────────────────
+#
+# Stage selection (per spec §3 brainstorm 2026-06-05):
+#
+#   per_task → gitleaks (regex-fast, ~100ms, sem network roundtrip — usado no
+#              hook entre review e commit em `forge implement`).
+#   cascade  → trufflehog --only-verified (mais lento mas valida ativamente
+#              cada candidato contra a origem — usado em `forge verify`).
+#
+# `benign_nonzero_codes=(1,)` é load-bearing: ambas as tools usam exit=1 pra
+# sinalizar "encontrei findings" (não crash). É o mesmo trick do eslint que a
+# infra Phase 0 já cobre — gate herda sem reinventar.
+#
+# Os cmd_builders ficam aqui (secrets-específicos pelas tools nativas) enquanto
+# o dispatch canônico vive em `_gate_infra.dispatch_native_tool`. Os próximos
+# gates (deps-cve, duplication, dead-code, arch-rules, function-length) seguem
+# o mesmo padrão — cada um define seus builders, todos compartilham a infra.
+
+
+def _build_gitleaks_cmd(
+    tool_bin: str,
+    files: list[str],
+    rendered_config: Optional[str],
+) -> list[str]:
+    """``gitleaks detect`` com staged files via ``--source`` repetível.
+
+    Composição literal::
+
+        gitleaks detect --no-git --report-format=json --report-path=- \\
+          --source <f1> --source <f2> ...
+
+    Notas:
+        ``--no-git`` evita scan do history inteiro — gate é diff-mode, apenas
+        staged interessa. ``--report-path=-`` emite JSON no stdout pra parsear
+        via ``_parse_gitleaks_json``. ``--source <path>`` é repetível em
+        gitleaks v8+ pra restringir scan a paths explícitos.
+
+        ``rendered_config`` ignorado em v1.2-dev — default rules cobrem o
+        baseline (AWS, GCP, Stripe, GitHub PATs, etc.); custom rules ficam pra
+        v1.3+ (gap SECRETS-1 documenta).
+    """
+    cmd = [
+        tool_bin,
+        "detect",
+        "--no-git",
+        "--report-format=json",
+        "--report-path=-",
+    ]
+    for f in files:
+        cmd.extend(["--source", str(f)])
+    return cmd
+
+
+def _build_trufflehog_cmd(
+    tool_bin: str,
+    files: list[str],
+    rendered_config: Optional[str],
+) -> list[str]:
+    """``trufflehog filesystem --only-verified --json`` com files no tail.
+
+    Composição literal::
+
+        trufflehog filesystem --only-verified --json <f1> <f2> ...
+
+    Notas:
+        ``--only-verified`` é decisão locked do brainstorm 2026-06-05 — reporta
+        apenas tokens validados ativamente contra a API de origem. Zero falsos
+        positivos ao custo de perder unverifiable secrets (chaves customizadas
+        sem detector). Trade-off aceito porque a cascade precisa ser confiável
+        o suficiente pra hard-fail sem ruído.
+
+        ``--json`` emite NDJSON (uma linha JSON por finding) — parser splits
+        por ``\\n`` em ``_parse_trufflehog_json``.
+
+        ``rendered_config`` ignorado em v1.2-dev (gap SECRETS-1).
+    """
+    cmd = [tool_bin, "filesystem", "--only-verified", "--json"]
+    cmd.extend(str(f) for f in files)
+    return cmd
+
+
+# Stage → (tool_bin, cmd_builder). Tabela explícita pra fail-fast em stage
+# desconhecido — dict lookup levanta ``KeyError`` natural, sem fallback
+# silencioso que esconderia bug de wiring no caller.
+_SECRETS_TOOL_BIN: dict[str, str] = {
+    "per_task": "gitleaks",
+    "cascade": "trufflehog",
+}
+
+_SECRETS_CMD_BUILDERS: dict[
+    str, Callable[[str, list[str], Optional[str]], list[str]]
+] = {
+    "per_task": _build_gitleaks_cmd,
+    "cascade": _build_trufflehog_cmd,
+}
+
+
+def _dispatch_for_stage(
+    stage: str,
+    files: list[Path],
+    *,
+    project_root: Path,
+) -> DispatchResult:
+    """Dispatch a tool correspondente ao ``stage`` via infra Phase 0.
+
+    Contrato:
+        ``stage="per_task"``  → gitleaks (regex-fast).
+        ``stage="cascade"``   → trufflehog --only-verified (active verify).
+        outro stage           → ``KeyError`` (fail-fast).
+
+    ``files`` chega como ``list[Path]`` porque vem do alto-nível
+    (``git_staged_files`` devolve Paths); convertemos pra ``list[str]`` aqui
+    porque ``dispatch_native_tool`` espera strings pra repassar ao
+    ``subprocess.run``. A conversão acontece em um ponto único — caller não
+    precisa pensar sobre isso.
+
+    ``language="any"`` é descritivo (secrets atravessam Kotlin, Swift, TS,
+    YAML, Dockerfile, ``.env``...) — o campo existe no ``DispatchResult`` por
+    contrato da infra, mas não é load-bearing aqui.
+
+    ``benign_nonzero_codes=(1,)`` cobre o "found findings → exit=1" das duas
+    tools. Sem este kwarg, o dispatch trataria findings como crash e o gate
+    quebraria silenciosamente toda vez que houvesse o que reportar.
+    """
+    tool_bin = _SECRETS_TOOL_BIN[stage]
+    cmd_builder = _SECRETS_CMD_BUILDERS[stage]
+    return dispatch_native_tool(
+        language="any",
+        files=[str(f) for f in files],
+        cmd_builder=cmd_builder,
+        project_root=project_root,
+        tool_bin=tool_bin,
+        benign_nonzero_codes=(1,),
+    )
