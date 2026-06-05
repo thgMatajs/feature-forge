@@ -43,6 +43,12 @@ def validate_qa_report(data: dict[str, Any]) -> None:
             f"verdict={verdict!r} inválido. Valores aceitos: {sorted(_VALID_VERDICTS)}"
         )
 
+    findings = data["findings"]
+    if not isinstance(findings, list):
+        raise QAReportValidationError(
+            f"findings deve ser list, recebido tipo {type(findings).__name__}"
+        )
+
     run = data["run"]
     if not isinstance(run, dict):
         raise QAReportValidationError("run deve ser dict")
@@ -51,6 +57,10 @@ def validate_qa_report(data: dict[str, Any]) -> None:
             raise QAReportValidationError(f"run.{required} ausente")
 
     scope = run["scope"]
+    if not isinstance(scope, dict):
+        raise QAReportValidationError(
+            f"run.scope deve ser dict, recebido tipo {type(scope).__name__}"
+        )
     if scope.get("type") not in _VALID_SCOPE_TYPES:
         raise QAReportValidationError(
             f"run.scope.type={scope.get('type')!r} inválido. "
@@ -77,4 +87,11 @@ def validate_qa_report(data: dict[str, Any]) -> None:
     if sev_sum != total:
         raise QAReportValidationError(
             f"summary.total_findings={total} não bate com sum(by_severity)={sev_sum}"
+        )
+
+    # Schema doc §6.1 linha 75: summary.total_findings == len(findings).
+    # Defesa contra synthesis-phase bugs onde contadores divergem do array real.
+    if len(findings) != total:
+        raise QAReportValidationError(
+            f"summary.total_findings={total} não bate com len(findings)={len(findings)}"
         )
