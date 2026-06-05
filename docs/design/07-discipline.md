@@ -1217,6 +1217,164 @@ External dependencies — Referenced from:
 
 ---
 
+## 10. Extension feature
+
+Feature done que ganha escopo correlato — variant, módulo paralelo,
+integração paralela — não cabe como feature standalone (perde herança do
+contexto da pai) nem como refactor (refactor não muda comportamento;
+extension ADICIONA). Stress test 2026-05-29 (cenário C2) mapeou o caso;
+revisita 2026-06-03 separou a mecânica `extends-feature` do escopo
+multi-target (watchOS/Wear/TV — out-of-scope permanente, documentado em
+`docs/design/04-pending.md §Gap 9`).
+
+A remediação é um **pattern leve de feature derivada**: novo slug derivado
++ campo aditivo `extends-feature: {parent-slug}` no L1 status + bloco
+§Extension context no intake + caminho explícito em Cena 1 do
+`forge plan`. Zero comando novo (Decision 9 preservada), zero flag
+(Decision 10), zero card novo (Decision 28 — overlay não requerido).
+Extension = `subtype: product` com parent linkado — `_VALID_SUBTYPES`
+permanece em 5 valores (`product | refactor | bugfix | spike | chore`).
+
+### Quando aplica
+
+- Feature `state: done` ganha escopo novo correlato e o user pede pra
+  reaproveitar contexto (contracts, screens baseline, naming
+  conventions) sem polluir o L1 da feature original.
+- Casos canônicos: variant operacional (parent shippa onboarding; extension
+  adiciona onboarding-empresarial paralelo), módulo paralelo (parent
+  shippa lembrete-rega; extension adiciona lembrete-rega-notificacao),
+  integração paralela (parent shippa weather-integration via OpenWeather;
+  extension adiciona weather-integration-fallback via WeatherAPI).
+
+NÃO usar pra:
+
+- Refactor (use §8 refactor subtype — comportamento inalterado por design).
+- Bugfix (use §8 bugfix subtype — restauração de comportamento existente).
+- Feature standalone nova (sem dependência semântica de outra feature
+  done — parte do zero, `extends-feature: null`).
+
+### Distinção formal vs outros tipos
+
+| Eixo | Refactor (§8) | Bugfix (§8) | Extension (§10) | Standalone product |
+|---|---|---|---|---|
+| Mudança de comportamento | Proibida por design | Inerente (de quebrado → correto) | **Aditiva** (preserva baseline da pai + adiciona delta) | Comportamento novo de zero |
+| Parent context | n/a (feature mesma) | n/a (feature mesma) | **Herdado** via `extends-feature` (contracts, screens baseline, naming) | n/a (sem parent) |
+| Retro strategy | Surface CFR candidates | 5-whys obrigatório (Gap 1) | **"O que herdei vs adicionei"** (sem 5-whys) | Naming/arquitetural patterns |
+| Wave A discovery | Refactor variant (Problem + Files + No-behavior attestation) | Bugfix variant (Reproduction + Expected vs actual + Validation) | **Product variant + §Extension context block** (parent slug + scope of extension + reuse from parent + out-of-scope vs parent) | Product variant default |
+
+### Wave dispatch semantics
+
+- **Wave A — intake**: usa `templates/feature-intake.template.md`
+  (product padrão) com bloco condicional §Extension context renderizado
+  quando `extends-feature != null`. Conductor não re-elicita user value /
+  business outcome / persona — herda da pai e foca no delta.
+- **Wave B — screens + contracts**: focado SÓ no delta. Screens já
+  cobertas pela pai são referenciadas como baseline, não re-modeladas.
+  Contracts (data-contract-spec, analytics-spec) ganham apenas as
+  entries novas; entries herdadas são referenciadas explicitamente.
+- **Wave C — tech-spec**: §1-§7 herdadas como referência ("ver
+  `parent/tech-spec.md §2 Architecture overview`"); apenas o delta novo
+  é renderizado em detalhe. §14 Cross-feature reusability ganha
+  evidência forte (extension É um caso de reuso explícito).
+- **Wave D — task-breakdown + TASK contracts**: `allowed_files` herda
+  baseline da pai (read-only references quando aplicável) + adiciona
+  paths novos da extension. Cada task declara explicitamente quais
+  arquivos da pai são apenas referenciados (read-only) vs estendidos
+  (read+write com cuidado de não regredir behavior da pai).
+- **Wave E — readiness**: aceita extension variant com checklist
+  focado em "delta coberto" (intake §Extension context completo +
+  contracts delta-only + task contracts com baseline herdado declarado).
+
+### Phase 6 retrospective — herança vs adição
+
+5-whys (§8 bugfix) não se aplica em extension — extension não conserta
+bug, expande feature done. Retrospective foca em **"o que herdei
+literalmente vs o que precisei adicionar"** com 4 perguntas:
+
+1. **Que artefatos da pai foram herdados literalmente?** (contracts,
+   screens, helpers, types, naming) — sinal positivo de reuso real.
+2. **Que artefatos precisaram de delta mínimo?** (extender contract com
+   1 campo, adicionar 1 screen variant) — sinal de extensibility natural.
+3. **Que artefatos foram criados do zero apesar de extension?** — sinal
+   suspeito; vale interrogar se a pai foi modelada com extensibility
+   insuficiente OU se a extension é genuinamente ortogonal.
+4. **Que sinais sugerem que parent + extension deveriam ser refatorados
+   pra shared base?** — proposed-evolution candidate; quando 2+
+   extensions de uma mesma pai compartilham N delta similar, promover a
+   base é candidato natural pra L2.
+
+Output esperado: ≥1 proposta concreta pra L2 OU justificativa
+explícita de "nada a promover — extension foi delta puro". Diferente de
+refactor/bugfix retrospective, extension retrospective também alimenta
+`forge graph` Q14/Q15 (near-duplicate detection entre parent + extension).
+
+### Filesystem layout
+
+Extension feature vive em `.claude/memory/L1/{parent-slug}-{descriptive-suffix}/`
+— **NÃO** em `non-product/{slug}/` (que é o guarda-chuva de refactor +
+bugfix em §8). Razão: extension é product-derived (gera valor de
+usuário novo, ainda que correlato), segue o pipeline product. O slug
+derivado é convencionalmente `{parent}-{suffix-descritivo}` (ex.:
+`lembrete-rega-notificacao`, `weather-integration-fallback`) — conductor
+sugere `{parent}-extension` como default na Cena 1, user customiza pra
+descritivo real.
+
+`docs/feature-implementation-workflow/features/{parent-slug}-{suffix}/`
+paralelo a qualquer outra product feature. Sub-tree de status, history,
+dispatch-log, verify-log idêntico ao product padrão.
+
+### Hypothesis schema
+
+`hypothesis.yaml` da extension ganha 2 campos aditivos quando
+`extends-feature != null`:
+
+```yaml
+extends-feature: lembrete-rega
+extension-scope: "Adicionar canal de notificação WhatsApp paralelo ao push existente"
+```
+
+`extension-scope` é string curta (1 linha) descrevendo o delta — usada
+por `validate_extension_feature.py` pra detecção de dedupe (EXT-004:
+múltiplas extensions com mesmo parent + mesmo scope = redundância).
+
+### Cross-link com §8, §9, e Gap 5
+
+- **§8 (subtype non-product)** — extension NÃO é um 6º subtype.
+  `_VALID_SUBTYPES` permanece em 5; extension é `product` com parent
+  linkado via campo aditivo. Refactor/bugfix de uma extension funcionam
+  exatamente como em product standalone (subtype é dimensão ortogonal a
+  extends-feature).
+- **§9 (external deps)** — extension pode ter dep externa exatamente
+  como product standalone. `blocked-on-external` opera ortogonal a
+  `extends-feature` (uma extension waiting on backend é válida; o gate
+  do `forge implement` segue §9 normal).
+- **Gap 5 (card local overlay)** — extensions pra plataforma exótica
+  (web, hipotético desktop) seguem o caminho oficial via overlay local
+  + extension feature, NÃO via card canon novo. Gap 9 NÃO usa overlay
+  no escopo final — extension mechanic é desacoplada de multi-target.
+
+### Cheat-sheet operacional
+
+| Trigger | Ação |
+|---|---|
+| User pediu pra adicionar X a feature done | Cena 1 oferece 4º caminho "Estender" — slug derivado + `extends-feature: {parent}` no L1 |
+
+### Referenced from
+
+Extension feature — Referenced from:
+`docs/schemas/memory.md §status.json extends-feature + parent-feature fields + MEM-L1-008` ·
+`engine/memory/l1.py L1State.extends_feature + parent_state + list_extensions_of` ·
+`engine/plan.py Cena 1 4º caminho detection + parent context import` ·
+`templates/feature-intake.template.md §Extension context conditional block` ·
+`docs/ux/forge-plan-roteiro.md §Cena 1 4º caminho Estender` ·
+`agents/planning-conductor.md §Phase 1 step 5 extension context import + §Phase 4 wave dispatch (extension variant) + §Phase 6 retrospective (herança vs adição)` ·
+`agents/feature-intake-agent.md §Extension context elicitation` ·
+`agents/tech-spec-agent.md §context pack extends-feature + parent-baseline references` ·
+`agents/retrospective-agent.md §Extension retrospective semantics` ·
+`validators/validate_extension_feature.py EXT-001..EXT-004`.
+
+---
+
 ## Cheat-sheet operacional
 
 Quando você (agente, humano, future-self) estiver escrevendo roteiro novo
@@ -1233,6 +1391,7 @@ ou agent-prompt e bater num dos sete pontos:
 | "Ctrl+C aqui faz o quê?" | §7 — pause = default, abort = explicit |
 | "Esta feature é refactor/spike/chore?" | §8 — non-product feature track |
 | "Esperando endpoint do backend — pode rodar a task?" | §9 — external dependencies |
+| "User pediu pra adicionar X a feature done?" | §10 — extension feature |
 
 Quando o que você quer escrever contradiz alguma disciplina, **pare** e
 abra issue. Mentor calmo é firme nas bordas — disciplina universal é

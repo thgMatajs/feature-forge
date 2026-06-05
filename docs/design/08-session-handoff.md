@@ -3,34 +3,54 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-04 (v1.2-dev — CC gate refinements + PR #4 review fixes)
-**Estado:** v1.2-dev — Cyclomatic Complexity gate passou final code review
-com 4 HIGH endereçados (commit `19d4348`) e está pronto pra
-finishing-branch. Refinamentos pré-merge: (H1) threshold dinâmico chega
-às tools nativas via tempfile-render (Detekt/SwiftLint não aceitam
-threshold via CLI flag — placeholder `__CC_THRESHOLD__` substituído em
-tempo de execução); (H2) Radon trocado de `-n F` (mascarava CC ∈ [11..40])
-pra `-n A` com filtragem em Python; (H3) `cc_format_three_paths` render
-canônico chega ao usuário via `result["render"]` consumido em
-`_render_cc_gate_block`; (H4) warnings de overrides malformados propagam
-via 3-tupla `(silenced, surviving, warnings)` até o result dict. 15
-validators total (era 14); novo `check_cyclomatic_complexity`
-multi-language (Kotlin/Swift/TS/Python) dispatcha pra Detekt/SwiftLint/
-eslint/Radon, roda em duas posições: cascade de `forge verify` (após
-`check_no_invented_behavior`) e per-task em `forge implement` (entre
-review e commit). Threshold via precedência card `cc-gate-override` >
-workflow-config `cc-gate` > defaults built-in. Regra de fail: função
-nova `cc > N` OU função modificada `cc_after > cc_before`. Override-
-justify via linha `CC-OVERRIDE: <file>:<func> cc=<N> — <razão>` no commit
-body, auditável via `git log --grep='CC-OVERRIDE'`. Bypass emergencial
-via env `NO_CC_GATE=1`, logado em `.claude/state/cc-gate-bypass.jsonl`.
-`forge doctor` ganha 13ª categoria `cc-gate-tools` (status + instruções
-de install). Suite total pós-refinements: 682 passed, 17 skipped (+~71
-vs baseline pré-CC-gate). Sem revisitar decisões locked — Decisions
-10/19/22/23 preservadas; nada de flag CLI, nada de runtime dep, validator
-multi-language único. Próximo: finishing-branch (merge na main) +
-doc-sync close-out se houver itens residuais. Histórico prévio (v1.2.0
-Gap 5 + power-review PR #2 R1) preservado abaixo na timeline.
+**Última atualização:** 2026-06-05 (v1.2.0 + Gap 9 + PR #4 CC gate review fixes + merge main)
+**Estado:** branch `worktree-feat+cc-gate` mescla `origin/main` (Gap 9
+ship + /resolve-pr-comments cleanup) com PR #4 (Cyclomatic Complexity
+gate + review fixes). Duas linhas de trabalho convivem no Unreleased:
+
+- **PR #4 — Cyclomatic Complexity gate** (em review) — `check_cyclomatic_complexity`
+  multi-language (Kotlin/Swift/TS/Python) dispatcha pra Detekt/SwiftLint/
+  eslint/Radon, roda em duas posições: cascade de `forge verify` (após
+  `check_no_invented_behavior`) e per-task em `forge implement` (entre
+  review e commit). Threshold via precedência card `cc-gate-override` >
+  workflow-config `cc-gate` > defaults built-in. Regra de fail: função
+  nova `cc > N` OU função modificada `cc_after > cc_before`. Override-
+  justify via linha `CC-OVERRIDE: <file>:<func> cc=<N> — <razão>` no commit
+  body, auditável via `git log --grep='CC-OVERRIDE'`. Bypass emergencial
+  via env `NO_CC_GATE=1`, logado em `.claude/state/cc-gate-bypass.jsonl`.
+  `forge doctor` ganha 13ª categoria `cc-gate-tools` (status + instruções
+  de install). Refinamentos pré-merge endereçados em final review (commit
+  `19d4348` + addendum): (H1) threshold dinâmico chega às tools nativas via
+  tempfile-render (Detekt/SwiftLint não aceitam threshold via CLI flag —
+  placeholder `__CC_THRESHOLD__` substituído em tempo de execução); (H2)
+  Radon trocado de `-n F` (mascarava CC ∈ [11..40]) pra `-n A` com
+  filtragem em Python; (H3) `cc_format_three_paths` render canônico chega
+  ao usuário via `result["render"]` consumido em `_render_cc_gate_block`;
+  (H4) warnings de overrides malformados propagam via 3-tupla `(silenced,
+  surviving, warnings)` até o result dict. Suite pós-refinements no branch:
+  682 passed, 17 skipped (+~71 vs baseline pré-CC-gate). PR #4 review-fix
+  loop adicionou +6 (D-006/D-008/D-009/F-006 + asserções tighter): 688
+  passed, 17 skipped. Sem revisitar decisões locked — Decisions 10/19/22/23
+  preservadas.
+
+- **Gap 9 — extends-feature mechanic** (shipped em `main` 2026-06-03) —
+  pattern leve product-derived: feature done pode ser estendida via novo
+  slug derivado com `extends-feature: {parent-slug}` aditivo no status.json
+  + intake — sem cards canon novos, sem mudança no enum platforms, sem
+  upgrade de inventory schema. Cena 1 do `forge plan` ganha 4º caminho
+  "Estender" (conditional state=done); validator novo EXT-001..004
+  (cross-cutting); discipline §10 formaliza semantics. **Multi-target
+  retroativo (watchOS / Wear OS / tvOS) movido pra out-of-scope permanente**
+  — feature-forge cobre mobile (Android + iOS + KMP); plataforma exótica
+  futura entra via Gap 5 overlay local, não via canon expansion. Suite
+  Gap 9 baseline: **637 passing + 12 skipped** (+42 desde v1.2.0: 37 Gap 9
+  + 5 fix loop).
+
+Após merge, a suite cumulativa esperada na branch é ~700 collected
+(637 Gap 9 + ~63 CC gate). Próximo: finishing-branch PR #4 + doc-sync
+close-out; considerar Gap 14 (preset coverage) e itens deferred v1.2.x em
+`04-pending.md` (lenient local loader C1, re-detection inline no Step 7.5
+N2-a, ADR-suspension audit log N13, catalog_overlay refactor N17).
 
 ### Histórico — v1.2.0 (2026-06-03)
 
@@ -72,8 +92,8 @@ Depois siga as instruções. Estou na Fase {N}.
 ## Estado atual (anchors)
 
 ```
-~379 arquivos · ~50,700 linhas · 27 decisões locked + 7 direcionais (Fase 3.5)
-v1.1.0 release: 508 tests passing (unit + integration, PR #1 R2 baseline) · 17 graph queries · 16 proposal kinds
+~400 arquivos · ~52,500 linhas · 27 decisões locked + 7 direcionais (Fase 3.5) + 1 ADR append-only (Decisão 28, Gap 5)
+v1.2.0 + Gap 9 + PR #4 CC gate cumulativo: ~700 tests collected (688 passed + 17 skipped pós PR #4 review fixes; Gap 9 baseline 637 + CC gate +~63) · 17 graph queries · 16 proposal kinds · 15 validators (inclui check_cyclomatic_complexity + validate_extension_feature) · 22 cards canon (+ overlay local)
 ```
 
 | Categoria | Status |
@@ -98,7 +118,9 @@ v1.1.0 release: 508 tests passing (unit + integration, PR #1 R2 baseline) · 17 
 | v1.1 — Gap 18 (reuse intelligence expansion) | ✅ shipped 2026-06-01 — 6 detection categories, schema v2, parser overhaul, gradle modules+deps, init Step 11.5+11.6, evolve dispatch, doctor check, incremental hook, forge plan integration. **+12.360 LOC, 55 arquivos, 20 unit tests novos.** |
 | **🎉 feature-forge v1.1.0 completa** | ✅ **~379 arquivos, ~50.7K LOC, 458 tests passing (rapid lane)** (2026-06-01) |
 | v1.1.0 — PR #1 bloqueadores resolvidos | ✅ shipped 2026-06-01 — 14 commits cobrindo C1–C4 (phase lock atomic O_EXCL, implement try/finally, `_reset_domain_tables` atomic, version bump 1.1.0) + A1/A2/A5/A6/A9/A12 (Swift `"""` brace counter, Groovy DSL parens, tie-breaker determinístico, root-level `test/` recognition, `forge plan` rc=130 em deferred) + review fixes (CR-01/CR-02/MD-01/HG-01/HG-02/HG-03). **+38 regression tests, total 458 (baseline 367 + 53)**. Detalhe em `CHANGELOG.md`. |
-| CC gate | ✅ live (cascade + per-task) — `check_cyclomatic_complexity` multi-language (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon); threshold per card override > workflow-config > defaults; 3-caminhos on-fail (refactor / override-justify / split-task); doctor categoria 13ª `cc-gate-tools`. 13 commits + ~63 tests novos (suite 630 → 693). |
+| v1.2 — Gap 5 (card local overlay) | ✅ shipped 2026-06-02 — Approach A: cascade canon ∪ local com hard-fail em colisão; validators overlay-aware; reconfigure submenu `card-local`; init Step 7.5 com 3-caminhos pra signals órfãos; cards canon 20 → 22 (`retrofit-client` + `shared-preferences-prefs` com `legacy-marker`). Decisão locked 28 nova (ADR append-only). Suite: 595 passing + 12 skipped. |
+| v1.2 — Gap 9 (extends-feature mechanic) | ✅ shipped 2026-06-03 — re-escopado: extends-feature pattern leve product-derived (sem cards canon novos, sem mudança em platforms enum, sem upgrade de inventory schema); 4º caminho "Estender" em `forge plan` Cena 1; validator EXT-001..004; discipline §10 formaliza semantics; `shipped-at` writer em transição state=done. Multi-target watchOS/Wear/TV movido pra out-of-scope permanente. **+42 tests cumulativo (37 Gap 9 + 5 fix loop); total 637 passing + 12 skipped**. Detalhe em `CHANGELOG.md`. |
+| v1.2-dev — CC gate (PR #4) | 🔄 em review — `check_cyclomatic_complexity` multi-language (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon); threshold per card override > workflow-config > defaults; 3-caminhos on-fail (refactor / override-justify / split-task); doctor categoria 13ª `cc-gate-tools`. 13 commits + ~63 tests novos (suite 630 → 693 collected pré-merge; 682 passed + 17 skipped pós-refinements; 688 passed + 17 skipped pós PR #4 review fixes D-006/D-008/D-009/F-006). |
 
 ## Conhecidos limites v1.1 (atualizado)
 
@@ -185,6 +207,47 @@ restantes ficam pra v1.2+ ou v2/Phase 6:
   `_dispatch.py`, `_override.py`, `_classifier.py`) deferido pra
   piggyback na próxima feature substantial do validator. Gap em
   `docs/design/04-pending.md § Gap CC-7`.
+
+**feature-forge cobre mobile (Android + iOS + KMP) — scope-out
+permanente (Gap 9 revisita 2026-06-03):**
+
+- **watchOS, Wear OS, tvOS e multi-target retroativo são explicitamente
+  out-of-scope permanente.** Não é "v1.x+" — é decisão arquitetural
+  consciente, não TODO residual. Cards canon `watchos-screens`,
+  `watchos-navigation`, `wear-os-screens`, `tv-screens` não virão; enum
+  `workflow-config.platforms.active` permanece `[android, ios, kmp, web]`;
+  `inventory.design-system.components.platforms` field não agrega valor
+  sem multi-target; labels `watchos-*` / `wear-os-*` / `tv-*` não entram
+  no catálogo nem como Reservada; `forge extend-feature {slug}` como
+  verbo novo não vem (Decision 9 preservada — "estender" vive dentro de
+  `forge plan` via 4º caminho conditional em Cena 1). Quando demanda
+  improvável surgir, o caminho oficial é via **Gap 5 (card local
+  overlay)** — não expansão prescritiva do canon. Demanda real teria
+  que reabrir a revisita Gap 9 inteira. Documentado em
+  `docs/design/04-pending.md §Gap 9 §OUT-OF-SCOPE explícito`.
+
+**Gap 9 (extends-feature mechanic) surfaced (2026-06-03) — não bloqueia
+merge, target v1.2.x:**
+
+- **`validate_extension_feature` wiring na cascade `forge verify`** —
+  validator existe + roda standalone + 19 testes verdes, mas não está
+  cadastrado em `engine/verify.py` cascade explícita. Decisão consciente
+  no ship: cross-cutting validator com apenas 1 caso até hoje; cascade
+  automatic em `forge verify` é refinamento que entra em v1.2.x quando
+  o pattern "cross-cutting validator" tiver 2+ casos. Workaround atual:
+  invocação manual ou smoke test. Documentado em
+  `docs/design/04-pending.md §Gap 9 §TODO residual`.
+- **Wave A skipping logic completo no conductor** — agent prompt da
+  `planning-conductor` foi patchado (Phase 1 step 5 extension context
+  import), mas execução real do skip de elicit no conductor (não
+  re-perguntar user value / business outcome / persona herdados da pai)
+  só é exercitada com piloto E2E real. Refinamento de prompt esperado
+  pós-piloto.
+- **Smoke test E2E real** — Mandamento "verde antes de pronto" cumprido
+  via unit + integration (637 passing). E2E real (dummy parent feature
+  done + `forge plan` + escolher Estender + verificar L1 + intake +
+  validator) seria refinamento de fixture pra v1.2.x. Smoke manual
+  documentado em `04-pending.md §Gap 9 §Validation pendente`.
 
 ## Fase 4 — completa (resumo)
 

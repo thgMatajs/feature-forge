@@ -39,11 +39,14 @@ from engine.memory.l1 import (
     acquire_phase_lock,
     append_history,
     current_subtype,
+    list_active_features,
     read_elicitation,
+    read_hypothesis,
     read_l1_status,
     release_phase_lock,
     set_subtype,
     write_elicitation,
+    write_hypothesis,
     write_l1_status,
 )
 from engine.persona import mentor_calmo
@@ -697,6 +700,339 @@ def _next_wave_from_history(slug: str, project_root: Path) -> str:
     return mapping.get(last_ack, "A")
 
 
+# ── Extension feature mechanic (Gap 9) ───────────────────────────────────────
+
+
+def _default_extension_slug(parent_slug: str) -> str:
+    """Heuristic default slug for an extension feature.
+
+    Gap 9 — extends-feature mechanic. The conductor (Cena 1, 4º caminho)
+    proposes ``{parent}-extension`` as a starting point; the user almost
+    always customizes (e.g., ``lembrete-rega-push``) to reflect the actual
+    delta scope. Validator EXT-003 guarantees the derived slug is never
+    equal to the parent slug.
+    """
+    return f"{parent_slug}-extension"
+
+
+def _import_parent_context(
+    parent_slug: str, project_root: Path
+) -> dict[str, Any]:
+    """Read parent feature's L1 + key plan artefacts, return baseline dict.
+
+    Gap 9 — extends-feature mechanic. The conductor calls this when the
+    user chooses caminho 3 (Estender) in Cena 1 with state=done. The
+    returned dict feeds the extension's context-pack so sub-agents
+    (Wave A intake, Wave B/C/D) inherit baseline from the parent without
+    re-eliciting — they only have to model the delta.
+
+    Returns a dict with keys (any may be absent when parent's artefact
+    wasn't written):
+
+      - ``parent-slug``         : str (always present, mirrors input)
+      - ``parent-state``        : str | None (status.json.state)
+      - ``parent-shipped-at``   : str | None (status.json.shipped-at if set)
+      - ``parent-hypothesis``   : dict | None (hypothesis.yaml)
+      - ``parent-feature-dir``  : str | None (path to features/{parent}/ or
+                                  non-product/{parent}/ as relative string;
+                                  caller resolves vs project_root)
+
+    Read-only; never writes. Best-effort: missing files do not raise — they
+    just produce ``None`` entries (the extension feature can proceed; the
+    sub-agent's context pack will say "parent's <artefact> absent").
+    """
+    out: dict[str, Any] = {
+        "parent-slug": parent_slug,
+        "parent-state": None,
+        "parent-shipped-at": None,
+        "parent-hypothesis": None,
+        "parent-feature-dir": None,
+    }
+    parent_status = read_l1_status(parent_slug, project_root)
+    if parent_status is not None:
+        out["parent-state"] = parent_status.status
+        # `shipped-at` lives in status.raw (free-form additive metadata) —
+        # it isn't a canonical L1State field. Best-effort read.
+        if isinstance(parent_status.raw, dict):
+            shipped = parent_status.raw.get("shipped-at") or parent_status.raw.get(
+                "shipped_at"
+            )
+            if isinstance(shipped, str) and shipped.strip():
+                out["parent-shipped-at"] = shipped.strip()
+    try:
+        parent_hyp = read_hypothesis(parent_slug, project_root)
+        if isinstance(parent_hyp, dict):
+            out["parent-hypothesis"] = parent_hyp
+    except Exception:  # noqa: BLE001 — best-effort: hypothesis may be malformed
+        out["parent-hypothesis"] = None
+
+    parent_subtype = current_subtype(parent_slug, project_root)
+    parent_feature_dir = _feature_path(
+        project_root, parent_slug, subtype=parent_subtype
+    )
+    if parent_feature_dir.is_dir():
+        try:
+            out["parent-feature-dir"] = str(
+                parent_feature_dir.relative_to(project_root)
+            )
+        except ValueError:
+            out["parent-feature-dir"] = str(parent_feature_dir)
+    return out
+
+
+def _create_extension_l1(
+    parent_slug: str, child_slug: str, project_root: Path
+) -> L1State:
+    """Create the child's status.json + seed hypothesis.yaml as an extension.
+
+    Gap 9 — extends-feature mechanic. Writes:
+      - ``.claude/memory/L1/{child}/status.json`` with extends-feature +
+        parent-feature pointing at ``parent_slug``, state=planning,
+        subtype=product (extensions are always product-derived).
+      - ``.claude/memory/L1/{child}/hypothesis.yaml`` seeded with the
+        ``extends-feature`` + ``parent-feature`` fields so the conductor
+        can read it on resume without re-asking.
+
+    Does NOT acquire the phase lock — caller (`run()`) does that after
+    this returns, per the engine's lifecycle. Does NOT write history —
+    `run()` appends a ``plan-started`` entry after lock acquisition.
+
+    Sanity guards (defensive — write-time enforcement reduz dependência
+    do validator runtime, que pode não estar wired no cascade default):
+      - ``child_slug != parent_slug`` (self-loop — EXT-003)
+      - parent's status.json must exist (EXT-001)
+      - ``parent_status.status == "done"`` (EXT-002 — extensions de
+        feature ainda viva poluem a L1 da pai e quebram a invariante
+        "1 feature = 1 ship moment")
+    """
+    if not parent_slug or not child_slug:
+        raise ValueError("parent_slug and child_slug must be non-empty")
+    if child_slug == parent_slug:
+        raise ValueError(
+            "extension slug cannot equal parent slug (sanity guard for EXT-003)"
+        )
+    parent_status = read_l1_status(parent_slug, project_root)
+    if parent_status is None:
+        raise ValueError(
+            f"parent '{parent_slug}' has no status.json on disk; "
+            "cannot create extension"
+        )
+    if parent_status.status != "done":
+        raise ValueError(
+            f"parent {parent_slug!r} has state={parent_status.status!r}; "
+            "extension requires parent.state == 'done' (EXT-002)"
+        )
+
+    child_state = L1State(
+        feature_slug=child_slug,
+        status="planning",
+        last_action_at="",
+        last_action_kind="extension-created",
+        subtype="product",  # extensions are product-derived (decided pra Gap 9)
+        extends_feature=parent_slug,
+        parent_feature=parent_slug,
+    )
+
+    # D-003: write hypothesis.yaml FIRST (planning artefact) and status.json
+    # SECOND as the commit point. If hypothesis write fails, nothing is
+    # persisted (no orphan status.json with extends-feature pointing nowhere
+    # on resume). If the status.json write fails after a successful
+    # hypothesis write, the orphan hypothesis is harmless — it has no
+    # state.json sibling so resume won't activate the child L1, and the
+    # next plan invocation overwrites it cleanly.
+    write_hypothesis(
+        child_slug,
+        project_root,
+        {
+            "schema-version": 1,
+            "feature-slug": child_slug,
+            "subtype": "product",
+            "extends-feature": parent_slug,
+            "parent-feature": parent_slug,
+            "shape": "extension",
+            "confidence": 0.0,  # delta intent not elicited yet
+        },
+    )
+    write_l1_status(child_state, project_root)
+    return child_state
+
+
+def _handle_done_feature_branch(
+    parent_slug: str, project_root: Path
+) -> Optional[str]:
+    """Offer the 4-caminhos when user invokes `forge plan` on a done feature.
+
+    Gap 9 — Cena 1 of forge-plan-roteiro.md, Edge case 1.5. Renders the
+    four paths interactively, asks the user, and:
+      - caminho 1 (Retomar): returns the parent slug — caller flips
+        status back to planning and re-plans (existing behavior; rare).
+      - caminho 2 (Nova): returns None — caller exits this branch and
+        treats the run as a no-op (user must re-invoke with a fresh slug).
+      - caminho 3 (Estender): elicits derived slug, creates child L1,
+        returns the **child slug** so the caller continues with it.
+      - caminho 4 (Abortar): returns None — caller exits cleanly.
+
+    Returns the slug to continue with, or None when the caller should exit.
+    Raises ``PromptAbortedError`` when user types ``para``.
+    """
+    parent_status = read_l1_status(parent_slug, project_root)
+    if parent_status is None or parent_status.status != "done":
+        # Defensive: caller should only invoke this when state=done. Treat
+        # any other state as a no-op (return parent slug → caller proceeds
+        # with normal flow, which will re-check state).
+        return parent_slug
+
+    renderer.write("")
+    renderer.write(
+        renderer.bold(
+            f"Detectei feature '{parent_slug}' já feita (state=done)."
+        )
+    )
+    renderer.write("")
+    renderer.write("Quatro caminhos:")
+    choice = question.ask(
+        "O que você quer?",
+        {
+            "1": "Retomar (re-plan inteiro — descarta artefatos, recomeça)",
+            "2": "Começar feature nova (saio agora — invoque com slug novo)",
+            "3": "Estender (novo slug derivado herda contexto da pai — Gap 9)",
+            "4": "Abortar",
+        },
+        allow_pause=True,
+    )
+
+    if choice == "1":
+        # Replan — caller flips parent state back to planning + re-runs.
+        # This is rare (replan of a done feature usually means a major
+        # pivot) but legitimate.
+        append_history(
+            parent_slug,
+            project_root,
+            {"event": "done-feature-replan-requested"},
+        )
+        # Flip state so _initialize_status doesn't reject.
+        parent_status.status = "planning"
+        parent_status.last_action_kind = "done-feature-replan"
+        write_l1_status(parent_status, project_root)
+        return parent_slug
+
+    if choice == "2":
+        renderer.write("")
+        renderer.write(
+            renderer.dim(
+                "Beleza. Re-invoque `forge plan {novo-slug}` quando estiver pronto."
+            )
+        )
+        return None
+
+    if choice == "3":
+        # Extension branch — elicit derived slug, create child L1, return
+        # the child slug so caller continues with it.
+        default_child = _default_extension_slug(parent_slug)
+        renderer.write("")
+        renderer.write(
+            f"Slug derivado proposto: {renderer.bold(default_child)}"
+        )
+        renderer.write(
+            renderer.dim(
+                "Aceita ou customiza? (digite o slug ou ENTER pra aceitar)"
+            )
+        )
+
+        # Loop until we get a slug that's valid, != parent, and not already
+        # in L1 (or user picks "abortar" via PromptAbortedError).
+        while True:
+            candidate = question.ask_text(
+                "Slug derivado:",
+                default=default_child,
+                validator=_is_valid_slug,
+                validator_hint=(
+                    "kebab-case lowercase, 2..50 chars, deve começar com letra."
+                ),
+            )
+            if candidate == parent_slug:
+                renderer.write(
+                    renderer.colored(
+                        "Slug derivado não pode ser igual ao slug da pai. "
+                        "Tente outro.",
+                        "yellow",
+                    )
+                )
+                continue
+            existing = read_l1_status(candidate, project_root)
+            if existing is not None:
+                # Slug duplicate — surface 3-caminhos.
+                renderer.write("")
+                renderer.write(
+                    renderer.bold(
+                        f"🛑 Slug '{candidate}' já existe em L1 "
+                        f"(state={existing.status})."
+                    )
+                )
+                dup_choice = question.ask_three_paths(
+                    "slug-duplicate-on-extension",
+                    [
+                        {"label": "Escolher outro slug derivado", "motive": ""},
+                        {
+                            "label": "Abortar a extension (volta ao prompt)",
+                            "motive": "",
+                        },
+                        {
+                            "label": (
+                                "Pisar no L1 existente (raro — exige "
+                                "`forge undo` antes; abortando aqui)"
+                            ),
+                            "motive": "",
+                        },
+                    ],
+                )
+                if dup_choice == "a":
+                    continue
+                # b or c — both abort the extension flow. Caminho c shown for
+                # discipline §1 (exactly 3 paths) but resolution is manual.
+                renderer.write("")
+                renderer.write(
+                    renderer.dim(
+                        f"Abortado. Nada criado. Use `forge undo {candidate}` "
+                        "se quiser limpar o L1 existente antes de tentar."
+                    )
+                )
+                return None
+            # Valid + unique — proceed to creation.
+            break
+
+        _create_extension_l1(parent_slug, candidate, project_root)
+        append_history(
+            candidate,
+            project_root,
+            {
+                "event": "extension-created",
+                "parent": parent_slug,
+            },
+        )
+        append_history(
+            parent_slug,
+            project_root,
+            {
+                "event": "extension-spawned",
+                "child": candidate,
+            },
+        )
+        renderer.write("")
+        renderer.write(
+            renderer.dim(
+                f"Extension '{candidate}' criada. extends-feature: "
+                f"{parent_slug}. Continuando com Cena 2 (source inquiry)."
+            )
+        )
+        return candidate
+
+    # choice == "4"
+    renderer.write("")
+    renderer.write(renderer.dim("Abortado. Nada mais escrito."))
+    return None
+
+
 # ── Slug elicitation ─────────────────────────────────────────────────────────
 
 
@@ -997,6 +1333,26 @@ def run(argv: list[str]) -> int:
         sys.stderr.write("\n— interrompido antes do slug, nada salvo.\n")
         return 130
 
+    # Gap 9 — Cena 1 extension branch. When the requested slug exists in
+    # L1 with state=done, offer the 4-caminhos (Retomar / Nova / Estender /
+    # Abortar). The "Estender" path creates a NEW child slug + L1; the run
+    # then continues with that child slug. Other paths either flip the
+    # parent back to planning (Retomar) or exit cleanly.
+    existing_status = read_l1_status(slug, project_root)
+    if existing_status is not None and existing_status.status == "done":
+        try:
+            resolved_slug = _handle_done_feature_branch(slug, project_root)
+        except PromptAbortedError:
+            sys.stderr.write(
+                "\n— interrompido no caminho extension, nada salvo.\n"
+            )
+            return 130
+        if resolved_slug is None:
+            # User chose "nova" or "abortar" — exit cleanly without touching
+            # the parent's status (it remains in `done`).
+            return 0
+        slug = resolved_slug
+
     # Status + phase lock. Subtype resolved AFTER status is created so the
     # default ("product") seeds correctly for greenfield features.
     state = _initialize_status(slug, project_root)
@@ -1228,4 +1584,9 @@ __all__ = [
     "detect_subtype_from_input",
     "record_external_dep",
     "_wave_order_for_subtype",
+    # Gap 9 — extends-feature mechanic helpers (test surface).
+    "_default_extension_slug",
+    "_import_parent_context",
+    "_create_extension_l1",
+    "_handle_done_feature_branch",
 ]
