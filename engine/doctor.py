@@ -140,6 +140,7 @@ def run(argv: list[str]) -> int:
                 _check_bak_overdue(project_root, config),
                 _check_forge_version_lock(project_root),
                 _check_cc_gate_tools(project_root),
+                _check_qa_coherence(project_root, config),
             ]
         )
 
@@ -649,6 +650,249 @@ def _check_forge_version_lock(project_root: Path) -> _CategoryReport:
             )
         )
     return _CategoryReport("Forge version lock", checks)
+
+
+def _check_qa_coherence(project_root: Path, config: dict) -> _CategoryReport:
+    """13ª categoria (Wave 7 / spec §16) — coerência da config qa.
+
+    4 checks (warning/info only — nunca FAIL):
+        1. qa.enabled=false + auto-run=true → config inconsistente
+        2. qa.enabled=true mas `.planning/qa/` sem write perm → warning
+        3. Runs em `.planning/qa/<slug>/<run-id>/` com timestamp >
+           retention-days dias → warning com lista (top 5) de paths
+        4. Cards declaram qa-extensions referenciando auditor em
+           extensions.disabled → info ("declarado mas desativado")
+
+    Read-only. Nada bloqueia commit/verify — verdict é informativo.
+    """
+    checks: list[_Check] = []
+    qa_cfg = (config.get("qa") or {}) if isinstance(config, dict) else {}
+    if not isinstance(qa_cfg, dict):
+        checks.append(
+            _Check(
+                "qa block",
+                _STATUS_WARN,
+                f"not a mapping (got {type(qa_cfg).__name__})",
+                "rode `forge reconfigure` → menu qa",
+            )
+        )
+        return _CategoryReport("QA coherence", checks)
+
+    if not qa_cfg:
+        # Ausente é OK — significa instalação pré-Wave 7 que ainda não
+        # rodou `forge reconfigure -> qa`. Defaults conservadores
+        # (enabled=true implícito; auto-run=false) já garantem
+        # comportamento sensato.
+        checks.append(
+            _Check(
+                "qa block",
+                _STATUS_SKIP,
+                "ausente (defaults: enabled=true, auto-run=false)",
+            )
+        )
+        return _CategoryReport("QA coherence", checks)
+
+    # Check 1 — config inconsistência
+    enabled = bool(qa_cfg.get("enabled", True))
+    auto_run = bool(qa_cfg.get("auto-run-on-feature-done", False))
+    if not enabled and auto_run:
+        checks.append(
+            _Check(
+                "enabled vs auto-run",
+                _STATUS_WARN,
+                "qa.enabled=false + auto-run=true (auto-run nunca dispara)",
+                "rode `forge reconfigure` → menu qa → opção 1 ou 2",
+            )
+        )
+    else:
+        checks.append(
+            _Check(
+                "enabled vs auto-run",
+                _STATUS_OK,
+                f"enabled={enabled}, auto-run={auto_run}",
+            )
+        )
+
+    # Check 2 — `.planning/qa/` write permission (só quando enabled).
+    qa_root = project_root / ".planning" / "qa"
+    if enabled:
+        if not qa_root.exists():
+            checks.append(
+                _Check(
+                    ".planning/qa/",
+                    _STATUS_OK,
+                    "ainda não criado (será criado na primeira run)",
+                )
+            )
+        elif not os.access(qa_root, os.W_OK):
+            checks.append(
+                _Check(
+                    ".planning/qa/",
+                    _STATUS_WARN,
+                    "sem permissão de escrita",
+                    "chmod +w .planning/qa/ (ou ajuste owner)",
+                )
+            )
+        else:
+            checks.append(
+                _Check(
+                    ".planning/qa/", _STATUS_OK, "writable"
+                )
+            )
+    else:
+        checks.append(
+            _Check(".planning/qa/", _STATUS_SKIP, "qa desabilitado")
+        )
+
+    # Check 3 — runs em retention overdue
+    retention_days = qa_cfg.get("retention-days", 14)
+    try:
+        retention_days = float(retention_days)
+    except (TypeError, ValueError):
+        retention_days = 14.0
+
+    overdue_paths: list[tuple[Path, float]] = []
+    if enabled and qa_root.is_dir():
+        now = datetime.now(timezone.utc).timestamp()
+        for slug_dir in qa_root.iterdir():
+            if not slug_dir.is_dir() or slug_dir.name.startswith("."):
+                continue
+            for run_dir in slug_dir.iterdir():
+                if not run_dir.is_dir():
+                    continue
+                try:
+                    mtime = run_dir.stat().st_mtime
+                except OSError:
+                    continue
+                age_days = (now - mtime) / 86400.0
+                if age_days > retention_days:
+                    overdue_paths.append((run_dir, age_days))
+
+    if not overdue_paths:
+        checks.append(
+            _Check(
+                "runs retention",
+                _STATUS_OK,
+                f"0 overdue (retention {retention_days}d)",
+            )
+        )
+    else:
+        for path, age in overdue_paths[:5]:
+            try:
+                rel = path.relative_to(project_root)
+            except ValueError:
+                rel = path
+            checks.append(
+                _Check(
+                    str(rel),
+                    _STATUS_WARN,
+                    f"{age:.1f}d > {retention_days}d",
+                    "rode `forge reconfigure` → menu qa → opção 5 ou remova manualmente",
+                )
+            )
+        if len(overdue_paths) > 5:
+            checks.append(
+                _Check(
+                    "…",
+                    _STATUS_WARN,
+                    f"+{len(overdue_paths) - 5} runs overdue não listadas",
+                )
+            )
+
+    # Check 4 — cards declaram qa-extensions referenciando auditor em
+    # extensions.disabled. Severity info — não é erro, é audit visibility.
+    extensions = qa_cfg.get("extensions") or {}
+    disabled_auditors: set[str] = set()
+    if isinstance(extensions, dict):
+        raw_disabled = extensions.get("disabled") or []
+        if isinstance(raw_disabled, list):
+            disabled_auditors = {str(n) for n in raw_disabled if isinstance(n, str)}
+
+    if disabled_auditors:
+        declared_disabled = _scan_disabled_auditors_in_cards(
+            project_root, disabled_auditors
+        )
+        if declared_disabled:
+            for auditor_name, card_names in sorted(declared_disabled.items()):
+                checks.append(
+                    _Check(
+                        auditor_name,
+                        _STATUS_SKIP,  # info — usamos SKIP glyph "·"
+                        f"declarado em {', '.join(card_names)} mas desativado",
+                    )
+                )
+        else:
+            checks.append(
+                _Check(
+                    "extensions.disabled",
+                    _STATUS_OK,
+                    f"{len(disabled_auditors)} auditor(es) desativado(s); "
+                    "nenhum card declara",
+                )
+            )
+    else:
+        checks.append(
+            _Check("extensions.disabled", _STATUS_OK, "vazio")
+        )
+
+    return _CategoryReport("QA coherence", checks)
+
+
+def _scan_disabled_auditors_in_cards(
+    project_root: Path, disabled: set[str]
+) -> dict[str, list[str]]:
+    """Walk cards (canon snapshot + local) procurando qa-extensions.auditors[].
+
+    Retorna mapping `{auditor_name: [card_names]}` quando o auditor declarado
+    no card está em `extensions.disabled` da workflow-config. Best-effort —
+    falhas de parse silenciam (read-only audit, não bloqueia doctor).
+    """
+    found: dict[str, list[str]] = {}
+    if not disabled:
+        return found
+
+    cards_root = cards_dir(project_root)
+    local_root = cards_root / "local"
+    candidates: list[Path] = []
+    if cards_root.is_dir():
+        for d in cards_root.iterdir():
+            if d.is_dir() and not d.name.startswith(".") and d.name != "local":
+                if (d / "card.yaml").is_file():
+                    candidates.append(d)
+    if local_root.is_dir():
+        for d in local_root.iterdir():
+            if d.is_dir() and not d.name.startswith("."):
+                if (d / "card.yaml").is_file():
+                    candidates.append(d)
+
+    for card_dir in candidates:
+        try:
+            data = read_yaml(card_dir / "card.yaml")
+        except (YamlIOError, OSError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        qa_ext = data.get("qa-extensions")
+        if not isinstance(qa_ext, dict):
+            continue
+        auditors = qa_ext.get("auditors") or []
+        if not isinstance(auditors, list):
+            continue
+        identity = data.get("identity") or {}
+        card_name = (
+            str(identity.get("name") or card_dir.name)
+            if isinstance(identity, dict)
+            else card_dir.name
+        )
+        for aud in auditors:
+            if not isinstance(aud, dict):
+                continue
+            aud_name = aud.get("name")
+            if not isinstance(aud_name, str):
+                continue
+            if aud_name in disabled:
+                found.setdefault(aud_name, []).append(card_name)
+    return found
 
 
 def _check_cc_gate_tools(project_root: Path) -> _CategoryReport:
