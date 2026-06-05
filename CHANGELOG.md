@@ -31,6 +31,13 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   `PASS_WITH_WARNINGS` e `PASS` pra findings com mitigação contextual
   escrita.
 
+  Sync r2 (2026-06-04): bloco verbatim da Task 1 do plano sincronizado
+  com `.claude/rules/plan-auditor.md` atual (341 linhas, refinements
+  inclusos) — endereça H-002 Caminho A do smoke r2. 5 meta-findings de
+  r2 anotados em `docs/design/04-pending.md` §"Meta-findings r2
+  (refinements pra plan-auditor v1.1)" como gaps deferidos pra revisita
+  quando padrão recorrer em smokes futuros.
+
 ## [1.2.0] — 2026-06-03
 
 ### Added (Gap 5 — Card local overlay, 2026-06-02)
