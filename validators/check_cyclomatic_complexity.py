@@ -39,8 +39,10 @@ from _common import (
 )
 from _gate_infra import (
     DispatchResult,
+    apply_overrides as _gate_apply_overrides,
     check_tool_available,  # noqa: F401  — re-exported for back-compat in tests
     dispatch_native_tool,
+    parse_overrides as _gate_parse_overrides,
     render_config_with_placeholders,  # noqa: F401  — re-exported (cmd_builders use it indirectly via dispatch_native_tool)
 )
 
@@ -419,116 +421,65 @@ def _build_radon_cmd(
 # (re.MULTILINE) so it can't be smuggled mid-sentence. The format is
 # load-bearing — `.claude/rules/disciplines.md §1` references it directly.
 #
-# Strict regex exige o trailing ` — <razão concreta>` (em-dash U+2014).
-# Loose regex captura tentativas malformadas (sem `—`) pra emitir warning;
-# isso mantém o gate honesto sobre tentativas de silenciar fails sem razão.
+# Parse + apply são generalizados em `_gate_infra.parse_overrides` /
+# `_gate_infra.apply_overrides`. Esta seção mantém apenas a especialização CC
+# (prefix + key_pattern + key fields + key_extractor + converter de `cc`).
 
-_CC_OVERRIDE_RE = re.compile(
-    r"^CC-OVERRIDE:\s+(?P<file>\S+):(?P<func>\S+)\s+cc=(?P<cc>\d+)\s+—\s+(?P<reason>.+)$",
-    re.MULTILINE,
-)
-
-_CC_OVERRIDE_LOOSE_RE = re.compile(
-    r"^CC-OVERRIDE:\s+(?P<file>\S+):(?P<func>\S+)\s+cc=(?P<cc>\d+)\b",
-    re.MULTILINE,
-)
+_CC_OVERRIDE_PREFIX = "CC-OVERRIDE"
+_CC_OVERRIDE_KEY_PATTERN = r"(?P<file>\S+):(?P<func>\S+)\s+cc=(?P<cc>\d+)"
+_CC_OVERRIDE_KEY_FIELDS = ["file", "func"]
+_CC_OVERRIDE_VALUE_CONVERTERS = {"cc": int}
 
 
-def _parse_overrides(
+def _cc_fail_key_extractor(fail: CCResult) -> tuple[str, str]:
+    """Extrai a tupla (file, function) do CCResult — cover key do CC gate."""
+    return (fail.file, fail.function)
+
+
+def parse_overrides(
     commit_body: str,
     *,
     return_warnings: bool = False,
 ):
-    """Parse CC-OVERRIDE lines from a commit body.
+    """Thin CC-specific wrapper around `_gate_infra.parse_overrides`.
 
-    Returns a list of override dicts (file/func/cc/reason). When
-    `return_warnings=True`, returns a (overrides, warnings) tuple.
-
-    Lines starting with CC-OVERRIDE but missing the `— <reason>` tail are
-    flagged as warnings and NOT counted as valid overrides — keeps the gate
-    honest about silenced fails.
+    Preserva o contrato do antigo `_parse_overrides`: dicts com
+    ``{file, func, cc: int, reason}``. Generalização vive em
+    `_gate_infra.parse_overrides` — esta wrapper fixa prefix/key_pattern/
+    value_converters do CC gate pra manter callsites enxutos e tests legíveis.
     """
-    overrides: list[dict[str, Any]] = []
-    warnings: list[str] = []
-
-    # First pass: strict regex (must have reason).
-    valid_spans: set[tuple[int, int]] = set()
-    for m in _CC_OVERRIDE_RE.finditer(commit_body):
-        try:
-            cc = int(m.group("cc"))
-        except (TypeError, ValueError):
-            continue
-        reason = m.group("reason").strip()
-        # D-008 — `.+` no regex casa whitespace puro após `—`. Sem este guard,
-        # `CC-OVERRIDE: foo:bar cc=11 —    ` viraria override válido com
-        # reason="". Skipa pro loose-pass, que emite o warning canônico.
-        if not reason:
-            continue
-        overrides.append(
-            {
-                "file": m.group("file"),
-                "func": m.group("func"),
-                "cc": cc,
-                "reason": reason,
-            }
-        )
-        valid_spans.add(m.span())
-
-    # Second pass: loose match — anything that LOOKS like an override but
-    # didn't pass strict regex is a malformed attempt → warn.
-    for m in _CC_OVERRIDE_LOOSE_RE.finditer(commit_body):
-        if m.span() in valid_spans:
-            continue
-        # Skip if the strict regex DID match on the same line (different span).
-        nl = commit_body.find("\n", m.start())
-        line_end = nl if nl != -1 else len(commit_body)
-        line = commit_body[m.start():line_end]
-        # Detect the em-dash and inspect what follows: a concrete reason after
-        # ` — ` means the strict regex already accepted it (skip); a trailing
-        # em-dash with empty/whitespace tail is still malformed and must warn
-        # (D-008 — the previous `if " — " in line: continue` swallowed these).
-        if " — " in line:
-            _, _, tail = line.partition(" — ")
-            if tail.strip():
-                continue
-        warnings.append(
-            f"CC-OVERRIDE sem razão concreta: '{line.strip()}' — adicione texto após —"
-        )
-
-    if return_warnings:
-        return overrides, warnings
-    return overrides
+    return _gate_parse_overrides(
+        commit_body,
+        prefix=_CC_OVERRIDE_PREFIX,
+        key_pattern=_CC_OVERRIDE_KEY_PATTERN,
+        value_converters=_CC_OVERRIDE_VALUE_CONVERTERS,
+        return_warnings=return_warnings,
+    )
 
 
-def _apply_overrides(
+def apply_overrides(
     fails: list[CCResult],
     commit_body: str,
 ) -> tuple[list[CCResult], list[CCResult], list[str]]:
-    """Split `fails` into (silenced, surviving, warnings) using CC-OVERRIDE lines.
+    """Thin CC-specific wrapper around `_gate_infra.apply_overrides`.
 
-    Match key: (file, function). Override cobre APENAS o par (file, func)
-    declarado — sem wildcards. Cada override aplica-se a UM commit; auditoria
-    via `git log --grep='CC-OVERRIDE'`.
+    Match key: ``(file, function)`` — cobre apenas o par declarado, sem
+    wildcards. Cada override aplica-se a UM commit; auditoria via
+    ``git log --grep='CC-OVERRIDE'``.
 
-    Malformed-override warnings (lines that look like CC-OVERRIDE but miss the
-    `— <razão>` tail) are surfaced as the third tuple element so the validator
-    can include them in the final result dict (H4 fix — spec §4 step 5
-    mandates "Validator emite warning 'CC-OVERRIDE sem razão — adicione texto
-    após —'. Mantém o fail.").
+    Malformed-override warnings (linhas com prefix mas sem ``— razão``)
+    sobem como terceiro elemento — preserva H4 do CC gate (warning emitido
+    mesmo quando o gate passa).
     """
-    overrides, warnings = _parse_overrides(commit_body, return_warnings=True)
-    if not overrides:
-        return [], list(fails), warnings
-
-    cover: set[tuple[str, str]] = {(o["file"], o["func"]) for o in overrides}
-    silenced: list[CCResult] = []
-    surviving: list[CCResult] = []
-    for f in fails:
-        if (f.file, f.function) in cover:
-            silenced.append(f)
-        else:
-            surviving.append(f)
-    return silenced, surviving, warnings
+    return _gate_apply_overrides(
+        fails,
+        commit_body,
+        prefix=_CC_OVERRIDE_PREFIX,
+        key_pattern=_CC_OVERRIDE_KEY_PATTERN,
+        fail_key_extractor=_cc_fail_key_extractor,
+        override_key_fields=_CC_OVERRIDE_KEY_FIELDS,
+        value_converters=_CC_OVERRIDE_VALUE_CONVERTERS,
+    )
 
 
 # ── Orchestrator ─────────────────────────────────────────────────────────────
@@ -939,7 +890,7 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
 
     # Override-justify aplicado antes de emitir fail (spec §4).
     commit_body = _read_commit_body(project_root)
-    silenced, surviving, override_warnings = _apply_overrides(fails, commit_body)
+    silenced, surviving, override_warnings = apply_overrides(fails, commit_body)
 
     # H4 — malformed CC-OVERRIDE attempts must surface as warnings even when
     # the gate passes. Spec §4 step 5: "Validator emite warning ...".
