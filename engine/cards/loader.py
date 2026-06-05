@@ -441,9 +441,65 @@ def _load_with_cascade(project_root: Path) -> list[CardManifest]:
     # Manifest write side-effect (cascade mode only).
     _write_local_cards_manifest(project_root, local)
 
+    # QA extensions validation (overlay-aware, mandamento #3 reusa _common.load_catalog).
+    # Roda APÓS canon×local card-name collision check (linha 434 acima) — auditor
+    # name collision dentro de qa-extensions[] é validada por validate_qa_extensions
+    # com a visão completa do pool de cards (canon ∪ local). Approach A / Decisão 28:
+    # hard fail sem merge silencioso; QAExtensionsCollisionError propaga.
+    _validate_qa_extensions_overlay(canon, local, project_root)
+
     return [canon[name] for name in sorted(canon)] + [
         local[name] for name in sorted(local)
     ]
+
+
+def _validate_qa_extensions_overlay(
+    canon: dict[str, "CardManifest"],
+    local: dict[str, "CardManifest"],
+    project_root: Path,
+) -> None:
+    """Invoca `validate_qa_extensions` em cada card carregado (canon ∪ local).
+
+    Args:
+        canon: mapping de cards canon já carregados (key=name, value=manifest).
+        local: mapping de cards local overlay (key=name, value=manifest).
+        project_root: raiz do projeto consumidor; passada pro validator
+            resolver catálogo efetivo (canon ∪ local).
+
+    Raises:
+        QAExtensionsCollisionError: colisão de auditor name canon×local
+            (subclass de QAExtensionsValidationError). Approach A — hard fail.
+        QAExtensionsValidationError: shape inválido em qa-extensions[].
+
+    Reuso (mandamento #3): delega 100% da lógica ao validator; loader só
+    monta o universo (`other_cards`) e propaga raise. Sem duplicação.
+    """
+    # Lazy import — validate_qa_extensions tem dep transitiva em validators._common
+    # (load_catalog) que não deve forçar custo de import quando o loader é usado
+    # em paths legacy (canon-only) que não escrevem qa-extensions.
+    from validators.validate_qa_extensions import validate_qa_extensions  # noqa: PLC0415
+
+    # Universo completo de cards já carregados, chaveado por path do card.yaml
+    # (str). validate_qa_extensions normaliza chaves internamente e filtra o
+    # próprio card via `card_path`.
+    loaded_by_path: dict[str, dict[str, Any]] = {}
+    for manifest in (*canon.values(), *local.values()):
+        card_yaml = manifest.source_path / "card.yaml"
+        loaded_by_path[str(card_yaml)] = manifest.raw
+
+    for manifest in (*canon.values(), *local.values()):
+        card_yaml = manifest.source_path / "card.yaml"
+        others = {
+            path: data
+            for path, data in loaded_by_path.items()
+            if path != str(card_yaml)
+        }
+        validate_qa_extensions(
+            card_path=card_yaml,
+            card_data=manifest.raw,
+            other_cards=others,
+            project_root=project_root,
+        )
 
 
 def validate_card_yaml(manifest_dict: dict[str, Any], source_path: Path) -> list[str]:
