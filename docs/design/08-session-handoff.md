@@ -3,10 +3,22 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-05 (v1.2.0 + Gap 9 + PR #4 CC gate review fixes + merge main)
-**Estado:** branch `worktree-feat+cc-gate` mescla `origin/main` (Gap 9
-ship + /resolve-pr-comments cleanup) com PR #4 (Cyclomatic Complexity
-gate + review fixes). Duas linhas de trabalho convivem no Unreleased:
+**Última atualização:** 2026-06-05 (v1.2 — forge qa entregue)
+**Estado:** v1.2 feito; próximo: stabilização + observabilidade de auditores
+
+`forge qa` entregue como 13º comando (red-team adversarial gate). 4
+attack vectors (spec-vs-spec, chaos, coverage, validator-claim) × 4
+scope targets (feature / screen / task / paranoid). Sandbox isolado
+em `.planning/qa/<run-id>/fixtures/` (Decisão 30). Verdict informativo
+(BLOCK / FLAG / PASS) — não bloqueia retrospective/commit (Decisão 5
+preservada via discipline §11 nova). Findings desaguam em
+`forge evolve` como `proposal-kind: qa-finding`. Spec:
+`docs/superpowers/specs/2026-06-05-forge-qa-design.md`. Plano executado:
+`docs/superpowers/plans/2026-06-05-forge-qa.md`.
+
+Branch `worktree-forge-qa` cumulativa também carrega PR #4 (Cyclomatic
+Complexity gate + review fixes). Duas linhas de trabalho convivem no
+Unreleased:
 
 - **PR #4 — Cyclomatic Complexity gate** (em review) — `check_cyclomatic_complexity`
   multi-language (Kotlin/Swift/TS/Python) dispatcha pra Detekt/SwiftLint/
@@ -120,6 +132,7 @@ v1.2.0 + Gap 9 + PR #4 CC gate cumulativo: ~700 tests collected (688 passed + 17
 | v1.1.0 — PR #1 bloqueadores resolvidos | ✅ shipped 2026-06-01 — 14 commits cobrindo C1–C4 (phase lock atomic O_EXCL, implement try/finally, `_reset_domain_tables` atomic, version bump 1.1.0) + A1/A2/A5/A6/A9/A12 (Swift `"""` brace counter, Groovy DSL parens, tie-breaker determinístico, root-level `test/` recognition, `forge plan` rc=130 em deferred) + review fixes (CR-01/CR-02/MD-01/HG-01/HG-02/HG-03). **+38 regression tests, total 458 (baseline 367 + 53)**. Detalhe em `CHANGELOG.md`. |
 | v1.2 — Gap 5 (card local overlay) | ✅ shipped 2026-06-02 — Approach A: cascade canon ∪ local com hard-fail em colisão; validators overlay-aware; reconfigure submenu `card-local`; init Step 7.5 com 3-caminhos pra signals órfãos; cards canon 20 → 22 (`retrofit-client` + `shared-preferences-prefs` com `legacy-marker`). Decisão locked 28 nova (ADR append-only). Suite: 595 passing + 12 skipped. |
 | v1.2 — Gap 9 (extends-feature mechanic) | ✅ shipped 2026-06-03 — re-escopado: extends-feature pattern leve product-derived (sem cards canon novos, sem mudança em platforms enum, sem upgrade de inventory schema); 4º caminho "Estender" em `forge plan` Cena 1; validator EXT-001..004; discipline §10 formaliza semantics; `shipped-at` writer em transição state=done. Multi-target watchOS/Wear/TV movido pra out-of-scope permanente. **+42 tests cumulativo (37 Gap 9 + 5 fix loop); total 637 passing + 12 skipped**. Detalhe em `CHANGELOG.md`. |
+| forge qa (13º comando) | ✓ — entregue v1.2, 4 attack vectors + 4 scope targets + sandbox isolado |
 | v1.2-dev — CC gate (PR #4) | 🔄 em review — `check_cyclomatic_complexity` multi-language (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon); threshold per card override > workflow-config > defaults; 3-caminhos on-fail (refactor / override-justify / split-task); doctor categoria 13ª `cc-gate-tools`. 13 commits + ~63 tests novos (suite 630 → 693 collected pré-merge; 682 passed + 17 skipped pós-refinements; 688 passed + 17 skipped pós PR #4 review fixes D-006/D-008/D-009/F-006). |
 
 ## Conhecidos limites v1.1 (atualizado)
@@ -225,6 +238,22 @@ permanente (Gap 9 revisita 2026-06-03):**
   overlay)** — não expansão prescritiva do canon. Demanda real teria
   que reabrir a revisita Gap 9 inteira. Documentado em
   `docs/design/04-pending.md §Gap 9 §OUT-OF-SCOPE explícito`.
+
+**forge qa (13º comando) surfaced (2026-06-05) — não bloqueia ship,
+target v1.2.x+:**
+
+- **Auditores LLM dependem de Claude Code dispatch** — Phase 2 (generative
+  auditors: spec-vs-spec, chaos, coverage, validator-claim) é invocada via
+  Agent tool em contexto Claude Code. Engine standalone fora desse contexto
+  não roda os 4 auditores LLM — só os auditores estáticos (Phase 1).
+  Decisão arquitetural alinhada a "LLM hookup real é Phase 6" (v1.0 herdado),
+  não bug. Documentado em `docs/superpowers/specs/2026-06-05-forge-qa-design.md`
+  §6.2.
+- **Greenfield retorna mensagem honesta sem 3-caminhos** — `forge qa` em
+  projeto sem features planejadas retorna `state=greenfield, verdict=n/a`
+  e explica que QA requer scope auditável (feature / screen / task /
+  paranoid sobre algo concreto). Não oferece 3-caminhos porque "rodar QA
+  vazio" não é caminho legítimo — é estado inicial honesto.
 
 **Gap 9 (extends-feature mechanic) surfaced (2026-06-03) — não bloqueia
 merge, target v1.2.x:**
