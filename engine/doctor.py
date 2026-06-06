@@ -140,6 +140,7 @@ def run(argv: list[str]) -> int:
                 _check_bak_overdue(project_root, config),
                 _check_forge_version_lock(project_root),
                 _check_cc_gate_tools(project_root),
+                _check_secrets_tools(project_root),
             ]
         )
 
@@ -649,6 +650,50 @@ def _check_forge_version_lock(project_root: Path) -> _CategoryReport:
             )
         )
     return _CategoryReport("Forge version lock", checks)
+
+
+def _check_secrets_tools(project_root: Path) -> _CategoryReport:
+    """Reporta availability das 2 tools nativas usadas por check_secrets.
+
+    Tools NÃO são instaladas pelo forge (Decision 22 + spec §3
+    trust-but-verify). Doctor surfaca status + install hint por tool.
+    Missing tool → WARN, nunca FAIL — workflows que não rodam o
+    secrets-gate (ex.: dev local sem ``forge implement``) não precisam
+    dessas ferramentas. Quem efetivamente precisa descobre via gate em
+    ``forge verify`` / ``forge implement`` (warn surface).
+
+    Lookup é PATH-only (``shutil.which``). Versão da ferramenta NÃO é
+    capturada aqui — esta categoria é availability, não compatibilidade.
+    Versão entra em escopo apenas se algum bug ligar a release específica.
+
+    Stage mapping (per spec §2):
+      - gitleaks  → per-task hook (``forge implement``, stage="per_task")
+      - trufflehog → cascade (``forge verify``, stage="cascade",
+                     ``--only-verified``)
+    """
+    del project_root  # not needed — tool lookup is PATH-only
+    tools = [
+        (
+            "gitleaks",
+            "brew install gitleaks    # or: go install github.com/gitleaks/gitleaks/v8@latest",
+        ),
+        ("trufflehog", "brew install trufflehog"),
+    ]
+    checks: list[_Check] = []
+    for name, install_hint in tools:
+        path = shutil.which(name)
+        if path:
+            checks.append(_Check(name, _STATUS_OK, f"found at {path}"))
+        else:
+            checks.append(
+                _Check(
+                    name,
+                    _STATUS_WARN,
+                    "não encontrado no PATH",
+                    f"install: {install_hint}",
+                )
+            )
+    return _CategoryReport("secrets-tools", checks)
 
 
 def _check_cc_gate_tools(project_root: Path) -> _CategoryReport:

@@ -532,6 +532,11 @@ _DEFAULT_VALIDATORS: list[dict[str, str]] = [
         "file": "check_cyclomatic_complexity.py",
         "severity": "fail",
     },
+    {
+        "name": "check_secrets",
+        "file": "check_secrets.py",
+        "severity": "fail",
+    },
 ]
 
 
