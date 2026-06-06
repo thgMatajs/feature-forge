@@ -70,6 +70,187 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   pra threshold de revisita ficar visível). Spec passa a apontar
   rule vivo como veredito; quando divergir de novo, rule vence.
 
+### Added (PRD docs/product/, 2026-06-04)
+
+- **`docs/product/`** — PRD consolidado do feature-forge com 4 docs (~2205 LOC totais):
+  - `docs/product/00-prd.md` (583 LOC) — porta de entrada, 13 seções (Por-quê / Vision / Princípios / Escopo IN-OUT / Personas-resumo / Scenarios-resumo / Roadmap-resumo / Success criteria / Anti-personas / Cross-refs docs técnicos / Glossary 15 termos / FAQ 9 perguntas / Risks 6 + Open questions 4).
+  - `docs/product/01-personas.md` (555 LOC) — 8 personas em 3 camadas: Marina (primária) + Bruno + Sub-agente Claude (dedicadas) / Carlos + Lucas + Carolina (variantes Marina) / Patricia + Diego (downstream read-only).
+  - `docs/product/02-scenarios.md` (679 LOC) — 6 user journeys end-to-end (C1 Brownfield init / C2 Feature product / C3 Bugfix IN-37234 / C4 Retomar pausado / C5 Extension Gap 9 / C6 Reuse intelligence).
+  - `docs/product/03-roadmap.md` (388 LOC) — 3 ondas (Autopilot v1.3-1.4 / Catálogo evolutivo v1.5-2.0 / Inteligência adaptativa v2.x) + Matriz Eisenhower + Anti-roadmap (8 items NÃO entrarão) + cross-ref bidirecional pro `docs/design/ROADMAP.md` técnico.
+- Spec fonte: `docs/superpowers/specs/2026-06-04-prd-design.md` (commit `2e1a266`).
+- Plan executado: `docs/superpowers/plans/2026-06-04-product-docs.md` (commit `4134744`).
+- Coexistência paralela com `docs/design/` (lente arquitetura) e `docs/ux/` (roteiros) — sem mexer em load-bearing (`docs/design/00-vision.md` e `docs/design/ROADMAP.md` permanecem intactos).
+
+### Added
+
+- **Cyclomatic Complexity gate (`check_cyclomatic_complexity`)** — multi-language
+  CC validator que roda no cascade de `forge verify` (após
+  `check_no_invented_behavior`) e per-task em `forge implement` (entre review e
+  commit). Threshold via precedência card `cc-gate-override` > workflow-config
+  `cc-gate` > defaults (kotlin=10, swift=10, ts=15, python=10). Dispatch pra
+  tools nativas: Detekt (Kotlin), SwiftLint (Swift), eslint (TS/JS), Radon
+  (Python). Tools NÃO instaladas pelo forge — `forge doctor` reporta na
+  categoria nova `cc-gate-tools` com instruções de install. Regra de fail:
+  função `new` com `cc > threshold` OU função `modified` com `cc_after >
+  cc_before`. Override-justify via `CC-OVERRIDE: <file>:<func> cc=<N> — <razão>`
+  no commit body silencia fail apenas pra aquele commit (auditável via
+  `git log --grep='CC-OVERRIDE'`). 3-caminhos canônico on-fail
+  (refactor / override-justify / split-task). Bypass de emergência via
+  `NO_CC_GATE=1` env var, logado em `.claude/state/cc-gate-bypass.jsonl`.
+- Helpers `cc_threshold_lookup` + `cc_format_three_paths` em `validators/_common.py`.
+- Configs internos `engine/_cc_configs/{detekt.yml,swiftlint.yml,eslint.json,radon.cfg}`
+  controlados pelo forge (versionados junto da release).
+- Doctor categoria `cc-gate-tools` (13ª categoria, full scope) com status
+  por tool (detekt/swiftlint/eslint/radon) + instruções de install pras
+  missing.
+- ~63 unit + integration tests novos (`tests/validators/test_cc_*.py`,
+  `tests/validators/test_check_cyclomatic_complexity.py`,
+  `tests/engine/test_*_cc_*.py`, `tests/integration/test_cc_gate_end_to_end.py`).
+  Suite total cresce de 630 → 693 tests collected.
+
+### Added (CC gate refinements — final review fixes)
+
+- **Dynamic threshold propagation** for Detekt and SwiftLint: configs use
+  `__CC_THRESHOLD__` placeholder rendered per invocation via tempfile.
+  Spec §3 contract "threshold via CLI args sempre" honored — mechanism
+  differs from eslint `--rule` flag because Detekt/SwiftLint don't accept
+  CC threshold via CLI.
+- **Radon rank filter** changed from `-n F` (rank F = CC ≥ 41) to `-n A`
+  (all functions). Previous filter masked CC ∈ [11..40], making Python
+  gate effectively cc=41 instead of configured threshold.
+- **Canonical 3-caminhos render** now reaches the user: `cc_format_three_paths`
+  output stored in `result["render"]`, consumed by `engine/implement.py:_render_cc_gate_block`.
+- **Malformed override warnings** propagate from `_apply_overrides` (now
+  returns 3-tuple `(silenced, surviving, warnings)`) up to the result
+  dict so users see why their CC-OVERRIDE attempt didn't count.
+- +8 tests novos (1 dispatch radon `-n A`, 2 dispatch threshold-via-config
+  Detekt/SwiftLint, 1 validate canonical render, 1 validate warnings,
+  1 helper apply_overrides warnings, 2 implement render canonical). Suite
+  total: 682 passed, 17 skipped.
+
+### Added (Gap 9 — extends-feature mechanic, 2026-06-03)
+
+- **Gap 9 resolvido — extends-feature mechanic (re-escopado 2026-06-03)** —
+  feature done pode ser estendida via novo slug derivado (e.g.,
+  `lembrete-rega-watch-extension`) que herda contexto da pai via campo
+  aditivo `extends-feature: {parent-slug}` no `status.json` + intake. Sem
+  cards canon novos; sem mudança no enum `platforms`; sem upgrade de
+  inventory schema. Pattern leve product-derived. Cobertura nova:
+  - **Schema** — `docs/schemas/memory.md` ganha `extends-feature` +
+    `parent-feature` em `status.json`; MEM-L1-008 atualizada com regra
+    "se `extends-feature != null` → parent existe E `parent.state == done`".
+    Forward-compat: status.json pré-Gap 9 carregam normais (default null).
+  - **Engine** — `engine/memory/l1.py` `L1State` ganha `extends_feature` +
+    `parent_feature` + helpers `parent_state()` + `list_extensions_of()`.
+    `engine/plan.py` Cena 1 oferece 4º caminho **"Estender"** quando
+    feature pai existe em `state=done`; context-pack import lê `status.json`,
+    `hypothesis.yaml`, `data-contract-spec.yaml`, `screen-analysis.yaml`,
+    `tech-spec.md`, `existing-helpers.yaml` da pai e popula o intake da
+    extensão.
+  - **Template** — `templates/feature-intake.template.md` ganha bloco
+    condicional §Extension context (parent feature, parent shipped, scope of
+    extension, reuse from parent, out-of-scope vs parent). Ausente quando
+    `extends-feature` é null — standalone feature fica idêntica ao pré-Gap 9.
+  - **UX** — `docs/ux/forge-plan-roteiro.md` Cena 1 ganha 4º caminho
+    "Estender" com sub-cenários (happy / parent não-done / slug derivado
+    duplicate / cancelar).
+  - **Validator** — `validators/validate_extension_feature.py` novo:
+    EXT-001 (parent existe), EXT-002 (parent.state == done), EXT-003
+    (slug derivado != parent), EXT-004 (dedupe por `extension-scope`).
+    3-caminhos canônico no fail (discipline §1). Inativo quando
+    `extends-feature` é null (no-op pass). **Wiring na cascade `forge
+    verify` deferido pra v1.x+ (W-001)** — validator existe standalone +
+    coberto por testes; cascade auto-discovery (via cards/hooks) vem
+    com piloto smoke. Hoje invocação é manual ou via hook custom; ver
+    `docs/design/04-pending.md` Gap 9 TODO residual.
+  - **Agents patched (4):** `planning-conductor` (Phase 1 step 5 extension
+    import + Phase 4 wave dispatch variants A/B/D + Phase 6 retrospective
+    variant + closing format), `feature-intake-agent` (extension block
+    elicitation), `tech-spec-agent` (context-pack ganha `extends-feature` +
+    `parent-baseline` references — sem mudança em rendering), `retrospective-
+    agent` (extension variant 4 perguntas: herdei literal / delta mínimo /
+    criei do zero apesar de extension / sinais pra refactor parent + extension
+    pra shared base).
+  - **Discipline §10 nova** em `docs/design/07-discipline.md` formaliza
+    semantics + distinção formal vs refactor/bugfix/standalone (tabela
+    4-eixos) + wave dispatch semantics + filesystem layout
+    (`L1/{parent}-{suffix}/`, **não** `non-product/`) + hypothesis schema +
+    Phase 6 retrospective (herança vs adição, sem 5-whys) + cheat-sheet
+    entry + cross-link com §8 + §9 + Gap 5.
+  - **Tests** — 37 novos (`tests/unit/test_extension_feature.py` cobre
+    round-trip L1State + helpers + validator happy + 4 fail paths;
+    `tests/unit/test_plan_extension.py` cobre Cena 1 4º caminho detection +
+    sub-cenários). Suite total: 595 → 637 passing (+42 cumulativo desde
+    v1.2.0: 37 Gap 9 + 5 do fix loop).
+- `engine/implement.py` escreve `shipped-at` (ISO 8601 UTC) automático na
+  transição `state=done` (sob o mesmo bloco que escreve
+  `last_action_kind = "implement-completed"`). Suportado por `L1State.raw`
+  round-trip — forward-compat com features done pre-Gap 9 (campo é
+  nullable, intake renderiza `unknown` quando ausente). Fix do W-002 do
+  REVIEW: extension intake rendering de `Parent shipped: {{parent_shipped_at_iso8601}}`
+  passa a ser populado em vez de sempre `null`/`unknown`.
+
+### Changed
+
+- `docs/design/04-pending.md` Gap 9 re-escopado e fechado: watchOS / Wear OS /
+  tvOS / multi-target movidos pra **"out-of-scope explícito permanente"**
+  (feature-forge cobre mobile = Android + iOS + KMP). Mecânica
+  `extends-feature` continua útil pra variant / sub-area / módulo paralelo.
+  Sinergia com Gap 5: plataforma exótica futura entra via overlay local
+  (`.claude/cards/local/`), não via canon expansion. Nenhuma decisão locked
+  revisitada (Decisões 9, 10, 14, 22, 28 aceitam aditivo natural).
+  Contadores atualizados (7 resolvidos / 9 acionáveis pra v1.x+).
+- `docs/design/07-discipline.md` §10 header padronizado (`## 10. Extension
+  feature`) alinhado ao paralelismo das §§ 1-9 (fix do I-007 do REVIEW —
+  consistência estilística vs prefixo `§10` + parênteses inline).
+- `engine/plan.py` `_create_extension_l1` ganha guard explícito enforçando
+  `parent_status.status == "done"` (fix do W-005 do REVIEW). Defesa em
+  profundidade: write-time check além do validator runtime. Custo: 4
+  linhas + 1 test.
+- `agents/retrospective-agent.md` extension variant agora cobre as **4
+  perguntas** canônicas do discipline §10 (era 3 — faltava "sinais pra
+  refactor parent + extension pra shared base"). Fix do W-003 do REVIEW.
+  `agents/planning-conductor.md` template prompt for retrospective-agent
+  (extension variant) idem.
+- `validators/validate_extension_feature.py` remove check redundante
+  `parent-feature != extends-feature` (fix do I-002 do REVIEW). Lockstep
+  é garantido por `_create_extension_l1` e `write_l1_status` no write path
+  — defender contra arquivo escrito à mão é overkill pra v1; os 4 codes
+  EXT-001..004 do plano canônico ficam estritos.
+- `CLAUDE.md` baseline de testes atualizado: `pytest (367 tests baseline)` →
+  `pytest (637 tests baseline)` (fix do I-006 do REVIEW — drift pré-existente
+  desde v1.1.0 + acumulado em v1.2.0 + Gap 9). Re-baselinar pra próximo
+  gap saber a verdade.
+- `engine/memory/l1.py`: simplifica fallback kebab/snake em `read_l1_status`
+  com `dict.get(kebab, dict.get(snake))` (refactor puro, sem mudança de
+  comportamento) — endereça nit gemini-code-assist no PR #3 (commit
+  `7313a30`).
+
+### Fixed (PR #4 review)
+
+- `_path_matches_ignore` agora emite warning quando regex inválida em
+  `cc-gate.ignore-paths` (era silently swallowed). Pré-validação via
+  helper `_compile_ignore_patterns` em `validate()`, warnings propagam
+  no result dict (`cc-gate.ignore-paths: regex inválida '<pat>' (<erro>)`)
+  — D-006.
+- `_parse_overrides` emite warning pra `CC-OVERRIDE: ... cc=N — ` com
+  reason vazia/whitespace após em-dash (era loose-skipped). Strict regex
+  ganhou guard `reason.strip() == ""` pra não aceitar reason em branco;
+  loose-pass inspeciona o tail após `—` — D-008.
+- Warnings de `_run_tools_for_staged` agora distinguem tool ausente
+  (`[<tool>] tool ausente: ...`) de tool crashada
+  (`[<tool>] tool crashou: ...`) — D-009.
+- `_git_staged_files` adiciona `-M80%` ao `git diff` pra rename detection
+  (SDD §2 — função renomeada até 20% mudança vira `modified` no delta
+  rule, não `new` + delete) — F-006.
+- Test assertions tightened: `install_hints` específico pro `eslint`
+  (filtra por `c.name == "eslint"` antes de checar substring),
+  `next()` lookup safer em `test_verify_cc_position` (default None +
+  assertion descritivo) — codereviewbot 3353045999/3353046005.
+- +6 tests novos cobrindo D-006/D-008/D-009/F-006. Suite total:
+  688 passed, 17 skipped, 1 falha pre-existing
+  (`test_bootstrap_is_idempotent` em worktree — Gap BOOTSTRAP-1).
+
 ## [1.2.0] — 2026-06-03
 
 ### Added (Gap 5 — Card local overlay, 2026-06-02)

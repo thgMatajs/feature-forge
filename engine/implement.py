@@ -20,6 +20,8 @@ Exit codes:
 
 from __future__ import annotations
 
+import json
+import os
 import re
 import sys
 from dataclasses import dataclass, field
@@ -420,6 +422,118 @@ def _print_plan_mode(task: TaskContract, project_root: Path) -> None:
         renderer.write("")
 
 
+# ── CC gate per-task hook ────────────────────────────────────────────────────
+
+
+def _cc_bypass_log_path(project_root: Path) -> Path:
+    """Audit trail location for ``NO_CC_GATE=1`` bypass invocations."""
+    return project_root / ".claude" / "state" / "cc-gate-bypass.jsonl"
+
+
+def _run_cc_gate(project_root: Path) -> dict[str, Any]:
+    """Invoke ``check_cyclomatic_complexity.validate`` as an in-process call.
+
+    Returns the validator result dict augmented with ``blocking: bool``:
+
+    - ``blocking=True``  → commit must NOT proceed; 3-paths block surfaced.
+    - ``blocking=False`` → pass / warn / bypass — handoff continues.
+
+    Bypass: ``NO_CC_GATE=1`` env var short-circuits the validator and
+    appends one record to ``.claude/state/cc-gate-bypass.jsonl`` for audit.
+    Override-justify (``CC-OVERRIDE: …``) in the commit body is handled
+    *inside* the validator — pass-through here.
+    """
+    if os.environ.get("NO_CC_GATE", "").strip().lower() in {"1", "true", "yes"}:
+        log_path = _cc_bypass_log_path(project_root)
+        try:
+            ensure_dir(log_path.parent)
+            ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            with log_path.open("a", encoding="utf-8") as fh:
+                fh.write(
+                    json.dumps(
+                        {"at": ts, "reason": "NO_CC_GATE env var set"},
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
+        except OSError:
+            # Audit best-effort — never let logging block the bypass.
+            pass
+        return {
+            "status": "warn",
+            "message": "NO_CC_GATE=1 — gate bypassed",
+            "blocking": False,
+        }
+
+    # Lazy import — avoids circular deps when engine boots without validators on path.
+    try:
+        from validators import check_cyclomatic_complexity as cc_validator
+    except ImportError:
+        return {
+            "status": "warn",
+            "message": "cc-gate validator unavailable (import failed)",
+            "blocking": False,
+        }
+
+    try:
+        result = cc_validator.validate(project_root)
+    except Exception as exc:  # pragma: no cover — defensive; validator crashes warn
+        return {
+            "status": "warn",
+            "message": f"cc-gate validator crashed: {exc}",
+            "blocking": False,
+        }
+
+    if not isinstance(result, dict):
+        return {
+            "status": "warn",
+            "message": "cc-gate validator returned non-dict result",
+            "blocking": False,
+        }
+
+    result["blocking"] = result.get("status") == "fail"
+    return result
+
+
+def _render_cc_gate_block(result: dict[str, Any]) -> None:
+    """Render the gate's 3-paths block when blocking.
+
+    Prefers the canonical `render` field (`cc_format_three_paths` output)
+    when available — it carries the load-bearing UX contract from spec §4
+    and disciplines §1 (literal header `🛑 Cyclomatic Complexity gate`,
+    sections "O que falhou:", "Onde:", "Por que importa:", "Três caminhos
+    pra resolver:"). Falls back to a per-path render when `render` is not
+    present, keeping backward compatibility with non-CC consumers.
+    """
+    renderer.write("")
+    canonical = result.get("render")
+    if isinstance(canonical, str) and canonical.strip():
+        # Canonical render already includes header + sections + footer.
+        for line in canonical.splitlines():
+            renderer.write(line)
+        # Surface malformed-override warnings (H4) so the user sees why
+        # their attempted CC-OVERRIDE didn't silence the fail.
+        warnings = result.get("warnings") or []
+        if warnings:
+            renderer.write("")
+            renderer.write(renderer.dim("Avisos:"))
+            for w in warnings:
+                renderer.write(renderer.dim(f"  · {w}"))
+        return
+
+    # Fallback render — kept for results that lack the canonical block.
+    renderer.write(renderer.bold(result.get("message") or "cc-gate hard fail"))
+    renderer.write("")
+    for p in result.get("paths") or []:
+        label = p.get("label") or p.get("kind") or "?"
+        motive = p.get("motive") or ""
+        renderer.write(f"  · {label}")
+        if motive:
+            renderer.write(f"      {motive}")
+    renderer.write("")
+    renderer.write(renderer.dim("Sem auto-fix aqui — escolha humana."))
+
+
 # ── Apply Mode (v1 stub) ─────────────────────────────────────────────────────
 
 
@@ -432,6 +546,22 @@ def _apply_mode_handoff(task: TaskContract, slug: str, project_root: Path) -> No
         "arquivos em `allowed_files`. Quando terminar:"
     )
     renderer.write("")
+
+    cc_result = _run_cc_gate(project_root)
+    if cc_result.get("blocking"):
+        _render_cc_gate_block(cc_result)
+        renderer.write("")
+        renderer.write(
+            "Resolva o gate antes de commitar. Re-rode `forge implement` "
+            "depois de refatorar / split / adicionar CC-OVERRIDE no commit body."
+        )
+        return  # do not emit commit instructions while gate is blocking
+    if cc_result.get("status") == "warn":
+        msg = cc_result.get("message", "")
+        if msg:
+            renderer.write(renderer.dim(f"cc-gate: {msg}"))
+            renderer.write("")
+
     renderer.write(f"  1) forge verify {slug}    # roda as validações declaradas")
     renderer.write(f"  2) git add <allowed_files apenas>")
     renderer.write(
@@ -665,6 +795,17 @@ def run(argv: list[str]) -> int:
             state.status = "done"
             state.last_action_kind = "implement-completed"
             state.phase_lock = None
+            # Gap 9 (W-002) — stamp shipped-at on the done transition so
+            # extension features can render `Parent shipped: <ISO>` from the
+            # parent's status.json. Lives in `raw` (additive metadata; not a
+            # canonical L1State field) so write_l1_status preserves it via
+            # the raw round-trip. Idempotent: only set when absent — re-runs
+            # of a done feature (rare; defensive) don't clobber the original
+            # ship timestamp.
+            if isinstance(state.raw, dict) and not state.raw.get("shipped-at"):
+                state.raw["shipped-at"] = datetime.now(timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                )
             write_l1_status(state, project_root)
             append_history(slug, project_root, {"event": "feature-done"})
         # Garante release do lock mesmo quando state era None ou já 'done'.

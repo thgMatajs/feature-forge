@@ -949,21 +949,21 @@ sibling, não replacement).
   `depends_on_external`
 - `tests/unit/test_l1_blocked_state.py` — NEW, 19 testes
 
-### Gap 9 — Cenário C2: Plataforma nova mid-projeto (multi-target retroativo)
+### Gap 9 — Cenário C2: Plataforma nova mid-projeto (multi-target retroativo) ✅ resolvido 2026-06-03 (extends-feature mechanic; multi-target out-of-scope permanente)
 
-**Severidade:** alta. Time decide adicionar Apple Watch (ou Wear OS, TV) a
-features existentes + futuras. Cards canônicos atuais cobrem só
-Android/iOS — Watch/TV/Wear caem em Gap 5 (D2). Mas há dimensão extra:
-**features já feitas não ganham nova plataforma retroativamente**, e
-forge não tem mecânica explícita pra isso.
+**Severidade:** alta (histórico). Time decide adicionar Apple Watch (ou
+Wear OS, TV) a features existentes + futuras. Cards canônicos atuais
+cobrem só Android/iOS — Watch/TV/Wear caíam em Gap 5 (D2). Mas há
+dimensão extra original: **features já feitas não ganham nova plataforma
+retroativamente**, e forge não tinha mecânica explícita pra isso.
 
-**Origem:** cards `watchos-screens`, `watchos-navigation`, `wear-os-screens`
-inexistentes em catálogo v1; kmp-shared não declara `watchOSArm64` target;
-inventory design-system não distingue componentes por target; feature done é
-done — forge não tem `forge extend-feature {slug} --add-platform watchos`
-(proibido por decisão 9 + 10).
+**Origem (histórico):** cards `watchos-screens`, `watchos-navigation`,
+`wear-os-screens` inexistentes em catálogo v1; kmp-shared não declara
+`watchOSArm64` target; inventory design-system não distingue componentes
+por target; feature done é done — forge não tinha `forge extend-feature
+{slug} --add-platform watchos` (proibido por decisão 9 + 10).
 
-**Remediação proposta (v1.1):**
+**Remediação proposta originalmente (v1.1, pré-revisita):**
 
 - [ ] Cards multi-target v1.1: `watchos-screens`, `watchos-navigation`,
       `wear-os-screens`, `tv-screens` (paralelos a swiftui-screens,
@@ -977,6 +977,223 @@ done — forge não tem `forge extend-feature {slug} --add-platform watchos`
       plataforma: `forge plan {slug}-watch-extension` com
       `extends-feature: {slug}` no intake — auto-importa context da feature
       pai e gera só tasks da nova plataforma
+
+**Solução aplicada — Re-escopo 2026-06-03 (extends-feature mechanic ship; multi-target out-of-scope):**
+
+Revisita Gap 9 desacoplou a mecânica `extends-feature` (Opção A das
+alternativas estudadas) do escopo multi-target. User explicitou
+"feature-forge cobre mobile (Android + iOS + KMP), não tem planos pra
+watchOS/Wear/TV". Resultado: **a mecânica de feature derivada virou um
+pattern leve product-derived** (sem cards novos, sem mudança no enum
+`platforms`, sem upgrade de inventory schema), e os 4 cards multi-target
++ workflow-config.targets aditivo + inventory.platforms field saíram
+permanentemente do escopo do projeto. Sinergia confirmada com Gap 5:
+plataforma exótica futura (improvável dado o positioning) entra via
+overlay local, não via canon expansion.
+
+- [x] **Schema `status.json` ganha 2 campos aditivos** —
+      `extends-feature: null | "{parent-slug}"` + `parent-feature: null |
+      "{parent-slug}"` (reverse pointer pra otimizar queries L1).
+      `docs/schemas/memory.md` documenta + MEM-L1-008 ganha rule: se
+      `extends-feature != null` → parent existe em
+      `.claude/memory/L1/{parent-slug}/` E `parent.state == "done"`.
+      Forward-compat: status.json pré-Gap 9 carregam normais (default null).
+- [x] **`L1State` em `engine/memory/l1.py` ganha 2 fields + helpers** —
+      `extends_feature`, `parent_feature`, `parent_state(slug, root)` +
+      `list_extensions_of(parent_slug, root)`. Round-trip + invalid-value
+      rejection cobertos por testes novos.
+- [x] **Template novo bloco condicional** em
+      `templates/feature-intake.template.md` — §Extension context
+      renderizado quando `extends-feature` está setado (parent feature,
+      parent shipped, scope of extension, reuse from parent,
+      out-of-scope vs parent). Ausente quando null — feature standalone
+      fica exatamente como antes.
+- [x] **UX Cena 1 do `forge plan` ganha 4º caminho "Estender"** —
+      `docs/ux/forge-plan-roteiro.md` Cena 1 detecta `state: done` e
+      adiciona 4º caminho (Retomar / Nova / **Estender** / Abortar).
+      Conductor sugere slug derivado `{parent}-extension`; user
+      customiza pra suffix descritivo. Cena 1 não muda quando state
+      != done.
+- [x] **Engine `engine/plan.py` Cena 1 detection branch** — 4º caminho
+      condicional + context-pack import (lê parent's `status.json`,
+      `hypothesis.yaml`, `data-contract-spec.yaml`, `screen-analysis.yaml`,
+      `tech-spec.md`, `existing-helpers.yaml`); popula extension's
+      context-pack com baseline herdado + delta como intent.
+- [x] **Validator novo `validators/validate_extension_feature.py`** —
+      EXT-001 (parent slug existe), EXT-002 (parent.state == "done"),
+      EXT-003 (slug derivado != parent), EXT-004 (dedupe: nenhum outro
+      slug derivado declara o mesmo `extends-feature` + `extension-scope`).
+      3-caminhos canônico no fail (discipline §1). Inativo quando
+      `extends-feature` é null (no-op pass).
+- [x] **Agents patcheados:**
+  - `agents/planning-conductor.md` Phase 1 step 5 (Extension context
+    import quando `extends-feature != null`); Phase 4 wave dispatch
+    abreviado (Wave A intake variant, Wave B focado no delta, Wave D
+    `allowed_files` herda baseline + delta); Phase 6 retrospective
+    variant (herança vs adição, sem 5-whys); closing format ganha
+    extension mention (parent + scope delta).
+  - `agents/feature-intake-agent.md` — extension block instructions
+    (elicita §Extension context fields quando hypothesis declara
+    `extends-feature`).
+  - `agents/tech-spec-agent.md` — context-pack ganha `extends-feature`
+    + `parent-baseline` fields como read-only references; sem mudança
+    em rendering (extension é product-derived, segue product rendering).
+  - `agents/retrospective-agent.md` — extension semantics (4 perguntas:
+    herdei literal / delta mínimo / criei do zero apesar de extension /
+    sinais pra refactor pra shared base).
+- [x] **Discipline §10 nova** em `docs/design/07-discipline.md` —
+      formaliza quando aplica, distinção formal (tabela 4-eixos vs
+      refactor/bugfix/standalone), wave dispatch semantics, filesystem
+      layout (`L1/{parent}-{suffix}/`, **não** `non-product/`),
+      hypothesis schema, Phase 6 retrospective (herança vs adição),
+      cheat-sheet entry, cross-link com §8 + §9 + Gap 5.
+- [x] **Tests** — `tests/unit/test_extension_feature.py` + extensão de
+      `tests/unit/test_plan_extension.py` (round-trip L1State,
+      `parent_state` + `list_extensions_of` helpers, validator happy
+      path + 4 fail paths, Cena 1 4º caminho detection).
+
+**Princípio preservado:** Decision 9 (12 verbos — sem `forge
+extend-feature` novo; "estender" vive dentro de `forge plan` Cena 1),
+Decision 10 (zero flags — drill-down conversational), Decision 22 (zero
+deps em outras skills), Decision 28 (overlay não exigido — extension
+não requer cards novos). Nenhuma decisão locked revisitada.
+
+**OUT-OF-SCOPE explícito (decisão consciente, permanente):**
+
+Itens da remediação original do Gap 9 que **não entram** neste ciclo —
+e ficam permanentemente fora do escopo do projeto até demanda real
+mudar a posição (improvável dado o positioning "feature-forge cobre
+mobile = Android + iOS + KMP"):
+
+- Cards canon `watchos-screens`, `watchos-navigation`, `wear-os-screens`,
+  `tv-screens` — feature-forge cobre Android + iOS + KMP; watchOS / Wear
+  OS / tvOS é out-of-scope deliberado. Quando surgir necessidade
+  (improvável), o caminho oficial é Gap 5 overlay local — não canon
+  expansion.
+- `workflow-config.platforms.active` upgrade pra suportar watch / wear /
+  tv — enum permanece `[android, ios, kmp, web]`. Web já é coberto;
+  watch / wear / tv permanecem fora.
+- `inventory.design-system.components.platforms: [list]` field — não
+  agrega valor sem multi-target. Inventory schema permanece sem o field.
+- Labels `watchos-*`, `wear-os-*`, `tv-*` no catálogo — **nem como
+  Reservada** (Reservada implica "vem v1.x+ por demanda"; aqui é
+  permanente out, não Reservada).
+- `forge extend-feature {slug}` como verbo novo — Decision 9 (12 verbos)
+  preservada; "estender" vive dentro de `forge plan` via detection no
+  Cena 1 (4º caminho conditional quando state=done).
+
+Este scope-out é **decisão arquitetural consciente**, não TODO
+residual. Não há roadmap pra v1.x+ trazer watchOS/Wear/TV de volta —
+demanda real teria que reabrir a revisita Gap 9 inteira.
+
+**O que ficou como TODO residual (v1.x+):**
+
+- [ ] **Wave A skipping logic completo no conductor** — Wave 2 cobriu a
+      entrada Cena 1 (4º caminho detection) e patchou o agent prompt da
+      planning-conductor com Phase 1 step 5 (extension context import).
+      Lógica de skip de elicit no conductor (não re-perguntar user value
+      / business outcome / persona que a pai já tem) está documentada no
+      prompt mas execução real só é exercitada com piloto. Quando
+      smoke test E2E real rolar, o agent prompt provavelmente ganha
+      refinamento; documentado aqui pra não pular silente.
+- [ ] **`validate_extension_feature` wiring na cascade `forge verify`** —
+      hoje validator existe + roda standalone + tests pass. Cascade
+      discovery é via cards (cada card declara que validators correm
+      contra seus artefatos); extension validator é cross-cutting
+      (roda em qualquer feature com `extends-feature != null`,
+      independente de card). Wiring atual: validator não está cadastrado
+      em `engine/verify.py` cascade explícita — espera card "core"
+      transversal OU hook explícito em `engine/verify.py` quando feature
+      tem `extends-feature` setado. Decisão consciente: shipping
+      validator + testes verdes + smoke manual cobre o caso; cascade
+      automatic em `forge verify` é refinamento que entra em v1.2 quando
+      o pattern "cross-cutting validator" tiver 2+ casos (até hoje só
+      este).
+- [ ] **Smoke test E2E real** — Mandamento "verde antes de pronto"
+      cumprido (unit + integration verdes; suite total 637 passing + 12
+      skipped). E2E real (dummy parent feature done + `forge plan` +
+      escolher Estender + verificar L1 + intake + validator) seria
+      refinamento de fixture pra v1.2.x. Smoke manual abaixo cobre o
+      gap até lá.
+
+**Power-review fix loop (post-ship 2026-06-03) — findings menores
+deferred:**
+
+O REVIEW.md em `.planning/gap9-extends-feature/REVIEW.md` listou 12
+findings (0 critical / 5 warning / 7 info). Fix loop aplicou W-002 +
+W-003 + W-005 + I-002 + I-007 antes do doc-sync; W-004 (commit fora de
+escopo `e0af68a chore(claude): migrate hooks`) foi aceito com nota no
+commit body (Caminho B do REVIEW); W-001 ficou como o item dedicado
+acima ("validate_extension_feature wiring") — decisão consciente
+documentada. INFO findings remanescentes como TODOs leves v1.x+:
+
+- [ ] **I-001** — Validator emite `EXT-001` quando `status.json` está
+      ausente do parent_dir (parent dir existe mas incompleto).
+      Tecnicamente o contrato do EXT-001 documentado é "parent slug
+      exists as a sibling L1 directory" — o caso melhor casaria com um
+      sub-código (e.g., `EXT-001b` ou `EXT-005 parent incompleto`).
+      Mensagem é clara o suficiente hoje pra operador entender; refinar
+      taxonomy é polish v1.x+.
+- [ ] **I-003** — Validator EXT-004 com scope vazio: comportamento
+      intencional (empty-scope-collision documentado no docstring) pode
+      confundir operador que ainda não declarou `extension-scope` (sinal
+      de "incompleto" mais do que "duplicado"). Trade-off: warn-shape
+      permite passar verify; fail-shape (atual) força resolução agora.
+      Avaliar warn-shape em v1.x+ se feedback de campo aparecer.
+- [ ] **I-004** — Tests `tests/unit/test_plan_extension.py` usam
+      `monkeypatch.setattr("engine.plan.question.ask", lambda ...)`
+      direto na signature interna de `question.ask`. Funciona, cria
+      acoplamento ao 3-arg + kwargs. Considerar v1.x+ um fake-input
+      dispatcher dedicado (`tests/_fakes/question_fake.py`) com API
+      estável. Não bloqueia merge.
+- [ ] **I-005** — `docs/schemas/memory.md:288-307` exemplo `status.json`
+      não mostra `shipped-at` (mesmo agora sendo escrito por
+      `engine/implement.py` na transição state=done — fix W-002). Quando
+      v1.x+ revisar o schema doc, adicionar `"shipped-at":
+      "2026-05-28T18:00:00Z"` em features done e `null` em features
+      pre-done. Mantém schema doc em sync com runtime.
+
+**Validation pendente para piloto smoke test:**
+
+- [ ] Smoke happy: feature parent done + `forge plan {parent}` oferece
+      4º caminho "Estender" + L1 nova grava `extends-feature: {parent}` +
+      intake renderiza §Extension context.
+- [ ] Smoke negativo: parent em `state: implementing` → 4º caminho NÃO
+      aparece (só 3 caminhos: Retomar / Nova / Abortar).
+- [ ] Smoke negativo: slug derivado duplicate (extension já existe com
+      mesmo slug) → 3-caminhos canônico.
+- [ ] Smoke validator EXT-001: criar L1 extension apontando pra parent
+      inexistente → validator emite `EXT-001` fail com 3-caminhos.
+- [ ] Smoke validator EXT-002: parent em `state: implementing` →
+      validator emite `EXT-002` fail com 3-caminhos.
+- [ ] Smoke validator EXT-003: slug derivado == parent slug (sanity) →
+      validator emite `EXT-003` fail.
+- [ ] Smoke validator EXT-004: 2 extensions do mesmo parent com mesmo
+      `extension-scope` → validator emite `EXT-004` fail (dedupe).
+
+**Arquivos modified (Gap 9):**
+
+- `docs/schemas/memory.md` — `extends-feature` + `parent-feature` em
+  status.json + MEM-L1-008 atualizada
+- `engine/memory/l1.py` — `L1State` ganha 2 fields + `parent_state` +
+  `list_extensions_of` helpers
+- `engine/plan.py` — Cena 1 4º caminho branch + context-pack import
+- `templates/feature-intake.template.md` — §Extension context bloco
+  condicional
+- `docs/ux/forge-plan-roteiro.md` — Cena 1 ganha 4º caminho Estender
+  com sub-cenários
+- `agents/planning-conductor.md` — Phase 1 step 5 extension context +
+  Phase 4 wave dispatch (variants A/B/D) + Phase 6 retrospective
+  variant + closing format extension mention
+- `agents/feature-intake-agent.md` — extension block elicitation
+- `agents/tech-spec-agent.md` — context pack extends-feature +
+  parent-baseline references
+- `agents/retrospective-agent.md` — extension semantics (4 perguntas)
+- `validators/validate_extension_feature.py` — NEW, EXT-001..EXT-004
+- `tests/unit/test_extension_feature.py` — NEW, suite completa
+- `tests/unit/test_plan_extension.py` — NEW, Cena 1 4º caminho
+- `docs/design/07-discipline.md` — §10 nova (Extension feature) +
+  cheat-sheet entry
 
 ### Gap 10 — Cenário D3: Monorepo cross-project UX
 
@@ -1401,11 +1618,13 @@ Itens emergidos durante o round 2 do PR #1 (30 commits aplicados sobre o que fic
 ### Resumo da fila pós-stress-test (cumulativo)
 
 Total: 18 gaps mapeados a partir de 20 cenários analisados (3 rounds).
-**5 resolvidos** (Gap 18 em 2026-05-30 manhã; Gap 2 em 2026-05-30 tarde —
+**6 resolvidos** (Gap 18 em 2026-05-30 manhã; Gap 2 em 2026-05-30 tarde —
 refactor only, spike+chore stubbed; Gap 8 em 2026-05-30 noite — schema +
 engine + manual unblock, MCP polling stubbed; Gap 1 em 2026-05-30 noite — bugfix
 subtype completo, A2 small-feature explicit non-goal; Gap 5 em 2026-06-02 —
-card local overlay Approach A, destrava parcialmente Gaps 9 + 14) · 13 pendentes.
+card local overlay Approach A, destrava parcialmente Gap 14; Gap 9 em
+2026-06-03 — extends-feature mechanic ship; watchOS/Wear/TV out-of-scope
+permanente) · 12 pendentes.
 
 | Gap | Cenário(s) | Severidade | Esforço estimado |
 |---|---|---|---|
@@ -1417,7 +1636,7 @@ card local overlay Approach A, destrava parcialmente Gaps 9 + 14) · 13 pendente
 | 6 | E1 — Multi-dev | — (v1.1+) | Schema upgrades + ADR |
 | 7 | B2 — Feature em múltiplos releases | Média | Estado intermediário + release-group + status patch |
 | ~~8~~ | ~~B3 — Dependência externa~~ | ~~Média-alta~~ | ~~Estado novo + schema task-contract + MCP polling~~ — schema + engine + manual unblock ship 2026-05-30; MCP polling stubbed para v1.1+ |
-| 9 | C2 — Plataforma nova mid-projeto | Alta | Cards multi-target + inventory schema + extension feature UX |
+| ~~9~~ | ~~C2 — Plataforma nova mid-projeto~~ | ~~Alta~~ | ~~Cards multi-target + inventory schema + extension feature UX~~ — re-escopado 2026-06-03 pra extends-feature mechanic (Opção A); watchOS/Wear/TV out-of-scope permanente |
 | 10 | D3 — Monorepo cross-project UX | Média | Status agregado + shared-memory opt-in + cross-checks |
 | 11 | E4 — Compliance regulatório | Média-específica | 3 cards regulatórios + scope-tags + WORM mode |
 | 12 | B4 — A/B test (2 variantes) | Média-específica | Card experimentation + analytics dimensions + estado `experiment-running` |
@@ -1439,7 +1658,7 @@ atacar uma feature-base destrava múltiplos gaps:
 | Mecânica base | Destrava |
 |---|---|
 | `status.json` schema upgrade (`active-tasks: [list]` + `state: blocked-on-external`) | Gaps 3, 6, 7, 8 |
-| Card local overlay (`.claude/cards/local/` + capability-labels.local) | Gaps 5, 9, 14 |
+| Card local overlay (`.claude/cards/local/` + capability-labels.local) | Gaps 5, 14 (Gap 9 re-escopado 2026-06-03 — extension mechanic é desacoplada de overlay) |
 | Persona/vocabulary substitution em agent prompts | Gaps 15, 16 |
 | Retrospective incremental disparado por eventos (não só "última task") | Gaps 3, 7 |
 | Validators advisory com 3-caminhos (vs hard-fail) | Gaps 4, 17 |
@@ -1465,8 +1684,8 @@ demanda real surgir.
 ### Conclusão do stress-test
 
 20 cenários analisados em 3 rounds. **18 gaps identificados**, dos quais
-**4 foram resolvidos** dentro do ciclo v1.0+ (Gaps 1, 2, 8, 18) e
-**11 permanecem acionáveis pra v1.1** (não-out-of-scope, não-bem-coberto-já).
+**6 foram resolvidos** dentro do ciclo v1.0+ (Gaps 1, 2, 5, 8, 9, 18) e
+**10 permanecem acionáveis pra v1.1** (não-out-of-scope, não-bem-coberto-já).
 
 Resultado positivo do stress-test: **as 27 decisões locked permanecem
 intactas**. Nenhum cenário forçou revisitar princípios ou disciplinas
@@ -1477,6 +1696,125 @@ Resultado a observar: forge v1 é **excelente pro happy path** (feature de
 produto Android+iOS+KMP com backend Firebase/REST, 1 dev, 5-10 tasks). Fora
 do happy path, há cobertura parcial — o roadmap v1.1+ deve preencher essa
 superfície sistematicamente.
+
+## v1.2-dev follow-ups (CC gate shipping — defer-with-reason)
+
+Itens identificados durante o ship do `check_cyclomatic_complexity` gate.
+Cada um é decisão consciente de não-fazer-em-v1.2, com critério explícito
+pra reentrar. Fingerprints sha256 estáveis pra silenciar re-proposals
+sem mudança de conteúdo.
+
+### Gap CC-1 — Whitelist persistente de overrides
+
+**Categoria:** cc-gate
+**Fingerprint:** `sha256(consolidate-within-module:cc-whitelist:override-no-commit-only)`
+**Status:** deferred (v1.3+)
+
+Hoje override é por commit no body (`CC-OVERRIDE: ...`). Eventualmente
+projetos grandes podem querer "essa função tem cc=20 e é assim porque é
+parser" como anotação permanente. v1.2-dev recusa pra evitar débito
+invisível. Reentrar se ≥3 projetos consumidores pedirem em retro.
+
+### Gap CC-2 — Cognitive Complexity (Sonar) como métrica alternativa
+
+**Categoria:** cc-gate
+**Fingerprint:** `sha256(redundant-platform:cognitive-vs-cyclomatic:v1.2-uses-cc)`
+**Status:** deferred (v1.3+)
+
+CC é métrica clássica mas Cognitive Complexity (Campbell, SonarSource)
+reflete melhor leitura humana. Trocar tooling é trabalho não-trivial
+(cada tool nativa tem variação) — deferido pra v1.3+ se sinal empírico
+justificar.
+
+### Gap CC-3 — CC trending em `forge graph` (Q18+)
+
+**Categoria:** cc-gate
+**Fingerprint:** `sha256(promote-to-shared:graph-q18:cc-trend-over-history)`
+**Status:** deferred (v1.3+)
+
+Adicionar query Q18+ que tabula CC por área do código e mostra trend ao
+longo do histórico. Útil pra retrospective. Deferido pra v1.3+ junto com
+expansão geral do graph.
+
+### Gap CC-4 — Auto-suggest refactor LLM-powered (Phase 6)
+
+**Categoria:** cc-gate
+**Fingerprint:** `sha256(near-duplicate:cc-auto-refactor:phase-6-orchestration)`
+**Status:** deferred (Phase 6)
+
+Quando gate bloqueia, mostrar sugestão concreta de como refatorar (LLM
+analisa função, propõe split). Fora de escopo v1.2-dev porque toca
+subagent orchestration de forma não-trivial.
+
+### Gap CC-5 — Per-function threshold inline annotation (REJECTED)
+
+**Categoria:** cc-gate
+**Fingerprint:** `sha256(consolidate-within-module:cc-inline-suppress:rejected-by-design)`
+**Status:** rejected (não reentrar sem mudança de contexto)
+
+Proposta de `// cc-threshold: 20` no código. **Rejeitada em favor de
+override-no-commit + override-per-card**: inline espalha exceções pelo
+código, dificulta auditoria, vira whitelist invisível. Documentado aqui
+pra não reaparecer em retrospective.
+
+### Gap CC-6 — CC gate delta rule (`cc_before` unpopulated) [F-001]
+
+**Categoria:** cc-gate
+**Fingerprint:** `sha256(consolidate-within-module:cc-delta-rule:cc-before-none)`
+**Status:** deferred (v1.2.1+) — surfaced em PR #4 review (2026-06-04)
+
+Estrutural presente (`CCResult.cc_before` field exists) mas funcionalmente
+inerte — todos os parsers seteam `cc_before=None`. A regra `cc_after >
+cc_before` nunca dispara, então funções modificadas só pegam a absolute
+rule (`cc > threshold`), perdendo o sinal de regressão local.
+
+**Por que defer:** implementar exige `git show <parent>:<file>` + re-run
+de cada tool (Detekt/SwiftLint/eslint/Radon) sobre o estado anterior do
+arquivo, parsing e diff. Não é fix de comentário — é feature substancial.
+Roadmap provável v1.2.1 ou v1.3.
+
+**Pré-requisito:** F-006 (rename detection `-M80%`) — JÁ aplicado no
+Unreleased; sem rename detection, função renomeada vira `new` com absolute
+rule e o delta nem é avaliado.
+
+### Gap CC-7 — CC validator LOC bloat [F-003]
+
+**Categoria:** cc-gate
+**Fingerprint:** `sha256(promote-to-shared:cc-validator-split:loc-bloat)`
+**Status:** deferred (próxima feature substantial do validator) — surfaced
+em PR #4 review (2026-06-04)
+
+`validators/check_cyclomatic_complexity.py` em 1067 LOC; SDD target
+350-450 LOC (≈2.4x bloat).
+
+**Por que defer:** refactor cross-cutting — extrair `_parsers/` (Detekt,
+SwiftLint, eslint, Radon), `_dispatch.py`, `_override.py`,
+`_classifier.py` módulos. Precisa de brainstorming + writing-plans + plano
+de testes pra garantir zero behavior change. Não cabe em comment-resolution
+scope.
+
+**Sugestão:** próxima feature substancial no validator (Gap CC-6 / delta
+rule F-001 ou similar) faz piggyback do refactor com test count + baseline
+preserved.
+
+### Gap BOOTSTRAP-1 — `test_bootstrap_is_idempotent` falha em worktree
+
+**Categoria:** bootstrap / test infrastructure
+**Fingerprint:** `sha256(consolidate-within-module:bootstrap-test-worktree:dotgit-file-vs-dir)`
+**Status:** deferred (v1.2-dev+), pre-existing — surfaced 2026-06-03
+
+`tests/integration/test_bootstrap_is_idempotent` e scripts em
+`.claude/bootstrap.sh` + hooks assumem que `.git` é um **diretório** (não
+um arquivo). Em Claude Code worktrees (`git worktree add`), `.git` é um
+arquivo apontando pro `gitdir` do parent — o que faz `[ -d .git ]`
+falhar e os scripts tentarem reinstalar symlinks num path inexistente.
+Não bloqueia ship de feature em worktree porque o gate principal
+(pytest + forge verify rodam normal), mas degrada smoke-checklist
+quando smoke é executado dentro de worktree. Fix proposto: detectar
+worktree via `git rev-parse --git-dir` e resolver gitdir real antes de
+fazer symlink. Onde: `.claude/bootstrap.sh` +
+`tests/integration/test_bootstrap_is_idempotent.py` +
+`.claude/rules/SMOKE-CHECKLIST.md § Check 1`.
 
 ## v1.2 follow-ups (power-review PR #2 — defer-with-reason)
 

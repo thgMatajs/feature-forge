@@ -1,0 +1,12 @@
+{
+  "engine/parser/lexer.py": [
+    {
+      "type": "function",
+      "name": "tokenize",
+      "lineno": 12,
+      "endline": 78,
+      "complexity": 13,
+      "rank": "C"
+    }
+  ]
+}

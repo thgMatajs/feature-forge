@@ -54,6 +54,45 @@ source-ref: "{{source_ref_or_none}}"
 - screenshots: {{screenshots_count}} file(s) — {{screenshots_relative_paths_csv}}
 - description origin: {{description_origin}}
 
+<!--
+  EXTENSION-CONTEXT-BLOCK (Gap 9 — extends-feature mechanic)
+  ----------------------------------------------------------
+  Renderize a seção `## Extension context` ABAIXO SOMENTE quando
+  hypothesis.yaml.extends-feature != null (feature derivada de uma pai
+  já em estado `done`).
+
+  Convenção de renderização:
+    - Se extends-feature == null → REMOVA o bloco inteiro entre os
+      marcadores `EXTENSION-CONTEXT-BLOCK BEGIN` e
+      `EXTENSION-CONTEXT-BLOCK END` (incluindo os marcadores). Feature
+      standalone fica exatamente como antes do Gap 9 — sem ruído.
+    - Se extends-feature != null → MANTENHA a seção, preencha os 4
+      campos abaixo, e remova apenas os marcadores `BEGIN/END`.
+
+  Campos:
+    · Parent feature  — slug da pai (igual a hypothesis.yaml.extends-feature)
+    · Parent shipped  — valor de .claude/memory/L1/{parent}/status.json.shipped-at
+    · Scope of this extension — delta intent declarado pelo user (1-2 frases)
+    · Reuse from parent — lista explícita do que herdamos (contracts, screens,
+                          helpers, naming conventions). Sem invenção.
+    · Out-of-scope vs parent — non-goals explícitos pra evitar re-extension
+                                redundante. Sem invenção.
+
+  Voz: mentor calmo. Sem emoji. Sem marketing. Conciso.
+  feature-intake-agent: instruções de preenchimento em
+  `agents/feature-intake-agent.md §Extension block (Gap 9)`.
+-->
+
+<!-- EXTENSION-CONTEXT-BLOCK BEGIN -->
+## Extension context
+
+- Parent feature: {{parent_feature_slug}}
+- Parent shipped: {{parent_shipped_at_iso8601}}
+- Scope of this extension: {{extension_scope_delta}}
+- Reuse from parent: {{reuse_from_parent_csv}}
+- Out-of-scope vs parent: {{out_of_scope_vs_parent_csv}}
+<!-- EXTENSION-CONTEXT-BLOCK END -->
+
 ## What this feature delivers
 
 <!--

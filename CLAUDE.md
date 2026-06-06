@@ -2,7 +2,7 @@
 
 > Guia operacional pra Claude Code mantendo este repo.
 > Voz: mentor calmo — firme nos gates, didático nos exemplos.
-> Última atualização: 2026-06-01 · Versão do projeto: v1.1.0
+> Última atualização: 2026-06-03 · Versão do projeto: v1.2.0 + Gap 9 cumulativo
 
 ## Identidade rápida
 
@@ -68,10 +68,10 @@ Detalhe: `.claude/rules/decisions.md`.
 
 ### 2. Verde antes de "pronto"
 
-`pytest` (367 tests baseline) verde + `forge verify` verde + validators
-sem hard fail. Sem isso, não dizemos "implementado". Subagente que
-implementa SEMPRE recebe `superpowers:verification-before-completion`
-como hard gate no context-pack.
+`pytest` (637 tests baseline + 12 skipped, v1.2.0 + Gap 9) verde + `forge
+verify` verde + validators sem hard fail. Sem isso, não dizemos
+"implementado". Subagente que implementa SEMPRE recebe
+`superpowers:verification-before-completion` como hard gate no context-pack.
 
 Detalhe: `.claude/rules/testing.md`.
 
@@ -163,7 +163,7 @@ Detalhe: `.claude/rules/superpowers.md`.
 ## Anatomia rápida
 
 - `engine/` — Python core, 13 commands handlers + foundation + state + integrations
-- `validators/` — 14 validators + helpers (tests obrigatórios em `tests/validators/`)
+- `validators/` — 15 validators + helpers (tests obrigatórios em `tests/validators/`)
 - `templates/`, `cards/`, `presets/` — composição declarativa, YAML/MD
 - `docs/design/` — fonte de verdade pra "por que" (quase tudo load-bearing)
 - `hooks/` — git + Claude Code hooks que `forge init` instala em **projetos consumidores** (diferente de `.claude/hooks/` que é deste repo)
@@ -175,9 +175,9 @@ Mapa completo: `.claude/rules/project-anatomy.md`.
 ## Comandos úteis
 
 ```bash
-pytest                              # 367 tests, default lane
-pytest -m "not integration"         # rápido
-forge verify                        # validators cascade
+pytest                              # 637 tests, default lane (+12 skipped e2e)
+pytest -m "not integration"         # rápido (rapid lane)
+forge verify                        # validators cascade (15 validators)
 forge doctor                        # health check 12 categorias
 ./bin/forge --version               # smoke
 ```

@@ -27,6 +27,7 @@ chosen conversationally at the prompt (decision 10: no flags).
 from __future__ import annotations
 
 import os
+import shutil
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -138,6 +139,7 @@ def run(argv: list[str]) -> int:
                 _check_i18n(project_root, config),
                 _check_bak_overdue(project_root, config),
                 _check_forge_version_lock(project_root),
+                _check_cc_gate_tools(project_root),
             ]
         )
 
@@ -647,6 +649,44 @@ def _check_forge_version_lock(project_root: Path) -> _CategoryReport:
             )
         )
     return _CategoryReport("Forge version lock", checks)
+
+
+def _check_cc_gate_tools(project_root: Path) -> _CategoryReport:
+    """Report availability of the 4 native CC tools used by check_cyclomatic_complexity.
+
+    Tools are NOT installed by forge (Decision 22 + spec §3 trust-but-verify).
+    Doctor surfaces status + install hint per tool. Missing tool → WARN, never
+    FAIL — dev workflows que não tocam toda linguagem não precisam de todas
+    as ferramentas. Quem realmente precisa descobre via cc-gate em
+    `forge verify`.
+
+    Lookup é PATH-only (`shutil.which`). Versão da ferramenta NÃO é capturada
+    aqui — chamadas a `<tool> --version` variam por binário e o objetivo desta
+    categoria é availability, não compatibilidade. Versão entra em escopo só
+    se algum bug específico ligar a determinada release.
+    """
+    del project_root  # not needed — tool lookup is PATH-only
+    tools = [
+        ("detekt", "brew install detekt    # or: sdk install detekt"),
+        ("swiftlint", "brew install swiftlint"),
+        ("eslint", "npm install -g eslint    # or per-project: npm i -D eslint"),
+        ("radon", "pip install radon"),
+    ]
+    checks: list[_Check] = []
+    for name, install_hint in tools:
+        path = shutil.which(name)
+        if path:
+            checks.append(_Check(name, _STATUS_OK, f"found at {path}"))
+        else:
+            checks.append(
+                _Check(
+                    name,
+                    _STATUS_WARN,
+                    "não encontrado no PATH",
+                    f"install: {install_hint}",
+                )
+            )
+    return _CategoryReport("cc-gate-tools", checks)
 
 
 # ── Rendering ────────────────────────────────────────────────────────────────
