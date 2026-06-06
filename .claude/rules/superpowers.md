@@ -35,6 +35,17 @@ Quando padrão emergir e justificar, entrar via:
 2. Brainstorm de revisita
 3. Update neste rule + CLAUDE.md superpowers map
 
+## Extensão local: plan-auditor
+
+`plan-auditor` não é skill do superpowers — é rule deste projeto
+(`.claude/rules/plan-auditor.md`). Estende o terminal-state do
+`superpowers:writing-plans`: antes do "Execution Handoff" do SKILL.md,
+o orquestrador OBRIGATORIAMENTE dispatcha `gsd-code-reviewer` com o
+prompt do auditor. Critical findings bloqueiam o handoff até fix-dispatch
+resolver.
+
+Detalhe completo: `.claude/rules/plan-auditor.md`.
+
 ## Hierarquia de prioridade (per superpowers contract)
 
 ```

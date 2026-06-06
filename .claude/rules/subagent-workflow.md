@@ -14,6 +14,7 @@ Como despachar bem. Mandamento 0 diz QUE despacha; este doc diz COMO.
 | Pesquisa multi-step | `general-purpose` | catch-all sem disciplina específica |
 | Edição de docs (sync, handoff, README) | `gsd-doc-writer` ou `general-purpose` | gsd-doc-writer se houver doc_assignment block; senão general |
 | Plano de feature/refactor | `gsd-planner` (via skill writing-plans) | writing-plans skill é o caminho canônico — não dispatch direto |
+| Auditar plano pós writing-plans | `gsd-code-reviewer` | prompt em `.claude/rules/plan-auditor.md`; produz `PLAN-REVIEW.md` com 12 checks classificados |
 
 ## Despacho em paralelo
 
@@ -73,6 +74,16 @@ Protocolo canônico após implementação:
      re-dispatch com info nova
 4. Após fix-dispatch: re-review SE mudanças substanciais; senão segue
 5. Verification SEMPRE rola depois (mesmo sem findings)
+
+## Loop pós-plano (plan-auditor)
+
+Para o loop de auditoria pré-execution-handoff, ver
+`.claude/rules/plan-auditor.md` §Re-audit. Diferenças chave do loop
+pós-impl acima:
+- Fixer atua no PLANO (não no código)
+- Cap de 3 rodadas
+- Rodada 4 → verdict `ESCALATE` pro orquestrador apresentar 3-caminhos
+  ao user
 
 ## Trust-but-verify
 

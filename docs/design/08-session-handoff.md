@@ -3,8 +3,8 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-05 (v1.2.0 + Gap 9 + CC gate v1 + PRD docs/product/)
-**Estado:** Duas linhas de trabalho convivem no Unreleased:
+**Última atualização:** 2026-06-05 (v1.2.0 + Gap 9 + CC gate v1 + PRD docs/product/ + plan-auditor PR #6)
+**Estado:** Três linhas de trabalho convivem no Unreleased:
 
 - **(1) CC gate v1 — em main** (PR #4 merged 2026-06-05) — `check_cyclomatic_complexity`
   multi-language (Kotlin/Swift/TS/Python) dispatcha pra Detekt/SwiftLint/
@@ -30,7 +30,7 @@
   + 17 skipped. Sem revisitar decisões locked — Decisions 10/19/22/23
   preservadas.
 
-- **(2) PRD docs/product/ entregue** (esta PR #5) — 4 docs (~2205 LOC):
+- **(2) PRD docs/product/ entregue** (PR #5) — 4 docs (~2205 LOC):
   `00-prd.md` (583 LOC, 13 seções: Por-quê / Vision / Princípios /
   Escopo IN-OUT / Personas-resumo / Scenarios-resumo / Roadmap-resumo /
   Success criteria / Anti-personas / Cross-refs docs técnicos / Glossary
@@ -49,6 +49,8 @@
   (load-bearing). Spec: `docs/superpowers/specs/2026-06-04-prd-design.md`
   (commit `2e1a266`). Plan: `docs/superpowers/plans/2026-06-04-product-docs.md`
   (commit `4134744`).
+
+- **(3) Plan auditor entregue** (PR #6, esta sessão) — `.claude/rules/plan-auditor.md` define prompt determinístico + 12 checks com severity (2 Critical / 4 High / 3 Medium / 3 Low) pra auditoria pós-`superpowers:writing-plans`. Orquestrador dispatcha `gsd-code-reviewer` com este prompt antes do "Execution Handoff"; Critical findings bloqueiam até fix-dispatch. Output em `.planning/plan-reviews/<plan-slug>-review-r<N>.md` (gitignored). Re-audit cap em 3 rodadas; override inline via `<!-- audit-override: C-XXX — razão -->` no topo do plano. Integração documentada em `CLAUDE.md` §Workflow por verbo, `.claude/rules/superpowers.md`, `.claude/rules/subagent-workflow.md`, `.claude/rules/README.md`. Sync r3 (2026-06-05) fecha 4 findings do power-review externo (PR-001 high + PR-002/PR-003 medium + PR-004 low): verbatim Task 1 ≡ rule vivo, spec back-portada pós refinements, override dash flex (`-`/`–`/`—`/`--`), meta-finding §"snapshot-vs-vivo" ganha case-1 factual. Spec: `docs/superpowers/specs/2026-06-04-plan-auditor-design.md`. Plan: `docs/superpowers/plans/2026-06-04-plan-auditor.md`.
 
 Anterior (Gap 9 + /resolve-pr-comments cleanup): extends-feature mechanic
 shipado em `feat/gap9-extends-feature` (PR #3 merged 2026-06-05). Pattern

@@ -45,3 +45,6 @@ dist/
 .claude/state/*.json
 .claude/state/*.jsonl
 !.claude/state/.gitkeep
+
+# Plan auditor — review outputs (per-rodada, não versionado)
+.planning/plan-reviews/
