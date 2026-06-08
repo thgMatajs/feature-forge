@@ -4,8 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from engine._sandbox.env import CORE_ALLOWLIST, SENSITIVE_PATTERN
-from engine._sandbox.env import build_safe_env, is_sensitive
+from engine._sandbox.env import (
+    CORE_ALLOWLIST,
+    SENSITIVE_PATTERN,
+    build_safe_env,
+    inspect_dropped,
+    is_sensitive,
+)
 
 
 def test_core_allowlist_is_frozen():
@@ -128,9 +133,6 @@ def test_build_safe_env_empty_extras_default(monkeypatch):
     assert env == {"PATH": "/bin"}
 
 
-from engine._sandbox.env import inspect_dropped
-
-
 def test_inspect_dropped_returns_sorted_list(monkeypatch):
     """Output determinístico (lista ordenada alfabeticamente)."""
     # Limpa para isolar
@@ -151,6 +153,9 @@ def test_inspect_dropped_returns_sorted_list(monkeypatch):
 
 def test_inspect_dropped_respects_extras(monkeypatch):
     """Vars listadas em extras não aparecem em dropped."""
+    # Limpa para isolar (symmetry com test_inspect_dropped_returns_sorted_list)
+    monkeypatch.delenv("A_VAR", raising=False)
+    monkeypatch.delenv("B_VAR", raising=False)
     monkeypatch.setenv("A_VAR", "a")
     monkeypatch.setenv("B_VAR", "b")
 
