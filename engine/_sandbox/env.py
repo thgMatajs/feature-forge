@@ -31,3 +31,8 @@ CORE_ALLOWLIST: frozenset[str] = frozenset({
 SENSITIVE_PATTERN: re.Pattern = re.compile(
     r"(?i).*(TOKEN|SECRET|PASSWORD|AUTH|CREDENTIAL|API[_-]?KEY|PRIVATE[_-]?KEY).*"
 )
+
+
+def is_sensitive(name: str) -> bool:
+    """Testa nome contra SENSITIVE_PATTERN (case-insensitive)."""
+    return SENSITIVE_PATTERN.match(name) is not None
