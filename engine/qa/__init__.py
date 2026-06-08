@@ -34,10 +34,10 @@ from __future__ import annotations
 import json
 import signal
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from engine.qa._common import utc_iso_z as _utc_iso_z
 from engine.qa.checkpoint import (
     Checkpoint,
     CheckpointCorruptError,
@@ -67,15 +67,9 @@ from engine.qa.synthesis import (
     synthesize,
 )
 
-
-def _utc_iso_z() -> str:
-    """Timestamp ISO 8601 UTC com sufixo ``Z`` (sem offset numerico).
-
-    Pattern espelha helpers de ``engine.evolve._now_utc_iso``,
-    ``engine.memory.l1._now`` etc. Centralizado aqui pra evitar drift
-    futuro: qa-report.json exige formato ``Z``-suffixed (§6.1 spec).
-    """
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+# Alias local pra preservar uso interno (`_utc_iso_z()`) sem espalhar a
+# importacao publica em cada call-site. O helper canonico vive em
+# engine.qa._common pra evitar duplicacao com checkpoint.py (M-4).
 
 
 __all__ = ["run_qa"]
@@ -162,25 +156,45 @@ def run_qa(
         try:
             resumed_checkpoint = read_checkpoint(resumable_dir)
         except CheckpointCorruptError as exc:
+            # Template canonico de Disciplina #1 (3-caminhos): "O que
+            # falhou / Onde / Por que importa / Tres caminhos / Sem
+            # auto-fix". Veja .claude/rules/disciplines.md §1 e
+            # docs/design/07-discipline.md §1.
             print(
-                f"⚠ Checkpoint encontrado mas invalido em {exc.path}.\n\n"
-                f"  Motivo: {exc.reason}\n\n"
-                f"  Tres caminhos pra continuar:\n"
-                f"    1) Ignorar checkpoint e comecar nova run — "
-                f"apague {exc.path.parent} e re-invoque\n"
-                f"    2) Inspecionar manualmente — `cat {exc.path}` "
-                f"pra entender o que sobrou\n"
-                f"    3) Restaurar do .bak se existir — "
-                f"`ls {exc.path}.bak`\n\n"
-                f"  Sem auto-fix aqui — escolha humana.",
+                f"\U0001f6d1 Checkpoint corrupto\n\n"
+                f"O que falhou:\n"
+                f"  {exc.reason}\n\n"
+                f"Onde:\n"
+                f"  {exc.path}\n\n"
+                f"Por que importa:\n"
+                f"  - Sem checkpoint valido, resume nao consegue retomar\n"
+                f"  - A run anterior pode ter findings parciais ainda utilizaveis\n"
+                f"  - Decisao 27: pause/resume e auto-resumable; corrupt quebra contrato\n\n"
+                f"Tres caminhos pra resolver:\n\n"
+                f"  1) Ignorar checkpoint e comecar nova run\n"
+                f"     apague {exc.path.parent} e re-invoque `forge qa {scope.target}`\n\n"
+                f"  2) Inspecionar o arquivo pra entender o que sobrou\n"
+                f"     `cat {exc.path}` - pode revelar findings parciais salvaveis\n\n"
+                f"  3) Apenas o checkpoint corrompeu - preservar findings, descartar marker\n"
+                f"     `rm {exc.path}` mantem findings/*.json e qa-report.json intactos;\n"
+                f"     proxima invocacao cria run nova mas voce ainda tem o registro\n\n"
+                f"Sem auto-fix aqui - escolha humana.",
                 file=sys.stderr,
             )
             return 0
 
     if resumed_checkpoint is not None and resumable_dir is not None:
         # Phase 5 ja completa — checkpoint nao devia existir, defensivo:
-        # apaga + segue pra fresh run.
+        # apaga + segue pra fresh run. Voz mentor calmo: avisa o user
+        # antes de gastar budget de sandbox em re-run nao solicitado
+        # (M-2 do review CONF-004).
         if resumed_checkpoint.last_phase_completed >= 5:
+            print(
+                f"⚠ Checkpoint encontrado em {resumable_dir.name} indica run completa\n"
+                f"  (phase 5 finished) mas verdict ficou pending — provavelmente\n"
+                f"  cleanup falhou. Descartando checkpoint stale e iniciando run nova.",
+                file=sys.stderr,
+            )
             try:
                 (resumable_dir / "checkpoint.json").unlink()
             except FileNotFoundError:
