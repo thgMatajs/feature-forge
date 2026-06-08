@@ -126,3 +126,34 @@ def test_build_safe_env_empty_extras_default(monkeypatch):
     monkeypatch.setenv("RANDOM_VAR", "z")
     env = build_safe_env()
     assert env == {"PATH": "/bin"}
+
+
+from engine._sandbox.env import inspect_dropped
+
+
+def test_inspect_dropped_returns_sorted_list(monkeypatch):
+    """Output determinístico (lista ordenada alfabeticamente)."""
+    # Limpa para isolar
+    for k in ("Z_VAR", "A_VAR", "M_VAR"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("Z_VAR", "z")
+    monkeypatch.setenv("A_VAR", "a")
+    monkeypatch.setenv("M_VAR", "m")
+
+    dropped = inspect_dropped()
+
+    # Pode haver outras vars no env do test runner; só checamos que
+    # estas 3 aparecem ordenadas relativamente entre si.
+    indices = [dropped.index(v) for v in ("A_VAR", "M_VAR", "Z_VAR")]
+    assert indices == sorted(indices)
+    assert dropped == sorted(dropped)
+
+
+def test_inspect_dropped_respects_extras(monkeypatch):
+    """Vars listadas em extras não aparecem em dropped."""
+    monkeypatch.setenv("A_VAR", "a")
+    monkeypatch.setenv("B_VAR", "b")
+
+    dropped = inspect_dropped(extras=["A_VAR"])
+    assert "A_VAR" not in dropped
+    assert "B_VAR" in dropped

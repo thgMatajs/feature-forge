@@ -66,3 +66,13 @@ def _validate_extras(extras: Iterable[str]) -> frozenset[str]:
             )
         out.add(v)
     return frozenset(out)
+
+
+def inspect_dropped(*, extras: Iterable[str] = ()) -> list[str]:
+    """Retorna lista ordenada de vars em os.environ que seriam dropadas.
+
+    Útil pra alert layer pré Phase 3: caller filtra por ``is_sensitive``
+    pra decidir se dispara prompt.
+    """
+    allowed = CORE_ALLOWLIST | _validate_extras(extras)
+    return sorted(k for k in os.environ if k not in allowed)
