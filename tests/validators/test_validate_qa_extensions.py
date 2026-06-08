@@ -523,3 +523,53 @@ def test_docstring_documents_catalog_overlay_error_propagation():
         "docstring deve mencionar propagação de CatalogOverlayError "
         "do _common.load_catalog (IN-03)"
     )
+
+
+# --- QA-11 Wave 2: env-needs schema validation ------------------------------
+
+
+def _card_with_env_needs(env_needs):
+    """Helper: monta card_data mínimo com qa-extensions.env-needs.
+
+    Foco isolado em env-needs — auditors vazio é OK (campo separado).
+    """
+    return {
+        "qa-extensions": {
+            "auditors": [],
+            "env-needs": env_needs,
+        }
+    }
+
+
+def test_env_needs_optional_absent_ok(tmp_path):
+    """Card sem env-needs passa (campo opcional)."""
+    card_data = {"qa-extensions": {"auditors": []}}
+    # No raise:
+    validate_qa_extensions(tmp_path / "card.yaml", card_data)
+
+
+def test_env_needs_list_of_strings_ok(tmp_path):
+    """Lista de strings válida passa."""
+    card_data = _card_with_env_needs(["GITHUB_TOKEN", "JAVA_HOME"])
+    validate_qa_extensions(tmp_path / "card.yaml", card_data)
+
+
+def test_env_needs_non_list_raises(tmp_path):
+    """env-needs não-lista (string, dict, etc.) raise."""
+    card_data = _card_with_env_needs("GITHUB_TOKEN")  # string em vez de lista
+    with pytest.raises(QAExtensionsValidationError, match="env-needs"):
+        validate_qa_extensions(tmp_path / "card.yaml", card_data)
+
+
+def test_env_needs_non_string_item_raises(tmp_path):
+    """env-needs com item não-string (int, None) raise."""
+    card_data = _card_with_env_needs(["GITHUB_TOKEN", 42])
+    with pytest.raises(QAExtensionsValidationError, match="env-needs"):
+        validate_qa_extensions(tmp_path / "card.yaml", card_data)
+
+
+def test_env_needs_empty_string_item_raises(tmp_path):
+    """env-needs com string vazia raise (whitespace é proibido)."""
+    card_data = _card_with_env_needs(["GITHUB_TOKEN", ""])
+    with pytest.raises(QAExtensionsValidationError, match="env-needs"):
+        validate_qa_extensions(tmp_path / "card.yaml", card_data)
