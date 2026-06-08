@@ -36,6 +36,234 @@ from typing import Any, Literal
 from engine.utils.sha256 import normalise_description
 
 
+@dataclass(frozen=True)
+class SandboxResultStub:
+    """Subset estavel do ``SandboxResult`` consumido por
+    ``findings_from_sandbox_results``.
+
+    Evita coupling com ``Fixture`` (que exige ``Path``-typed input/validator)
+    e permite re-hidratar a partir de ``sandbox-results.json`` escrito pelo
+    conductor — onde apenas o nome do fixture e os campos de status sao
+    relevantes pro finding emergente.
+
+    Attributes:
+        fixture_name: identificador do fixture (mapeia pra ``Fixture.name``).
+        status: ``"ok" | "timeout" | "sandbox-breach" | "skipped-budget" |
+            "error"`` (espelha ``SandboxStatus`` em ``engine.qa.sandbox``).
+        exit_code: codigo de saida quando ``status == "ok"``.
+        stdout / stderr: capturas. Vazios sao validos.
+        duration_s: tempo de wall-clock; 0.0 quando subprocess nao chegou
+            a rodar (skipped-budget, breach pre-spawn).
+        error: mensagem livre, populada em ``status == "sandbox-breach" |
+            "error"`` pra carregar contexto humano.
+    """
+
+    fixture_name: str
+    status: str
+    exit_code: int | None = None
+    stdout: str = ""
+    stderr: str = ""
+    duration_s: float = 0.0
+    error: str = ""
+
+
+def hydrate_sandbox_results(
+    raw: list[dict[str, Any]],
+) -> list[SandboxResultStub]:
+    """Converte lista de dicts (sandbox-results.json) em stubs.
+
+    Tolerante a shapes diversos: aceita ``fixture: {name: ...}`` (espelha
+    ``SandboxResult`` serializado) ou ``fixture_name: ...`` (forma flat).
+    Itens nao-dict ou sem nome sao silenciosamente pulados — defesa
+    contra arquivos corrompidos.
+    """
+    if not isinstance(raw, list):
+        return []
+
+    out: list[SandboxResultStub] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+
+        # Resolver nome do fixture
+        name = None
+        fixture_blob = entry.get("fixture")
+        if isinstance(fixture_blob, dict):
+            name = fixture_blob.get("name")
+        if not name:
+            name = entry.get("fixture_name")
+        if not isinstance(name, str) or not name:
+            continue
+
+        status = entry.get("status", "ok")
+        if not isinstance(status, str):
+            status = "error"
+
+        exit_code = entry.get("exit_code")
+        if exit_code is not None and not isinstance(exit_code, int):
+            exit_code = None
+
+        stdout = entry.get("stdout", "")
+        stderr = entry.get("stderr", "")
+        error = entry.get("error", "")
+        try:
+            duration_s = float(entry.get("duration_s", 0.0))
+        except (TypeError, ValueError):
+            duration_s = 0.0
+
+        out.append(
+            SandboxResultStub(
+                fixture_name=name,
+                status=status,
+                exit_code=exit_code,
+                stdout=str(stdout) if stdout is not None else "",
+                stderr=str(stderr) if stderr is not None else "",
+                duration_s=duration_s,
+                error=str(error) if error is not None else "",
+            )
+        )
+    return out
+
+
+def findings_from_sandbox_results(
+    results: list[Any],
+    *,
+    run_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Converte SandboxResult/SandboxResultStub problematicos em findings.
+
+    Spec §5.3:
+      - ``status == "sandbox-breach"`` -> finding severity=critical,
+        vector=sandbox-breach (always BLOCK per §5.4 critical>=1).
+      - ``status == "timeout"`` -> finding severity=medium,
+        vector=sandbox-timeout.
+
+    Status ``ok`` / ``skipped-budget`` / ``error`` nao geram findings
+    automaticos (``error`` pode ser bug do validator nao do sandbox —
+    deixar pro auditor LLM julgar).
+
+    Os findings sao deterministicos: fingerprint canonical-form (Decisao
+    25) garante que re-runs com mesmo breach/timeout dedupam corretamente
+    em Phase 4. Inclui ``evidence.sandbox_result`` populado pra audit
+    trail.
+
+    Args:
+        results: lista de ``SandboxResult`` ou ``SandboxResultStub`` (ou
+            qualquer objeto com atributos ``fixture``-or-``fixture_name``,
+            ``status``, ``error``, ``stdout``, ``stderr``, ``duration_s``,
+            ``exit_code``).
+        run_id: opcional — se fornecido, ID dos findings vira ``qa-<run_id>-
+            <NNNN>`` no formato canonico. Default usa
+            ``sandbox-{breach|timeout}-<fixture_name>-<NNNN>``.
+
+    Returns:
+        Lista de findings dict prontos pra entrar em ``synthesize``. Pode
+        ser vazia (todos os results foram ``ok`` / ``skipped-budget``).
+    """
+    findings: list[dict[str, Any]] = []
+    seq = 0
+    for r in results:
+        # Suporta tanto SandboxResult (com .fixture.name) quanto
+        # SandboxResultStub (com .fixture_name)
+        fixture_name = getattr(r, "fixture_name", None)
+        if not fixture_name:
+            fixture = getattr(r, "fixture", None)
+            fixture_name = getattr(fixture, "name", None) if fixture else None
+        if not fixture_name:
+            fixture_name = "unknown-fixture"
+
+        status = getattr(r, "status", "ok")
+        if status not in ("sandbox-breach", "timeout"):
+            continue
+
+        seq += 1
+        suffix = f"{seq:04d}"
+
+        if status == "sandbox-breach":
+            severity = "critical"
+            vector = "sandbox-breach"
+            title = f"sandbox breach detectado em fixture '{fixture_name}'"
+            description = (
+                f"Validator subprocess violou isolamento do sandbox "
+                f"(Decisao 30) durante execucao do fixture '{fixture_name}'. "
+                f"Erro: {getattr(r, 'error', '') or 'sem mensagem'}"
+            )
+            auditor_reasoning = (
+                "Sandbox detectou tentativa de escape (chdir, path traversal "
+                "ou similar). Critical porque rompe a invariante de "
+                "isolamento — qualquer finding deste validator e suspeito "
+                "ate o breach ser entendido."
+            )
+            evolution_summary = (
+                f"investigar fixture '{fixture_name}' / validator pra "
+                f"entender o vetor de breach"
+            )
+        else:  # timeout
+            severity = "medium"
+            vector = "sandbox-timeout"
+            title = f"timeout em fixture '{fixture_name}'"
+            description = (
+                f"Validator subprocess excedeu agent-timeout-seconds "
+                f"durante execucao do fixture '{fixture_name}'. "
+                f"Duracao observada: {getattr(r, 'duration_s', 0.0):.2f}s."
+            )
+            auditor_reasoning = (
+                "Validator demorou mais que o budget per-validator. Medium "
+                "porque pode ser validator lento (ajustar budget) ou loop "
+                "infinito (bug). User decide via forge evolve."
+            )
+            evolution_summary = (
+                f"investigar se fixture '{fixture_name}' / validator tem "
+                f"loop ou se budget precisa aumentar"
+            )
+
+        if run_id:
+            finding_id = f"qa-{run_id}-{suffix}"
+        else:
+            finding_id = f"sandbox-{vector.split('-')[1]}-{fixture_name}-{suffix}"
+
+        sandbox_result_evidence: dict[str, Any] = {
+            "status": status,
+            "duration_s": float(getattr(r, "duration_s", 0.0)),
+        }
+        exit_code = getattr(r, "exit_code", None)
+        if exit_code is not None:
+            sandbox_result_evidence["exit_code"] = int(exit_code)
+        stdout = getattr(r, "stdout", "")
+        if stdout:
+            sandbox_result_evidence["stdout"] = str(stdout)
+        stderr = getattr(r, "stderr", "")
+        if stderr:
+            sandbox_result_evidence["stderr"] = str(stderr)
+        err = getattr(r, "error", "")
+        if err:
+            sandbox_result_evidence["error"] = str(err)
+
+        finding = {
+            "id": finding_id,
+            "vector": vector,
+            "severity": severity,
+            "title": title,
+            "description": description,
+            "scope": {"files": [f"<sandbox>/{fixture_name}"]},
+            "evidence": {
+                "auditor": "qa-sandbox",
+                "auditor_reasoning": auditor_reasoning,
+                "sandbox_result": sandbox_result_evidence,
+            },
+            "proposed_evolution": {
+                "type": f"qa-finding-{vector}",
+                "summary": evolution_summary,
+                "actionable": severity in ("critical", "high", "medium"),
+            },
+        }
+        # Fingerprint canonical-form (Decisao 25) deterministico
+        finding["fingerprint"] = canonical_fingerprint(finding)
+        findings.append(finding)
+
+    return findings
+
+
 Severity = Literal["critical", "high", "medium", "low", "info"]
 Verdict = Literal["BLOCK", "FLAG", "PASS"]
 
