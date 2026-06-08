@@ -568,8 +568,9 @@ def test_env_needs_non_string_item_raises(tmp_path):
         validate_qa_extensions(tmp_path / "card.yaml", card_data)
 
 
-def test_env_needs_empty_string_item_raises(tmp_path):
-    """env-needs com string vazia raise (whitespace é proibido)."""
-    card_data = _card_with_env_needs(["GITHUB_TOKEN", ""])
+@pytest.mark.parametrize("bad_item", ["", "GITHUB TOKEN", " LEADING", "TRAILING ", "MIXED VAR"])
+def test_env_needs_empty_or_whitespace_item_raises(tmp_path, bad_item):
+    """env-needs com string vazia ou contendo whitespace raise."""
+    card_data = _card_with_env_needs(["GITHUB_TOKEN", bad_item])
     with pytest.raises(QAExtensionsValidationError, match="env-needs"):
         validate_qa_extensions(tmp_path / "card.yaml", card_data)
