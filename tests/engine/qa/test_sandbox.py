@@ -21,6 +21,7 @@ de produto — sandbox testa subprocess dispatch puro.
 
 from __future__ import annotations
 
+import os
 import textwrap
 from pathlib import Path
 
@@ -30,6 +31,7 @@ from engine.qa.sandbox import (
     Fixture,
     SandboxBreachError,
     SandboxResult,
+    _hardened_env,
     run_sandbox,
 )
 
@@ -455,9 +457,6 @@ def test_forge_qa_sandbox_marker_present_in_env(tmp_path: Path) -> None:
     )
 
 
-from engine.qa.sandbox import _hardened_env
-
-
 def test_hardened_env_delegates_to_build_safe_env(tmp_path, monkeypatch):
     """_hardened_env constrói env a partir de build_safe_env (não dict(os.environ))."""
     # Set var sensitive no pai — não deve aparecer no env retornado
@@ -473,16 +472,13 @@ def test_hardened_env_delegates_to_build_safe_env(tmp_path, monkeypatch):
 def test_hardened_env_preserves_pythonpath_guard_prepend(tmp_path, monkeypatch):
     """guard_dir é prepended ao PYTHONPATH existente."""
     monkeypatch.setenv("PYTHONPATH", "/existing/path")
-    # PYTHONPATH não está em CORE_ALLOWLIST — mas _hardened_env sobrescreve
-    # com guard_dir + existing (lendo de env já reduzido). Como build_safe_env
-    # não inclui PYTHONPATH, a "existing" será vista via os.environ direto pela
-    # impl de _hardened_env. Garantimos que o resultado tem guard_dir primeiro.
+    # guard_dir prepended; existing /existing/path preserved após separator
     guard_dir = tmp_path / "guard"
     guard_dir.mkdir()
 
     env = _hardened_env(guard_dir)
 
-    assert env["PYTHONPATH"].startswith(str(guard_dir))
+    assert env["PYTHONPATH"] == f"{guard_dir}{os.pathsep}/existing/path"
 
 
 def test_hardened_env_preserves_forge_qa_sandbox_marker(tmp_path):
