@@ -42,6 +42,11 @@ if TYPE_CHECKING:
     from validators._common import CapabilityCatalog  # noqa: F401
 
 from engine import __version__ as FORGE_VERSION
+from engine.cards.grant import (
+    GrantDecision,
+    UserAbortError,
+    evaluate_sensitive_grants,
+)
 from engine.cards.loader import load_all_cards, CardManifest
 from engine.cards.merger import merge_contributions
 from engine.cards.resolver import resolve
@@ -1201,6 +1206,38 @@ def _run_pipeline(project_root: Path) -> int:
         )
     )
 
+    # ── Step 7.7 — Grant flow pra cards com sensitive env-needs (QA-11) ─────
+    # Pergunta 3-caminhos (grant/deny/abort) por var sensitive declarada em
+    # qa-extensions. Dedup cross-cards (var perguntada UMA vez). Decisão é
+    # aplicada: cards com var denied saem de `activated`; vars granted são
+    # persistidas em workflow-config.qa.sensitive-env-grants no Step 12.
+    #
+    # No primeiro init não há grants prévios (workflow-config ainda não
+    # existe), então passamos dict vazio — evaluate só lê
+    # `qa.sensitive-env-grants` que defaulta a [].
+    try:
+        grant_decision: GrantDecision = evaluate_sensitive_grants(activated, {})
+    except UserAbortError as exc:
+        renderer.write(
+            mentor_calmo.pause_message(
+                resume_command=f"forge init  # após reconciliar grants — {exc}"
+            )
+        )
+        return 0  # aborta init sem persistir workflow-config
+
+    # Aplica decisão: remove cards denied de `activated` (persist final
+    # acontece em Step 12 via _build_workflow_config; new_grants_to_persist
+    # é injetado em config['qa']['sensitive-env-grants'] logo depois).
+    if grant_decision.denied_cards:
+        activated = [c for c in activated if c.name not in grant_decision.denied_cards]
+        renderer.write(
+            renderer.colored(
+                f"  ✓ {len(grant_decision.denied_cards)} card(s) removido(s) "
+                f"por var sensitive denied: {', '.join(grant_decision.denied_cards)}",
+                "yellow",
+            )
+        )
+
     checkpoint.step = "step-8-merge"
     checkpoint.at = _utc_now_iso()
     _save_checkpoint(checkpoint)
@@ -1348,6 +1385,16 @@ def _run_pipeline(project_root: Path) -> int:
         qa_enabled=qa_enabled,
         qa_auto_run=qa_auto_run,
     )
+
+    # QA-11: persist sensitive-env-grants decididos no Step 7.7
+    if grant_decision.new_grants_to_persist:
+        qa_cfg = config.setdefault("qa", {})
+        existing = list(qa_cfg.get("sensitive-env-grants", []))
+        for var in grant_decision.new_grants_to_persist:
+            if var not in existing:
+                existing.append(var)
+        qa_cfg["sensitive-env-grants"] = existing
+
     write_yaml(workflow_config_path(project_root), config, atomic=True)
 
     checkpoint.step = "step-12.5-version-lock"
