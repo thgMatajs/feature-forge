@@ -80,7 +80,12 @@ def render_config_with_placeholders(
     leak silencioso seria minor, mas o gate atual já cuida disso bem.
     """
     raw = template_path.read_text(encoding="utf-8")
-    for placeholder, value in placeholders.items():
+    # B1 — ordena por len(key) desc pra evitar prefix-collision: substituir
+    # `__CC` antes de `__CC_THRESHOLD__` corromperia o longo. Sort estável
+    # mantém ordem relativa entre chaves de mesmo tamanho.
+    for placeholder, value in sorted(
+        placeholders.items(), key=lambda kv: len(kv[0]), reverse=True
+    ):
         raw = raw.replace(placeholder, value)
     tmp = tempfile.NamedTemporaryFile(
         mode="w",
@@ -88,8 +93,22 @@ def render_config_with_placeholders(
         delete=False,
         encoding="utf-8",
     )
-    tmp.write(raw)
-    tmp.close()
+    # B2 — write/close pode raise (disco cheio, permission). Sem cleanup, o
+    # tempfile vira leak silencioso. Try/except + unlink + re-raise preserva
+    # a exceção original (BaseException cobre KeyboardInterrupt também).
+    try:
+        tmp.write(raw)
+        tmp.close()
+    except BaseException:
+        try:
+            tmp.close()
+        except Exception:
+            pass
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+        raise
     return tmp.name
 
 
@@ -279,7 +298,11 @@ def parse_overrides(
                 continue
             try:
                 entry[group_name] = conv(entry[group_name])
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, KeyError):
+                # B4 — KeyError cobre conversor que tenta acessar campo
+                # ausente (ex.: pattern reescrito sem o group esperado).
+                # Match the docstring promise: skip silencioso pra falhas
+                # de conversor.
                 skip = True
                 break
         if skip:
@@ -341,7 +364,24 @@ def apply_overrides(
     Warnings (linhas malformadas detectadas por ``parse_overrides``) são
     propagadas pro caller usar no result final — preserva o contrato H4
     do CC gate (warning emitido mesmo quando o gate passa).
+
+    Raises:
+        ValueError: Se ``override_key_fields`` contém nomes que não existem
+            como named groups em ``key_pattern``. Validação up-front evita
+            KeyError tardio dentro do loop de cover-tuple.
     """
+    # B3 — valida up-front que cada override_key_field corresponde a um
+    # named group existente no key_pattern. Antes, mismatch viraria KeyError
+    # cripítico no comprehension `tuple(o[f] for f in override_key_fields)`.
+    compiled = re.compile(key_pattern)
+    missing = set(override_key_fields) - set(compiled.groupindex)
+    if missing:
+        raise ValueError(
+            f"apply_overrides: override_key_fields {sorted(missing)} "
+            f"não existem em key_pattern (named groups: "
+            f"{sorted(compiled.groupindex)})"
+        )
+
     overrides, warnings = parse_overrides(
         commit_body,
         prefix=prefix,
