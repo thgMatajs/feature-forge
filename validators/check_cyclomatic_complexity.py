@@ -46,10 +46,8 @@ from _diff import (
 from _gate_infra import (
     DispatchResult,
     apply_overrides as _gate_apply_overrides,
-    check_tool_available,  # noqa: F401  — re-exported for back-compat in tests
     dispatch_native_tool,
     parse_overrides as _gate_parse_overrides,
-    render_config_with_placeholders,  # noqa: F401  — re-exported (cmd_builders use it indirectly via dispatch_native_tool)
 )
 
 sys.path.insert(0, str(Path(__file__).parent.parent))

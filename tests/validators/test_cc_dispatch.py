@@ -40,14 +40,14 @@ def test_check_tool_available_returns_true_when_on_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(_gate_infra.shutil, "which", lambda name: "/usr/local/bin/" + name)
-    assert v.check_tool_available("detekt") is True
+    assert _gate_infra.check_tool_available("detekt") is True
 
 
 def test_check_tool_available_returns_false_when_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(_gate_infra.shutil, "which", lambda name: None)
-    assert v.check_tool_available("swiftlint") is False
+    assert _gate_infra.check_tool_available("swiftlint") is False
 
 
 def test_dispatch_tool_kotlin_builds_correct_command(
