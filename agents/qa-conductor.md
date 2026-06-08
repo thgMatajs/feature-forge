@@ -87,6 +87,48 @@ mesmo overlay. Sem extensão = só os 4 core.
 Você termina Phase 2 e re-invoca `engine.qa.run_qa(run_id, resume="phase-3")`.
 Sandbox roda subprocess hardened contra cada fixture com `executable: true`.
 
+**Após Phase 3 — escreva `sandbox-results.json`** (obrigatório pra
+ativar findings determinísticos):
+
+Após `run_qa` retornar o controle pós-sandbox, você serializa a lista
+de `SandboxResult` em `.planning/qa/<slug>/<run-id>/sandbox-results.json`.
+Shape esperado (lista de dicts):
+
+```json
+[
+  {
+    "fixture_name": "chaos-null-token",
+    "status": "ok",
+    "exit_code": 0,
+    "duration_s": 0.42
+  },
+  {
+    "fixture_name": "validator-claim-traversal",
+    "status": "sandbox-breach",
+    "exit_code": 1,
+    "stderr": "SandboxBreachError: path /etc/passwd outside sandbox",
+    "duration_s": 0.11
+  },
+  {
+    "fixture_name": "chaos-slow-loop",
+    "status": "timeout",
+    "exit_code": null,
+    "duration_s": 15.0
+  }
+]
+```
+
+Status reconhecidos: `ok | timeout | sandbox-breach | skipped-budget | error`.
+Campos opcionais: `exit_code`, `stdout`, `stderr`, `duration_s`, `error`.
+
+**Por que importa:** Phase 4 synthesis usa este arquivo pra derivar
+findings determinísticos pra `status=sandbox-breach` (critical, always
+BLOCK) e `status=timeout` (medium). Sem este arquivo, esses findings
+ficam dependentes do synthesizer LLM inferir do stderr — fragile. Com
+ele, `synthesis.findings_from_sandbox_results` emite os findings em
+contrato deterministic, independente do auditor LLM ter chamado
+atenção pra eles.
+
 **Phase 4 — Synthesis** (você dispatcha após Phase 3 completar):
 
 - `Agent[qa-synthesizer]` → consome `findings/*.json` (4 core + N extension)
