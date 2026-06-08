@@ -23,6 +23,7 @@ Voz mentor calmo nos asserts — falha clara, sem alarmismo.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -120,6 +121,42 @@ def test_forge_qa_cli_invokes_handler(tmp_path):
         f"stdout: {rc.stdout}\nstderr: {rc.stderr}"
     )
 
+    # CONF-007: valida qa-report.json on-disk per SDD §15.4.
+    # Phase 0 deve ter escrito o skeleton com verdict=pending; quando
+    # findings existem, Phase 4 finaliza com PASS/FLAG/BLOCK.
+    qa_runs_root = tmp_path / ".planning" / "qa"
+    reports = list(qa_runs_root.rglob("qa-report.json"))
+    assert len(reports) >= 1, (
+        f"qa-report.json nao encontrado em {qa_runs_root}.\n"
+        f"stdout: {rc.stdout}\nstderr: {rc.stderr}"
+    )
+    report = json.loads(reports[0].read_text(encoding="utf-8"))
+    assert "schema_version" in report, (
+        f"qa-report.json sem schema_version: {report}"
+    )
+    assert "run" in report, f"qa-report.json sem envelope 'run': {report}"
+    assert "id" in report["run"], (
+        f"qa-report.json sem run.id (canonico per qa-report.md): {report}"
+    )
+    assert report["verdict"] in {"pending", "PASS", "FLAG", "BLOCK"}, (
+        f"verdict invalido: {report.get('verdict')}"
+    )
+    assert "scope" in report["run"], (
+        f"qa-report.json sem run.scope: {report}"
+    )
+    assert "type" in report["run"]["scope"]
+    assert "started_at" in report["run"]
+    assert report["run"]["started_at"].endswith("Z"), (
+        f"started_at precisa terminar com Z (UTC): "
+        f"{report['run']['started_at']}"
+    )
+    assert "config_snapshot" in report["run"], (
+        f"qa-report.json sem run.config_snapshot (audit trail): {report}"
+    )
+    assert isinstance(report.get("findings"), list), (
+        f"findings deve ser list: {type(report.get('findings'))}"
+    )
+
 
 @pytest.mark.e2e
 @pytest.mark.skipif(not _RUN_E2E, reason="set RUN_E2E=1 to run e2e tests")
@@ -150,4 +187,18 @@ def test_forge_qa_disabled_returns_clean(tmp_path):
         "stderr nao contem 'desabilitado' — mensagem do opt-out path "
         "regrediu ou nao foi emitida.\n"
         f"stderr: {rc.stderr}"
+    )
+
+    # CONF-007: qa.enabled=false NAO deve criar qa-report.json.
+    # Phase 0 nem roda quando desabilitado — nenhum artefato de run e
+    # persistido.
+    qa_runs_root = tmp_path / ".planning" / "qa"
+    reports = (
+        list(qa_runs_root.rglob("qa-report.json"))
+        if qa_runs_root.exists()
+        else []
+    )
+    assert reports == [], (
+        f"qa-report.json nao deveria existir com qa.enabled=false, "
+        f"mas achei: {reports}"
     )
