@@ -3,9 +3,11 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-05 (v1.2-dev — Phase 0 gate-infra extraction)
-**Estado:** branch `worktree-feat+gate-infra-extract` consolida Phase 0 do
-roadmap de quality-gates expansion — refactor estrito (no-behavior-change)
+**Última atualização:** 2026-06-05 (v1.2-dev — R1.1 secrets gate)
+**Estado:** v1.1 feito + Phase 0 mergeado; v1.2-dev R1.1 (`check_secrets`)
+shipping na mesma branch `worktree-feat+gate-infra-extract`, que consolida
+Phase 0 do roadmap de quality-gates expansion — refactor estrito
+(no-behavior-change)
 extrai infra reusável do CC gate em `validators/_gate_infra.py` +
 `validators/_diff.py` + rename de helpers em `validators/_common.py`. CC
 validator caiu de ~1127 LOC para ~840 LOC compondo helpers públicos.
@@ -110,7 +112,7 @@ Depois siga as instruções. Estou na Fase {N}.
 
 ```
 ~400 arquivos · ~52,500 linhas · 27 decisões locked + 7 direcionais (Fase 3.5) + 1 ADR append-only (Decisão 28, Gap 5)
-v1.2.0 + Gap 9 + PR #4 CC gate cumulativo: ~700 tests collected (688 passed + 17 skipped pós PR #4 review fixes; Gap 9 baseline 637 + CC gate +~63) · 17 graph queries · 16 proposal kinds · 15 validators (inclui check_cyclomatic_complexity + validate_extension_feature) · 22 cards canon (+ overlay local)
+v1.2.0 + Gap 9 + PR #4 CC gate + Phase 0 + R1.1 secrets cumulativo: ~730 tests collected (Gap 9 baseline 637 + CC gate +~63 + Phase 0 -1 justificado + secrets gate +~30) · 17 graph queries · 16 proposal kinds · 16 validators (inclui check_cyclomatic_complexity + check_secrets + validate_extension_feature) · 22 cards canon (+ overlay local)
 ```
 
 | Categoria | Status |
@@ -139,6 +141,7 @@ v1.2.0 + Gap 9 + PR #4 CC gate cumulativo: ~700 tests collected (688 passed + 17
 | v1.2 — Gap 9 (extends-feature mechanic) | ✅ shipped 2026-06-03 — re-escopado: extends-feature pattern leve product-derived (sem cards canon novos, sem mudança em platforms enum, sem upgrade de inventory schema); 4º caminho "Estender" em `forge plan` Cena 1; validator EXT-001..004; discipline §10 formaliza semantics; `shipped-at` writer em transição state=done. Multi-target watchOS/Wear/TV movido pra out-of-scope permanente. **+42 tests cumulativo (37 Gap 9 + 5 fix loop); total 637 passing + 12 skipped**. Detalhe em `CHANGELOG.md`. |
 | v1.2-dev — CC gate (PR #4) | 🔄 em review — `check_cyclomatic_complexity` multi-language (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon); threshold per card override > workflow-config > defaults; 3-caminhos on-fail (refactor / override-justify / split-task); doctor categoria 13ª `cc-gate-tools`. 13 commits + ~63 tests novos (suite 630 → 693 collected pré-merge; 682 passed + 17 skipped pós-refinements; 688 passed + 17 skipped pós PR #4 review fixes D-006/D-008/D-009/F-006). |
 | v1.2-dev — Phase 0 (gate-infra-extract) | ✅ extracted (`_gate_infra.py` + `_diff.py`) 2026-06-05 — refactor estrito sem behavior change: 7 commits extraem `DispatchResult`/`check_tool_available`/`dispatch_native_tool`/`render_config_with_placeholders`/`parse_overrides`/`apply_overrides` em `_gate_infra.py` + `DiffHunk`/`classify_range_against_hunks`/`extract_diff_hunks`/`git_staged_files`/`read_commit_body` em `_diff.py`; rename `cc_threshold_lookup` → `gate_threshold_lookup` e `cc_format_three_paths` → `format_three_paths_message` em `_common.py` (DEFAULTS_CC preservado). CC validator ~1127 → ~840 LOC compondo helpers. Suite 750 (baseline 751 - 1 justificado em T4). Destrava Wave R1+ (check_secrets/check_deps_cve/check_duplication/check_cognitive_complexity/check_dead_code/check_arch_rules/check_function_length_and_nesting). |
+| v1.2-dev — Secrets gate (R1.1) | 🚀 shipping 2026-06-05 — `check_secrets` per-stage split: gitleaks no per-task hook de `forge implement`, trufflehog `--only-verified` na cascade de `forge verify`. Posicionado após `check_cyclomatic_complexity` (fail-fast Decision 23 preservado). Override via `SECRETS-OVERRIDE: <file>:<line> kind=<token-type> — <razão>` no commit body. Hard-fail sempre; tool missing → warn; bypass `NO_SECRETS_GATE=1` logado em `.claude/state/secrets-gate-bypass.jsonl`. Composto inteiro da infra Phase 0 (2º consumer, prova que a extração paga). Validators 15→16, doctor 13→14 categorias (`secrets-tools`). 6 commits + ~30 tests novos. |
 
 ## Conhecidos limites v1.1 (atualizado)
 

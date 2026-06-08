@@ -52,6 +52,22 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   `tests/validators/test_check_cyclomatic_complexity.py`,
   `tests/engine/test_*_cc_*.py`, `tests/integration/test_cc_gate_end_to_end.py`).
   Suite total cresce de 630 → 693 tests collected.
+- **Check Secrets gate (`check_secrets`)** — gate multi-tool que barra secrets
+  em staged files, com per-stage split: `gitleaks` roda no per-task hook de
+  `forge implement` (fast, regex-based, ~100ms) e `trufflehog --only-verified`
+  roda na cascade de `forge verify` (deep, verificação ativa contra a origem).
+  Posicionado **após** `check_cyclomatic_complexity` no cascade — fail-fast
+  Decision 23 preservado. Override via `SECRETS-OVERRIDE: <file>:<line>
+  kind=<token-type> — <razão>` no commit body silencia o finding `(file, line,
+  kind)` apenas naquele commit (auditável via `git log --grep='SECRETS-OVERRIDE'`).
+  Hard-fail sempre quando secret sobrevive; tool missing → warn (cascade segue
+  alive, mesmo contrato do CC gate). Bypass de emergência via `NO_SECRETS_GATE=1`,
+  logado em `.claude/state/secrets-gate-bypass.jsonl`. Composto inteiramente da
+  infra Phase 0 (`dispatch_native_tool`, `apply_overrides`, `check_tool_available`,
+  `git_staged_files`, `read_commit_body`, `result_*`). Doctor ganha 14ª categoria
+  `secrets-tools` (gitleaks + trufflehog + install hints). Validators 15→16.
+  Tests em `tests/validators/test_check_secrets*.py` +
+  `tests/integration/test_secrets_gate_end_to_end.py`.
 
 ### Added (CC gate refinements — final review fixes)
 

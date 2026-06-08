@@ -1801,19 +1801,66 @@ revisitado.
 ### Gap GATE-INFRA-1 — Parametrize gate_threshold_lookup + format_three_paths_message
 
 **Categoria:** gate-infra
-**Severidade:** baixa (YAGNI — não bloqueia até 2º consumer)
-**Status:** deferred (resolver quando R1.1 check_secrets ou outro gate consumir)
+**Severidade:** baixa (YAGNI — não bloqueia até 2º consumer numérico)
+**Status:** deferred — **R1.1 confirmou YAGNI** (resolver em R2.2 Cognitive Complexity)
 
 `gate_threshold_lookup` ainda hardcoda `"cc-gate-override"` / `"cc-gate"` /
 `DEFAULTS_CC` internamente. Nome foi generalizado mas implementação permanece
-CC-específica. Quando 2º gate consumer arriver (provavelmente `check_secrets`),
-parametrizar via novos kwargs: `card_override_key` / `workflow_block_key` /
-`defaults` / `gate_title` / `why_lines`. Similar pra `format_three_paths_message`
+CC-específica. Quando 2º gate consumer **numérico** arriver, parametrizar via
+novos kwargs: `card_override_key` / `workflow_block_key` / `defaults` /
+`gate_title` / `why_lines`. Similar pra `format_three_paths_message`
 (parametrizar `gate_title`, `format_annotation`).
 
-Razão pra deferir: YAGNI — sem 2º consumer concreto, parametrização vira
-abstração especulativa. `forge graph` Q12/Q14 vão detectar near-duplicate
-quando R1.1 copiar o helper.
+**Confirmação R1.1 (2026-06-05):** `check_secrets` shipou como 2º consumer da
+infra Phase 0 e **NÃO** tocou `gate_threshold_lookup` — secrets é binário
+(detectou = fail), não tem threshold numérico por linguagem. O render
+3-caminhos do secrets é local (vocabulário próprio — "rotação"/"fixture" vs
+"refactor"/"split-task" do CC), por decisão de spec §3: fundir os dois renderia
+prose genérica que perde o ponto. Logo a parametrização permanece corretamente
+deferida até o 2º consumer **numérico** — provavelmente Cognitive Complexity
+(wave R2.2), que herda ~80% do CC gate e VAI precisar do threshold lookup
+generalizado. `forge graph` Q12/Q14 não detectaram near-duplicate em R1.1
+porque o secrets não copiou o helper — compôs `apply_overrides` /
+`dispatch_native_tool` / `check_tool_available` direto.
+
+### Gap SECRETS-1 — Custom rules per project (deferred v1.3+)
+
+**Categoria:** secrets-gate
+**Severidade:** baixa (default ruleset cobre o baseline)
+**Status:** deferred (reentra com pedido empírico de ≥2 projetos consumidores)
+
+`gitleaks` aceita regras customizadas via `gitleaks.toml`; `trufflehog` via
+`--config`. v1.2-dev usa o **default ruleset** das duas tools (AWS, GCP, Stripe,
+GitHub PATs, Firebase, etc.) — cobertura aceitável pra apps mobile e web sem
+inflar complexity. Custom rules (ex.: token interno da empresa com formato
+proprietário) ficam pra v1.3+. Critério pra reentrar: pedido empírico
+documentado de ≥2 projetos consumidores. O `cmd_builder` já recebe
+`rendered_config` (ignorado hoje) — o hook de extensão existe, falta só wirar
+config → tempfile render quando a demanda chegar.
+
+### Gap SECRETS-2 — History scan periódico (out-of-scope até phase 5)
+
+**Categoria:** secrets-gate
+**Severidade:** média (cobre vazamento histórico, não o diff atual)
+**Status:** out-of-scope v1.2-dev
+
+`check_secrets` é diff-mode — escaneia apenas staged files no commit atual.
+Vazamentos no histórico (PR mergeado há meses contendo token ainda ativo) só
+pegam num `trufflehog git --since=...` periódico. Forge não orquestra CI, então
+isso vale um GitHub Action separado no projeto consumidor. Critério pra
+reentrar: phase 5+ se forge ganhar componente de CI orchestration.
+
+### Gap SECRETS-3 — Webhook/notify on detection (out-of-scope até phase 6)
+
+**Categoria:** secrets-gate
+**Severidade:** baixa (mitigação manual existe — rotação imediata no 3-caminhos)
+**Status:** out-of-scope v1.2-dev
+
+Quando um secret verificado é detectado, o ideal seria notificar canal de
+segurança (Slack #security, email) automaticamente — assume comprometido até
+prova em contrário. Out-of-scope v1.2-dev. Pode entrar em phase 6 (LLM hookup)
+junto com auto-suggest-rotation. Critério pra reentrar: phase 6 quando a
+infraestrutura de notify existir.
 
 ### Gap BOOTSTRAP-1 — test_bootstrap_is_idempotent falha em worktree context
 

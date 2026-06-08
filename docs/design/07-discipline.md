@@ -215,6 +215,7 @@ decisão 10 (zero flags).
 ├ check_no_invented_behavior.py          🛑 1.4s  FAIL
 │
 ├ check_cyclomatic_complexity.py         — não rodado (cascade parou)
+├ check_secrets.py                        — não rodado (cascade parou)
 └ check_files_in_allowed_files.py        — não rodado (cascade parou)
 ```
 
@@ -256,6 +257,41 @@ review e commit — bloqueia o atomic commit se há fail sem override válido
 no commit body já redigido. Cascade em `forge verify` roda standalone
 sobre diff staged ou diff vs HEAD.
 
+### Posicionamento de `check_secrets` (v1.2-dev+, R1.1)
+
+Novo gate (`check_secrets`) entra na cascade **após**
+`check_cyclomatic_complexity` — mesma família "anti-pattern gate", agora de
+segurança. Ordem é deliberada: CC roda em ~segundos por feature, enquanto a
+verificação ativa do trufflehog (cascade) pode demorar contra origens
+externas; falhar antes em CC poupa esse tempo. Decision 23 (fail-fast)
+preservada: gate anterior falha → secrets nem roda.
+
+Características operacionais:
+
+- **Per-stage tool split** — `gitleaks` (regex-based, ~100ms) roda no
+  per-task hook de `forge implement` (stage="per_task"); `trufflehog
+  --only-verified` roda na cascade de `forge verify` (stage="cascade"). As
+  duas cobrem perfis complementares: gitleaks pega o token sintaticamente
+  plausível antes do commit, trufflehog confirma se está ativo na origem
+  antes do merge.
+- **Binário, não-numérico** — secrets é detectou/não-detectou; sem threshold
+  por linguagem. Hard-fail sempre quando um finding sobrevive. Tool missing
+  → `result_warn` (não bloqueia), igual ao CC gate.
+- **Override-justify por commit** — `SECRETS-OVERRIDE: <file>:<line>
+  kind=<token-type> — <razão>` no commit body silencia o finding `(file,
+  line, kind)` **só pra aquele commit**. Auditável via
+  `git log --grep='SECRETS-OVERRIDE'`. Sem whitelist persistente — decisão
+  deliberada (força o dev a articular razão visível em review).
+- **Bypass de emergência** — env var `NO_SECRETS_GATE=1`, logado em
+  `.claude/state/secrets-gate-bypass.jsonl`. Distinto do override-justify.
+- **3-caminhos on-fail** — render canônico conforme §1 (remover+rotacionar /
+  override-justify / marcar como fixture). Sem auto-fix.
+
+Composto inteiro da infra Phase 0 (`dispatch_native_tool`, `apply_overrides`,
+`check_tool_available`, `git_staged_files`, `read_commit_body`, `result_*`) —
+2º consumer da extração, sem helper duplicado. Detalhe de config em
+`docs/schemas/workflow-config.md § secrets-gate`.
+
 ### Exemplo de cascade com fail-fast=false
 
 ```
@@ -267,6 +303,7 @@ sobre diff staged ou diff vs HEAD.
 ├ validate_backend_e2e.py                ⚠ 482ms  (3 warnings)
 ├ check_no_invented_behavior.py          🛑 1.4s   FAIL (3)
 ├ check_cyclomatic_complexity.py         🛑 2.1s   FAIL (4)
+├ check_secrets.py                        ✓ 1.8s
 └ check_files_in_allowed_files.py        ✓ 89ms
 
 4 hard fails coletados — apresentando em ordem de aparição.

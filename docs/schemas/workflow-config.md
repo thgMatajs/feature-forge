@@ -488,6 +488,54 @@ com `threshold` declarado wins** (ordem determinística do listing). Não é
 prioridade declarada pelo usuário. Documentado também em
 `docs/schemas/card.md § cc-gate-override`.
 
+## `secrets-gate` (opt-in, v1.2-dev+)
+
+Configura o validator `check_secrets`. Bloco opcional — sem ele, o gate roda
+com defaults (habilitado, ignore-paths cobrindo os fixtures do próprio gate).
+Diferente do `cc-gate`, secrets é **binário** (detectou = fail) — não tem
+threshold numérico, logo nenhuma precedência de card por linguagem.
+
+```yaml
+secrets-gate:
+  enabled: true
+  ignore-paths:
+    - "tests/fixtures/secrets/.*"    # próprios fixtures do gate (já default)
+    - ".*\\.lock$"                    # lock files — raro ter secret, evita ruído
+  per_task:
+    tool: gitleaks                    # fast scan no hook de forge implement
+  cascade:
+    tool: trufflehog
+    only_verified: true               # apenas tokens validados ativamente
+```
+
+### Semântica de campos
+
+| Campo | Tipo | Default | Notas |
+|---|---|---|---|
+| `enabled` | bool | `true` | `false` → validator emite warn ("secrets-gate desligado"), não bloqueia — útil em projeto migrando |
+| `ignore-paths` | lista regex | `["tests/fixtures/secrets/.*"]` | regexes Python (`re.search`) aplicadas ao path relativo após coletar o staged set; o default é sempre prependado (config-extra estende, não substitui) |
+| `per_task.tool` | str | `gitleaks` | tool do hook de `forge implement` (stage="per_task"); fixo em v1.2-dev |
+| `cascade.tool` | str | `trufflehog` | tool da cascade de `forge verify` (stage="cascade"); fixo em v1.2-dev |
+| `cascade.only_verified` | bool | `true` | `--only-verified` no trufflehog — reporta só tokens confirmados ativos na origem (zero false positives ativos) |
+
+### Semântica de runtime
+
+- **Override por commit body, não por arquivo.** Não há allowlist persistente.
+  Pra liberar um finding pontual (test fixture genuíno), adicione ao commit body
+  a linha exata `SECRETS-OVERRIDE: <file>:<line> kind=<token-type> — <razão>`.
+  O override cobre apenas a tupla `(file, line, kind)` daquele commit; auditável
+  via `git log --grep='SECRETS-OVERRIDE'`.
+- **Hard-fail policy.** Qualquer secret que sobreviva ao filtro de ignore-paths
+  e aos overrides bloqueia (security não tem soft-warn). Decision 23 fail-fast:
+  posicionado após `check_cyclomatic_complexity` no cascade — se um gate anterior
+  falhar, `check_secrets` nem roda.
+- **Tool missing → warn.** Se gitleaks/trufflehog não estiver no PATH, o gate
+  emite warn com install hint (não fail — cascade segue alive). `forge doctor`
+  reporta status das duas tools na categoria `secrets-tools`.
+- **Bypass de emergência.** `NO_SECRETS_GATE=1` pula o gate no per-task hook e
+  registra a invocação em `.claude/state/secrets-gate-bypass.jsonl`. Não é o
+  caminho normal de override — pra isso existe `SECRETS-OVERRIDE` no commit body.
+
 ## Deliberately OUT of config
 
 | Decision | Why not in config |
