@@ -35,8 +35,11 @@ import json
 import signal
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
+from engine._sandbox.env import CORE_ALLOWLIST, inspect_dropped, is_sensitive
+from engine.cards.loader import load_all_cards
+from engine.persona import three_paths_block
 from engine.qa._common import utc_iso_z as _utc_iso_z
 from engine.qa.checkpoint import (
     Checkpoint,
@@ -204,6 +207,8 @@ def run_qa(
                 scope, run_tree.snapshot_dir, project_root=project_root
             )
             _write_qa_report_skeleton(scope, run_tree, cfg)
+            # QA-11 Wave 4: alert pre Phase 3 sandbox (informativo, nao bloqueia).
+            _maybe_alert_sensitive_drops(project_root, workflow_config)
             _write_conductor_handoff(scope, run_tree, cfg)
             resumed_checkpoint = None
         else:
@@ -227,6 +232,12 @@ def run_qa(
         # antes de qualquer dispatch (§5.0). Phase 4 finaliza in-place
         # preservando started_at/config.
         _write_qa_report_skeleton(scope, run_tree, cfg)
+
+        # QA-11 Wave 4: alert pre Phase 3 sandbox (informativo, nao bloqueia).
+        # Computa card_extras = union(env_needs) cross active cards, intersect
+        # com (CORE_ALLOWLIST | grants). Se vars sensitive serao dropadas e
+        # nenhum card cobre, dispara mentor_calmo three_paths em stderr.
+        _maybe_alert_sensitive_drops(project_root, workflow_config)
 
         # Phase 1+2+4 sao Claude Code Agent dispatch — coordenados pelo
         # agente qa-conductor.md (criado em Wave 6 Task 6.1). Aqui apenas
@@ -493,6 +504,93 @@ def _finalize_qa_report(
         json.dumps(report, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+
+
+def _alert_sensitive_drops(card_extras: Iterable[str]) -> None:
+    """Pre Phase 3: alerta se vars sensitive serao dropadas (QA-11 Wave 4).
+
+    Dispara um bloco mentor calmo (gate_violation_header + 3-caminhos) em
+    stderr quando ``os.environ`` contem variaveis sensitive que NAO estao
+    cobertas por:
+
+      - ``CORE_ALLOWLIST`` (PATH/HOME/...),
+      - ``extras`` declarados por algum card ativo (``env_needs``),
+      - ``qa.sensitive-env-grants`` do workflow-config.
+
+    Como Decisao 27 garante que pause = auto-resumable, o alert e
+    informativo: nao bloqueia o run. O caminho oficial pra parar e
+    Ctrl+C (registra deferred state); o caminho oficial pra cobrir e
+    declarar no card ou granted no projeto (3-caminhos abaixo).
+
+    Args:
+        card_extras: vars ja autorizadas (union dos env_needs cross cards
+            ativos, intersect com ``CORE_ALLOWLIST | granted``). E o mesmo
+            ``extras`` que ``build_safe_env`` receberia em Phase 3.
+    """
+    extras_tuple = tuple(card_extras)
+    dropped = inspect_dropped(extras=extras_tuple)
+    sensitive = [v for v in dropped if is_sensitive(v)]
+    if not sensitive:
+        return
+
+    block = three_paths_block(
+        "Variaveis sensitive serao dropadas no sandbox",
+        what_failed=(
+            f"Detectadas {len(sensitive)} vars sensitive no env do pai "
+            f"nao declaradas por nenhum card ativo: "
+            f"{', '.join(sensitive)}"
+        ),
+        where="engine/qa Phase 3 sandbox boot",
+        why=[
+            "subprocess de validators rodara sem essas vars",
+            "se validator/card depende delas, vai falhar com erro de auth/config",
+            "se NAO depende, o drop e a defesa funcionando (zero acao)",
+        ],
+        paths=[
+            {
+                "label": "Ignorar e seguir",
+                "motive": "validator/card nao depende dessas vars — drop esperado",
+            },
+            {
+                "label": "Declarar no card",
+                "motive": "editar qa-extensions.env-needs do card relevante e re-rodar",
+            },
+            {
+                "label": "Grant no projeto",
+                "motive": "rodar `forge reconfigure` e adicionar em qa.sensitive-env-grants",
+            },
+        ],
+    )
+    print(block, file=sys.stderr)
+
+
+def _maybe_alert_sensitive_drops(
+    project_root: Path, workflow_config: dict[str, Any]
+) -> None:
+    """Computa ``card_extras`` e chama ``_alert_sensitive_drops``.
+
+    Fail-safe wrapper: o alert layer NUNCA bloqueia QA run. Se qualquer
+    coisa quebra (cards nao carregam, persona indisponivel, config
+    malformada), emite um warning compacto e segue. A defesa real
+    continua em Phase 3 (sandbox dropa por allowlist independentemente
+    do alert).
+    """
+    try:
+        active_cards = load_all_cards(project_root)
+        card_env_needs: set[str] = set()
+        for card in active_cards:
+            card_env_needs.update(card.env_needs)
+        granted = set(
+            (workflow_config or {}).get("qa", {}).get("sensitive-env-grants", []) or []
+        )
+        allowed_extras = card_env_needs & (set(CORE_ALLOWLIST) | granted)
+        _alert_sensitive_drops(allowed_extras)
+    except Exception as exc:  # noqa: BLE001 — fail-safe por contrato
+        print(
+            f"⚠ Alert layer QA-11 falhou ({type(exc).__name__}: {exc}); "
+            f"seguindo sem aviso de env vars sensitive.",
+            file=sys.stderr,
+        )
 
 
 def _write_conductor_handoff(
