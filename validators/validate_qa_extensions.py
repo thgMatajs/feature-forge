@@ -114,7 +114,7 @@ def validate_qa_extensions(
                     f"{card_path}: qa-extensions.env-needs[{idx}] deve ser string "
                     f"(recebido {type(item).__name__}: {item!r})"
                 )
-            if not item or item != item.strip() or any(c.isspace() for c in item):
+            if not item or any(c.isspace() for c in item):
                 raise QAExtensionsValidationError(
                     f"{card_path}: qa-extensions.env-needs[{idx}] inválido "
                     f"({item!r}): deve ser non-empty sem whitespace interno"
