@@ -453,3 +453,54 @@ def test_forge_qa_sandbox_marker_present_in_env(tmp_path: Path) -> None:
     assert "MARKER=1" in r.stdout, (
         f"esperado MARKER=1 no stdout, obtido: {r.stdout!r}"
     )
+
+
+from engine.qa.sandbox import _hardened_env
+
+
+def test_hardened_env_delegates_to_build_safe_env(tmp_path, monkeypatch):
+    """_hardened_env constrói env a partir de build_safe_env (não dict(os.environ))."""
+    # Set var sensitive no pai — não deve aparecer no env retornado
+    monkeypatch.setenv("AWS_SECRET", "leak")
+    guard_dir = tmp_path / "guard"
+    guard_dir.mkdir()
+
+    env = _hardened_env(guard_dir)
+
+    assert "AWS_SECRET" not in env, "env do sandbox não pode incluir var sensitive do pai"
+
+
+def test_hardened_env_preserves_pythonpath_guard_prepend(tmp_path, monkeypatch):
+    """guard_dir é prepended ao PYTHONPATH existente."""
+    monkeypatch.setenv("PYTHONPATH", "/existing/path")
+    # PYTHONPATH não está em CORE_ALLOWLIST — mas _hardened_env sobrescreve
+    # com guard_dir + existing (lendo de env já reduzido). Como build_safe_env
+    # não inclui PYTHONPATH, a "existing" será vista via os.environ direto pela
+    # impl de _hardened_env. Garantimos que o resultado tem guard_dir primeiro.
+    guard_dir = tmp_path / "guard"
+    guard_dir.mkdir()
+
+    env = _hardened_env(guard_dir)
+
+    assert env["PYTHONPATH"].startswith(str(guard_dir))
+
+
+def test_hardened_env_preserves_forge_qa_sandbox_marker(tmp_path):
+    """FORGE_QA_SANDBOX=1 marker é setado."""
+    guard_dir = tmp_path / "guard"
+    guard_dir.mkdir()
+
+    env = _hardened_env(guard_dir)
+
+    assert env["FORGE_QA_SANDBOX"] == "1"
+
+
+def test_hardened_env_propagates_extras_to_build_safe_env(tmp_path, monkeypatch):
+    """extras passados pra _hardened_env chegam em build_safe_env."""
+    monkeypatch.setenv("JAVA_HOME", "/opt/java")
+    guard_dir = tmp_path / "guard"
+    guard_dir.mkdir()
+
+    env = _hardened_env(guard_dir, extras=["JAVA_HOME"])
+
+    assert env["JAVA_HOME"] == "/opt/java"
