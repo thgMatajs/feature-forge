@@ -3,8 +3,16 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-08 (v1.2-dev — merge origin/main + Phase 0 gate-infra-extract + R1.1 secrets gate in-flight + forge qa branch in-flight)
+**Última atualização:** 2026-06-08 (v1.2-dev — merge origin/main + Phase 0 gate-infra-extract + R1.1 secrets gate in-flight + PR #8 forge qa CONF + pause/resume entregues)
 **Estado:** v1.2.0 feito + Gap 9 cumulativo + CC gate v1 (PR #4) + PRD docs/product/ (PR #5) + plan-auditor (PR #6) tudo em `main`. Branch `worktree-feat+gate-infra-extract` agora consolida (após merge de origin/main) Phase 0 do roadmap de quality-gates expansion — refactor estrito (no-behavior-change) extrai infra reusável do CC gate em `validators/_gate_infra.py` + `validators/_diff.py` + rename de helpers em `validators/_common.py`. CC validator caiu de ~1127 LOC para ~840 LOC compondo helpers públicos. Phase 0 suite verde (baseline 751 - 1 justificado em T4: removed test do lookup `_TOOL_BIN[lang]` interno que não existe pós-refactor). Wave R1.1 `check_secrets` shipping na mesma branch — primeiro consumer real do helper extraído valida a generalização e fechou Gap GATE-INFRA-1 (parametrização de `gate_threshold_lookup` + `format_three_paths_message`); Gap GATE-INFRA-2 (kw-only `cmd_builder` API) registrado pra próximo consumer.
+
+Linha paralela `worktree-forge-qa` (PR #8) consolidou pós-rebase contra
+`main`: CONF-001..008 entregues, Gap QA-12 fechado (pause/resume via
+checkpoint.json), 4 fixes pós-review CONF-004 aplicados (H-1, M-2, M-4,
+M-5), Revisita Decisão 30 (sandbox guard via sitecustomize.py em vez de
+PYTHONSTARTUP — comportamento idêntico, mecanismo nomeado corrigido).
+Suite: 933 passed + 19 skipped + 1 falha pré-existente bootstrap
+(BOOTSTRAP-1). Próximo: merge PR #8 → main + estabilização.
 
 Linha paralela: branch `worktree-forge-qa` (PR #8, in-flight contra
 `main` pós-rebase) carrega `forge qa` como 13º comando (red-team
@@ -136,8 +144,8 @@ Depois siga as instruções. Estou na Fase {N}.
 ## Estado atual (anchors)
 
 ```
-~400 arquivos · ~52,500 linhas · 27 decisões locked + 7 direcionais (Fase 3.5) + 1 ADR append-only (Decisão 28, Gap 5)
-v1.2.0 + Gap 9 + PR #4 CC gate + Phase 0 + R1.1 secrets cumulativo: ~730 tests collected (Gap 9 baseline 637 + CC gate +~63 + Phase 0 -1 justificado + secrets gate +~30) · 17 graph queries · 16 proposal kinds · 16 validators (inclui check_cyclomatic_complexity + check_secrets + validate_extension_feature) · 22 cards canon (+ overlay local)
+~400 arquivos · ~52,500 linhas · 27 decisões locked + 7 direcionais (Fase 3.5) + 2 ADR append-only (Decisão 28, Gap 5; Decisão 31, Revisita 30 sandbox guard via sitecustomize.py)
+v1.2-dev cumulativo (PR #4 CC gate + Phase 0 + R1.1 secrets + PR #8 forge qa CONF + pause/resume): **933 passed + 19 skipped** na branch PR #8 (baseline pré-PR #8: 847; +86 tests da CONF wave + pause/resume + review fixes); branch gate-infra-extract registra Gap 9 baseline 637 + CC gate +~63 + Phase 0 -1 justificado + secrets gate +~30 · 17 graph queries · 16 proposal kinds · 16 validators (inclui check_cyclomatic_complexity + check_secrets + validate_extension_feature) · 22 cards canon (+ overlay local)
 ```
 
 | Categoria | Status |
@@ -165,6 +173,7 @@ v1.2.0 + Gap 9 + PR #4 CC gate + Phase 0 + R1.1 secrets cumulativo: ~730 tests c
 | v1.2 — Gap 5 (card local overlay) | ✅ shipped 2026-06-02 — Approach A: cascade canon ∪ local com hard-fail em colisão; validators overlay-aware; reconfigure submenu `card-local`; init Step 7.5 com 3-caminhos pra signals órfãos; cards canon 20 → 22 (`retrofit-client` + `shared-preferences-prefs` com `legacy-marker`). Decisão locked 28 nova (ADR append-only). Suite: 595 passing + 12 skipped. |
 | v1.2 — Gap 9 (extends-feature mechanic) | ✅ shipped 2026-06-03 — re-escopado: extends-feature pattern leve product-derived (sem cards canon novos, sem mudança em platforms enum, sem upgrade de inventory schema); 4º caminho "Estender" em `forge plan` Cena 1; validator EXT-001..004; discipline §10 formaliza semantics; `shipped-at` writer em transição state=done. Multi-target watchOS/Wear/TV movido pra out-of-scope permanente. **+42 tests cumulativo (37 Gap 9 + 5 fix loop); total 637 passing + 12 skipped**. Detalhe em `CHANGELOG.md`. |
 | forge qa (13º comando) | ✓ — entregue v1.2, 4 attack vectors + 4 scope targets + sandbox isolado |
+| v1.2-dev — PR #8 forge qa hardening (2026-06-08) | ✅ no branch `worktree-forge-qa` — CONF-001 (qa-report.json skeleton + finalize), CONF-002 (snapshot via hardlink/copy), CONF-003 (sandbox-breach + timeout → findings determinísticos), CONF-004 (pause/resume via checkpoint.json — fecha Gap QA-12), CONF-007 (e2e valida estrutura on-disk), CONF-008 (Revisita Decisão 30 — sitecustomize.py em vez de PYTHONSTARTUP). Novos módulos: `engine/qa/checkpoint.py`, `engine/qa/_common.py`. Conductor agora escreve `sandbox-results.json` após Phase 3 (ativa CONF-003 em produção). Suite: **847 → 933 passing** (+86 tests). Gaps novos: QA-14 (conductor contract), QA-15 (review findings deferidos M-1/M-3/L-1/L-2/L-4), QA-16 (utc_iso_z cross-engine sweep). |
 | v1.2-dev — CC gate (PR #4) | 🔄 em review — `check_cyclomatic_complexity` multi-language (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon); threshold per card override > workflow-config > defaults; 3-caminhos on-fail (refactor / override-justify / split-task); doctor categoria 13ª `cc-gate-tools`. 13 commits + ~63 tests novos (suite 630 → 693 collected pré-merge; 682 passed + 17 skipped pós-refinements; 688 passed + 17 skipped pós PR #4 review fixes D-006/D-008/D-009/F-006). |
 | v1.2-dev — Phase 0 (gate-infra-extract) | ✅ extracted (`_gate_infra.py` + `_diff.py`) 2026-06-05 — refactor estrito sem behavior change: 7 commits extraem `DispatchResult`/`check_tool_available`/`dispatch_native_tool`/`render_config_with_placeholders`/`parse_overrides`/`apply_overrides` em `_gate_infra.py` + `DiffHunk`/`classify_range_against_hunks`/`extract_diff_hunks`/`git_staged_files`/`read_commit_body` em `_diff.py`; rename `cc_threshold_lookup` → `gate_threshold_lookup` e `cc_format_three_paths` → `format_three_paths_message` em `_common.py` (DEFAULTS_CC preservado). CC validator ~1127 → ~840 LOC compondo helpers. Suite 750 (baseline 751 - 1 justificado em T4). Destrava Wave R1+ (check_secrets/check_deps_cve/check_duplication/check_cognitive_complexity/check_dead_code/check_arch_rules/check_function_length_and_nesting). |
 | v1.2-dev — Secrets gate (R1.1) | 🚀 shipping 2026-06-05 — `check_secrets` per-stage split: gitleaks no per-task hook de `forge implement`, trufflehog `--only-verified` na cascade de `forge verify`. Posicionado após `check_cyclomatic_complexity` (fail-fast Decision 23 preservado). Override via `SECRETS-OVERRIDE: <file>:<line> kind=<token-type> — <razão>` no commit body. Hard-fail sempre; tool missing → warn; bypass `NO_SECRETS_GATE=1` logado em `.claude/state/secrets-gate-bypass.jsonl`. Composto inteiro da infra Phase 0 (2º consumer, prova que a extração paga). Validators 15→16, doctor 13→14 categorias (`secrets-tools`). 6 commits + ~30 tests novos. |
@@ -254,6 +263,24 @@ restantes ficam pra v1.2+ ou v2/Phase 6:
   `_dispatch.py`, `_override.py`, `_classifier.py`) deferido pra
   piggyback na próxima feature substantial do validator. Gap em
   `docs/design/04-pending.md § Gap CC-7`.
+
+**PR #8 forge qa v1.2-dev surfaced (2026-06-08) — não bloqueia merge, target v1.x+:**
+
+- **Gap QA-14 — sandbox-results.json contract no qa-conductor.md**: CONF-003
+  ativo mas dormente em produção sem conductor cooperante. Wave 4 já
+  endereçou no `agents/qa-conductor.md`; restam runs reais pra validar
+  serialização concreta no campo. Gap em `04-pending.md § Gap QA-14`.
+- **Gap QA-15 — Findings deferidos do review CONF-004**: M-1 (SIGINT em
+  Phase 0 deixa run_dir órfão), M-3 (find_resumable_run ignora scope_type
+  → colisão `feature/login` vs `screen/login`), L-1/L-2/L-4 (style only).
+  Cross-cutting; brainstorm separado. Gap em `04-pending.md § Gap QA-15`.
+- **Gap QA-16 — `_utc_iso_z` duplicado em 10+ call-sites cross-engine**:
+  M-4 do review CONF-004 consolidou apenas em `engine/qa/_common.py`.
+  Sweep cross-engine (promover pra `engine/utils/timestamps.py` ou
+  similar) é refactor dedicado. Gap em `04-pending.md § Gap QA-16`.
+- **BOOTSTRAP-1**: `test_bootstrap_is_idempotent` falha em worktree (1
+  test count drop em 933→932 quando rodado em worktree). Pré-existente;
+  não introduzido por PR #8.
 
 **feature-forge cobre mobile (Android + iOS + KMP) — scope-out
 permanente (Gap 9 revisita 2026-06-03):**

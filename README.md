@@ -123,7 +123,7 @@ Requer Python 3.11+ + PyYAML (única dep externa).
   presets/kmp-mobile/                   canonical preset v1
   validators/                           17 validators + helpers (inclui check_cyclomatic_complexity + check_secrets + validate_extension_feature)
   hooks/                                9 hooks + reuse incremental script
-  tests/                                637 passing tests (unit + integration + e2e) + 12 skipped
+  tests/                                933 passing tests (unit + integration + e2e) + 19 skipped
 
 [per project install via `forge init`]
 {project}/.claude/

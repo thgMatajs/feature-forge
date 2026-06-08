@@ -2021,26 +2021,20 @@ ver Gap QA-6).
 Provavelmente caminho híbrido: allowlist core + blocklist regex
 configurável.
 
-### Gap QA-12 — Pause/resume implementation (Decisão 27 + §16 edge 6)
+### Gap QA-12 — Pause/resume implementation (Decisão 27 + §16 edge 6) — ✅ FECHADO 2026-06-08 (CONF-004)
 
 **Categoria:** qa-flow / state
 **Fingerprint:** `sha256(consolidate-within-module:qa-pause-resume:checkpoint-json)`
-**Status:** deferred (3 tests aspirational @pytest.mark.skip) — surfaced em Task 8.6
+**Status:** ✅ shipped 2026-06-08 — PR #8 CONF-004 (commits `5d50e3a` impl + `aa29a01` review fixes)
 
-`engine.qa` é atualmente stateless. Decisão 27 (pause = `deferred`
-auto-resumable; abort = 2-step via `forge undo`) + §16 edge 6 do spec
-qa-design exigem `checkpoint.json` + resume logic. 3 tests em
-`tests/qa/test_qa_pause_resume.py` marcados `@pytest.mark.skip` aguardam
-implementação.
-
-**Por que defer:** implementação envolve serializar estado parcial das
-6 phases (ingest/static/generative/sandbox/synthesis/emit) — Phase 2
-(generative) e Phase 3 (sandbox) têm side effects que precisam
-idempotência cuidadosa. Brainstorm + plan separados.
-
-**Condição pra revisitar:** plan dedicado pra implementar checkpoint
-schema + resume contract phase-by-phase. Tests aspirational viram
-gate "verde antes de pronto" do plan.
+Resolvido via `engine/qa/checkpoint.py` (`Checkpoint` dataclass +
+`CheckpointCorruptError` + `write_checkpoint`/`read_checkpoint`/
+`find_resumable_run`). SIGINT salva checkpoint atomicamente; nova
+invocação detecta e retoma sem criar novo `run_id`. Auto-resume; corrupt
+checkpoint cai em 3-caminhos mentor calmo. Tests aspirational
+desbloqueados (skip markers removidos). Findings deferidos do review
+(M-1 SIGINT pré-signal-register; M-3 scope_type ignored) anotados em
+Gap QA-15 abaixo.
 
 ### Gap QA-13 — Paranoid scope state filter
 
@@ -2063,6 +2057,84 @@ state legacy pre-Gap-8).
 `list_features(filter_states=[...])` — momento natural pra plugar
 filter aqui. Provavelmente piggyback de Gap 6 (multi-dev `active-tasks`
 expansion) ou Gap 7 (partial-released state).
+
+### Gap QA-14 — sandbox-results.json contract no qa-conductor.md
+
+**Categoria:** qa-flow / conductor-contract
+**Fingerprint:** `sha256(consolidate-within-module:qa-conductor-sandbox-results:phase-3-handoff)`
+**Status:** deferred (Wave 4 documentou o contract; falta runs reais validarem) — surfaced 2026-06-08 PR #8
+
+`engine/qa/synthesis.py` agora deriva findings determinísticos de
+`SandboxResult` via `findings_from_sandbox_results`. `engine/qa/__init__.py`
+lê `<run>/sandbox-results.json` se existir. PR #8 Wave 4 atualizou
+`agents/qa-conductor.md` ensinando o conductor LLM a serializar
+SandboxResults nesse arquivo após Phase 3. Antes desse update, CONF-003
+funcionava em testes mas ficava dormente em produção (conductor LLM
+atual escreve só findings/*.json).
+
+Shape esperado: lista de dicts com `{fixture_name | fixture.name, status,
+exit_code?, stdout?, stderr?, duration_s?, error?}`. Status reconhecidos:
+`ok | timeout | sandbox-breach | skipped-budget | error`. Apenas
+`sandbox-breach` (critical, always BLOCK) e `timeout` (medium) viram
+findings automáticos.
+
+**Por que defer:** doc-only change; validar serialização real exige
+runs end-to-end com conductor LLM acionado. Eventual revisita pode
+endurecer contrato (schema validator pra `sandbox-results.json`, alerta
+no synthesizer quando arquivo missing).
+
+**Condição pra revisitar:** primeiro run real onde conductor LLM
+escreve `sandbox-results.json` e synthesis emite finding determinístico.
+Se shape divergir do documentado, brainstorm pra schema explícito.
+
+### Gap QA-15 — Findings deferidos do review CONF-004
+
+**Categoria:** qa-state / qa-scope
+**Fingerprint:** `sha256(consolidate-within-module:qa-pause-resume-followups:review-conf-004-deferred)`
+**Status:** deferred (cross-cutting ou cosmético) — surfaced 2026-06-08 review CONF-004
+
+Review CONF-004 (commit `aa29a01` aplicou H-1, M-2, M-4, M-5; restante
+deferred):
+
+- **M-1**: SIGINT durante Phase 0 (antes do `signal.signal` registrar)
+  deixa run_dir órfão sem checkpoint nem cleanup → `find_resumable_run`
+  não detecta. Zombie até retention. Cross-cutting (precisa decisão UX:
+  cleanup vs preserve).
+- **M-3**: `find_resumable_run` aceita `scope_type` mas ignora; layout
+  `.planning/qa/<target>/` não discrimina scope_type → `feature/login` e
+  `screen/login` colidem. Pre-existing herdado de ingest.
+- **L-1**: `_phase = [0]` list-of-int hack em `engine/qa/__init__.py`
+  (alternativa dataclass `_PhaseTracker` mais clara — style only).
+- **L-2**: `test_checkpoint_written_on_sigint` mockado borderline entre
+  unit e integration (marker discutível).
+- **L-4**: `test_corrupt_checkpoint` não asserta
+  `len(qa_dir.iterdir()) == 1` (que nenhum run dir novo foi criado).
+
+**Por que defer:** M-1 e M-3 exigem brainstorm dedicado (UX policy + scope
+discrimination); L-1/L-2/L-4 são cosméticos sem impacto funcional.
+
+**Condição pra revisitar:** primeira vez que M-1 ou M-3 morder usuário em
+run real, ou polish-pass dedicado pra L-* via subagent housekeeping.
+
+### Gap QA-16 — `_utc_iso_z` duplicado em 10+ call-sites cross-engine
+
+**Categoria:** code-quality / Mandamento #3 (reuso)
+**Fingerprint:** `sha256(consolidate-within-module:utc-iso-z-helper:cross-engine-sweep)`
+**Status:** deferred (cross-cutting refactor) — surfaced 2026-06-08 review CONF-004
+
+Reviewer CONF-004 mencionou 10+ duplicações de
+`datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")` em
+`engine/{evolve,plan,undo,verify,init,memory/*,inventory/*,reconfigure,implement}.py`.
+M-4 do review CONF-004 consolidou apenas em `engine/qa/_common.py`
+(entre `engine/qa/__init__.py` e `engine/qa/checkpoint.py`).
+
+**Por que defer:** cross-engine refactor (~30 file touches) sai do escopo
+de PR #8 (forge qa hardening); promover `engine/qa/_common.utc_iso_z`
+pra `engine/utils/timestamps.py` exige sweep + regression-test cuidadoso.
+
+**Condição pra revisitar:** task dedicado de sweep cross-engine (promover
+helper pra utils + atualizar todos os call-sites). Estimativa: 1 commit
+médio (~30 file touches, regression-test-safe via grep+sed scriptado).
 
 ### Gap BOOTSTRAP-1 — `test_bootstrap_is_idempotent` falha em worktree
 
