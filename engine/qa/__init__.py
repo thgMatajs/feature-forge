@@ -43,6 +43,7 @@ from engine.qa.ingest import (
     RunTree,
     create_run_tree,
     parse_qa_config,
+    snapshot_artefacts,
 )
 from engine.qa.scope import (
     Scope,
@@ -140,6 +141,13 @@ def run_qa(
 
     run_tree = create_run_tree(scope, project_root=project_root)
 
+    # Phase 0 — snapshot dos artefatos resolvidos (§5.0). Hardlink quando
+    # possivel, fallback copy2. Best-effort: paths inexistentes ou
+    # falhas de I/O nao quebram a run.
+    snapshot_copied = snapshot_artefacts(
+        scope, run_tree.snapshot_dir, project_root=project_root
+    )
+
     # Phase 0 — escreve skeleton de qa-report.json com verdict=pending
     # antes de qualquer dispatch (§5.0). Phase 4 finaliza in-place
     # preservando started_at/config.
@@ -157,10 +165,16 @@ def run_qa(
     # segue direto pra synthesis + emit.
     findings_files = sorted(run_tree.findings_dir.glob("*.json"))
     if not findings_files:
+        snapshot_line = (
+            f"  snapshot: {len(snapshot_copied)} artefatos copiados\n"
+            if snapshot_copied
+            else ""
+        )
         print(
             f"Run tree criada em {run_tree.root}.\n"
             f"  scope:  {scope.type} {scope.target}\n"
             f"  run:    {run_tree.run_id}\n"
+            f"{snapshot_line}"
             f"Dispatch `agents/qa-conductor.md` pra rodar phases 1-4."
         )
         return 0

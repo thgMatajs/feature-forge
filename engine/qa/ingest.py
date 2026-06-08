@@ -18,7 +18,9 @@ canonica em runtime.
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -228,3 +230,82 @@ def create_run_tree(scope: Scope, *, project_root: Path) -> RunTree:
         audit_dir=audit,
         snapshot_dir=snapshot,
     )
+
+
+def snapshot_artefacts(
+    scope: Scope, snapshot_dir: Path, *, project_root: Path
+) -> list[Path]:
+    """Copia (hardlink-preferido) os artefatos resolvidos de ``scope.paths``.
+
+    Spec §5.0 (Phase 0 Ingest): "Snapshot dos artefatos resolvidos em
+    <run_id>/snapshot/ (hardlinks ou copy)". Permite que a run conserve
+    uma copia imutavel dos specs / validators / outras fontes consumidas,
+    de forma que auditoria pos-fato consiga reproduzir o que os auditores
+    viram mesmo se o working tree mudou.
+
+    Estrategia de copia:
+
+    1. ``os.link`` (hardlink) e tentado primeiro — instantaneo, sem custo
+       de disco, e o conteudo fica genuinamente imutavel (file e o mesmo
+       inode).
+    2. Em ``OSError`` ou ``NotImplementedError`` (cross-device, FS sem
+       suporte a hardlink — ex. tmpfs sobre overlayfs, Windows em alguns
+       casos, paths em volumes diferentes) cai pra ``shutil.copy2``,
+       preservando metadata.
+
+    Layout preservado: estrutura relativa a ``project_root`` espelhada
+    dentro de ``snapshot_dir``. Path absoluto fora do project_root (caso
+    raro — scope custom) vira ``snapshot_dir / src.name`` (achatado).
+
+    Paths inexistentes sao silenciosamente puladas — Phase 0 nao quebra
+    porque um path em scope.paths nao foi achado (Phase 2/3 auditores
+    reportam isso se for relevante).
+
+    Args:
+        scope: ``Scope`` resolvido (consome ``scope.paths``).
+        snapshot_dir: ``RunTree.snapshot_dir`` (ja criado por
+            ``create_run_tree``).
+        project_root: raiz do projeto consumidor pra calcular paths
+            relativos.
+
+    Returns:
+        Lista de ``Path`` dos destinos efetivamente criados em
+        ``snapshot_dir``. Lista vazia significa que nenhum path em
+        ``scope.paths`` existia ou que ``scope.paths`` estava vazio.
+    """
+    copied: list[Path] = []
+    project_root_resolved = project_root.resolve()
+
+    for src in scope.paths:
+        src_path = Path(src)
+        if not src_path.exists():
+            continue
+
+        # Determina path relativo pra preservar layout dentro do snapshot.
+        try:
+            rel = src_path.resolve().relative_to(project_root_resolved)
+        except ValueError:
+            # Path absoluto fora do project_root — achata pro nome do
+            # arquivo. Caso raro mas defensivo (Scope custom pode
+            # carregar paths absolutos de fora).
+            rel = Path(src_path.name)
+
+        dest = snapshot_dir / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            os.link(src_path, dest)
+        except (OSError, NotImplementedError):
+            # Fallback: copy2 preserva metadata (mtime, permissions).
+            # OSError cobre cross-device link (EXDEV), permission errors,
+            # FS sem suporte. NotImplementedError em platforms exoticas.
+            try:
+                shutil.copy2(src_path, dest)
+            except OSError:
+                # Disk full / perm error mid-copy — silenciamos pra nao
+                # explodir Phase 0; snapshot e best-effort.
+                continue
+
+        copied.append(dest)
+
+    return copied
