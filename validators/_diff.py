@@ -32,6 +32,12 @@ import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
+
+# E1 — `kind` é Literal pra type-narrowing em callers. Runtime aceita
+# qualquer string (preservação byte-a-byte com o contrato anterior), mas
+# mypy/pyright/pylance reclamam de valores fora do triplet.
+HunkKind = Literal["add", "del", "ctx"]
 
 
 @dataclass(frozen=True)
@@ -46,7 +52,7 @@ class DiffHunk:
 
     start: int
     end: int
-    kind: str
+    kind: HunkKind
 
 
 def classify_range_against_hunks(
@@ -199,8 +205,56 @@ def read_commit_body(project_root: Path) -> str:
     contrato silencioso casa com o caller que itera procurando padrão
     ``CC-OVERRIDE: ...`` (ou similar) — vazio = nada a aplicar.
     """
-    editmsg = project_root / ".git" / "COMMIT_EDITMSG"
-    if editmsg.is_file():
+    # D1 — Resolve gitdir pra suportar worktrees (onde `.git` é arquivo
+    # apontando pra `<repo>/.git/worktrees/<name>`). Antes lookup direto em
+    # `project_root / ".git" / "COMMIT_EDITMSG"` falhava silenciosamente em
+    # worktree, forçando fallback pra `git log` (que retorna commit prévio
+    # em contexto pre-commit — bug observável neste próprio repo).
+    #
+    # Ordem de resolução:
+    #   1. `git rev-parse --git-dir` (canônico — funciona em worktree real).
+    #   2. Parse manual de `.git` file (`gitdir: <path>` line) — fallback
+    #      pra cenários onde git CLI não consegue invocar (ex.: test fixtures
+    #      sintéticas sem HEAD/refs).
+    #   3. `<project_root>/.git/COMMIT_EDITMSG` direto (plain checkout).
+    editmsg: Path | None = None
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(project_root), "rev-parse", "--git-dir"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            git_dir = Path(proc.stdout.strip())
+            if not git_dir.is_absolute():
+                git_dir = project_root / git_dir
+            editmsg = git_dir / "COMMIT_EDITMSG"
+    except (subprocess.SubprocessError, OSError):
+        pass
+
+    if editmsg is None or not editmsg.is_file():
+        dot_git = project_root / ".git"
+        if dot_git.is_file():
+            # Worktree: parse `gitdir: <path>` do .git file.
+            try:
+                first_line = dot_git.read_text(encoding="utf-8", errors="replace").splitlines()[0]
+                if first_line.startswith("gitdir:"):
+                    git_dir_path = Path(first_line.split(":", 1)[1].strip())
+                    if not git_dir_path.is_absolute():
+                        git_dir_path = project_root / git_dir_path
+                    candidate = git_dir_path / "COMMIT_EDITMSG"
+                    if candidate.is_file():
+                        editmsg = candidate
+            except (OSError, IndexError):
+                pass
+        elif dot_git.is_dir():
+            candidate = dot_git / "COMMIT_EDITMSG"
+            if candidate.is_file():
+                editmsg = candidate
+
+    if editmsg is not None and editmsg.is_file():
         try:
             return editmsg.read_text(encoding="utf-8", errors="replace")
         except OSError:
