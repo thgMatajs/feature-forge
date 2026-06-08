@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +52,16 @@ from engine.qa.scope import (
     resolve_scope,
 )
 from engine.qa.synthesis import SynthesisResult, synthesize
+
+
+def _utc_iso_z() -> str:
+    """Timestamp ISO 8601 UTC com sufixo ``Z`` (sem offset numerico).
+
+    Pattern espelha helpers de ``engine.evolve._now_utc_iso``,
+    ``engine.memory.l1._now`` etc. Centralizado aqui pra evitar drift
+    futuro: qa-report.json exige formato ``Z``-suffixed (§6.1 spec).
+    """
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 __all__ = ["run_qa"]
@@ -129,6 +140,11 @@ def run_qa(
 
     run_tree = create_run_tree(scope, project_root=project_root)
 
+    # Phase 0 — escreve skeleton de qa-report.json com verdict=pending
+    # antes de qualquer dispatch (§5.0). Phase 4 finaliza in-place
+    # preservando started_at/config.
+    _write_qa_report_skeleton(scope, run_tree, cfg)
+
     # Phase 1+2+4 sao Claude Code Agent dispatch — coordenados pelo
     # agente qa-conductor.md (criado em Wave 6 Task 6.1). Aqui apenas
     # registramos os caminhos pro conductor consumir.
@@ -176,9 +192,119 @@ def run_qa(
         result.findings, project_root=project_root
     )
 
+    # Phase 4 — finaliza qa-report.json escrito em Phase 0 com verdict,
+    # findings consolidados, totals, e completed_at. Preserva campos
+    # load-bearing do skeleton (run.id, run.scope, run.config_snapshot,
+    # run.started_at) — idempotente em re-invocacoes (re-le antes de
+    # escrever).
+    _finalize_qa_report(run_tree, result)
+
     _print_verdict_block(scope, run_tree, result, emit_summary)
 
     return 8 if result.verdict == "BLOCK" else 0
+
+
+def _write_qa_report_skeleton(
+    scope: Scope, run_tree: RunTree, cfg: QAConfig
+) -> None:
+    """Escreve qa-report.json inicial com verdict='pending' (Phase 0).
+
+    Shape segue ``docs/schemas/qa-report.md`` (envelope canonico):
+    ``schema_version`` + ``run`` (id/scope/config_snapshot/started_at)
+    + ``verdict`` + ``summary`` (total_findings/by_severity/by_vector)
+    + ``findings`` (lista vazia ate Phase 4 popular).
+
+    Phase 4 chama ``_finalize_qa_report`` que LE este arquivo, ATUALIZA
+    verdict/findings/summary e ADICIONA ``run.finished_at`` +
+    ``run.duration_s``. ``run.started_at`` e ``run.config_snapshot``
+    sao preservados — auditoria pode reconstruir a config sob a qual a
+    run iniciou mesmo se workflow-config mudou depois.
+
+    Args:
+        scope: ``Scope`` resolvido em Phase 0.
+        run_tree: ``RunTree`` criado em Phase 0.
+        cfg: ``QAConfig`` parseado em Phase 0.
+    """
+    report: dict[str, Any] = {
+        "schema_version": 1,
+        "run": {
+            "id": run_tree.run_id,
+            "scope": {
+                "type": scope.type,
+                "target": scope.target,
+                "paths": [str(p) for p in scope.paths],
+            },
+            "config_snapshot": {
+                "sandbox_budget_seconds_total": cfg.sandbox_budget_seconds_total,
+                "agent_timeout_seconds": cfg.agent_timeout_seconds,
+                "extensions_disabled": list(cfg.extensions_disabled),
+                "retention_days": cfg.retention_days,
+                "paranoid_max_features": cfg.paranoid_max_features,
+            },
+            "started_at": _utc_iso_z(),
+        },
+        "verdict": "pending",
+        "summary": {
+            "total_findings": 0,
+            "by_severity": {},
+            "by_vector": {},
+        },
+        "findings": [],
+    }
+    (run_tree.root / "qa-report.json").write_text(
+        json.dumps(report, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _finalize_qa_report(
+    run_tree: RunTree, result: SynthesisResult
+) -> None:
+    """Atualiza qa-report.json com verdict/findings/totals finais (Phase 4).
+
+    Le o skeleton escrito em Phase 0 (preservando run.id, run.scope,
+    run.config_snapshot, run.started_at), substitui ``verdict``,
+    ``summary`` e ``findings`` pelos consolidados de Phase 4, e anexa
+    ``run.finished_at``.
+
+    Tolerante a skeleton ausente — degradacao graciosa: se o file nao
+    existe (caller chamou finalize sem skeleton previo, ou disk error em
+    Phase 0), reconstroi o envelope basico com o que tem do
+    ``run_tree``. Audit trail completo so existe quando skeleton foi
+    persistido.
+
+    Args:
+        run_tree: ``RunTree`` da run em curso.
+        result: ``SynthesisResult`` da Phase 4.
+    """
+    report_path = run_tree.root / "qa-report.json"
+    try:
+        existing = json.loads(report_path.read_text(encoding="utf-8"))
+        if not isinstance(existing, dict):
+            existing = {}
+    except (json.JSONDecodeError, OSError):
+        existing = {}
+
+    run_block = existing.get("run") if isinstance(existing.get("run"), dict) else {}
+    run_block = dict(run_block)  # shallow copy pra evitar mutacao do dict lido
+    run_block.setdefault("id", run_tree.run_id)
+    run_block["finished_at"] = _utc_iso_z()
+
+    report: dict[str, Any] = {
+        "schema_version": existing.get("schema_version", 1),
+        "run": run_block,
+        "verdict": result.verdict,
+        "summary": {
+            "total_findings": len(result.findings),
+            "by_severity": dict(result.by_severity),
+            "by_vector": dict(result.by_vector),
+        },
+        "findings": list(result.findings),
+    }
+    report_path.write_text(
+        json.dumps(report, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
 
 def _write_conductor_handoff(
