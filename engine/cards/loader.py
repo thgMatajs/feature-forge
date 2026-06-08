@@ -19,6 +19,7 @@ from typing import Any
 
 import yaml as _yaml_lib
 
+from .._sandbox.env import is_sensitive
 from ..utils.paths import forge_home
 from ..utils.yaml_io import YamlIOError, read_yaml
 from . import CardError, CardConflictError
@@ -292,6 +293,8 @@ class CardManifest:
     raw: dict[str, Any] = field(default_factory=dict)
     source_path: Path = field(default_factory=lambda: Path("."))
     legacy_marker: bool = False
+    env_needs: tuple[str, ...] = ()
+    sensitive_env_needs: tuple[str, ...] = ()
     origin: str = "canon"  # "canon" | "local" — set by load_all_cards cascade
 
 
@@ -323,6 +326,14 @@ def load_card(card_dir: Path) -> CardManifest:
     identity = data.get("identity") or {}
     contributes = data.get("contributes") or {}
 
+    # QA-11 wave 2: parse qa-extensions.env-needs into tuple + classify sensitive.
+    # Parse permissivo (lista ou fallback pra tupla vazia); validation hard fica
+    # em validate_qa_extensions (Task 2.1), invocada via validate_card_yaml acima.
+    qa_ext = data.get("qa-extensions") or {}
+    env_needs_raw = qa_ext.get("env-needs") or []
+    env_needs = tuple(env_needs_raw) if isinstance(env_needs_raw, list) else ()
+    sensitive_env_needs = tuple(v for v in env_needs if is_sensitive(v))
+
     return CardManifest(
         name=str(identity.get("name", "")),
         version=str(identity.get("version", "")),
@@ -340,6 +351,8 @@ def load_card(card_dir: Path) -> CardManifest:
         raw=data,
         source_path=card_dir,
         legacy_marker=bool(data.get("legacy-marker", False)),
+        env_needs=env_needs,
+        sensitive_env_needs=sensitive_env_needs,
         origin="canon",  # default; load_all_cards reassigns based on cascade
     )
 
