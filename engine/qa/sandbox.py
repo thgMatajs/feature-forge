@@ -125,16 +125,19 @@ def _validate_paths_inside_sandbox(fixture: Fixture, sandbox_cwd: Path) -> None:
             f"fixture.input_path {fixture.input_path} não resolve: {exc}"
         ) from exc
 
-    sandbox_str = str(sandbox_resolved)
-    resolved_str = str(resolved_input)
-    if resolved_str != sandbox_str and not resolved_str.startswith(
-        sandbox_str + os.sep
-    ):
+    # Path.relative_to: containment check robusto (vs. startswith + os.sep
+    # que falha em corner cases — ex.: sandbox=/tmp/a, input=/tmp/ab/x
+    # passaria startswith("/tmp/a") incorretamente sem o +os.sep, e mesmo
+    # com +os.sep ignora symlink resolution semantics em platforms onde
+    # o path-string compare diverge da semantic-containment).
+    try:
+        resolved_input.relative_to(sandbox_resolved)
+    except ValueError as exc:
         raise SandboxBreachError(
             f"fixture.input_path {fixture.input_path} fora do sandbox {sandbox_cwd} "
             f"(resolved={resolved_input}). Decisão 30: inputs devem morar em "
             f"run_dir/fixtures/."
-        )
+        ) from exc
 
 
 def _write_chdir_guard(run_dir: Path) -> Path:
@@ -251,11 +254,16 @@ def run_sandbox(
 
         t0 = time.monotonic()
         try:
+            # .resolve() em ambos: subprocess roda com cwd=sandbox_cwd, e
+            # paths relativos seriam interpretados relativos a esse cwd —
+            # quebrando se validator_path for absoluto fora do sandbox
+            # (caso canon de produção) ou input_path for path-relativo do
+            # caller. Resolver garante que ambos chegam absolutos.
             proc = subprocess.run(
                 [
                     sys.executable,
-                    str(fixture.validator_path),
-                    str(fixture.input_path),
+                    str(fixture.validator_path.resolve()),
+                    str(fixture.input_path.resolve()),
                 ],
                 cwd=sandbox_cwd,
                 capture_output=True,

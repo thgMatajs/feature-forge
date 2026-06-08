@@ -24,7 +24,9 @@ _VALID_SEVERITY = {"critical", "high", "medium", "low", "info"}
 _CORE_VECTORS = {"spec-vs-spec", "coverage", "chaos", "validator-claim"}
 _FINGERPRINT_RE = re.compile(r"[0-9a-f]{64}")
 _ISO_UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$")
-_ID_RE = re.compile(r"^[a-z][a-z0-9-]*-\d{4}$")
+# Case-insensitive: IDs gerados a partir de run_id (ISO 8601) carregam
+# `T` e `Z` uppercase no meio, ex.: `qa-2026-06-08T12-30-45Z-0001`.
+_ID_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9-]*-\d{4}$")
 _REQUIRED_TOP = {
     "id",
     "fingerprint",
@@ -68,7 +70,8 @@ def validate_qa_finding(
     finding_id = data["id"]
     if not isinstance(finding_id, str) or not _ID_RE.fullmatch(finding_id):
         raise QAFindingValidationError(
-            f"id inválido (esperado '<slug>-NNNN' lowercase, ex.: "
+            f"id inválido (esperado '<slug>-NNNN', case-insensitive — IDs "
+            f"derivados de run_id ISO 8601 carregam T/Z uppercase. Ex.: "
             f"'qa-<run-id>-0007' ou '<auditor>-0001'): {finding_id!r}"
         )
 
@@ -136,26 +139,32 @@ def validate_qa_finding(
                 "(subprocess executado no sandbox)"
             )
         sr = evidence["sandbox_result"]
-        if not isinstance(sr, dict):
-            raise QAFindingValidationError(
-                f"evidence.sandbox_result deve ser dict, recebido tipo "
-                f"{type(sr).__name__}"
-            )
-        for sr_required, expected_type, type_name in (
-            ("exit_code", int, "int"),
-            ("stdout", str, "str"),
-            ("stderr", str, "str"),
-            ("duration_s", (int, float), "number"),
-        ):
-            if sr_required not in sr:
+        # Drafts (templates/qa-finding.template.json) carregam
+        # sandbox_result=null antes da Phase 3 executar — auditor preenche
+        # depois. Aceitamos None como placeholder explícito e pulamos a
+        # validação interna; o conductor é responsável por trocar pelo
+        # dict real antes do Phase 4 synthesis.
+        if sr is not None:
+            if not isinstance(sr, dict):
                 raise QAFindingValidationError(
-                    f"evidence.sandbox_result.{sr_required} ausente (required)"
+                    f"evidence.sandbox_result deve ser dict (ou null em drafts), "
+                    f"recebido tipo {type(sr).__name__}"
                 )
-            if not isinstance(sr[sr_required], expected_type):
-                raise QAFindingValidationError(
-                    f"evidence.sandbox_result.{sr_required} deve ser {type_name}, "
-                    f"recebido tipo {type(sr[sr_required]).__name__}"
-                )
+            for sr_required, expected_type, type_name in (
+                ("exit_code", int, "int"),
+                ("stdout", str, "str"),
+                ("stderr", str, "str"),
+                ("duration_s", (int, float), "number"),
+            ):
+                if sr_required not in sr:
+                    raise QAFindingValidationError(
+                        f"evidence.sandbox_result.{sr_required} ausente (required)"
+                    )
+                if not isinstance(sr[sr_required], expected_type):
+                    raise QAFindingValidationError(
+                        f"evidence.sandbox_result.{sr_required} deve ser {type_name}, "
+                        f"recebido tipo {type(sr[sr_required]).__name__}"
+                    )
 
     pe = data["proposed_evolution"]
     if not isinstance(pe, dict):

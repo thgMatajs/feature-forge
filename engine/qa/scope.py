@@ -165,13 +165,15 @@ def _features_root(root: Path) -> Path:
 
 
 def _list_features_for_paranoid(root: Path, *, cap: int) -> list[Path]:
-    """Lista feature dirs ate ``cap``. Ordem determinada por glob (filesystem)."""
+    """Lista feature dirs ate ``cap``. Ordenado alfabeticamente; ignora
+    dirs hidden (``.``-prefixed) como ``.git``, ``.cache`` etc.
+    """
     features_root = _features_root(root)
     if not features_root.exists():
         return []
     candidates: list[Path] = []
     for entry in sorted(features_root.iterdir()):
-        if entry.is_dir():
+        if entry.is_dir() and not entry.name.startswith("."):
             candidates.append(entry)
         if len(candidates) >= cap:
             break
@@ -187,7 +189,9 @@ def _find_screen(screen_id: str, root: Path) -> Path | None:
     features_root = _features_root(root)
     if not features_root.exists():
         return None
-    for feature_dir in features_root.iterdir():
+    # sorted(): determinismo cross-machine — iterdir() retorna em ordem
+    # filesystem-dependente, mas scope resolution deve ser estavel.
+    for feature_dir in sorted(features_root.iterdir()):
         if not feature_dir.is_dir():
             continue
         candidate = feature_dir / "screens" / f"{screen_id}.yaml"
@@ -200,7 +204,8 @@ def _find_task(task_id: str, root: Path) -> Path | None:
     features_root = _features_root(root)
     if not features_root.exists():
         return None
-    for feature_dir in features_root.iterdir():
+    # sorted(): determinismo cross-machine (mesmo motivo de _find_screen).
+    for feature_dir in sorted(features_root.iterdir()):
         if not feature_dir.is_dir():
             continue
         candidate = feature_dir / "tasks" / f"{task_id}.yaml"

@@ -518,21 +518,29 @@ def _qa_toggle_auto_run(working: dict[str, Any]) -> None:
 
 
 def _qa_adjust_budgets(working: dict[str, Any]) -> None:
-    """Opção 3 — ajusta sandbox-budget-seconds-total + agent-timeout-seconds."""
+    """Opção 3 — ajusta sandbox-budget-seconds-total + agent-timeout-seconds.
+
+    Aceita float pra preservar sub-second precision (ex.: 0.5s pra
+    timeouts agressivos em CI). Valor <= 0 é rejeitado com mensagem
+    mentor-calma — budget zero/negativo quebra o enforcement do sandbox.
+    """
     block = _qa_block(working)
-    current_total = int(block.get("sandbox-budget-seconds-total", 60))
-    current_per = int(block.get("agent-timeout-seconds", 15))
+    current_total = float(block.get("sandbox-budget-seconds-total", 60.0))
+    current_per = float(block.get("agent-timeout-seconds", 15.0))
 
     total_str = question.ask_text(
         f"sandbox-budget-seconds-total (atual {current_total}, ENTER mantém):",
     ).strip()
     if total_str:
         try:
-            block["sandbox-budget-seconds-total"] = int(total_str)
-        except ValueError:
+            val = float(total_str)
+            if val <= 0:
+                raise ValueError("deve ser > 0")
+            block["sandbox-budget-seconds-total"] = val
+        except ValueError as exc:
             renderer.write(
                 renderer.colored(
-                    f"valor inválido {total_str!r} — mantendo {current_total}",
+                    f"valor inválido {total_str!r} ({exc}) — mantendo {current_total}",
                     "yellow",
                 )
             )
@@ -542,11 +550,14 @@ def _qa_adjust_budgets(working: dict[str, Any]) -> None:
     ).strip()
     if per_str:
         try:
-            block["agent-timeout-seconds"] = int(per_str)
-        except ValueError:
+            val = float(per_str)
+            if val <= 0:
+                raise ValueError("deve ser > 0")
+            block["agent-timeout-seconds"] = val
+        except ValueError as exc:
             renderer.write(
                 renderer.colored(
-                    f"valor inválido {per_str!r} — mantendo {current_per}",
+                    f"valor inválido {per_str!r} ({exc}) — mantendo {current_per}",
                     "yellow",
                 )
             )
@@ -587,15 +598,29 @@ def _qa_list_disable_auditors(working: dict[str, Any]) -> None:
         "Auditores locais (qa-extensions em cards) são gerenciados via "
         "card.yaml `qa-extensions.auditors[].name`."
     ))
+    # Estado atual: lista os que estão desativados pra user ver o que
+    # marcar/desmarcar — a seleção SUBSTITUI a lista (não é aditiva).
+    # Pra re-ativar um auditor já desabilitado, NÃO selecione ele neste
+    # prompt. (ask_multi atualmente não suporta seleção pré-marcada;
+    # quando suportar, passar initial=disabled aqui.)
+    if disabled:
+        renderer.write(renderer.dim(
+            f"Atualmente desativados: {sorted(disabled)}"
+        ))
+        renderer.write(renderer.dim(
+            "Re-selecione apenas os que devem PERMANECER desativados; "
+            "os omitidos serão re-ativados."
+        ))
 
     picked = question.ask_multi(
-        "Auditores a desativar (multi-select; ENTER vazio = sem mudança):",
+        "Auditores a desativar (multi-select; ENTER vazio = re-ativar todos):",
         {name: name for name in canon_auditors},
         min_selected=0,
     )
-    if picked:
-        # Union com disabled atual — toggle aditivo conservador.
-        new_disabled = sorted(set(disabled) | set(picked))
+    if isinstance(picked, list):
+        # Substituição: a seleção do user reflete o estado desejado.
+        # ENTER vazio (picked=[]) zera a lista — todos auditores re-ativados.
+        new_disabled = sorted(set(picked))
         extensions["disabled"] = new_disabled
         block["extensions"] = extensions
         renderer.write(renderer.dim(
@@ -604,7 +629,12 @@ def _qa_list_disable_auditors(working: dict[str, Any]) -> None:
 
 
 def _qa_adjust_retention(working: dict[str, Any]) -> None:
-    """Opção 5 — ajusta qa.retention-days (default 14)."""
+    """Opção 5 — ajusta qa.retention-days (default 14).
+
+    Aceita inteiros > 0. Zero ou negativo é rejeitado com mensagem
+    mentor-calma — retention=0 quebra a janela de auditoria histórica
+    e deleta imediatamente as runs finalizadas.
+    """
     block = _qa_block(working)
     current = int(block.get("retention-days", 14))
     val_str = question.ask_text(
@@ -612,14 +642,17 @@ def _qa_adjust_retention(working: dict[str, Any]) -> None:
     ).strip()
     if val_str:
         try:
-            block["retention-days"] = int(val_str)
+            val = int(val_str)
+            if val <= 0:
+                raise ValueError("deve ser > 0")
+            block["retention-days"] = val
             renderer.write(renderer.dim(
                 f"qa.retention-days = {block['retention-days']}"
             ))
-        except ValueError:
+        except ValueError as exc:
             renderer.write(
                 renderer.colored(
-                    f"valor inválido {val_str!r} — mantendo {current}",
+                    f"valor inválido {val_str!r} ({exc}) — mantendo {current}",
                     "yellow",
                 )
             )

@@ -9,7 +9,7 @@ Verdict logic (§5.4) é informativo — não bloqueia retrospective nem commit
 (§12.2 / Decisão 5). Exit code é responsabilidade de Phase 5 emit.
 
 Reuso (mandamento #3):
-- ``engine.utils.sha256._normalise_description`` — normalização NFC +
+- ``engine.utils.sha256.normalise_description`` — normalização NFC +
   casefold + whitespace collapse pra estabilidade contra cosmetic edits.
 - Pattern de ``canonical_form_fingerprint`` em ``engine/utils/sha256.py`` —
   estrutura json.dumps(sort_keys=True, separators).
@@ -33,7 +33,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from engine.utils.sha256 import _normalise_description
+from engine.utils.sha256 import normalise_description
 
 
 Severity = Literal["critical", "high", "medium", "low", "info"]
@@ -52,7 +52,7 @@ def canonical_fingerprint(finding: dict[str, Any]) -> str:
         files:       sorted(finding.scope.files),
     }))
 
-    Normalização (alinhada com ``engine/utils/sha256._normalise_description``):
+    Normalização (alinhada com ``engine/utils/sha256.normalise_description``):
     NFC + casefold + whitespace collapse. Sobrevive a case differences, extra
     whitespace, accent decomposition. Muda quando vector / title-semântico /
     description-semântico / files mudam.
@@ -73,8 +73,8 @@ def canonical_fingerprint(finding: dict[str, Any]) -> str:
 
     norm = {
         "type": str(finding.get("vector", "")),
-        "title": _normalise_description(str(finding.get("title") or "")),
-        "description": _normalise_description(str(finding.get("description") or "")),
+        "title": normalise_description(str(finding.get("title") or "")),
+        "description": normalise_description(str(finding.get("description") or "")),
         "files": sorted(str(f) for f in files),
     }
     blob = json.dumps(
@@ -87,12 +87,18 @@ def canonical_fingerprint(finding: dict[str, Any]) -> str:
 
 
 def dedup_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Colapsa findings com mesma fingerprint, anexando evidências extras.
+    """Colapsa findings com mesma fingerprint, registrando auditores duplicados.
 
     Cada finding ganha campo ``fingerprint`` (calculado se ausente).
     Quando 2+ findings batem no mesmo fingerprint:
       - sobrevive o primeiro encontrado (cópia rasa)
-      - evidências dos demais entram em ``evidence_extras`` (list, ordenada)
+      - nomes de auditores dos demais entram em
+        ``evidence.duplicates`` (list, ordem de chegada, sem repetir).
+
+    Alinhado com ``agents/qa-synthesizer.md`` §dedup spec: duplicates carrega
+    apenas auditor names — a evidência por-auditor original já vive no draft
+    arquivo do auditor em ``<run>/findings/``. Synthesis registra "outros
+    auditores também viram isto" pra reforço estatístico no verdict humano.
 
     Defensive: input não-list raise TypeError. Item não-dict raise TypeError
     nomeando o índice.
@@ -114,8 +120,24 @@ def dedup_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
         fp = f.get("fingerprint") or canonical_fingerprint(f)
         if fp in by_fp:
             existing = by_fp[fp]
-            extras = existing.setdefault("evidence_extras", [])
-            extras.append(f.get("evidence", {}))
+            evidence = existing.setdefault("evidence", {})
+            if not isinstance(evidence, dict):
+                # Defensive: existing.evidence pode ter vindo não-dict do
+                # draft original — substitui por dict pra poder registrar
+                # duplicates sem AttributeError downstream.
+                evidence = {}
+                existing["evidence"] = evidence
+            duplicates = evidence.setdefault("duplicates", [])
+            if not isinstance(duplicates, list):
+                duplicates = []
+                evidence["duplicates"] = duplicates
+            dup_evidence = f.get("evidence") or {}
+            if isinstance(dup_evidence, dict):
+                auditor = dup_evidence.get("auditor")
+            else:
+                auditor = None
+            if isinstance(auditor, str) and auditor and auditor not in duplicates:
+                duplicates.append(auditor)
         else:
             survivor = dict(f)
             survivor["fingerprint"] = fp
@@ -161,7 +183,16 @@ def compute_verdict(findings: list[dict[str, Any]]) -> Verdict:
 
 @dataclass(frozen=True)
 class SynthesisResult:
-    """Resultado de ``synthesize()``. Imutável (frozen) — consumido por Phase 5."""
+    """Resultado de ``synthesize()``. Consumido por Phase 5.
+
+    Shallow-frozen — atributos top-level são imutáveis (rebind raises
+    ``dataclasses.FrozenInstanceError``), mas os containers internos
+    (``findings``, ``by_severity``, ``by_vector``) são mutáveis em si.
+    Callers devem tratar como read-only por convenção; não mutate
+    post-creation pra evitar confusão de estado entre Phase 4 (synthesis)
+    e Phase 5 (emit). Frozen serve pra detectar reassignment acidental
+    do atributo inteiro — não pra impedir append em list interna.
+    """
 
     findings: list[dict[str, Any]] = field(default_factory=list)
     verdict: Verdict = "PASS"

@@ -11,6 +11,8 @@ from __future__ import annotations
 import re
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from engine.qa.run_id import generate_run_id
 
 
@@ -54,3 +56,12 @@ def test_run_id_utc_enforced() -> None:
     assert prefix == "2026-06-05T12-30-00Z", (
         f"esperava timestamp em UTC (12-30-00Z), obtive {prefix!r}"
     )
+
+
+def test_run_id_naive_datetime_raises_value_error() -> None:
+    """FIX-3: naive datetime (sem tzinfo) e ambiguo — astimezone() o
+    interpretaria como local time, gerando run_ids diferentes por
+    maquina. Rejeitamos explicitamente com ValueError."""
+    naive = datetime(2026, 6, 8, 12, 30, 45)  # sem tzinfo
+    with pytest.raises(ValueError, match="timezone-aware"):
+        generate_run_id(now=naive)

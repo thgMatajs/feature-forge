@@ -62,9 +62,14 @@ def _make_critical_finding(slug: str) -> dict[str, Any]:
 
 
 def test_qa_feature_scope_end_to_end_pass_verdict(tmp_path: Path) -> None:
-    """Feature scope sem findings: run_qa cria run tree + handoff + exit 0.
+    """Phase 0 + re-invoke sem findings actionable: run_qa exit 0.
 
-    Cenário PASS canônico:
+    Cobertura parcial: invoca run_qa duas vezes, valida que Phase 0 (handoff
+    write) acontece e re-invocação sem findings actionable produz exit 0
+    sem emitir proposed.yaml. Phase 1+2+4 (conductor LLM) não são exercitadas
+    — ver Gap QA-14 em 04-pending.md (gap pendente) para lifecycle completo.
+
+    Cenário PASS:
     1. Setup feature dir coerente
     2. Invoke run_qa: gera handoff (Phase 0), termina antes de Phase 4
     3. Inject findings vazios via arquivo JSON no `findings/`
@@ -118,15 +123,23 @@ def test_qa_feature_scope_end_to_end_pass_verdict(tmp_path: Path) -> None:
     assert not proposed.exists(), "PASS verdict não deveria emitir entries"
 
 
-def test_qa_feature_scope_block_verdict_with_critical(tmp_path: Path) -> None:
-    """Feature scope com 1 finding critical → verdict=BLOCK, exit 8.
+def test_synthesis_emit_block_verdict_with_critical_finding(tmp_path: Path) -> None:
+    """Testa synthesis+emit em isolamento com 1 finding critical → BLOCK + exit 8.
 
-    Cenário BLOCK canônico (§5.4: critical >= 1 → BLOCK):
-    1. Setup feature
-    2. Run 1: cria run tree
-    3. Pre-inject finding critical no findings_dir mais recente
-    4. Run 2: synthesize captura finding, verdict=BLOCK, emit grava
-       proposed.yaml com entry; exit=8
+    Escopo restrito: este test NÃO invoca run_qa (lifecycle completo).
+    Cobre o pipeline Phase 4 (synthesize) + Phase 5 (emit_proposed_evolutions)
+    diretamente, validando o contrato BLOCK do §5.4 (critical >= 1) e a
+    escrita atômica em proposed.yaml.
+
+    Lifecycle full coverage (Phase 0 → 5 com run_qa invocando o conductor)
+    virá quando fixtures de injection existirem — ver Gap QA-14 em
+    04-pending.md (gap pendente).
+
+    Cenário (§5.4: critical >= 1 → BLOCK):
+    1. Setup feature (apenas pra ter project_root coerente)
+    2. Run 1 do run_qa: cria run tree + handoff (Phase 0)
+    3. Synthesize finding critical sintético → verdict=BLOCK
+    4. Emit grava proposed.yaml com entry; written=1
     """
     from engine.qa import run_qa
 
@@ -138,13 +151,10 @@ def test_qa_feature_scope_block_verdict_with_critical(tmp_path: Path) -> None:
     exit1 = run_qa(slug, project_root=proj, workflow_config=workflow_config)
     assert exit1 == 0
 
-    # Localiza a próxima run a ser criada pré-injetando o finding na MESMA
-    # tree usando o trick: criamos manualmente uma run tree nova e
-    # depositamos findings, depois invocamos run_qa que vai criar OUTRA
-    # tree nova mas o conductor real escreveria na anterior. Workaround
-    # canônico (alinhado com a engine atual): cria a tree, escreve
-    # findings, depois chama o pipeline de forma direta via synthesize +
-    # emit — sem dispatch do conductor LLM.
+    # Bypass do dispatch do conductor LLM: chama synthesize + emit
+    # diretamente com finding sintético. Lifecycle real exigiria conductor
+    # gravando o finding em <run>/findings/auditor-*.json e re-invocação
+    # de run_qa — ver Gap QA-14 em 04-pending.md.
     from engine.qa.emit import emit_proposed_evolutions
     from engine.qa.synthesis import synthesize
 
