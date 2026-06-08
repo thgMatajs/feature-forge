@@ -1,44 +1,32 @@
-"""Integration — Ctrl+C pause + resume (Decisão 27).
+"""Integration — Ctrl+C pause + resume (Decisão 27 + CONF-004).
 
-Wave 8 Task 8.6: aspirational tests do contrato pause/resume pra ``forge
-qa``. Decisão 27 estabelece "pause = ``deferred`` auto-resumable; abort
-terminal só via ``forge undo``".
+Wave 8 Task 8.6 / CONF-004: contrato pause/resume implementado em
+``engine.qa.checkpoint`` + integracao em ``engine.qa.__init__.run_qa``.
 
-**Estado atual**: ``engine.qa`` ainda NÃO implementa checkpoint/resume —
-o handler em ``engine/qa/__init__.py`` é stateless por design (Phases
-1+2+4 são dispatch externo via Claude Code Agent, e Phase 4 synthesis
-roda sobre findings já materializados em ``findings/*.json``). A
-persistência de progresso parcial entre interrupções vive na convenção
-de filesystem (a run tree existe → findings parciais persistem; nova
-invocação cria nova run tree).
+Decisao 27 estabelece "pause = ``deferred`` auto-resumable; abort terminal
+soh via ``forge undo``". O SIGINT handler em ``run_qa`` escreve
+``<run_tree.root>/checkpoint.json`` atomicamente; re-invocacao detecta o
+checkpoint via ``find_resumable_run`` e retoma sem criar novo ``run_id``.
 
-Por isso os 3 tests aqui são ``@pytest.mark.skip`` documentando o
-contrato esperado quando o feature aterrissar (Wave futura ou
-follow-up). Mantém o arquivo na suite como contract spec ativa —
-quando alguém implementar o checkpoint, basta remover os ``skip``.
-
-Marker: integration (slow). Excluído da rapid lane.
+Marker: integration (slow). Excluido da rapid lane.
 """
 
 from __future__ import annotations
 
 import json
+import signal
 from pathlib import Path
+from typing import Any
+from unittest.mock import patch
 
 import pytest
 
 pytestmark = pytest.mark.integration
 
-_PENDING_REASON = (
-    "pause/resume implementation pending — engine.qa atualmente é "
-    "stateless (Phases LLM são dispatch externo). Reabilitar quando "
-    "checkpoint.json + resume detection aterrissarem."
-)
-
 
 @pytest.fixture
 def qa_pause_project(tmp_path: Path) -> Path:
-    """Project root mínimo com feature stub pra exercícios de pause/resume."""
+    """Project root minimo com feature stub pra exercicios de pause/resume."""
     proj = tmp_path / "qa-pause-pilot"
     (proj / ".git").mkdir(parents=True)
     feat = (
@@ -55,88 +43,203 @@ def qa_pause_project(tmp_path: Path) -> Path:
     return proj
 
 
-@pytest.mark.skip(reason=_PENDING_REASON)
-def test_checkpoint_written_between_phase_1_and_phase_2(
-    qa_pause_project: Path,
-) -> None:
-    """Ctrl+C entre Phase 1 e Phase 2 → checkpoint.json com phase_completed=1.
+def test_checkpoint_written_on_sigint(qa_pause_project: Path) -> None:
+    """SIGINT handler em run_qa escreve checkpoint.json atomicamente.
 
-    Contrato esperado:
-    - Hook SIGINT no conductor escreve ``<run_tree.root>/checkpoint.json``
-      com payload ``{"phase_completed": 1, "findings_partial": [...]}``
-    - Arquivo serializado atomicamente (tmp + os.replace) pra Ctrl+C
-      duplo não corromper
-    - Findings parciais de Phase 1 preservados em ``findings/phase-1-*.json``
+    Estrategia: ao inves de fork+SIGINT real (frageis em pytest), valida
+    o handler invocando-o diretamente apos run_qa instalar via
+    ``signal.signal``. Confirma:
+    1. ``signal.signal(SIGINT, ...)`` foi chamado (handler instalado)
+    2. ``write_checkpoint`` chamado pelo handler com argumentos coerentes
+    3. ``signal.signal`` chamado de novo no finally pra restaurar prev_handler
     """
-    from engine.qa import run_qa  # noqa: F401 — placeholder pra import-check
+    from engine.qa import run_qa
 
-    # Quando implementado: simular SIGINT via mock no dispatch loop.
-    # Assert checkpoint.json existe + payload coerente.
-    assert qa_pause_project.exists()  # placeholder
+    workflow_config: dict[str, Any] = {"qa": {"enabled": True}}
+
+    handler_installed: list[Any] = []
+    original_signal = signal.signal
+
+    def _capture_signal(sig: int, handler: Any) -> Any:
+        if sig == signal.SIGINT:
+            handler_installed.append(handler)
+        return original_signal(sig, handler)
+
+    with patch("engine.qa.signal.signal", side_effect=_capture_signal):
+        # Run completo (sem findings -> exit cedo apos handoff write).
+        run_qa(
+            "pause-feature",
+            project_root=qa_pause_project,
+            workflow_config=workflow_config,
+        )
+
+    # Handler foi instalado (1a chamada) + restaurado (2a chamada).
+    assert len(handler_installed) >= 2
+    sigint_handler = handler_installed[0]
+    assert callable(sigint_handler)
+    assert sigint_handler is not original_signal  # nao e o default
+
+    # Localiza o run dir criado pra confirmar atomic write contract.
+    qa_dir = qa_pause_project / ".planning" / "qa" / "pause-feature"
+    runs = list(qa_dir.iterdir())
+    assert len(runs) == 1
+    run_dir = runs[0]
+
+    # Simula SIGINT chamando o handler — deve escrever checkpoint.json
+    # e chamar sys.exit(130).
+    with pytest.raises(SystemExit) as exc_info:
+        sigint_handler(signal.SIGINT, None)
+    assert exc_info.value.code == 130
+
+    checkpoint_path = run_dir / "checkpoint.json"
+    assert checkpoint_path.exists()
+    payload = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    assert payload["scope_type"] == "feature"
+    assert payload["scope_target"] == "pause-feature"
+    assert isinstance(payload["last_phase_completed"], int)
+    assert payload["interrupted_at"].endswith("Z")
+    assert "run_id" in payload
 
 
-@pytest.mark.skip(reason=_PENDING_REASON)
-def test_resume_detects_checkpoint_and_reuses_phase_1_findings(
-    qa_pause_project: Path,
-) -> None:
-    """Nova invocação detecta checkpoint + retoma sem regenerar findings.
-
-    Contrato esperado:
-    - Run tree pré-existente com ``checkpoint.json`` + findings parciais
-    - Nova invocação de ``run_qa`` detecta checkpoint, pula Phase 1
-      (findings reused), executa Phase 2+
-    - Auditoria preservada: nenhum dispatch redundante registrado
-    """
-    # Pre-seed: run tree + checkpoint.json apontando phase_completed=1
-    run_dir = (
-        qa_pause_project
-        / ".planning"
-        / "qa"
-        / "pause-feature"
-        / "2026-06-04T12-00-00Z-abcd"
-    )
-    run_dir.mkdir(parents=True)
-    (run_dir / "findings").mkdir()
-    (run_dir / "findings" / "phase-1-coverage.json").write_text(
-        json.dumps({"findings": [{"vector": "coverage-gap", "severity": "info"}]}),
-        encoding="utf-8",
-    )
-    (run_dir / "checkpoint.json").write_text(
-        json.dumps({"phase_completed": 1, "scope": "feature", "target": "pause-feature"}),
-        encoding="utf-8",
-    )
-
-    # Quando implementado: invocar run_qa e assertar que phase 1 NÃO
-    # foi re-dispatched (mocking conductor + counting calls).
-    assert (run_dir / "checkpoint.json").exists()
-
-
-@pytest.mark.skip(reason=_PENDING_REASON)
-def test_corrupt_checkpoint_offers_three_paths_remediation(
+def test_resume_reuses_existing_run_tree_and_reads_findings(
     qa_pause_project: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Checkpoint JSON inválido → 3-caminhos (ignore+restart / abort / inspect).
+    """Nova invocacao detecta checkpoint + retoma sem novo run_id.
 
-    Contrato esperado (Disciplina 1 — 3-caminhos pattern):
-    - ``checkpoint.json`` mal-formado (JSON inválido OU shape inesperado)
-    - Handler detecta + apresenta 3 caminhos via mensagem mentor calmo:
-        1) Ignorar checkpoint e recomeçar do zero
-        2) Abortar invocação (volta pro caller pra inspeção manual)
-        3) Path absoluto do checkpoint pra ``cat`` / debug
+    Pre-seed: run dir + checkpoint pendente + 1 finding em findings/.
+    Apos invocar ``run_qa``:
+    - Reusa o run dir existente (NAO cria novo run_id)
+    - Print contem "Retomando run <run_id>"
+    - Phase 4/5 rodam sobre os findings do pre-seed
     """
+    from engine.qa import run_qa
+
+    target = "pause-feature"
+    existing_run_id = "2026-06-04T12-00-00Z-abcd"
     run_dir = (
         qa_pause_project
         / ".planning"
         / "qa"
-        / "pause-feature"
+        / target
+        / existing_run_id
+    )
+    (run_dir / "findings").mkdir(parents=True)
+    (run_dir / "fixtures").mkdir()
+    (run_dir / "audit").mkdir()
+    (run_dir / "snapshot").mkdir()
+
+    # Finding actionable pra exercitar synthesis + emit
+    (run_dir / "findings" / "phase-1-coverage.json").write_text(
+        json.dumps(
+            {
+                "findings": [
+                    {
+                        "id": "F-1",
+                        "vector": "coverage-gap",
+                        "severity": "info",
+                        "summary": "stub finding",
+                        "repro": "stub",
+                        "remediation": "stub",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "qa-report.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "run": {"id": existing_run_id},
+                "verdict": "pending",
+                "summary": {},
+                "findings": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "checkpoint.json").write_text(
+        json.dumps(
+            {
+                "run_id": existing_run_id,
+                "scope_type": "feature",
+                "scope_target": target,
+                "last_phase_completed": 3,
+                "interrupted_at": "2026-06-04T12-30-00Z",
+                "findings_partial_count": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    run_qa(
+        target,
+        project_root=qa_pause_project,
+        workflow_config={"qa": {"enabled": True}},
+    )
+
+    captured = capsys.readouterr()
+    assert "Retomando run" in captured.out
+    assert existing_run_id in captured.out
+
+    # Run dir reutilizado: nao deve haver outro irmao
+    qa_dir = qa_pause_project / ".planning" / "qa" / target
+    runs = list(qa_dir.iterdir())
+    assert len(runs) == 1
+    assert runs[0].name == existing_run_id
+
+    # qa-report.json foi finalizado (verdict nao mais "pending")
+    final = json.loads(
+        (run_dir / "qa-report.json").read_text(encoding="utf-8")
+    )
+    assert final["verdict"] != "pending"
+
+    # Checkpoint foi limpo apos completion
+    assert not (run_dir / "checkpoint.json").exists()
+
+
+def test_corrupt_checkpoint_prints_three_paths_remediation(
+    qa_pause_project: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Checkpoint JSON corrupto -> 3-caminhos mentor calmo + return 0.
+
+    Disciplina 1 — 3-caminhos pattern:
+    1) Ignorar checkpoint e comecar nova run
+    2) Inspecionar manualmente
+    3) Restaurar do .bak
+    """
+    from engine.qa import run_qa
+
+    target = "pause-feature"
+    run_dir = (
+        qa_pause_project
+        / ".planning"
+        / "qa"
+        / target
         / "2026-06-04T12-00-00Z-corp"
     )
     run_dir.mkdir(parents=True)
     (run_dir / "checkpoint.json").write_text(
         "{ not valid json", encoding="utf-8"
     )
+    (run_dir / "qa-report.json").write_text(
+        json.dumps({"verdict": "pending"}), encoding="utf-8"
+    )
 
-    # Quando implementado: invocar run_qa, assertar stderr contém
-    # "3 caminhos" + path do checkpoint + voz mentor calmo (sem ALL-CAPS).
-    assert (run_dir / "checkpoint.json").exists()
+    exit_code = run_qa(
+        target,
+        project_root=qa_pause_project,
+        workflow_config={"qa": {"enabled": True}},
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    stderr = captured.err
+    assert "Checkpoint encontrado mas invalido" in stderr
+    assert "Tres caminhos" in stderr
+    assert str(run_dir / "checkpoint.json") in stderr
+    # Voz mentor calmo: sem ALL-CAPS, sem "ERROR!!!"
+    assert "ERROR" not in stderr
+    assert "!!!" not in stderr

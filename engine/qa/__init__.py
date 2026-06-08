@@ -32,11 +32,19 @@ Voz: mentor calmo. Sem auto-fix — verdict BLOCK exige escolha humana via
 from __future__ import annotations
 
 import json
+import signal
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from engine.qa.checkpoint import (
+    Checkpoint,
+    CheckpointCorruptError,
+    find_resumable_run,
+    read_checkpoint,
+    write_checkpoint,
+)
 from engine.qa.emit import emit_proposed_evolutions
 from engine.qa.ingest import (
     QAConfig,
@@ -144,106 +152,230 @@ def run_qa(
         print(f"\U0001f6d1 {exc}", file=sys.stderr)
         return 0
 
-    run_tree = create_run_tree(scope, project_root=project_root)
-
-    # Phase 0 — snapshot dos artefatos resolvidos (§5.0). Hardlink quando
-    # possivel, fallback copy2. Best-effort: paths inexistentes ou
-    # falhas de I/O nao quebram a run.
-    snapshot_copied = snapshot_artefacts(
-        scope, run_tree.snapshot_dir, project_root=project_root
-    )
-
-    # Phase 0 — escreve skeleton de qa-report.json com verdict=pending
-    # antes de qualquer dispatch (§5.0). Phase 4 finaliza in-place
-    # preservando started_at/config.
-    _write_qa_report_skeleton(scope, run_tree, cfg)
-
-    # Phase 1+2+4 sao Claude Code Agent dispatch — coordenados pelo
-    # agente qa-conductor.md (criado em Wave 6 Task 6.1). Aqui apenas
-    # registramos os caminhos pro conductor consumir.
-    _write_conductor_handoff(scope, run_tree, cfg)
-
-    # Phase 3 sandbox + Phase 5 emit sao executados quando o conductor
-    # devolve findings em findings/*.json. Em invocacao sincrona, este
-    # handler termina aqui e o conductor e dispatched externamente.
-    # Quando rodando em test/integration mode com findings ja presentes,
-    # segue direto pra synthesis + emit.
-    findings_files = sorted(run_tree.findings_dir.glob("*.json"))
-    if not findings_files:
-        snapshot_line = (
-            f"  snapshot: {len(snapshot_copied)} artefatos copiados\n"
-            if snapshot_copied
-            else ""
-        )
-        print(
-            f"Run tree criada em {run_tree.root}.\n"
-            f"  scope:  {scope.type} {scope.target}\n"
-            f"  run:    {run_tree.run_id}\n"
-            f"{snapshot_line}"
-            f"Dispatch `agents/qa-conductor.md` pra rodar phases 1-4."
-        )
-        return 0
-
-    all_findings: list[dict[str, Any]] = []
-    for ff in findings_files:
-        # Degradação graciosa: arquivo malformado (JSON quebrado) ou
-        # ilegível (perm error) não derruba synthesis — outros auditores
-        # podem ter contribuído findings válidos. Logamos em stderr pra
-        # o user ver o draft problemático e decidir manualmente.
+    # Resume detection (Decisao 27 — pause = auto-resumable).
+    # Procura um run dir previo com checkpoint pendente ANTES de criar
+    # uma nova run tree. Se encontrar e o checkpoint for valido, reusa o
+    # dir; se corrupto, cai em 3-caminhos mentor calmo e retorna 0.
+    resumable_dir = find_resumable_run(project_root, scope.type, scope.target)
+    resumed_checkpoint: Checkpoint | None = None
+    if resumable_dir is not None:
         try:
-            data = json.loads(ff.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as exc:
+            resumed_checkpoint = read_checkpoint(resumable_dir)
+        except CheckpointCorruptError as exc:
             print(
-                f"⚠ Falha ao ler findings de {ff.name} ({exc}). "
-                "Ignorando este arquivo para degradação graciosa.",
+                f"⚠ Checkpoint encontrado mas invalido em {exc.path}.\n\n"
+                f"  Motivo: {exc.reason}\n\n"
+                f"  Tres caminhos pra continuar:\n"
+                f"    1) Ignorar checkpoint e comecar nova run — "
+                f"apague {exc.path.parent} e re-invoque\n"
+                f"    2) Inspecionar manualmente — `cat {exc.path}` "
+                f"pra entender o que sobrou\n"
+                f"    3) Restaurar do .bak se existir — "
+                f"`ls {exc.path}.bak`\n\n"
+                f"  Sem auto-fix aqui — escolha humana.",
                 file=sys.stderr,
             )
-            continue
-        if isinstance(data, list):
-            all_findings.extend(data)
-        elif isinstance(data, dict):
-            nested = data.get("findings", [])
-            if isinstance(nested, list):
-                all_findings.extend(nested)
+            return 0
 
-    # CONF-003: sandbox breach/timeout viram findings deterministicos
-    # (§5.3). Le sandbox-results.json escrito pelo conductor; injeta
-    # findings derivados antes do synthesize pra que dedup + verdict
-    # logic considerem os problemas de isolamento como first-class
-    # findings (breach -> critical -> BLOCK).
-    sandbox_results_file = run_tree.root / "sandbox-results.json"
-    if sandbox_results_file.exists():
-        try:
-            raw = json.loads(sandbox_results_file.read_text(encoding="utf-8"))
-            stubs = hydrate_sandbox_results(
-                raw if isinstance(raw, list) else raw.get("results", [])
+    if resumed_checkpoint is not None and resumable_dir is not None:
+        # Phase 5 ja completa — checkpoint nao devia existir, defensivo:
+        # apaga + segue pra fresh run.
+        if resumed_checkpoint.last_phase_completed >= 5:
+            try:
+                (resumable_dir / "checkpoint.json").unlink()
+            except FileNotFoundError:
+                pass
+            run_tree = create_run_tree(scope, project_root=project_root)
+            snapshot_copied = snapshot_artefacts(
+                scope, run_tree.snapshot_dir, project_root=project_root
             )
-            derived = findings_from_sandbox_results(
-                stubs, run_id=run_tree.run_id
-            )
-            all_findings.extend(derived)
-        except (json.JSONDecodeError, OSError) as exc:
+            _write_qa_report_skeleton(scope, run_tree, cfg)
+            _write_conductor_handoff(scope, run_tree, cfg)
+            resumed_checkpoint = None
+        else:
+            run_tree = _reattach_run_tree(resumable_dir, resumed_checkpoint)
+            snapshot_copied = []
             print(
-                f"⚠ sandbox-results.json malformado ({exc}). "
-                "Ignorando — sandbox findings nao serao gerados nesta run.",
+                f"Retomando run {resumed_checkpoint.run_id} "
+                f"(Phase {resumed_checkpoint.last_phase_completed} completa)..."
+            )
+    else:
+        run_tree = create_run_tree(scope, project_root=project_root)
+
+        # Phase 0 — snapshot dos artefatos resolvidos (§5.0). Hardlink quando
+        # possivel, fallback copy2. Best-effort: paths inexistentes ou
+        # falhas de I/O nao quebram a run.
+        snapshot_copied = snapshot_artefacts(
+            scope, run_tree.snapshot_dir, project_root=project_root
+        )
+
+        # Phase 0 — escreve skeleton de qa-report.json com verdict=pending
+        # antes de qualquer dispatch (§5.0). Phase 4 finaliza in-place
+        # preservando started_at/config.
+        _write_qa_report_skeleton(scope, run_tree, cfg)
+
+        # Phase 1+2+4 sao Claude Code Agent dispatch — coordenados pelo
+        # agente qa-conductor.md (criado em Wave 6 Task 6.1). Aqui apenas
+        # registramos os caminhos pro conductor consumir.
+        _write_conductor_handoff(scope, run_tree, cfg)
+
+    # Track phase progresso pro SIGINT handler. List-of-int pra mutar
+    # dentro do closure (nonlocal nao funciona em handler registrado via
+    # signal.signal pq frame e diferente).
+    _phase = [0]
+
+    def _sigint_checkpoint(_signum: int, _frame: Any) -> None:
+        try:
+            findings_count = len(list(run_tree.findings_dir.glob("*.json")))
+            write_checkpoint(
+                run_tree.root,
+                run_id=run_tree.run_id,
+                scope_type=scope.type,
+                scope_target=scope.target,
+                last_phase_completed=_phase[0],
+                findings_partial_count=findings_count,
+            )
+            print(
+                f"\n⏸ Interrompido — checkpoint salvo em "
+                f"{run_tree.root / 'checkpoint.json'}.\n"
+                f"  Re-invoque `forge qa {scope.target}` pra retomar.",
                 file=sys.stderr,
             )
+        finally:
+            sys.exit(130)
 
-    result = synthesize(all_findings)
-    emit_summary = emit_proposed_evolutions(
-        result.findings, project_root=project_root
+    prev_handler = signal.signal(signal.SIGINT, _sigint_checkpoint)
+    try:
+        # Phase 0 ja completa (run tree + skeleton + handoff escritos OU
+        # reattach do resume). Marca pra checkpoint capturar caso SIGINT
+        # chegue antes das phases seguintes terminarem.
+        _phase[0] = 0
+
+        # Phase 3 sandbox + Phase 5 emit sao executados quando o conductor
+        # devolve findings em findings/*.json. Em invocacao sincrona, este
+        # handler termina aqui e o conductor e dispatched externamente.
+        # Quando rodando em test/integration mode com findings ja presentes,
+        # segue direto pra synthesis + emit.
+        findings_files = sorted(run_tree.findings_dir.glob("*.json"))
+        if not findings_files:
+            snapshot_line = (
+                f"  snapshot: {len(snapshot_copied)} artefatos copiados\n"
+                if snapshot_copied
+                else ""
+            )
+            print(
+                f"Run tree criada em {run_tree.root}.\n"
+                f"  scope:  {scope.type} {scope.target}\n"
+                f"  run:    {run_tree.run_id}\n"
+                f"{snapshot_line}"
+                f"Dispatch `agents/qa-conductor.md` pra rodar phases 1-4."
+            )
+            return 0
+
+        all_findings: list[dict[str, Any]] = []
+        for ff in findings_files:
+            # Degradação graciosa: arquivo malformado (JSON quebrado) ou
+            # ilegível (perm error) não derruba synthesis — outros auditores
+            # podem ter contribuído findings válidos. Logamos em stderr pra
+            # o user ver o draft problemático e decidir manualmente.
+            try:
+                data = json.loads(ff.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError) as exc:
+                print(
+                    f"⚠ Falha ao ler findings de {ff.name} ({exc}). "
+                    "Ignorando este arquivo para degradação graciosa.",
+                    file=sys.stderr,
+                )
+                continue
+            if isinstance(data, list):
+                all_findings.extend(data)
+            elif isinstance(data, dict):
+                nested = data.get("findings", [])
+                if isinstance(nested, list):
+                    all_findings.extend(nested)
+
+        # CONF-003: sandbox breach/timeout viram findings deterministicos
+        # (§5.3). Le sandbox-results.json escrito pelo conductor; injeta
+        # findings derivados antes do synthesize pra que dedup + verdict
+        # logic considerem os problemas de isolamento como first-class
+        # findings (breach -> critical -> BLOCK).
+        sandbox_results_file = run_tree.root / "sandbox-results.json"
+        if sandbox_results_file.exists():
+            try:
+                raw = json.loads(sandbox_results_file.read_text(encoding="utf-8"))
+                stubs = hydrate_sandbox_results(
+                    raw if isinstance(raw, list) else raw.get("results", [])
+                )
+                derived = findings_from_sandbox_results(
+                    stubs, run_id=run_tree.run_id
+                )
+                all_findings.extend(derived)
+            except (json.JSONDecodeError, OSError) as exc:
+                print(
+                    f"⚠ sandbox-results.json malformado ({exc}). "
+                    "Ignorando — sandbox findings nao serao gerados nesta run.",
+                    file=sys.stderr,
+                )
+
+        _phase[0] = 3  # findings + sandbox-results processados
+        result = synthesize(all_findings)
+        _phase[0] = 4  # synthesis done
+        emit_summary = emit_proposed_evolutions(
+            result.findings, project_root=project_root
+        )
+
+        # Phase 4 — finaliza qa-report.json escrito em Phase 0 com verdict,
+        # findings consolidados, totals, e completed_at. Preserva campos
+        # load-bearing do skeleton (run.id, run.scope, run.config_snapshot,
+        # run.started_at) — idempotente em re-invocacoes (re-le antes de
+        # escrever).
+        _finalize_qa_report(run_tree, result)
+        _phase[0] = 5  # emit + finalize done
+
+        _print_verdict_block(scope, run_tree, result, emit_summary)
+
+        # Cleanup do checkpoint: run completou, checkpoint nao e mais
+        # relevante. Atomic delete tolerante a ausencia.
+        try:
+            (run_tree.root / "checkpoint.json").unlink()
+        except FileNotFoundError:
+            pass
+
+        return 8 if result.verdict == "BLOCK" else 0
+    finally:
+        signal.signal(signal.SIGINT, prev_handler)
+
+
+def _reattach_run_tree(run_dir: Path, _checkpoint: Checkpoint) -> RunTree:
+    """Reconstroi RunTree a partir de um dir existente sem criar nada.
+
+    Usado no resume path: o run dir ja foi criado em invocacao anterior,
+    precisamos so reativar os paths canonicos pra Phase 4/5 continuarem.
+    Tolerante a subdirs ausentes — mkdir defensivo pra cobrir cleanup
+    parcial entre interrupcao e resume.
+
+    Args:
+        run_dir: dir raiz da run resumivel (ja existente em disco).
+        _checkpoint: checkpoint lido (reservado pra extensao futura; hoje
+            so usamos ``run_id`` do nome do dir).
+
+    Returns:
+        ``RunTree`` espelhando os paths canonicos de ``create_run_tree``.
+    """
+    fixtures = run_dir / "fixtures"
+    findings = run_dir / "findings"
+    audit = run_dir / "audit"
+    snapshot = run_dir / "snapshot"
+    for d in (fixtures, findings, audit, snapshot):
+        d.mkdir(parents=True, exist_ok=True)
+    return RunTree(
+        run_id=run_dir.name,
+        root=run_dir,
+        fixtures_dir=fixtures,
+        findings_dir=findings,
+        audit_dir=audit,
+        snapshot_dir=snapshot,
     )
-
-    # Phase 4 — finaliza qa-report.json escrito em Phase 0 com verdict,
-    # findings consolidados, totals, e completed_at. Preserva campos
-    # load-bearing do skeleton (run.id, run.scope, run.config_snapshot,
-    # run.started_at) — idempotente em re-invocacoes (re-le antes de
-    # escrever).
-    _finalize_qa_report(run_tree, result)
-
-    _print_verdict_block(scope, run_tree, result, emit_summary)
-
-    return 8 if result.verdict == "BLOCK" else 0
 
 
 def _write_qa_report_skeleton(
