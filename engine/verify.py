@@ -34,6 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from engine._sandbox.env import build_safe_env
 from engine.memory.l1 import (
     L1State,
     list_active_features,
@@ -627,6 +628,7 @@ def _invoke_validator(spec: _ValidatorSpec, project_root: Path) -> _ValidatorRes
             capture_output=True,
             text=True,
             timeout=60,
+            env=build_safe_env(),     # QA-11: env reduzido pra subprocess de validator
         )
     except subprocess.TimeoutExpired:
         return _ValidatorResult(
