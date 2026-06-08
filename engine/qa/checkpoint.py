@@ -24,6 +24,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Optional
 
+from engine.qa._common import utc_iso_z
+from engine.qa.ingest import sanitize_scope_target
+
 
 @dataclass(frozen=True)
 class Checkpoint:
@@ -105,11 +108,7 @@ def write_checkpoint(
     Returns:
         Path do checkpoint escrito.
     """
-    from datetime import datetime, timezone
-
-    interrupted_at = (
-        datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    )
+    interrupted_at = utc_iso_z()
     checkpoint = Checkpoint(
         run_id=run_id,
         scope_type=scope_type,
@@ -227,18 +226,21 @@ def find_resumable_run(
         project_root: raiz do projeto consumidor.
         scope_type: tipo do scope (mantido pra API; ainda nao usado na
             busca — futuro: discriminar runs de targets homonimos).
-        scope_target: target conforme passado pelo user. Sanitizado pelo
-            mesmo whitelist de ``ingest.create_run_tree`` antes da busca.
+        scope_target: target conforme passado pelo user. Sanitizado via
+            :func:`engine.qa.ingest.sanitize_scope_target` (mesmo helper
+            usado por ``create_run_tree``), garantindo simetria entre
+            "onde ingest gravou" e "onde resume procura".
 
     Returns:
         Path absoluto do run dir resumivel mais recente, ou ``None``.
+        Tambem retorna ``None`` quando ``scope_target`` e
+        irrepresentavel apos sanitizacao (ex.: input que vira string
+        vazia ou comeca com ``.``) — coerente com "nao ha run resumivel
+        a ser encontrada", deixando o caller cair no fluxo de fresh run
+        que entao explode em ``create_run_tree`` com mensagem util.
     """
-    # Sanitizacao espelha ingest.create_run_tree pra casar com o dir real
-    # gravado em disco. Import inline pra evitar dependencia circular.
-    import re
-
-    safe_target = re.sub(r"[^A-Za-z0-9._-]", "_", scope_target)
-    if not safe_target or safe_target.startswith("."):
+    safe_target = sanitize_scope_target(scope_target)
+    if safe_target is None:
         return None
 
     scope_dir = project_root / ".planning" / "qa" / safe_target

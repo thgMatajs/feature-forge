@@ -37,6 +37,34 @@ from engine.qa.scope import Scope
 _TARGET_SAFE_RE = re.compile(r"[^A-Za-z0-9._-]")
 
 
+def sanitize_scope_target(target: str) -> str | None:
+    """Sanitiza ``scope.target`` pra componente de path seguro.
+
+    Source of truth pra duas chamadas no projeto:
+
+    1. :func:`create_run_tree` — usa o helper e converte ``None`` em
+       ``ValueError`` (input invalido derruba a Phase 0 imediatamente).
+    2. ``engine.qa.checkpoint.find_resumable_run`` — usa o helper e
+       converte ``None`` em retorno ``None`` (input invalido significa
+       "nenhuma run resumivel a ser encontrada", sem raise).
+
+    Regra: aplica whitelist ``[A-Za-z0-9._-]`` (qualquer outro vira
+    ``"_"``). Rejeita resultado vazio (sanitizacao consumiu todo o input)
+    ou que comece com ``.`` (mascararia hidden dir).
+
+    Args:
+        target: ``scope.target`` bruto conforme entrada do user.
+
+    Returns:
+        String sanitizada quando representavel como componente de path;
+        ``None`` quando o resultado seria vazio ou comecaria com ``.``.
+    """
+    safe = _TARGET_SAFE_RE.sub("_", target)
+    if not safe or safe.startswith("."):
+        return None
+    return safe
+
+
 @dataclass
 class QAConfig:
     """Config resolvida da section ``qa:`` do workflow-config.
@@ -200,18 +228,16 @@ def create_run_tree(scope: Scope, *, project_root: Path) -> RunTree:
     Returns:
         ``RunTree`` com paths absolutos dos 4 subdirs criados.
     """
-    # Sanitiza scope.target antes de virar componente de path. Decisão
-    # defensiva: scope.target chega do user (slug/screen id/TASK-NNNN)
-    # e poderia carregar "../" ou separadores de path, escapando a
-    # convenção `.planning/qa/<target>/...`. Whitelist [A-Za-z0-9._-];
-    # qualquer outro vira "_". Rejeita target vazio ou que inicia com
-    # "." (mascara hidden dir).
-    safe_target = _TARGET_SAFE_RE.sub("_", scope.target)
-    if not safe_target or safe_target.startswith("."):
+    # Sanitiza scope.target antes de virar componente de path. Helper
+    # canonico em sanitize_scope_target (mesma logica reusada por
+    # checkpoint.find_resumable_run). None significa "input
+    # irrepresentavel" — aqui derrubamos Phase 0 com mensagem util.
+    safe_target = sanitize_scope_target(scope.target)
+    if safe_target is None:
         raise ValueError(
-            f"scope.target inválido após sanitização: {scope.target!r} "
-            f"-> {safe_target!r}. Use slug/id que contenha apenas "
-            f"[A-Za-z0-9._-] e não comece com ponto."
+            f"scope.target inválido após sanitização: {scope.target!r}. "
+            f"Use slug/id que contenha apenas [A-Za-z0-9._-] e não "
+            f"comece com ponto."
         )
 
     run_id = generate_run_id()

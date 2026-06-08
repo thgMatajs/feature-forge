@@ -205,10 +205,10 @@ def test_corrupt_checkpoint_prints_three_paths_remediation(
 ) -> None:
     """Checkpoint JSON corrupto -> 3-caminhos mentor calmo + return 0.
 
-    Disciplina 1 — 3-caminhos pattern:
-    1) Ignorar checkpoint e comecar nova run
-    2) Inspecionar manualmente
-    3) Restaurar do .bak
+    Template canonico de Disciplina #1 (CONF-004 H-1):
+    - O que falhou / Onde / Por que importa
+    - Tres caminhos pra resolver (numerados)
+    - Sem auto-fix - escolha humana
     """
     from engine.qa import run_qa
 
@@ -237,9 +237,21 @@ def test_corrupt_checkpoint_prints_three_paths_remediation(
     assert exit_code == 0
     captured = capsys.readouterr()
     stderr = captured.err
-    assert "Checkpoint encontrado mas invalido" in stderr
-    assert "Tres caminhos" in stderr
+    # Header + secoes do template canonico (3-caminhos pattern).
+    assert "Checkpoint corrupto" in stderr
+    assert "O que falhou:" in stderr
+    assert "Onde:" in stderr
+    assert "Por que importa:" in stderr
+    assert "Tres caminhos pra resolver:" in stderr
+    assert "Sem auto-fix" in stderr
+    # Os 3 paths numerados.
+    assert "1) Ignorar checkpoint" in stderr
+    assert "2) Inspecionar" in stderr
+    assert "3) Apenas o checkpoint corrompeu" in stderr
+    # Path do checkpoint mencionado na secao Onde + Tres caminhos.
     assert str(run_dir / "checkpoint.json") in stderr
+    # Caminho 3 NAO sugere .bak (checkpoint nunca cria backup).
+    assert ".bak" not in stderr
     # Voz mentor calmo: sem ALL-CAPS, sem "ERROR!!!"
     assert "ERROR" not in stderr
     assert "!!!" not in stderr
