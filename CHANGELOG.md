@@ -7,6 +7,42 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed (PR #7 review fixes — 2026-06-08)
+
+- **`validators/_common.py`** — `gate_threshold_lookup` aceita kwargs
+  `card_override_key` / `workflow_block_key` / `defaults`;
+  `format_three_paths_message` aceita kwargs `gate_title` / `why_lines` /
+  `override_example` / `format_annotation`. Defaults preservam CC gate
+  byte-a-byte; outros gates numéricos (Cognitive Complexity, Function
+  Length) reusam direto. Fecha Gap GATE-INFRA-1 (4 PR threads, A1/A2).
+- **`validators/_gate_infra.py`** — quatro robustness fixes:
+  (B1) `render_config_with_placeholders` ordena placeholders por len
+  desc antes de replace (evita prefix-collision); (B2) write/close em
+  try/except com unlink + re-raise (sem leak de tempfile em disk-full);
+  (B3) `apply_overrides` valida `override_key_fields` contra named
+  groups do `key_pattern` up-front (ValueError em vez de KeyError
+  tardio); (B4) `parse_overrides` adiciona `KeyError` à tupla de
+  exceções do value_converter (match the docstring promise).
+- **`validators/check_cyclomatic_complexity.py`** — drop dead re-exports
+  `check_tool_available` / `render_config_with_placeholders` (C2).
+  Tests migraram pra importar direto de `_gate_infra`.
+- **`validators/_diff.py`** — (D1) `read_commit_body` resolve gitdir via
+  `git rev-parse --git-dir` + fallback parse manual de `.git` file,
+  suportando worktrees (`.git` é arquivo, não diretório). Antes
+  silently caía pro `git log` fallback (commit prévio em pre-commit
+  context). (E1) `DiffHunk.kind` promovido pra
+  `Literal["add", "del", "ctx"]` (alias `HunkKind`) — sem behavior
+  change em runtime.
+- **`docs/design/04-pending.md`** — Gap GATE-INFRA-1 marcado como
+  resolvido; novo Gap GATE-INFRA-2 (N+1 subprocess em
+  `extract_diff_hunks`) registrado como deferred YAGNI até 2º consumer
+  de hunks aparecer.
+
+10 testes novos cobrindo as 4 áreas: `test_common_cc_helpers.py` (+8),
+`test_gate_infra_robustness.py` (+6), `test_diff_worktree.py` (+3).
+Suite total continua verde (819 passed + 19 skipped + 1 known-fail em
+worktree environment).
+
 ### Changed (Phase 0 — gate-infra extraction)
 
 - **Reusable gate infrastructure** extracted from CC gate into:

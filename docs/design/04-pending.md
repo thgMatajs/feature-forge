@@ -1802,7 +1802,15 @@ revisitado.
 
 **Categoria:** gate-infra
 **Severidade:** baixa (YAGNI — não bloqueia até 2º consumer numérico)
-**Status:** deferred — **R1.1 confirmou YAGNI** (resolver em R2.2 Cognitive Complexity)
+**Status:** ✅ **resolvido** (PR #7 review fixes — commit 152cae0, 2026-06-08).
+Helpers aceitam kwargs `card_override_key` / `workflow_block_key` /
+`defaults` (em `gate_threshold_lookup`) + `gate_title` / `why_lines` /
+`override_example` / `format_annotation` (em `format_three_paths_message`).
+Defaults preservam comportamento CC byte-a-byte; testes em
+`tests/validators/test_common_cc_helpers.py` cobrem parametrização +
+defaults. Cognitive Complexity (R2.2) já consome direto, sem reescrever.
+
+**Histórico (preservado pra rastreabilidade):**
 
 `gate_threshold_lookup` ainda hardcoda `"cc-gate-override"` / `"cc-gate"` /
 `DEFAULTS_CC` internamente. Nome foi generalizado mas implementação permanece
@@ -1822,6 +1830,37 @@ deferida até o 2º consumer **numérico** — provavelmente Cognitive Complexit
 generalizado. `forge graph` Q12/Q14 não detectaram near-duplicate em R1.1
 porque o secrets não copiou o helper — compôs `apply_overrides` /
 `dispatch_native_tool` / `check_tool_available` direto.
+
+### Gap GATE-INFRA-2 — extract_diff_hunks N+1 subprocess
+
+**Categoria:** gate-infra
+**Severidade:** baixa (performance — não bloqueia funcionalidade)
+**Status:** deferred (YAGNI até 2º consumer de hunks aparecer)
+
+Hoje `extract_diff_hunks` em `validators/_diff.py` dispara 1
+`git diff --cached -U0 -- <file>` por arquivo. Pre-commit em projeto grande
+(50+ arquivos staged) acumula 50 fork+exec — overhead linear na quantidade
+de staged files. `git diff` aceita N paths posicionais e o parser sabe
+separar por header `+++ b/<path>`, então a refator é mecânica.
+
+Defer YAGNI porque (a) CC gate atualmente é o ÚNICO consumer de hunks
+(secrets usa `staged_files` diretamente, sem hunk-level diffing) e
+(b) overhead empírico é minor em features típicas (<10 staged files).
+Revisitar quando consumer #2 de hunks chegar — provavelmente
+Cognitive Complexity (R2.2) ou Function Length & Nesting (R2.4), ambos
+precisam de classify_range_against_hunks pra delta-rule.
+
+**Fix sugerido:** batched git invocation + parser por arquivo. Estrutura:
+
+```python
+proc = subprocess.run(
+    ["git", "-C", root, "diff", "--cached", "-U0", "--", *rel_paths],
+    ...
+)
+# Parser split por linhas `diff --git a/<path> b/<path>` ou `+++ b/<path>`
+```
+
+Self-review thread relacionada: PR #7 comment 3375391361.
 
 ### Gap SECRETS-1 — Custom rules per project (deferred v1.3+)
 
