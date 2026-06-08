@@ -28,6 +28,7 @@ validate_qa_finding (orthogonal — synthesis aceita drafts, validação shape
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
 import pytest
@@ -119,15 +120,34 @@ def test_verdict_pass_when_below_thresholds():
 
 
 def test_dedup_collapses_findings_with_same_fingerprint():
+    """Sobrevive o primeiro; demais auditor names entram em
+    ``evidence.duplicates`` (per agents/qa-synthesizer.md §dedup).
+
+    Findings sem ``evidence.auditor`` não contribuem pra duplicates —
+    evita poluir o registro com strings vazias.
+    """
     fp = "a" * 64
-    f1 = _mk(severity="high", title="dup", evidence={"step": 1}, fingerprint=fp)
-    f2 = _mk(severity="high", title="dup", evidence={"step": 2}, fingerprint=fp)
+    f1 = _mk(
+        severity="high",
+        title="dup",
+        evidence={"auditor": "a1", "step": 1},
+        fingerprint=fp,
+    )
+    f2 = _mk(
+        severity="high",
+        title="dup",
+        evidence={"auditor": "a2", "step": 2},
+        fingerprint=fp,
+    )
     out = dedup_findings([f1, f2])
     assert len(out) == 1
     survivor = out[0]
     assert survivor["fingerprint"] == fp
-    extras = survivor["evidence_extras"]
-    assert extras == [{"step": 2}]
+    # evidence.auditor do survivor preservado; duplicates anexado.
+    assert survivor["evidence"]["auditor"] == "a1"
+    assert survivor["evidence"].get("duplicates") == ["a2"]
+    # Pattern antigo (evidence_extras) não deve mais existir.
+    assert "evidence_extras" not in survivor
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +217,72 @@ def test_synthesize_raises_typeerror_on_non_list():
 
 
 def test_synthesize_frozen_dataclass():
+    """SynthesisResult é frozen (shallow): rebind de atributo top-level raise.
+
+    Containers internos (findings, by_severity, by_vector) continuam mutáveis
+    por design — frozen detecta apenas reassignment do atributo, não mutação
+    interna. Ver docstring de SynthesisResult.
+    """
     result = synthesize([_mk(severity="low")])
-    with pytest.raises((AttributeError, Exception)):
+    with pytest.raises((AttributeError, dataclasses.FrozenInstanceError)):
         result.verdict = "BLOCK"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# FIX-13: dedup usa evidence.duplicates (lista de auditor names) per spec
+# agents/qa-synthesizer.md — não mais evidence_extras
+# ---------------------------------------------------------------------------
+
+
+def test_dedup_records_duplicate_auditors_in_evidence_duplicates():
+    """Quando 2+ findings batem no mesmo fingerprint, os auditor names dos
+    demais entram em ``survivor.evidence.duplicates`` (ordem de chegada,
+    sem repetir). Spec: agents/qa-synthesizer.md §dedup.
+
+    Survivor mantém evidence.auditor original; duplicates aparece SÓ
+    quando há fingerprint colidindo. evidence_extras NÃO deve existir.
+    """
+    fp = "b" * 64
+    f1 = _mk(
+        severity="high",
+        title="same",
+        evidence={"auditor": "qa-auditor-spec-vs-spec", "step": 1},
+        fingerprint=fp,
+    )
+    f2 = _mk(
+        severity="high",
+        title="same",
+        evidence={"auditor": "qa-auditor-chaos", "step": 2},
+        fingerprint=fp,
+    )
+    f3 = _mk(
+        severity="high",
+        title="same",
+        evidence={"auditor": "qa-auditor-coverage", "step": 3},
+        fingerprint=fp,
+    )
+    out = dedup_findings([f1, f2, f3])
+
+    assert len(out) == 1
+    survivor = out[0]
+    assert "evidence_extras" not in survivor, (
+        "evidence_extras é o pattern antigo — synthesis agora usa "
+        "evidence.duplicates per agents/qa-synthesizer.md"
+    )
+    evidence = survivor["evidence"]
+    assert evidence["auditor"] == "qa-auditor-spec-vs-spec"
+    duplicates = evidence.get("duplicates")
+    assert duplicates == ["qa-auditor-chaos", "qa-auditor-coverage"]
+
+
+def test_dedup_duplicates_dedupes_same_auditor_name():
+    """Mesmo auditor aparecendo 2x na fingerprint não duplica o nome
+    em ``duplicates`` (set semantics preservando ordem)."""
+    fp = "c" * 64
+    f1 = _mk(severity="high", title="x", evidence={"auditor": "a"}, fingerprint=fp)
+    f2 = _mk(severity="high", title="x", evidence={"auditor": "b"}, fingerprint=fp)
+    f3 = _mk(severity="high", title="x", evidence={"auditor": "b"}, fingerprint=fp)
+    out = dedup_findings([f1, f2, f3])
+
+    assert len(out) == 1
+    assert out[0]["evidence"]["duplicates"] == ["b"]

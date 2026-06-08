@@ -151,7 +151,19 @@ def run_qa(
 
     all_findings: list[dict[str, Any]] = []
     for ff in findings_files:
-        data = json.loads(ff.read_text(encoding="utf-8"))
+        # Degradação graciosa: arquivo malformado (JSON quebrado) ou
+        # ilegível (perm error) não derruba synthesis — outros auditores
+        # podem ter contribuído findings válidos. Logamos em stderr pra
+        # o user ver o draft problemático e decidir manualmente.
+        try:
+            data = json.loads(ff.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as exc:
+            print(
+                f"⚠ Falha ao ler findings de {ff.name} ({exc}). "
+                "Ignorando este arquivo para degradação graciosa.",
+                file=sys.stderr,
+            )
+            continue
         if isinstance(data, list):
             all_findings.extend(data)
         elif isinstance(data, dict):

@@ -75,15 +75,24 @@ def load_rejected_fingerprints(project_root: Path) -> set[str]:
     if not rejected_path.exists():
         return set()
 
-    data = yaml.safe_load(rejected_path.read_text(encoding="utf-8"))
+    # OSError (perm denied, I/O error) e YAMLError (arquivo corrompido)
+    # tratados juntos: ambos significam "não conseguimos ler rejected
+    # list — assume fresh state". Pattern alinhado com o resto do módulo
+    # (degradação graciosa em vez de propagar exception).
+    try:
+        raw = rejected_path.read_text(encoding="utf-8")
+        data = yaml.safe_load(raw)
+    except (OSError, yaml.YAMLError):
+        return set()
+
     if not isinstance(data, dict):
         return set()
 
-    raw = data.get("rejected", [])
-    if not isinstance(raw, list):
+    rejected_list = data.get("rejected", [])
+    if not isinstance(rejected_list, list):
         return set()
 
-    return {str(fp) for fp in raw}
+    return {str(fp) for fp in rejected_list}
 
 
 def filter_actionable(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -160,28 +169,60 @@ def emit_proposed_evolutions(
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / _PROPOSED_FILENAME
 
-    # Carrega entries pré-existentes (append, não overwrite).
+    # Carrega entries pré-existentes (append, não overwrite). OSError
+    # (perm/I/O) e YAMLError (arquivo corrompido por edit manual) tratados
+    # juntos: ambos significam "não conseguimos reaproveitar — começa
+    # fresh". Pattern espelha load_rejected_fingerprints.
     existing: dict[str, Any] = {}
     if out_path.exists():
-        loaded = yaml.safe_load(out_path.read_text(encoding="utf-8"))
+        try:
+            raw_text = out_path.read_text(encoding="utf-8")
+            loaded = yaml.safe_load(raw_text)
+        except (OSError, yaml.YAMLError):
+            loaded = None
         if isinstance(loaded, dict):
             existing = loaded
 
     raw_entries = existing.get("entries", [])
     entries: list[dict[str, Any]] = list(raw_entries) if isinstance(raw_entries, list) else []
 
+    # Dedup contra fingerprints já gravados em proposed.yaml — re-emit
+    # da mesma finding em runs subsequentes não duplica entries no
+    # endpoint humano (`forge evolve`). Findings sem fingerprint (string
+    # vazia) caem fora do set, vão como append normal — caller upstream
+    # já deveria ter rejeitado, mas defendemos aqui.
+    existing_fingerprints = {
+        e.get("fingerprint")
+        for e in entries
+        if isinstance(e, dict) and e.get("fingerprint")
+    }
+
+    written_count = 0
     for f in to_write:
+        fp = f.get("fingerprint", "")
+        if fp and fp in existing_fingerprints:
+            # Já gravada antes — pula silenciosamente (dedup append-only).
+            continue
         pe = f.get("proposed_evolution") or {}
         if not isinstance(pe, dict):
             pe = {}
         entries.append(
             {
                 "type": pe.get("type", f"qa-finding-{f.get('vector', 'unknown')}"),
-                "fingerprint": f.get("fingerprint", ""),
+                "fingerprint": fp,
                 "summary": pe.get("summary", f.get("title", "")),
                 "payload": f,
             }
         )
+        if fp:
+            existing_fingerprints.add(fp)
+        written_count += 1
+
+    # Short-circuit: se TODOS foram dedup-pulados, não toca o arquivo.
+    # Evita rewrite atômico desnecessário quando re-rodar gera mesma
+    # fingerprint set já presente.
+    if written_count == 0:
+        return {"written": 0, "skipped": skipped, "write_failed": False}
 
     new_data = {"entries": entries}
     tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
@@ -203,7 +244,7 @@ def emit_proposed_evolutions(
             pass
 
     return {
-        "written": len(to_write),
+        "written": written_count,
         "skipped": skipped,
         "write_failed": write_failed,
     }

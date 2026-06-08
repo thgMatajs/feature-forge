@@ -293,8 +293,42 @@ def test_created_at_format_invalid():
 
 
 def test_id_format_invalid():
-    """id fora do formato '<slug>-NNNN' lowercase deve raise."""
+    """id fora do formato '<slug>-NNNN' deve raise.
+
+    "INVALID-ID-FORMAT" não tem sufixo `-NNNN` (4 dígitos), portanto
+    falha mesmo com regex case-insensitive (FIX-1).
+    """
     finding = _minimal_valid_finding()
     finding["id"] = "INVALID-ID-FORMAT"
     with pytest.raises(QAFindingValidationError, match="id inválido"):
         validate_qa_finding(finding)
+
+
+# --- FIX-1: id case-insensitive (cobre IDs derivados de run_id ISO 8601) ---
+
+
+def test_id_accepts_uppercase_iso_run_id_components():
+    """IDs derivados de run_id carregam T/Z uppercase no meio, ex.:
+    `qa-2026-06-08T12-30-45Z-0001`. Regex deve aceitar case-insensitive."""
+    finding = _minimal_valid_finding()
+    finding["id"] = "qa-2026-06-08T12-30-45Z-0001"
+    validate_qa_finding(finding)  # no raise
+
+
+def test_id_accepts_pure_uppercase_slug():
+    """Slug uppercase puro também aceito (case-insensitive)."""
+    finding = _minimal_valid_finding()
+    finding["id"] = "AUDITOR-0001"
+    validate_qa_finding(finding)  # no raise
+
+
+# --- FIX-2: sandbox_result=null aceito em drafts (template default) ---
+
+
+def test_sandbox_result_null_accepted_in_draft():
+    """templates/qa-finding.template.json carrega sandbox_result=null
+    antes do Phase 3 preencher. Validator deve aceitar null como
+    placeholder explícito e pular validações internas."""
+    finding = _minimal_valid_finding()
+    finding["evidence"]["sandbox_result"] = None
+    validate_qa_finding(finding)  # no raise — null é placeholder válido

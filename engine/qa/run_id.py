@@ -25,7 +25,10 @@ def generate_run_id(*, now: datetime | None = None) -> str:
             ``None`` (default), usa ``datetime.now(timezone.utc)``.
             Quando passado com ``tzinfo`` nao-UTC, e convertido pra UTC
             via ``astimezone`` — a hora local do fuso original NAO
-            aparece no resultado.
+            aparece no resultado. Datetime naive (``tzinfo=None``) e
+            REJEITADO via ``ValueError`` — astimezone() trata naive
+            como local time o que e ambiguo e gera run_ids erradas em
+            maquinas com fusos diferentes.
 
     Returns:
         String no formato ``YYYY-MM-DDTHH-MM-SSZ-<4-hex>``. Ex:
@@ -36,6 +39,8 @@ def generate_run_id(*, now: datetime | None = None) -> str:
     Raises:
         TypeError: ``now`` nao e ``datetime`` (defensive — consumer
             pode passar lixo, queremos erro claro nao ``AttributeError``).
+        ValueError: ``now`` e naive datetime (sem ``tzinfo``). Use
+            ``datetime.now(timezone.utc)`` ou anexe tzinfo explicito.
     """
     if now is not None and not isinstance(now, datetime):
         raise TypeError(
@@ -44,7 +49,14 @@ def generate_run_id(*, now: datetime | None = None) -> str:
         )
 
     ts = now if now is not None else datetime.now(timezone.utc)
-    if ts.tzinfo is None or ts.utcoffset().total_seconds() != 0:
+    if ts.tzinfo is None:
+        raise ValueError(
+            "'now' deve ser timezone-aware (tzinfo set). Datetime naive "
+            "e ambiguo — astimezone() interpretaria como local time, o "
+            "que gera run_ids diferentes por maquina. Use "
+            "datetime.now(timezone.utc) ou anexe tzinfo explicito."
+        )
+    if ts.utcoffset().total_seconds() != 0:
         ts = ts.astimezone(timezone.utc)
 
     formatted = ts.strftime("%Y-%m-%dT%H-%M-%SZ")

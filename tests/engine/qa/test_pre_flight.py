@@ -176,3 +176,111 @@ def test_create_run_tree_tolerates_pre_existing_subdir(tmp_path: Path) -> None:
 
     assert tree.root.exists()
     assert tree.fixtures_dir.exists()
+
+
+# ---------------------------------------------------------------------------
+# FIX-8: parse_qa_config tolera tipos errados (string em vez de numero)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_qa_config_string_budget_emits_warning_and_uses_default() -> None:
+    """YAML com `sandbox-budget-seconds-total: "abc"` (string nao-castavel)
+    nao deve raise ValueError — emite warning mentor-calmo e mantem default."""
+    workflow_config = {
+        "qa": {
+            "enabled": True,
+            "sandbox-budget-seconds-total": "abc",
+        }
+    }
+    cfg = parse_qa_config(workflow_config)
+
+    assert cfg.sandbox_budget_seconds_total == 60.0  # default preservado
+    assert any("sandbox-budget-seconds-total" in w for w in cfg.warnings), (
+        f"esperava warning sobre cast, obtive {cfg.warnings!r}"
+    )
+
+
+def test_parse_qa_config_string_agent_timeout_emits_warning() -> None:
+    """`agent-timeout-seconds: "fast"` -> warning + default 15.0."""
+    workflow_config = {"qa": {"agent-timeout-seconds": "fast"}}
+    cfg = parse_qa_config(workflow_config)
+
+    assert cfg.agent_timeout_seconds == 15.0
+    assert any("agent-timeout-seconds" in w for w in cfg.warnings)
+
+
+def test_parse_qa_config_string_paranoid_max_emits_warning() -> None:
+    """`paranoid-max-features: "many"` -> warning + default 10."""
+    workflow_config = {
+        "qa": {"scope-defaults": {"paranoid-max-features": "many"}}
+    }
+    cfg = parse_qa_config(workflow_config)
+
+    assert cfg.paranoid_max_features == 10
+    assert any("paranoid-max-features" in w for w in cfg.warnings)
+
+
+def test_parse_qa_config_string_retention_emits_warning() -> None:
+    """`retention-days: "forever"` -> warning + default 14."""
+    workflow_config = {"qa": {"retention-days": "forever"}}
+    cfg = parse_qa_config(workflow_config)
+
+    assert cfg.retention_days == 14
+    assert any("retention-days" in w for w in cfg.warnings)
+
+
+# ---------------------------------------------------------------------------
+# FIX-9: create_run_tree sanitiza scope.target contra path traversal
+# ---------------------------------------------------------------------------
+
+
+def test_create_run_tree_sanitizes_path_traversal_in_target(tmp_path: Path) -> None:
+    """scope.target com '../' nao deve criar dirs fora de .planning/qa/.
+
+    Sanitizacao whitelist-based substitui qualquer char fora de [A-Za-z0-9._-]
+    por '_'. Path separators ('/') somem; dots literais sobrevivem como
+    parte do nome do componente (sao chars seguros num filename). A
+    propriedade load-bearing e: NENHUM componente apos sanitize cria um
+    novo nivel de diretorio (sem '/'), portanto resolve(tree.root) fica
+    confinado a tmp_path/.planning/qa/.
+    """
+    malicious_scope = Scope(
+        type="task", target="TASK-../../escape", paths=()
+    )
+    tree = create_run_tree(malicious_scope, project_root=tmp_path)
+
+    # Garante que nada vazou pra fora de tmp_path apos resolve simbolico
+    resolved = tree.root.resolve()
+    assert str(resolved).startswith(str(tmp_path.resolve())), (
+        f"path traversal escapou: {resolved!r}"
+    )
+    # Sanitizado deve continuar sob .planning/qa/<safe>
+    assert ".planning/qa" in str(tree.root)
+    # Componente do target sanitizado nao deve conter SEPARATORS ('/')
+    # nem ser interpretado como traversal pelo filesystem.
+    target_component = tree.root.parent.name
+    assert "/" not in target_component
+    # Path '..' como componente inteiro seria traversal; aqui o '..'
+    # aparece embutido num nome maior ("TASK-.._.._escape"), que e tratado
+    # pelo filesystem como um filename literal — nao volta um nivel.
+    assert target_component != ".."
+    assert target_component != "."
+
+
+def test_create_run_tree_rejects_target_starting_with_dot(tmp_path: Path) -> None:
+    """Target sanitizado que comeca com '.' (mascara hidden dir) e rejeitado
+    com ValueError — defensiva contra dirs ocultos no .planning/qa/."""
+    hidden_scope = Scope(type="task", target=".hidden", paths=())
+    with pytest.raises(ValueError, match="scope.target inválido"):
+        create_run_tree(hidden_scope, project_root=tmp_path)
+
+
+def test_create_run_tree_rejects_empty_target_after_sanitize(tmp_path: Path) -> None:
+    """Target inteiramente non-alphanumeric (ex.: '///') vira string vazia
+    apos sanitize com whitelist — rejeitado com ValueError."""
+    # '///' nao tem nada na whitelist [A-Za-z0-9._-]: vira '___' (cada / -> _).
+    # Pra forcar empty string apos sanitize, target precisa ser vazio direto;
+    # mas Scope dataclass aceita "" como target — testamos.
+    empty_scope = Scope(type="task", target="", paths=())
+    with pytest.raises(ValueError, match="scope.target inválido"):
+        create_run_tree(empty_scope, project_root=tmp_path)

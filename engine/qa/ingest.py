@@ -18,12 +18,21 @@ canonica em runtime.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from engine.qa.run_id import generate_run_id
 from engine.qa.scope import Scope
+
+
+# Whitelist conservadora pra scope.target virar componente de path
+# (.planning/qa/<target>/<run-id>/). Aceita alfanumericos + ._- pra cobrir
+# IDs comuns ("TASK-0007", "feature-name", "screen.id"). Qualquer outro
+# caractere e substituido por "_" — defense em profundidade contra
+# traversal ("../") ou separadores de path embutidos no input do usuario.
+_TARGET_SAFE_RE = re.compile(r"[^A-Za-z0-9._-]")
 
 
 @dataclass
@@ -91,19 +100,55 @@ def parse_qa_config(workflow_config: dict[str, Any] | None) -> QAConfig:
     disabled_raw = extensions.get("disabled") or []
     extensions_disabled = tuple(disabled_raw)
 
+    # Cast defensivo: se o YAML carregou string ao inves de numero
+    # (ex.: `agent-timeout-seconds: "15"` por engano), nao queremos
+    # ValueError vazar — emite warning mentor-calmo e usa o default.
+    # Pattern espelha o approach de engine.reconfigure._qa_adjust_budgets.
+    warnings_collected: list[str] = []
+
+    def _safe_float(key: str, default: float, source: dict[str, Any]) -> float:
+        raw = source.get(key, default)
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            warnings_collected.append(
+                f"qa.{key}={raw!r} nao e numero — usando default {default}. "
+                f"Ajuste via `forge reconfigure → qa`."
+            )
+            return float(default)
+
+    def _safe_int(key: str, default: int, source: dict[str, Any]) -> int:
+        raw = source.get(key, default)
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            warnings_collected.append(
+                f"qa.{key}={raw!r} nao e inteiro — usando default {default}. "
+                f"Ajuste via `forge reconfigure → qa`."
+            )
+            return int(default)
+
     cfg = QAConfig(
         enabled=bool(section.get("enabled", True)),
         auto_run_on_feature_done=bool(
             section.get("auto-run-on-feature-done", False)
         ),
-        sandbox_budget_seconds_total=float(
-            section.get("sandbox-budget-seconds-total", 60.0)
+        sandbox_budget_seconds_total=_safe_float(
+            "sandbox-budget-seconds-total", 60.0, section
         ),
-        agent_timeout_seconds=float(section.get("agent-timeout-seconds", 15.0)),
-        paranoid_max_features=int(scope_defaults.get("paranoid-max-features", 10)),
+        agent_timeout_seconds=_safe_float(
+            "agent-timeout-seconds", 15.0, section
+        ),
+        paranoid_max_features=_safe_int(
+            "paranoid-max-features", 10, scope_defaults
+        ),
         extensions_disabled=extensions_disabled,
-        retention_days=int(section.get("retention-days", 14)),
+        retention_days=_safe_int("retention-days", 14, section),
     )
+
+    # Anexa warnings coletados durante cast — preserva o default mesmo
+    # quando o YAML carrega tipo errado, em vez de explodir o handler.
+    cfg.warnings.extend(warnings_collected)
 
     if not cfg.enabled and cfg.auto_run_on_feature_done:
         cfg.warnings.append(
@@ -153,8 +198,22 @@ def create_run_tree(scope: Scope, *, project_root: Path) -> RunTree:
     Returns:
         ``RunTree`` com paths absolutos dos 4 subdirs criados.
     """
+    # Sanitiza scope.target antes de virar componente de path. Decisão
+    # defensiva: scope.target chega do user (slug/screen id/TASK-NNNN)
+    # e poderia carregar "../" ou separadores de path, escapando a
+    # convenção `.planning/qa/<target>/...`. Whitelist [A-Za-z0-9._-];
+    # qualquer outro vira "_". Rejeita target vazio ou que inicia com
+    # "." (mascara hidden dir).
+    safe_target = _TARGET_SAFE_RE.sub("_", scope.target)
+    if not safe_target or safe_target.startswith("."):
+        raise ValueError(
+            f"scope.target inválido após sanitização: {scope.target!r} "
+            f"-> {safe_target!r}. Use slug/id que contenha apenas "
+            f"[A-Za-z0-9._-] e não comece com ponto."
+        )
+
     run_id = generate_run_id()
-    base = project_root / ".planning" / "qa" / scope.target / run_id
+    base = project_root / ".planning" / "qa" / safe_target / run_id
     fixtures = base / "fixtures"
     findings = base / "findings"
     audit = base / "audit"
