@@ -52,7 +52,12 @@ from engine.qa.scope import (
     ScopeMissingError,
     resolve_scope,
 )
-from engine.qa.synthesis import SynthesisResult, synthesize
+from engine.qa.synthesis import (
+    SynthesisResult,
+    findings_from_sandbox_results,
+    hydrate_sandbox_results,
+    synthesize,
+)
 
 
 def _utc_iso_z() -> str:
@@ -200,6 +205,29 @@ def run_qa(
             nested = data.get("findings", [])
             if isinstance(nested, list):
                 all_findings.extend(nested)
+
+    # CONF-003: sandbox breach/timeout viram findings deterministicos
+    # (§5.3). Le sandbox-results.json escrito pelo conductor; injeta
+    # findings derivados antes do synthesize pra que dedup + verdict
+    # logic considerem os problemas de isolamento como first-class
+    # findings (breach -> critical -> BLOCK).
+    sandbox_results_file = run_tree.root / "sandbox-results.json"
+    if sandbox_results_file.exists():
+        try:
+            raw = json.loads(sandbox_results_file.read_text(encoding="utf-8"))
+            stubs = hydrate_sandbox_results(
+                raw if isinstance(raw, list) else raw.get("results", [])
+            )
+            derived = findings_from_sandbox_results(
+                stubs, run_id=run_tree.run_id
+            )
+            all_findings.extend(derived)
+        except (json.JSONDecodeError, OSError) as exc:
+            print(
+                f"⚠ sandbox-results.json malformado ({exc}). "
+                "Ignorando — sandbox findings nao serao gerados nesta run.",
+                file=sys.stderr,
+            )
 
     result = synthesize(all_findings)
     emit_summary = emit_proposed_evolutions(
