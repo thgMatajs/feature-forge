@@ -13,20 +13,31 @@ from engine._sandbox.env import (
 )
 
 
-def test_core_allowlist_is_frozen():
-    """CORE_ALLOWLIST é frozenset (imutável) — mutação deve raise AttributeError."""
+def test_core_allowlist_is_immutable_and_contains_essentials():
+    """deep-013: testa a invariante de segurança real — essenciais presentes,
+    secrets ausentes — não a manifestação 'add raise AttributeError'."""
     assert isinstance(CORE_ALLOWLIST, frozenset)
-    with pytest.raises(AttributeError):
-        CORE_ALLOWLIST.add("EVIL_VAR")  # type: ignore[attr-defined]
+    # Essenciais presentes
+    for k in ("PATH", "HOME"):
+        assert k in CORE_ALLOWLIST
+    # Sensíveis canônicos ausentes
+    for k in ("GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY", "DB_PASSWORD"):
+        assert k not in CORE_ALLOWLIST
 
 
 def test_sensitive_pattern_compiles_and_is_case_insensitive():
-    """SENSITIVE_PATTERN é regex compilada e match é case-insensitive."""
+    """SENSITIVE_PATTERN é regex compilada e search é case-insensitive.
+
+    deep-002: passou de ``.*(...).*`` + ``.match`` para boundary-anchored
+    + ``.search`` (a API canônica do is_sensitive). Testes que usavam
+    ``.match`` em nomes com prefixo (ex.: GITHUB_TOKEN) precisam usar
+    ``.search`` agora — ou simplesmente chamar ``is_sensitive(...)``.
+    """
     import re
     assert isinstance(SENSITIVE_PATTERN, re.Pattern)
-    assert SENSITIVE_PATTERN.match("GITHUB_TOKEN") is not None
-    assert SENSITIVE_PATTERN.match("github_token") is not None
-    assert SENSITIVE_PATTERN.match("Github_Token") is not None
+    assert SENSITIVE_PATTERN.search("GITHUB_TOKEN") is not None
+    assert SENSITIVE_PATTERN.search("github_token") is not None
+    assert SENSITIVE_PATTERN.search("Github_Token") is not None
 
 
 @pytest.mark.parametrize("name", [
@@ -162,3 +173,77 @@ def test_inspect_dropped_respects_extras(monkeypatch):
     dropped = inspect_dropped(extras=["A_VAR"])
     assert "A_VAR" not in dropped
     assert "B_VAR" in dropped
+
+
+# ---------------------------------------------------------------------------
+# deep-002: pattern boundary semantics — sem false-positive em AUTHOR/CO_AUTHOR
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", [
+    "AUTHOR",
+    "AUTHOR_NAME",
+    "CO_AUTHOR",
+    "CO_AUTHOR_EMAIL",
+    "BASE_PATHTOKEN_NAME",  # TOKEN dentro de identificador maior — não-sensível
+    "RUST_BACKTRACE",
+    "PYTHONPATH",
+])
+def test_is_sensitive_negative_boundary_cases(name):
+    """deep-002: nomes que apenas contêm substring AUTH/TOKEN não disparam."""
+    assert is_sensitive(name) is False, (
+        f"{name!r} não deve bater SENSITIVE_PATTERN (boundary semantics)"
+    )
+
+
+@pytest.mark.parametrize("name", [
+    "AUTH",                       # bare AUTH
+    "AUTH_USER",                  # AUTH prefixo
+    "USER_AUTH",                  # AUTH sufixo
+    "AUTHORIZATION_HEADER",       # AUTHORIZATION token full
+    "AUTHORIZATION",              # bare AUTHORIZATION
+    "GITHUB_TOKEN",
+    "OAUTH_TOKEN",
+])
+def test_is_sensitive_positive_boundary_cases(name):
+    """deep-002: nomes com sufixo/prefixo sensível canônico batem."""
+    assert is_sensitive(name) is True, (
+        f"{name!r} deve bater SENSITIVE_PATTERN (boundary semantics)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# deep-003: build_safe_env defense-in-depth contra sensitive em extras
+# ---------------------------------------------------------------------------
+
+
+def test_build_safe_env_rejects_sensitive_in_extras_by_default(monkeypatch):
+    """deep-003: sem allow_sensitive=True, passar GITHUB_TOKEN em extras raise."""
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_xxx")
+    with pytest.raises(ValueError, match="GITHUB_TOKEN"):
+        build_safe_env(extras=["GITHUB_TOKEN"])
+
+
+def test_build_safe_env_allow_sensitive_lets_grant_pass_through(monkeypatch):
+    """deep-003: caller pós-grant passa allow_sensitive=True e a var entra."""
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_xxx")
+    env = build_safe_env(extras=["GITHUB_TOKEN"], allow_sensitive=True)
+    assert env["GITHUB_TOKEN"] == "ghp_xxx"
+
+
+def test_build_safe_env_non_sensitive_extras_default_safe(monkeypatch):
+    """deep-003: extras não-sensitive (JAVA_HOME) passam sem allow_sensitive."""
+    monkeypatch.setenv("JAVA_HOME", "/opt/java")
+    env = build_safe_env(extras=["JAVA_HOME"])
+    assert env["JAVA_HOME"] == "/opt/java"
+
+
+# ---------------------------------------------------------------------------
+# deep-008: is_sensitive fail-open em non-str (não TypeError)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("value", [None, 42, 3.14, [], {}, ("TOKEN",)])
+def test_is_sensitive_non_str_returns_false(value):
+    """deep-008: non-str não TypeError; retorna False (fail-open)."""
+    assert is_sensitive(value) is False

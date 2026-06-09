@@ -188,7 +188,12 @@ def _hardened_env(
     Callers que precisem de paths extras devem declará-los via `extras`,
     cruzando o grant flow primeiro.
     """
-    env = build_safe_env(extras=extras)
+    # extras vem de _compute_allowed_extras (engine/qa/__init__.py), que
+    # já filtrou contra workflow_config.qa.sensitive-env-grants — vars
+    # sensitive presentes aqui são as explicitamente autorizadas pelo
+    # user. allow_sensitive=True comunica essa pré-validação ao guard
+    # de defense-in-depth (deep-003).
+    env = build_safe_env(extras=extras, allow_sensitive=True)
     env["PYTHONPATH"] = str(guard_dir)
     env["FORGE_QA_SANDBOX"] = "1"
     return env
