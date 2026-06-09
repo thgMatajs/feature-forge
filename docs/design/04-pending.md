@@ -2040,7 +2040,7 @@ Gap QA-15 abaixo.
 
 **Categoria:** qa-scope
 **Fingerprint:** `sha256(consolidate-within-module:qa-paranoid-state-filter:feature-state)`
-**Status:** open (depende de feature state file padrão) — surfaced em Task 8.3
+**Status:** ✅ resolvido 2026-06-08 (filter aborted/archived via status.json read em `engine/qa/scope.py._is_terminal_state`; fail-safe default-include pra legacy/malformado; 3 tests novos cobrindo positivos + edge cases).
 
 `_list_features_for_paranoid` em `engine/qa/scope.py` enumera todos os
 diretórios de feature sem filtrar por `state`. Spec §5.0 declara filter

@@ -15,6 +15,8 @@ mensagem segue voz mentor calmo com remediation explicita.
 
 from __future__ import annotations
 
+import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -164,17 +166,54 @@ def _features_root(root: Path) -> Path:
     return root / "docs" / "feature-implementation-workflow" / "features"
 
 
+_TERMINAL_STATES = frozenset({"aborted", "archived"})
+
+
+def _is_terminal_state(feature_dir: Path) -> bool:
+    """True se status.json indica state aborted/archived; False em todos os
+    outros casos (incluindo status.json ausente, malformado, ou sem campo
+    state).
+
+    Fail-safe = default-include: paranoid scope quer audit broad; broken/
+    legacy features ficam visiveis pra user notar gaps (per spec §5.0).
+    """
+    status_file = feature_dir / "status.json"
+    if not status_file.is_file():
+        return False  # legacy pre-Gap-8 — incluir
+    try:
+        data = json.loads(status_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        print(
+            f"⚠ status.json em {feature_dir.name} malformado "
+            f"({type(exc).__name__}); incluindo no paranoid scope (fail-safe).",
+            file=sys.stderr,
+        )
+        return False
+    if not isinstance(data, dict):
+        return False  # malformado de outra forma
+    # Aceita key "state" OU legacy "status" (compat com l1.py:257).
+    state = data.get("state", data.get("status"))
+    return isinstance(state, str) and state in _TERMINAL_STATES
+
+
 def _list_features_for_paranoid(root: Path, *, cap: int) -> list[Path]:
     """Lista feature dirs ate ``cap``. Ordenado alfabeticamente; ignora
     dirs hidden (``.``-prefixed) como ``.git``, ``.cache`` etc.
+
+    Filtra features com state aborted/archived (per spec §5.0). Fail-safe:
+    status.json ausente ou malformado -> incluir (defensivo pra legacy +
+    paranoid prefere over-include sobre silent exclusion).
     """
     features_root = _features_root(root)
     if not features_root.exists():
         return []
     candidates: list[Path] = []
     for entry in sorted(features_root.iterdir()):
-        if entry.is_dir() and not entry.name.startswith("."):
-            candidates.append(entry)
+        if not entry.is_dir() or entry.name.startswith("."):
+            continue
+        if _is_terminal_state(entry):
+            continue
+        candidates.append(entry)
         if len(candidates) >= cap:
             break
     return candidates

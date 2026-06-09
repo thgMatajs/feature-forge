@@ -445,6 +445,14 @@ worktree environment).
 - Re-review confirmou os 7 findings endereçados corretamente. Suite
   rapid lane: 896 tests verdes.
 
+### Fixed (QA-13)
+
+- `engine/qa/scope.py._list_features_for_paranoid` agora filtra features
+  com `state ∈ {"aborted", "archived"}` (per spec §5.0). Fail-safe
+  default-include pra features legacy (sem status.json) ou status.json
+  malformado — paranoid quer audit broad, broken features ficam visíveis
+  pra user notar gaps. Fecha pré-piloto bloqueador QA-13.
+
 ## [1.2.0] — 2026-06-03
 
 ### Added (Gap 5 — Card local overlay, 2026-06-02)
