@@ -3,8 +3,8 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-08 (v1.2-dev — merge origin/main + Phase 0 gate-infra-extract + R1.1 secrets gate in-flight + PR #8 forge qa CONF + pause/resume entregues)
-**Estado:** v1.2.0 feito + Gap 9 cumulativo + CC gate v1 (PR #4) + PRD docs/product/ (PR #5) + plan-auditor (PR #6) tudo em `main`. Branch `worktree-feat+gate-infra-extract` agora consolida (após merge de origin/main) Phase 0 do roadmap de quality-gates expansion — refactor estrito (no-behavior-change) extrai infra reusável do CC gate em `validators/_gate_infra.py` + `validators/_diff.py` + rename de helpers em `validators/_common.py`. CC validator caiu de ~1127 LOC para ~840 LOC compondo helpers públicos. Phase 0 suite verde (baseline 751 - 1 justificado em T4: removed test do lookup `_TOOL_BIN[lang]` interno que não existe pós-refactor). Wave R1.1 `check_secrets` shipping na mesma branch — primeiro consumer real do helper extraído valida a generalização e fechou Gap GATE-INFRA-1 (parametrização de `gate_threshold_lookup` + `format_three_paths_message`); Gap GATE-INFRA-2 (kw-only `cmd_builder` API) registrado pra próximo consumer.
+**Última atualização:** 2026-06-08 (v1.2-dev — merge origin/main + Phase 0 gate-infra-extract + R1.1 secrets gate in-flight + PR #8 forge qa CONF + pause/resume entregues + QA-11 sandbox hardening fechado + QA-13 paranoid scope filter)
+**Estado:** v1.2.0 feito + Gap 9 cumulativo + CC gate v1 (PR #4) + PRD docs/product/ (PR #5) + plan-auditor (PR #6) tudo em `main`. `forge qa` shipado (PR #8). QA-11 sandbox env hardening fechado; pré-piloto restrito a QA-13 (paranoid state filter — `aborted`/`archived` corretamente excluídos do cross-feature scope). Branch `worktree-feat+gate-infra-extract` agora consolida (após merge de origin/main) Phase 0 do roadmap de quality-gates expansion — refactor estrito (no-behavior-change) extrai infra reusável do CC gate em `validators/_gate_infra.py` + `validators/_diff.py` + rename de helpers em `validators/_common.py`. CC validator caiu de ~1127 LOC para ~840 LOC compondo helpers públicos. Phase 0 suite verde (baseline 751 - 1 justificado em T4: removed test do lookup `_TOOL_BIN[lang]` interno que não existe pós-refactor). Wave R1.1 `check_secrets` shipping na mesma branch — primeiro consumer real do helper extraído valida a generalização e fechou Gap GATE-INFRA-1 (parametrização de `gate_threshold_lookup` + `format_three_paths_message`); Gap GATE-INFRA-2 (kw-only `cmd_builder` API) registrado pra próximo consumer.
 
 Linha paralela `worktree-forge-qa` (PR #8) consolidou pós-rebase contra
 `main`: CONF-001..008 entregues, Gap QA-12 fechado (pause/resume via
@@ -338,6 +338,13 @@ merge, target v1.2.x:**
   done + `forge plan` + escolher Estender + verificar L1 + intake +
   validator) seria refinamento de fixture pra v1.2.x. Smoke manual
   documentado em `04-pending.md §Gap 9 §Validation pendente`.
+
+**QA-11 sandbox hardening surfaced (2026-06-08) — não bloqueia ship, gap opt-in v1.2+:**
+
+- **Grant revoke automático:** quando card com `qa-extensions.env-needs`
+  é desinstalado, grant permanece em `workflow-config.qa.sensitive-env-grants`.
+  Revoke é manual (editar config) ou via gap opt-in
+  `forge reconfigure --revoke-grants` (não implementado v1.2).
 
 ## Fase 4 — completa (resumo)
 

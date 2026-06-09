@@ -2003,7 +2003,7 @@ regex é fix localizado.
 
 **Categoria:** qa-sandbox / security
 **Fingerprint:** `sha256(promote-to-shared:qa-sandbox-env-isolation:allowlist-vs-blocklist)`
-**Status:** open (brainstorm pendente) — surfaced em IN-02 da Task 3.3
+**Status:** ✅ resolvido 2026-06-08 (allowlist core + per-card opt-in + grant explícito via spec `docs/superpowers/specs/2026-06-08-qa-sandbox-env-hardening-design.md` + impl em PR QA-11; 40+ tests adicionados; baseline 953 → ~995 tests; closeout commit referencia este resolvido).
 
 Sandbox subprocess (Phase 3 do `forge qa`) herda env completo do processo
 pai, incluindo possíveis secrets (`AWS_*`, `GITHUB_TOKEN`, etc.). Allowlist
