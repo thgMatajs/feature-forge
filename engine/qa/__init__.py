@@ -210,7 +210,12 @@ def run_qa(
             _write_qa_report_skeleton(scope, run_tree, cfg)
             # QA-11 Wave 4: alert pre Phase 3 sandbox (informativo, nao bloqueia).
             _maybe_alert_sensitive_drops(project_root, workflow_config)
-            _write_conductor_handoff(scope, run_tree, cfg)
+            # QA-11 CR-01: computa extras autorizados UMA vez e injeta no
+            # handoff. Conductor consome esse campo pra propagar ao subprocess.
+            allowed_extras = _compute_allowed_extras(project_root, workflow_config)
+            _write_conductor_handoff(
+                scope, run_tree, cfg, allowed_extras=allowed_extras
+            )
             resumed_checkpoint = None
         else:
             run_tree = _reattach_run_tree(resumable_dir, resumed_checkpoint)
@@ -243,7 +248,12 @@ def run_qa(
         # Phase 1+2+4 sao Claude Code Agent dispatch — coordenados pelo
         # agente qa-conductor.md (criado em Wave 6 Task 6.1). Aqui apenas
         # registramos os caminhos pro conductor consumir.
-        _write_conductor_handoff(scope, run_tree, cfg)
+        # QA-11 CR-01: computa extras autorizados e injeta no handoff pra
+        # que o conductor propague ao subprocess (run_sandbox extras=...).
+        allowed_extras = _compute_allowed_extras(project_root, workflow_config)
+        _write_conductor_handoff(
+            scope, run_tree, cfg, allowed_extras=allowed_extras
+        )
 
     # Track phase progresso pro SIGINT handler. List-of-int pra mutar
     # dentro do closure (nonlocal nao funciona em handler registrado via
@@ -565,6 +575,49 @@ def _alert_sensitive_drops(card_extras: Iterable[str]) -> None:
     print(block, file=sys.stderr)
 
 
+def _compute_allowed_extras(
+    project_root: Path,
+    workflow_config: dict[str, Any] | None,
+) -> tuple[str, ...]:
+    """Computa env extras autorizados pra subprocess do sandbox (QA-11).
+
+    Retorna union de ``card.env_needs`` (cross cards ativos) intersect com
+    ``(non-sensitive ∪ granted)``. Vars sensitive sem grant sao dropadas
+    aqui pra que NUNCA cheguem ao subprocess via handoff json.
+
+    Fail-safe: erro de carga (cards malformados, perm error, etc.) vira
+    tupla vazia. O sandbox sempre tem CORE_ALLOWLIST como baseline; tupla
+    vazia significa "so o core, nada de extras", que e o estado seguro.
+
+    Args:
+        project_root: raiz do projeto consumidor.
+        workflow_config: dict completo do workflow-config.yaml (ou None).
+
+    Returns:
+        Tupla ordenada determinismo pro handoff JSON (sorted).
+    """
+    try:
+        active_cards = load_all_cards(project_root)
+    except (CardError, OSError, ValueError, KeyError):
+        return ()
+
+    card_env_needs: set[str] = set()
+    for card in active_cards:
+        card_env_needs.update(card.env_needs)
+
+    granted = set(
+        (workflow_config or {}).get("qa", {}).get("sensitive-env-grants", []) or []
+    )
+
+    # Non-sensitive vars sempre passam (user instalou o card).
+    # Sensitive vars so passam se ja tem grant explicito do user.
+    allowed = {
+        v for v in card_env_needs
+        if not is_sensitive(v) or v in granted
+    }
+    return tuple(sorted(allowed))
+
+
 def _maybe_alert_sensitive_drops(
     project_root: Path, workflow_config: dict[str, Any]
 ) -> None:
@@ -577,19 +630,7 @@ def _maybe_alert_sensitive_drops(
     do alert).
     """
     try:
-        active_cards = load_all_cards(project_root)
-        card_env_needs: set[str] = set()
-        for card in active_cards:
-            card_env_needs.update(card.env_needs)
-        granted = set(
-            (workflow_config or {}).get("qa", {}).get("sensitive-env-grants", []) or []
-        )
-        # Non-sensitive vars sempre passam (user instalou o card).
-        # Sensitive vars so passam se ja tem grant explicito do user.
-        allowed_extras = {
-            v for v in card_env_needs
-            if not is_sensitive(v) or v in granted
-        }
+        allowed_extras = _compute_allowed_extras(project_root, workflow_config)
         _alert_sensitive_drops(allowed_extras)
     except (CardError, OSError, ValueError, KeyError) as exc:
         print(
@@ -600,7 +641,11 @@ def _maybe_alert_sensitive_drops(
 
 
 def _write_conductor_handoff(
-    scope: Scope, run_tree: RunTree, cfg: QAConfig
+    scope: Scope,
+    run_tree: RunTree,
+    cfg: QAConfig,
+    *,
+    allowed_extras: tuple[str, ...] = (),
 ) -> None:
     """Escreve ``<run_tree.root>/conductor-handoff.json``.
 
@@ -612,6 +657,12 @@ def _write_conductor_handoff(
         scope: ``Scope`` resolvido em Phase 0.
         run_tree: ``RunTree`` criado em Phase 0.
         cfg: ``QAConfig`` parseado em Phase 0.
+        allowed_extras: env vars autorizadas pelo card layer pra cruzar a
+            barreira do sandbox (QA-11 CR-01). Lista pre-filtrada — vars
+            sensitive sem grant ja foram removidas em
+            ``_compute_allowed_extras``. O conductor DEVE repassar essa
+            lista como ``extras=`` ao invocar ``run_sandbox`` (ver
+            ``agents/qa-conductor.md §Sandbox env``).
     """
     handoff: dict[str, Any] = {
         "scope": {
@@ -625,6 +676,12 @@ def _write_conductor_handoff(
             "sandbox_budget_seconds_total": cfg.sandbox_budget_seconds_total,
             "agent_timeout_seconds": cfg.agent_timeout_seconds,
             "extensions_disabled": list(cfg.extensions_disabled),
+            # QA-11 CR-01: contrato subprocess env. Conductor DEVE passar
+            # essa lista como `extras=` ao invocar engine.qa.sandbox.run_sandbox
+            # — sem isso, cards declarando JAVA_HOME/ANDROID_HOME/etc. quebram
+            # mesmo com grants validos. Vars sensitive sem grant ja foram
+            # filtradas no engine; lista aqui e tudo seguro pra repassar.
+            "allowed_env_extras": list(allowed_extras),
         },
     }
     (run_tree.root / "conductor-handoff.json").write_text(
