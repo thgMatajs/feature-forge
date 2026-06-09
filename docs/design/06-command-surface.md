@@ -26,9 +26,9 @@ dedicated PR. Silent expansion is forbidden.
 | # | Command | Canonical purpose |
 |---|---|---|
 | 1 | `forge init` | Greenfield / brownfield install: scan project, propose cards, write `.claude/workflow-config.yaml`, seed memory L2/L3, build initial graph. |
-| 2 | `forge plan` | Conduct planning-conductor pipeline (Waves A–E) to produce a full feature package with `readiness=ready`. |
+| 2 | `forge plan` | Conduct planning-conductor pipeline (Waves A–E) to produce a full feature package with `readiness=ready`. Subtype-aware (product / refactor / bugfix / spike / chore): no bugfix detecta o ticket (ex: IN-37234) e exige regression-test-first; no refactor entra com contrato no-behavior-change. |
 | 3 | `forge implement` | Conduct execution-conductor pipeline (Plan Mode → Apply Mode → review → commit) for one task at a time. |
-| 4 | `forge verify` | Read-only verification gate (task-scope, feature-scope, or inferred-scope). Runs hard-gate validators. |
+| 4 | `forge verify` | Read-only verification gate (task-scope, feature-scope, or inferred-scope). Runs hard-gate validators numa cascade fail-fast (para no primeiro erro duro). Inclui os gates fortes: `check_cyclomatic_complexity` (multi-lang), `check_secrets` (gitleaks/trufflehog), `check_no_behavior_change` (refactor) — cada gate forte com override-justify auditável no commit body + bypass de emergência logado em `.claude/state/`. |
 | 5 | `forge status` | Read-only board: in-flight features, current task, last verify, pending evolutions, doctor freshness. |
 | 6 | `forge doctor` | Read-only health check across config, cards, inventory, memory, graph, hooks, MCPs, i18n, connectivity. Interactive choice of scope (full / quick). |
 | 7 | `forge reconfigure` | **Single entrypoint for any post-init mutation**: cards, paths, conventions, backend, ticketing, workflow, persona, memory policy, external-docs, hooks, inventory re-extract, graph rebuild. Diff → confirm → apply → auto-doctor. |
