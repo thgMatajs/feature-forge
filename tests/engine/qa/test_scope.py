@@ -130,3 +130,88 @@ def test_scope_missing_raises(tmp_path: Path) -> None:
 
     msg = str(excinfo.value)
     assert "does-not-exist" in msg
+
+
+# ---------------------------------------------------------------------------
+# QA-13 — paranoid scope filtra features com state aborted/archived
+# ---------------------------------------------------------------------------
+
+
+def test_paranoid_excludes_aborted_state(tmp_path: Path) -> None:
+    """Features com state=aborted são filtradas do paranoid scope."""
+    features_root = tmp_path / "docs" / "feature-implementation-workflow" / "features"
+    features_root.mkdir(parents=True)
+
+    # Feature ativa
+    (features_root / "alpha").mkdir()
+    (features_root / "alpha" / "status.json").write_text(
+        '{"state": "planning"}', encoding="utf-8"
+    )
+
+    # Feature aborted (deve ser excluída)
+    (features_root / "beta").mkdir()
+    (features_root / "beta" / "status.json").write_text(
+        '{"state": "aborted"}', encoding="utf-8"
+    )
+
+    scope = resolve_scope("paranoid", project_root=tmp_path, paranoid_max_features=10)
+
+    paths_str = [str(p) for p in scope.paths]
+    assert any("alpha" in p for p in paths_str), "alpha (planning) should be included"
+    assert not any("beta" in p for p in paths_str), "beta (aborted) should be excluded"
+
+
+def test_paranoid_excludes_archived_state(tmp_path: Path) -> None:
+    """Features com state=archived são filtradas do paranoid scope."""
+    features_root = tmp_path / "docs" / "feature-implementation-workflow" / "features"
+    features_root.mkdir(parents=True)
+
+    (features_root / "alpha").mkdir()
+    (features_root / "alpha" / "status.json").write_text(
+        '{"state": "done"}', encoding="utf-8"
+    )
+
+    (features_root / "gamma").mkdir()
+    (features_root / "gamma" / "status.json").write_text(
+        '{"state": "archived"}', encoding="utf-8"
+    )
+
+    scope = resolve_scope("paranoid", project_root=tmp_path, paranoid_max_features=10)
+
+    paths_str = [str(p) for p in scope.paths]
+    assert any("alpha" in p for p in paths_str), "alpha (done) should be included"
+    assert not any("gamma" in p for p in paths_str), "gamma (archived) should be excluded"
+
+
+def test_paranoid_includes_when_status_missing_or_malformed(tmp_path: Path) -> None:
+    """Edge cases (fail-safe = include): status.json ausente, malformado, sem campo state."""
+    features_root = tmp_path / "docs" / "feature-implementation-workflow" / "features"
+    features_root.mkdir(parents=True)
+
+    # Sem status.json (legacy pre-Gap-8)
+    (features_root / "legacy").mkdir()
+
+    # status.json malformado
+    (features_root / "broken").mkdir()
+    (features_root / "broken" / "status.json").write_text(
+        "{not valid json", encoding="utf-8"
+    )
+
+    # status.json sem campo state
+    (features_root / "stateless").mkdir()
+    (features_root / "stateless" / "status.json").write_text(
+        '{"subtype": "feature"}', encoding="utf-8"
+    )
+
+    scope = resolve_scope("paranoid", project_root=tmp_path, paranoid_max_features=10)
+
+    paths_str = [str(p) for p in scope.paths]
+    assert any(
+        "legacy" in p for p in paths_str
+    ), "feature sem status.json should be included (legacy)"
+    assert any(
+        "broken" in p for p in paths_str
+    ), "feature com malformed status.json should be included (fail-safe)"
+    assert any(
+        "stateless" in p for p in paths_str
+    ), "feature sem campo state should be included (back-compat)"
