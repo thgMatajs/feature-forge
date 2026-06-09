@@ -97,6 +97,29 @@ def validate_qa_extensions(
             f"got {type(auditors).__name__}"
         )
 
+    # QA-11 Wave 2: env-needs (opcional, lista de strings non-empty sem whitespace).
+    # Spec §3: validator só checa SHAPE, não SEMÂNTICA. Pattern sensitive
+    # (GITHUB_TOKEN, AWS_*, etc.) NÃO é rejeitado aqui — decisão de
+    # rejeição/grant fica pra runtime (init/reconfigure, Wave 3).
+    env_needs = qa_ext.get("env-needs")
+    if env_needs is not None:
+        if not isinstance(env_needs, list):
+            raise QAExtensionsValidationError(
+                f"{card_path}: qa-extensions.env-needs deve ser lista "
+                f"(recebido {type(env_needs).__name__})"
+            )
+        for idx, item in enumerate(env_needs):
+            if not isinstance(item, str):
+                raise QAExtensionsValidationError(
+                    f"{card_path}: qa-extensions.env-needs[{idx}] deve ser string "
+                    f"(recebido {type(item).__name__}: {item!r})"
+                )
+            if not item or any(c.isspace() for c in item):
+                raise QAExtensionsValidationError(
+                    f"{card_path}: qa-extensions.env-needs[{idx}] inválido "
+                    f"({item!r}): deve ser non-empty sem whitespace"
+                )
+
     disabled = extensions_disabled or set()
 
     # Catálogo efetivo (canon ∪ local). Só carrega quando há requires a

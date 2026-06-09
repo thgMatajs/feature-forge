@@ -30,6 +30,11 @@ from typing import Any
 import yaml
 
 from engine.cards import LOCAL_CARD_NAME_RE
+from engine.cards.grant import (
+    GrantDecision,
+    UserAbortError,
+    evaluate_sensitive_grants,
+)
 from engine.cards.loader import CardError, CardManifest, load_all_cards, load_card
 from engine.cards.resolver import resolve
 from engine.cards.snapshotter import (
@@ -38,6 +43,7 @@ from engine.cards.snapshotter import (
     snapshot_card,
 )
 from engine.graph.builder import build_full
+from engine.persona import mentor_calmo
 from engine.inventory import (
     extract_conventions,
     extract_design_system,
@@ -136,6 +142,56 @@ def run(argv: list[str]) -> int:
         renderer.write("Nenhuma mudança detectada — saindo sem escrever nada.")
         draft_path.unlink(missing_ok=True)
         return 0
+
+    # QA-11: grant flow pra sensitive env-needs declaradas em qa-extensions.
+    # reconfigure passa o `working` REAL (com prior grants em
+    # qa.sensitive-env-grants) → evaluate trata idempotência (vars já granted
+    # não geram prompt). Resolvemos os CardManifest atuais carregando o
+    # diretório de snapshots e filtrando pelos nomes em `working.cards.active`
+    # (post-mutation: cards.add já snapshottou, cards.remove já moveu .bak).
+    active_names_post = {
+        c.get("name") for c in (working.get("cards") or {}).get("active") or []
+    }
+    active_manifests_post = [
+        m
+        for m in _load_active_manifests(cards_dir(project_root))
+        if m.name in active_names_post
+    ]
+    try:
+        grant_decision: GrantDecision = evaluate_sensitive_grants(
+            active_manifests_post, working
+        )
+    except UserAbortError as exc:
+        renderer.write(
+            mentor_calmo.pause_message(
+                resume_command=f"forge reconfigure  # após reconciliar grants — {exc}"
+            )
+        )
+        _save_draft(draft_path, working)
+        return 0  # aborta reconfigure sem persistir state parcial
+
+    if grant_decision.new_grants_to_persist:
+        qa_cfg = working.setdefault("qa", {})
+        existing = list(qa_cfg.get("sensitive-env-grants", []))
+        for var in grant_decision.new_grants_to_persist:
+            if var not in existing:
+                existing.append(var)
+        qa_cfg["sensitive-env-grants"] = existing
+
+    if grant_decision.denied_cards:
+        denied = set(grant_decision.denied_cards)
+        working.setdefault("cards", {})["active"] = [
+            c
+            for c in (working.get("cards") or {}).get("active") or []
+            if c.get("name") not in denied
+        ]
+        renderer.write(
+            renderer.colored(
+                f"  ✓ {len(denied)} card(s) removido(s) por var sensitive denied: "
+                f"{', '.join(sorted(denied))}",
+                "yellow",
+            )
+        )
 
     _show_diff(current, working)
     if not question.confirm("Aplicar essas mudanças?", default=False):

@@ -202,3 +202,72 @@ def test_forge_qa_disabled_returns_clean(tmp_path):
         f"qa-report.json nao deveria existir com qa.enabled=false, "
         f"mas achei: {reports}"
     )
+
+
+@pytest.mark.e2e
+@pytest.mark.skipif(not _RUN_E2E, reason="set RUN_E2E=1 to run e2e tests")
+def test_forge_qa_cli_no_secret_leak_smoke(tmp_path):
+    """E2E: secret no env do pai NAO vaza em stdout/stderr nem em artifacts.
+
+    Roda subprocess real do CLI (``forge qa <slug>``) com ``AWS_TOKEN``
+    exportado no env. Assert: o VALUE do secret nao aparece em stdout,
+    stderr, ou em qualquer arquivo gerado em ``.planning/qa/``. Test e
+    resiliente — nao exige exit 0; so verifica a no-leak guarantee em
+    qualquer caminho que o handler tome.
+
+    QA-11 wave 5 — fecha o ciclo de hardening provando E2E que o
+    sandbox env do handler nao deixa secrets vazarem pra saida/artefatos
+    quando o CLI roda em subprocess real.
+    """
+    # Project root minimo: .git/ + workflow-config + feature placeholder.
+    (tmp_path / ".git").mkdir()
+    _write_workflow_config(tmp_path, enabled=True)
+
+    slug = "probe-feature"
+    feature_dir = (
+        tmp_path
+        / "docs"
+        / "feature-implementation-workflow"
+        / "features"
+        / slug
+    )
+    feature_dir.mkdir(parents=True)
+
+    # Secret value canario — formato AWS-like pra ficar obvio em grep.
+    secret_value = "AKIA-LEAK-PROBE-12345"
+    env = _env_with_forge_home()
+    env["AWS_TOKEN"] = secret_value
+
+    rc = subprocess.run(
+        [sys.executable, "-m", "engine.cli", "qa", slug],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+    # 1) Secret VALUE nao aparece em stdout/stderr (independente do
+    #    exit code — no-leak guarantee vale em qualquer caminho).
+    assert secret_value not in rc.stdout, (
+        f"AWS_TOKEN value vazou em stdout.\nstdout: {rc.stdout}"
+    )
+    assert secret_value not in rc.stderr, (
+        f"AWS_TOKEN value vazou em stderr.\nstderr: {rc.stderr}"
+    )
+
+    # 2) Secret nao aparece em nenhum arquivo gerado em .planning/qa/.
+    qa_dir = tmp_path / ".planning" / "qa"
+    if qa_dir.exists():
+        for path in qa_dir.rglob("*"):
+            if path.is_file():
+                try:
+                    content = path.read_text(encoding="utf-8")
+                except UnicodeDecodeError:
+                    # Arquivos binarios — pula (no-leak guarantee
+                    # cobre arquivos de texto/JSON/YAML do handler).
+                    continue
+                assert secret_value not in content, (
+                    f"AWS_TOKEN value vazou em "
+                    f"{path.relative_to(tmp_path)}"
+                )

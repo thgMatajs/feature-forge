@@ -37,13 +37,22 @@ externamente é imutável".
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Iterable, Literal
+
+from engine._sandbox.env import build_safe_env
+
+
+# deep-007: spawn overhead floor — abaixo disso o subprocess nem começa
+# trabalho útil; preferimos skipped-budget a um timeout near-instant.
+# Tunable se portarmos pra plataforma com spawn mais lento (Windows +
+# bundled Python).
+_MIN_REMAINING_S_FOR_SPAWN = 0.05
+
 
 _CHDIR_GUARD = """\
 # sitecustomize.py preload — bloqueia mudança de CWD no subprocess do sandbox.
@@ -144,22 +153,48 @@ def _write_chdir_guard(run_dir: Path) -> Path:
     """Escreve sitecustomize.py em um diretório dedicado para PYTHONPATH preload.
 
     Retorna o diretório que deve ser prepended ao PYTHONPATH (não o arquivo).
+
+    deep-020: aplica permissões restritivas (0700 no dir, 0600 no arquivo)
+    em best-effort — em multi-tenant POSIX evita que co-tenant leia ou
+    troque o guard entre write e subprocess spawn (TOCTOU). Windows ignora
+    chmod silenciosamente (OSError swallowed).
     """
     guard_dir = run_dir / "_sandbox_guard"
     guard_dir.mkdir(parents=True, exist_ok=True)
     guard_file = guard_dir / "sitecustomize.py"
     guard_file.write_text(_CHDIR_GUARD, encoding="utf-8")
+    try:
+        guard_file.chmod(0o600)
+        guard_dir.chmod(0o700)
+    except OSError:
+        pass  # best-effort; Windows não honra POSIX modes
     return guard_dir
 
 
-def _hardened_env(guard_dir: Path) -> dict[str, str]:
-    """Constrói env com sitecustomize.py preload + marker FORGE_QA_SANDBOX=1."""
-    env = dict(os.environ)
-    existing = env.get("PYTHONPATH", "")
-    if existing:
-        env["PYTHONPATH"] = f"{guard_dir}{os.pathsep}{existing}"
-    else:
-        env["PYTHONPATH"] = str(guard_dir)
+def _hardened_env(
+    guard_dir: Path,
+    *,
+    extras: Iterable[str] = (),
+) -> dict[str, str]:
+    """Constrói env safe + sitecustomize.py preload + marker.
+
+    Refactor (QA-11): delega base pra build_safe_env(extras=...);
+    adiciona PYTHONPATH guard e FORGE_QA_SANDBOX=1 por cima.
+
+    SEGURANÇA (deep-001): NÃO herda PYTHONPATH do parent. PYTHONPATH é
+    vetor de code-execution — qualquer módulo sob ele pode ser importado
+    pelo validator subprocess, então herdar do parent burla a allowlist
+    pro var que mais importa (defesa-em-profundidade quebrada).
+    Callers que precisem de paths extras devem declará-los via `extras`,
+    cruzando o grant flow primeiro.
+    """
+    # extras vem de _compute_allowed_extras (engine/qa/__init__.py), que
+    # já filtrou contra workflow_config.qa.sensitive-env-grants — vars
+    # sensitive presentes aqui são as explicitamente autorizadas pelo
+    # user. allow_sensitive=True comunica essa pré-validação ao guard
+    # de defense-in-depth (deep-003).
+    env = build_safe_env(extras=extras, allow_sensitive=True)
+    env["PYTHONPATH"] = str(guard_dir)
     env["FORGE_QA_SANDBOX"] = "1"
     return env
 
@@ -170,6 +205,7 @@ def run_sandbox(
     *,
     budget_total_s: float = 60.0,
     per_validator_s: float = 15.0,
+    extras: Iterable[str] = (),
 ) -> list[SandboxResult]:
     """Loop subprocess pra cada fixture com hardening conforme Decisão 30.
 
@@ -187,6 +223,13 @@ def run_sandbox(
     list[SandboxResult]
         Um result por fixture, ordem preservada. Mesmo em breach/timeout/skip,
         o fixture correspondente aparece na lista com o status apropriado.
+
+    Parameters
+    ----------
+    extras : Iterable[str]
+        Env vars declaradas em ``qa-extensions.env-needs`` dos cards
+        ativos. Filtradas contra grants em workflow-config antes do
+        caller chamar (QA-11).
     """
     if budget_total_s <= 0:
         raise ValueError(
@@ -207,7 +250,7 @@ def run_sandbox(
         return []
 
     guard_dir = _write_chdir_guard(run_dir)
-    env = _hardened_env(guard_dir)
+    env = _hardened_env(guard_dir, extras=extras)
 
     results: list[SandboxResult] = []
     started = time.monotonic()
@@ -248,7 +291,7 @@ def run_sandbox(
         # synthesis depende dessa distinção (timeout = validator lento;
         # skipped-budget = orchestrator decidiu pular).
         remaining = min(per_validator_s, budget_total_s - elapsed)
-        if remaining < 0.05:
+        if remaining < _MIN_REMAINING_S_FOR_SPAWN:
             results.append(SandboxResult(fixture=fixture, status="skipped-budget"))
             continue
 

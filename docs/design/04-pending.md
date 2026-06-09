@@ -2003,7 +2003,7 @@ regex é fix localizado.
 
 **Categoria:** qa-sandbox / security
 **Fingerprint:** `sha256(promote-to-shared:qa-sandbox-env-isolation:allowlist-vs-blocklist)`
-**Status:** open (brainstorm pendente) — surfaced em IN-02 da Task 3.3
+**Status:** ✅ resolvido 2026-06-08 (allowlist core + per-card opt-in + grant explícito via spec `docs/superpowers/specs/2026-06-08-qa-sandbox-env-hardening-design.md` + impl em PR QA-11; 40+ tests adicionados; baseline 953 → ~995 tests; closeout commit referencia este resolvido).
 
 Sandbox subprocess (Phase 3 do `forge qa`) herda env completo do processo
 pai, incluindo possíveis secrets (`AWS_*`, `GITHUB_TOKEN`, etc.). Allowlist
@@ -2040,7 +2040,7 @@ Gap QA-15 abaixo.
 
 **Categoria:** qa-scope
 **Fingerprint:** `sha256(consolidate-within-module:qa-paranoid-state-filter:feature-state)`
-**Status:** open (depende de feature state file padrão) — surfaced em Task 8.3
+**Status:** ✅ resolvido 2026-06-08 (filter aborted/archived via status.json read em `engine/qa/scope.py._is_terminal_state`; fail-safe default-include pra legacy/malformado; 3 tests novos cobrindo positivos + edge cases).
 
 `_list_features_for_paranoid` em `engine/qa/scope.py` enumera todos os
 diretórios de feature sem filtrar por `state`. Spec §5.0 declara filter

@@ -193,6 +193,17 @@ def read_checkpoint(run_dir: Path) -> Optional[Checkpoint]:
                 f"recebi {type(value).__name__}",
             )
 
+    # Range guard: last_phase_completed tem que estar em 0..5 (Phases 1-5
+    # da spec QA; 0 = nenhuma phase concluída). Valor fora rejeita o
+    # checkpoint como corrompido em vez de propagar adiante.
+    lpc = data["last_phase_completed"]
+    if not (0 <= lpc <= 5):
+        raise CheckpointCorruptError(
+            path,
+            f"campo last_phase_completed fora do intervalo permitido "
+            f"(0..5): {lpc}",
+        )
+
     findings_partial = data.get("findings_partial_count", 0)
     if not isinstance(findings_partial, int) or isinstance(findings_partial, bool):
         raise CheckpointCorruptError(

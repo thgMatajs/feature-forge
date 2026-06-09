@@ -74,7 +74,7 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 | Preset | kmp-mobile (8 stack cards + 4 backend-candidates) |
 | Validators Python | 15 (+ 4 helper modules: `_common.py`, `_gate_infra.py`, `_diff.py`, `__init__.py`) — inclui `check_no_behavior_change` para refactor, `check_cyclomatic_complexity` multi-language (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon) refatorado em Phase 0 (v1.2-dev) pra compor de `_gate_infra` + `_diff`; `validate_card_yaml` + `validate_capability_labels` overlay-aware (Gap 5); `validate_extension_feature` novo em Gap 9 (EXT-001..004, cross-cutting) |
 | Hooks | 9 + 1 reuse incremental (`post-edit-detect-duplications.sh`) |
-| Tests | ~730 collected (rapid lane + integration/e2e — Gap 9 +42 (37 ship + 5 fix loop) + CC gate +~63 + Phase 0 -1 justificado + secrets gate +~30 + forge qa +~60 cobrindo qa validators + engine + auditors; cumulativo cobre PR #1 R1+R2+R3 + Gap 5 + power-review PR #2 R1 + Gap 9 + PR #4 CC gate + Phase 0 gate-infra + R1.1 secrets + forge qa v1.2). v1.2.0 baseline 595+12 e Gap 9 baseline 637+12 preservados na timeline. |
+| Tests | ~1097 collected (rapid lane + integration/e2e — Gap 9 +42 (37 ship + 5 fix loop) + CC gate +~63 + Phase 0 -1 justificado + secrets gate +~30 + forge qa +~60 cobrindo qa validators + engine + auditors + QA-11 sandbox env hardening +~30 + QA-13 paranoid scope filter +3; cumulativo cobre PR #1 R1+R2+R3 + Gap 5 + power-review PR #2 R1 + Gap 9 + PR #4 CC gate + Phase 0 gate-infra + R1.1 secrets + forge qa v1.2 + QA-11/QA-13). v1.2.0 baseline 595+12 e Gap 9 baseline 637+12 preservados na timeline. |
 | LOC total | ~52.500 |
 | Engine LOC | ~22.000 (Python) |
 | Files total | ~400 |
@@ -123,7 +123,7 @@ Requer Python 3.11+ + PyYAML (única dep externa).
   presets/kmp-mobile/                   canonical preset v1
   validators/                           17 validators + helpers (inclui check_cyclomatic_complexity + check_secrets + validate_extension_feature)
   hooks/                                9 hooks + reuse incremental script
-  tests/                                933 passing tests (unit + integration + e2e) + 19 skipped
+  tests/                                ~1097 collected tests (unit + integration + e2e) + 20 skipped
 
 [per project install via `forge init`]
 {project}/.claude/

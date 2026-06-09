@@ -11,6 +11,42 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 - Revisita decisão 30: sandbox isolation guard via sitecustomize.py (não PYTHONSTARTUP) — texto da Decisão atualizado pra refletir mecanismo real implementado em engine/qa/sandbox.py. Comportamento de isolamento idêntico; só o mecanismo nomeado mudou.
 
+### Fixed (QA-11 ultra-review remediação — PR #9, 2026-06-09)
+
+Remediação de 16 findings do ultra-review (deep.json) sobre QA-11 sandbox env hardening + QA-13. Severities variam de critical (1) a suggestion (7); todas aplicadas exceto onde indicado.
+
+- **deep-001 [crítico]** — `engine/qa/sandbox.py::_hardened_env` não herda mais `PYTHONPATH` do parent process. A versão anterior concatenava `os.environ['PYTHONPATH']` ao `guard_dir`, permitindo que um parent hostil ou shell poluído injetasse paths de import no subprocess do sandbox. PYTHONPATH é vetor de code-execution; defense-in-depth exige drop incondicional. Callers que precisem de paths extras declaram via `extras` (que passa pelo grant flow). Test de regressão `test_hardened_env_drops_parent_pythonpath` falharia antes do fix.
+- **deep-002** — `SENSITIVE_PATTERN` reescrita com boundary semantics (`(?:^|[_-])TOKEN|...(?:$|[_-])`) — elimina false-positive em `AUTHOR`, `CO_AUTHOR`, `BASE_PATHTOKEN_NAME` sem perder cobertura canônica. `AUTHORIZATION` e `AUTH(?=$|[_-])` cobertos explicitamente; `is_sensitive` passou de `.match` a `.search`.
+- **deep-003** — `build_safe_env` ganha `allow_sensitive=False` default. Raise `ValueError` se `extras` contém var sensitive sem `allow_sensitive=True`. `_hardened_env` (pós-grant) passa True; callers com extras non-sensitive hardcoded (engine.verify com JAVA_HOME/ANDROID_HOME/GRADLE_USER_HOME) mantêm default seguro.
+- **deep-004** — `_prompt_sensitive_grant` re-prompta até 3x antes de declarar abort e captura `EOFError` com mensagem explícita ('stdin fechado — abortando grant'). Anteriormente, qualquer input não-reconhecido (typo, '4', EOF em CI sem TTY) cancelava forge init/reconfigure silenciosamente.
+- **deep-005** — `_alert_sensitive_drops` mascara nomes de vars sensitive no stderr (formato `AW********`). Em CI com log verboso, expor nomes completos como `STRIPE_LIVE_KEY` ou `OAUTH_INTERNAL_VAULT_TOKEN` era information disclosure (atacante aprende namespace de secrets do host).
+- **deep-006** — `_compute_allowed_extras` ganha isinstance guard antes de `set(raw_grants)`. Shape malformado (dict, string, int) virava semantic drift silencioso: `set('GITHUB_TOKEN')` resultava em `{'G','I','T','H','U','B','_',...}` — cada char virava 'grant'. Guard duplicado consciente do já presente em `grant.py._load_existing_grants`; TODO de reuse anotado pra PR separado (extrair pra `engine/qa/_grants.py`, Mandamento #3).
+- **deep-007** — magic number `0.05` em `run_sandbox` promovido a constante module-level `_MIN_REMAINING_S_FOR_SPAWN` com comentário explicando spawn overhead floor + nota de tunabilidade pra platform mais lenta.
+- **deep-008** — `is_sensitive` aceita `object` e retorna `False` para non-str (fail-open) em vez de `TypeError`. Defensivo contra chamadores que esquecem `isinstance` upstream.
+- **deep-009** — `evaluate_sensitive_grants` short-circuita o loop de `denied_cards` quando `denied_vars` está vazio (caminho comum em re-run sem novos prompts).
+- **deep-013** — `test_core_allowlist_is_frozen` reescrito como `test_core_allowlist_is_immutable_and_contains_essentials`, asserindo a invariante de segurança real (essentials presentes, secrets ausentes) em vez da manifestação 'add raise AttributeError'.
+- **deep-015** — emoji warning padronizado para `⚠` plain (sem variation selector U+FE0F) em `engine/cards/grant.py` para render consistente cross-terminal.
+- **deep-016** — `extras` materializado em tupla na entrada de `build_safe_env` e `inspect_dropped` para re-iteração segura contra generators.
+- **deep-017** — `_prompt_sensitive_grant` ganha `prompt_fn=input` como DI seam — tests injetam callable em vez de monkeypatch global.
+- **deep-018** — `SENSITIVE_PATTERN: re.Pattern` → `re.Pattern[str]`.
+- **deep-019** — `var_to_cards` em `evaluate_sensitive_grants` usa set internamente, dedup quando um mesmo card declara a mesma var duas vezes por yaml duplication user-error.
+- **deep-020** — `_write_chdir_guard` aplica `chmod 0700` ao guard dir e `0600` ao `sitecustomize.py` em best-effort (Windows ignora). Em multi-tenant POSIX evita TOCTOU window entre write e subprocess spawn.
+- **deep-022** — `_maybe_alert_sensitive_drops` captura `RuntimeError` adicional. `validate_qa_extensions` pode raise `RuntimeError` em catalog corrompido — sem este catch o alert layer quebrava o contrato 'NUNCA bloqueia QA run' documentado no docstring.
+
+### Deferred (QA-11 ultra-review — fora do PR #9)
+
+Endereçados em PRs separados por requererem refactor cross-cutting fora da whitelist do fix-loop atual:
+
+- **deep-010** — structured warning channel (`engine/_warn.py emit_warn`) substituindo `print(..., file=sys.stderr)` em scope/qa-init/grant. Requer novo módulo e refactor cross-cutting de 3 call-sites.
+- **deep-011** — normalização de `state` legacy ('aborted_by_user' → 'aborted') em `engine/qa/scope.py::_is_terminal_state`. Não está na whitelist atual.
+- **deep-012** — memoização opcional de `_is_terminal_state` em `engine/qa/scope.py` para paranoid scope com muitos features. Trade-off de complexidade vs benefício; aceitar O(features) por enquanto.
+- **deep-014** — plumbing de `_compute_allowed_extras` pra `engine/verify.py` substituindo o tuple hardcoded `(JAVA_HOME, ANDROID_HOME, GRADLE_USER_HOME)`. Requer propagar `workflow_config` por `_run_cascade` → `_invoke_validator` (cross-cutting). Defesa atual continua funcionando (extras hardcoded são non-sensitive).
+- **deep-021** — warning em `engine/cards/loader.py` quando `env_needs[idx]` não é string. Loader não está na whitelist atual.
+
+### Tests (QA-11 ultra-review, 2026-06-09)
+
+- **1097 → 1113 passed** (+16 tests). Cobertura: test de regressão pra `PYTHONPATH` leak (deep-001); 9 unit tests novos pra pattern boundary semantics (deep-002 positivos + negativos); 3 tests pra defense-in-depth do `build_safe_env` (deep-003); test fail-open de `is_sensitive` para non-str (deep-008); 4 tests pra alert layer (deep-005 mask + deep-006 isinstance guard + deep-022 runtime catch); 3 tests pra grant prompt EOF + re-prompt + abort após 3 typos (deep-004); dedup de cards em var_to_cards (deep-019).
+
 ### Added (PR #8 forge qa CONF gaps + pause/resume, 2026-06-08)
 
 - `forge qa` Phase 0 inicializa `<run>/qa-report.json` com `verdict=pending` + finaliza após Phase 5 com verdict/findings/totals + completed_at (CONF-001).
@@ -193,6 +229,19 @@ worktree environment).
   `qa.auto-run-on-feature-done`).
 - Roteiro UX: `docs/ux/forge-qa-roteiro.md` (8 cenas).
 - §11 nova em `docs/design/07-discipline.md` — "QA verdict não-bloqueante".
+- `engine/_sandbox/env.py` — safe env builder pra subprocess de validators
+  (`build_safe_env`, `inspect_dropped`, `is_sensitive`); pure stdlib, zero
+  deps em `engine.*` (QA-11).
+- Campo `qa-extensions.env-needs` em cards (lista opcional de env vars
+  que o card declara precisar no sandbox; QA-11).
+- Campo `workflow-config.qa.sensitive-env-grants` (lista de env vars
+  sensitive autorizadas explicitamente pelo user; QA-11).
+- `engine/cards/grant.py` — `evaluate_sensitive_grants` + `GrantDecision`
+  + `UserAbortError`. Prompt 3-caminhos mentor-calmo dispara em
+  `forge init` / `forge reconfigure` quando card pede sensitive var sem
+  grant prévio (QA-11).
+- `engine.qa._alert_sensitive_drops` — alert mentor-calmo pré Phase 3
+  quando vars sensitive serão dropadas e nenhum card as declara (QA-11).
 
 ### Added (CC gate)
 
@@ -354,11 +403,28 @@ worktree environment).
   com `dict.get(kebab, dict.get(snake))` (refactor puro, sem mudança de
   comportamento) — endereça nit gemini-code-assist no PR #3 (commit
   `7313a30`).
+- `engine/qa/sandbox.py._hardened_env` agora delega base do env pra
+  `build_safe_env(extras=...)` em vez de `dict(os.environ)`. Refactor
+  mantém PYTHONPATH guard + FORGE_QA_SANDBOX marker (QA-11).
+- `engine.verify` linha 624 — `subprocess.run` pra validator agora usa
+  `env=build_safe_env()` (era default: herdar env completo do pai). Bug
+  silente de leak fechado (QA-11).
 
 ### Changed (load-bearing)
 
 - Revisita decisão 9: command surface 12 → 13 subcomandos — adiciona `forge qa` (adversarial red-team gate). Design completo em `docs/superpowers/specs/2026-06-05-forge-qa-design.md`. Locked at 12 histórico preservado em `docs/design/01-decisions.md` linha 9; novo lock em linha 29.
 - Adiciona decisão 30: sandbox isolation pra `forge qa` Phase 3 — subprocess CWD dedicado em `.planning/qa/<run-id>/fixtures/`, SandboxBreachError em writes fora, budget global configurável.
+
+### Security
+
+- **QA-11 fechado.** Secrets do processo pai (`AWS_TOKEN`, `GITHUB_TOKEN`,
+  `DB_PASSWORD`, `*_SECRET`, etc.) não vazam mais pro subprocess de
+  validators rodando em `forge qa` Phase 3 sandbox nem em `forge verify`.
+  Mitigação cobre dois threats: card extension malicioso (`qa-extensions.
+  auditors` lendo `os.environ`) e leak acidental em validator canon
+  (traceback que printa env em debug). Defesa = allowlist core
+  (`CORE_ALLOWLIST` hardcoded em `engine/_sandbox/env.py`) + per-card
+  opt-in declarativo + grant explícito do user pra vars sensitive.
 
 ### Fixed (PR #4 review)
 
@@ -384,6 +450,44 @@ worktree environment).
 - +6 tests novos cobrindo D-006/D-008/D-009/F-006. Suite total:
   688 passed, 17 skipped, 1 falha pre-existing
   (`test_bootstrap_is_idempotent` em worktree — Gap BOOTSTRAP-1).
+
+### Fixed (QA-11 post-review remediação)
+
+- **QA-11 final review remediação** (commits `0563cfa` + `728aa79`):
+  - **CR-01:** `conductor-handoff.json` agora inclui
+    `config.allowed_env_extras` (list[str] derivada de cards' `env-needs`
+    + `sensitive-env-grants`); `agents/qa-conductor.md` documenta contrato
+    de consumo (`run_sandbox(extras=...)`). Sem isso, a chain card
+    `env-needs` → sandbox subprocess ficava plumbing-only em produção.
+  - **CR-02:** `_alert_sensitive_drops` em `engine/qa/__init__.py` tinha
+    interseção invertida (`card_env_needs & (CORE ∪ granted)` — filtrava
+    non-sensitive vars de cards). Substituída pela semântica correta:
+    non-sensitive sempre passa; sensitive só com grant.
+  - **CR-03:** `engine/cards/loader.py` agora guarda `isinstance(v, str)`
+    antes de `is_sensitive(v)` — `env-needs` malformado no canon path não
+    crasha mais com `TypeError` cru.
+  - **IM-01:** `engine/verify.py` subprocess de validator agora passa
+    `extras=("JAVA_HOME", "ANDROID_HOME", "GRADLE_USER_HOME")` — CC
+    validator (detekt/swiftlint) volta a funcionar em codebases
+    Kotlin/Android.
+  - **IM-02:** alert layer `except Exception` estreitado pra
+    `(CardError, OSError, ValueError, KeyError)` — deixa de mascarar bugs
+    reais.
+  - **IM-03:** `evaluate_sensitive_grants` agora ordena `cards_requesting`
+    antes do join — prompt UX determinístico cross runs.
+  - **IM-04:** alinhamento de calling style de `three_paths_block` entre
+    `engine/qa/__init__.py` e `engine/cards/grant.py` (positional
+    consistente).
+- Re-review confirmou os 7 findings endereçados corretamente. Suite
+  rapid lane: 896 tests verdes.
+
+### Fixed (QA-13)
+
+- `engine/qa/scope.py._list_features_for_paranoid` agora filtra features
+  com `state ∈ {"aborted", "archived"}` (per spec §5.0). Fail-safe
+  default-include pra features legacy (sem status.json) ou status.json
+  malformado — paranoid quer audit broad, broken features ficam visíveis
+  pra user notar gaps. Fecha pré-piloto bloqueador QA-13.
 
 ## [1.2.0] — 2026-06-03
 
