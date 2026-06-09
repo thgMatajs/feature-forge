@@ -1,21 +1,21 @@
 # Command surface — locked at 13 (após Revisita Decisão 9 em 2026-06-05)
 
 This document is the formal mapping between **every lifecycle operation** the
-engine performs and **which of the 12 canonical subcommands** hosts it. It
+engine performs and **which of the 13 canonical subcommands** hosts it. It
 exists because two locked decisions are load-bearing and easy to drift from:
 
-- **Decision 9** — the command surface is fixed at **12 subcomandos**. No
-  thirteenth.
+- **Decision 9** — the command surface is fixed at **13 subcomandos** (após
+  Revisita Decisão 9 em 2026-06-05, que adicionou `forge qa` como 13º comando).
 - **Decision 10** — interaction is **100% conversational, sem flags**. Every
-  parameter is collected via interactive prompt or menu inside one of the 12
+  parameter is collected via interactive prompt or menu inside one of the 13
   entrypoints.
 
 Anything that *feels* like it needs a new command (card lifecycle, inventory
-refresh, schema migration, graph rebuild) **must route through one of the 12
+refresh, schema migration, graph rebuild) **must route through one of the 13
 as an interactive menu choice or a sub-prompt** — never as a new top-level
 verb, never as a flag.
 
-If a future need does not encaixar em nenhum dos 12, the response is **not** a
+If a future need does not encaixar em nenhum dos 13, the response is **not** a
 new command. The response is: revisit decisions 9 + 10 explicitly via a
 dedicated PR. Silent expansion is forbidden.
 
@@ -114,16 +114,16 @@ A tabela completa de tudo que foi inventado nos roteiros e o que vira agora:
 ## Por que essa disciplina importa
 
 1. **Decisão 9 é load-bearing.** Inventar comandos quebra a expectativa de que
-   o usuário precisa lembrar apenas 12 verbos. Cada novo subcomando dobra a
+   o usuário precisa lembrar apenas 13 verbos. Cada novo subcomando dobra a
    superfície cognitiva.
 2. **Decisão 10 é load-bearing.** Flags geram explosão combinatória de UX.
    `forge X --foo --bar` aceita ordem qualquer, valores fora de enum, conflitos
    entre flags. Conversational é restrito por design: a engine pergunta, o
    usuário responde dentro do conjunto oferecido.
-3. **Auditabilidade.** Toda mutação passa por um dos 12 entrypoints, então
+3. **Auditabilidade.** Toda mutação passa por um dos 13 entrypoints, então
    `history.jsonl` de cada entrypoint cobre 100% das mutações. Sem comandos
    "laterais" gerando estado opaco.
-4. **Portabilidade.** O dispatcher bash em `bin/forge` resolve apenas 12 verbos.
+4. **Portabilidade.** O dispatcher bash em `bin/forge` resolve apenas 13 verbos.
    Se a tabela cresce, o dispatcher cresce, a documentação cresce, e a skill
    deixa de ser absorvível em um clone.
 
@@ -132,13 +132,13 @@ A tabela completa de tudo que foi inventado nos roteiros e o que vira agora:
 ## Hidden internal entrypoints
 
 Some operations need an event-driven funnel that hooks call on the user's
-behalf. These **are not part of the 12 user-facing commands**, are **never
+behalf. These **are not part of the 13 user-facing commands**, are **never
 typed manually**, and are **not documented as something the user invokes**.
 They exist so that a single Python entrypoint can route any hook signal into
 the right handler (graph delta, memory append, inventory refresh, proposal
 queue).
 
-| Hidden entrypoint | Who calls it | What it does | Why it's not in the 12 |
+| Hidden entrypoint | Who calls it | What it does | Why it's not in the 13 |
 |---|---|---|---|
 | `forge ingest --event <type> [payload]` | Claude Code hooks, git hooks, CI hooks, forge native dispatchers | Routes the event into `engine/ingest.py` which fans out to graph updater, memory updater, inventory updater, or proposal queue | Pure plumbing. No UX. User never types this; if a user runs it manually that's a bug in the hook layer, not a feature. |
 | `forge graph detect-incremental <file>...` | `.claude/hooks/post-edit-detect-duplications.sh` (Claude Code post-edit hook) | Re-parses edited files, refreshes graph row, runs reuse-intelligence detection, prints inline any finding touching the edited files. Exit 0 always — never breaks the developer's edit. | Subcomando POSICIONAL de `forge graph` (não flag — argv[0]=="detect-incremental"). É um modo non-interactive do verbo já existente, não um novo verbo. Decisão 9 preservada. |
@@ -161,10 +161,10 @@ Quando um futuro contributor (humano ou agente) escrever roteiro, schema, ou
 agent prompt que mencione `forge {algo-novo}` ou `forge X --flag`:
 
 1. Procura na **migration table** acima. Se está listado, usa o replacement.
-2. Se não está listado mas a operação é nova: encaixa em um dos 12 como menu
+2. Se não está listado mas a operação é nova: encaixa em um dos 13 como menu
    ou prompt interativo.
-3. Se não encaixa em nenhum dos 12: **para** e abre PR pra revisar decisões 9
+3. Se não encaixa em nenhum dos 13: **para** e abre PR pra revisar decisões 9
    e 10 explicitamente. Nunca expande silenciosamente.
 
 Mentor calmo é firme aqui: o que protege a UX do forge é a estabilidade da
-superfície. 12 verbos, zero flags, zero exceções.
+superfície. 13 verbos, zero flags, zero exceções.
