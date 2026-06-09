@@ -517,6 +517,19 @@ def _finalize_qa_report(
     )
 
 
+def _mask_var_name(name: str) -> str:
+    """deep-005: mascara nome de var sensitive pra log/alert.
+
+    Mantém 2 primeiros chars + asteriscos do tamanho restante. Em CI com
+    log verboso, expor nomes (`STRIPE_LIVE_KEY`, `OAUTH_INTERNAL_VAULT_TOKEN`)
+    é information disclosure mesmo sem expor valor — atacante aprende o
+    namespace de secrets do host. Mascarar reduz superfície.
+    """
+    if len(name) <= 2:
+        return name
+    return name[:2] + "*" * (len(name) - 2)
+
+
 def _alert_sensitive_drops(card_extras: Iterable[str]) -> None:
     """Pre Phase 3: alerta se vars sensitive serao dropadas (QA-11 Wave 4).
 
@@ -544,12 +557,14 @@ def _alert_sensitive_drops(card_extras: Iterable[str]) -> None:
     if not sensitive:
         return
 
+    masked = sorted(_mask_var_name(v) for v in sensitive)
     block = three_paths_block(
         "Variaveis sensitive serao dropadas no sandbox",
         what_failed=(
             f"Detectadas {len(sensitive)} vars sensitive no env do pai "
-            f"nao declaradas por nenhum card ativo: "
-            f"{', '.join(sensitive)}"
+            f"nao declaradas por nenhum card ativo (nomes mascarados pra "
+            f"evitar disclosure em CI log): "
+            f"{', '.join(masked)}"
         ),
         where="engine/qa Phase 3 sandbox boot",
         why=[
@@ -605,9 +620,21 @@ def _compute_allowed_extras(
     for card in active_cards:
         card_env_needs.update(card.env_needs)
 
-    granted = set(
-        (workflow_config or {}).get("qa", {}).get("sensitive-env-grants", []) or []
-    )
+    # deep-006: isinstance guard antes de set(). Sem isso, raw_grants
+    # vindo como dict produz {chaves} (semantic drift silencioso) e
+    # raw_grants string produz {char, ...} (cada caractere vira 'grant'
+    # silencioso). grant.py._load_existing_grants já faz esse check —
+    # duplicamos aqui para fechar gap até reuse explícito (TODO: extrair
+    # pra engine/qa/_grants.py em PR separado — Mandamento #3).
+    raw_grants = (workflow_config or {}).get("qa", {}).get("sensitive-env-grants", [])
+    if not isinstance(raw_grants, list):
+        print(
+            f"⚠ qa.sensitive-env-grants tem shape {type(raw_grants).__name__}; "
+            f"tratando como vazio.",
+            file=sys.stderr,
+        )
+        raw_grants = []
+    granted = {v for v in raw_grants if isinstance(v, str)}
 
     # Non-sensitive vars sempre passam (user instalou o card).
     # Sensitive vars so passam se ja tem grant explicito do user.
@@ -632,7 +659,11 @@ def _maybe_alert_sensitive_drops(
     try:
         allowed_extras = _compute_allowed_extras(project_root, workflow_config)
         _alert_sensitive_drops(allowed_extras)
-    except (CardError, OSError, ValueError, KeyError) as exc:
+    except (CardError, OSError, ValueError, KeyError, RuntimeError) as exc:
+        # deep-022: RuntimeError adicionado pra cobrir corrupção de
+        # catálogo via validate_qa_extensions (não-subclasse de Card/Value/
+        # OSError). Contrato do alert layer é "NUNCA bloqueia QA run";
+        # deixar RuntimeError escapar contradizia o docstring.
         print(
             f"⚠ Alert layer QA-11 falhou ({type(exc).__name__}: {exc}); "
             f"seguindo sem aviso de env vars sensitive.",

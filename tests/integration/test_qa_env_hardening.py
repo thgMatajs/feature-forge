@@ -99,8 +99,17 @@ def test_alert_fires_when_sensitive_unwhitelisted_present(monkeypatch, capsys):
 
     captured = capsys.readouterr()
     combined = captured.out + captured.err
-    assert "sensitive" in combined.lower() or "AWS_TOKEN" in combined, (
+    # deep-005: nomes mascarados (AW********); a string completa NÃO deve
+    # aparecer em log. Cheque pelo prefixo + presença de máscara, e/ou
+    # pelo texto descritivo do alert.
+    assert "sensitive" in combined.lower(), (
         f"Alert nao disparou. Output: {combined!r}"
+    )
+    assert "AWS_TOKEN" not in combined, (
+        f"Nome completo de var sensitive vazou — esperava máscara. Output: {combined!r}"
+    )
+    assert "AW" in combined and "*" in combined, (
+        f"Esperava nome mascarado 'AW********'. Output: {combined!r}"
     )
 
 
