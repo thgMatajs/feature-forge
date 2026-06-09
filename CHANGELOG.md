@@ -415,6 +415,36 @@ worktree environment).
   688 passed, 17 skipped, 1 falha pre-existing
   (`test_bootstrap_is_idempotent` em worktree — Gap BOOTSTRAP-1).
 
+### Fixed (QA-11 post-review remediação)
+
+- **QA-11 final review remediação** (commits `0563cfa` + `728aa79`):
+  - **CR-01:** `conductor-handoff.json` agora inclui
+    `config.allowed_env_extras` (list[str] derivada de cards' `env-needs`
+    + `sensitive-env-grants`); `agents/qa-conductor.md` documenta contrato
+    de consumo (`run_sandbox(extras=...)`). Sem isso, a chain card
+    `env-needs` → sandbox subprocess ficava plumbing-only em produção.
+  - **CR-02:** `_alert_sensitive_drops` em `engine/qa/__init__.py` tinha
+    interseção invertida (`card_env_needs & (CORE ∪ granted)` — filtrava
+    non-sensitive vars de cards). Substituída pela semântica correta:
+    non-sensitive sempre passa; sensitive só com grant.
+  - **CR-03:** `engine/cards/loader.py` agora guarda `isinstance(v, str)`
+    antes de `is_sensitive(v)` — `env-needs` malformado no canon path não
+    crasha mais com `TypeError` cru.
+  - **IM-01:** `engine/verify.py` subprocess de validator agora passa
+    `extras=("JAVA_HOME", "ANDROID_HOME", "GRADLE_USER_HOME")` — CC
+    validator (detekt/swiftlint) volta a funcionar em codebases
+    Kotlin/Android.
+  - **IM-02:** alert layer `except Exception` estreitado pra
+    `(CardError, OSError, ValueError, KeyError)` — deixa de mascarar bugs
+    reais.
+  - **IM-03:** `evaluate_sensitive_grants` agora ordena `cards_requesting`
+    antes do join — prompt UX determinístico cross runs.
+  - **IM-04:** alinhamento de calling style de `three_paths_block` entre
+    `engine/qa/__init__.py` e `engine/cards/grant.py` (positional
+    consistente).
+- Re-review confirmou os 7 findings endereçados corretamente. Suite
+  rapid lane: 896 tests verdes.
+
 ## [1.2.0] — 2026-06-03
 
 ### Added (Gap 5 — Card local overlay, 2026-06-02)
