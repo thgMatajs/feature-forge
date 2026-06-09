@@ -156,9 +156,8 @@ def test_paranoid_excludes_aborted_state(tmp_path: Path) -> None:
 
     scope = resolve_scope("paranoid", project_root=tmp_path, paranoid_max_features=10)
 
-    paths_str = [str(p) for p in scope.paths]
-    assert any("alpha" in p for p in paths_str), "alpha (planning) should be included"
-    assert not any("beta" in p for p in paths_str), "beta (aborted) should be excluded"
+    assert features_root / "alpha" in scope.paths, "alpha (planning) should be included"
+    assert features_root / "beta" not in scope.paths, "beta (aborted) should be excluded"
 
 
 def test_paranoid_excludes_archived_state(tmp_path: Path) -> None:
@@ -178,9 +177,8 @@ def test_paranoid_excludes_archived_state(tmp_path: Path) -> None:
 
     scope = resolve_scope("paranoid", project_root=tmp_path, paranoid_max_features=10)
 
-    paths_str = [str(p) for p in scope.paths]
-    assert any("alpha" in p for p in paths_str), "alpha (done) should be included"
-    assert not any("gamma" in p for p in paths_str), "gamma (archived) should be excluded"
+    assert features_root / "alpha" in scope.paths, "alpha (done) should be included"
+    assert features_root / "gamma" not in scope.paths, "gamma (archived) should be excluded"
 
 
 def test_paranoid_includes_when_status_missing_or_malformed(tmp_path: Path) -> None:
@@ -205,13 +203,12 @@ def test_paranoid_includes_when_status_missing_or_malformed(tmp_path: Path) -> N
 
     scope = resolve_scope("paranoid", project_root=tmp_path, paranoid_max_features=10)
 
-    paths_str = [str(p) for p in scope.paths]
-    assert any(
-        "legacy" in p for p in paths_str
-    ), "feature sem status.json should be included (legacy)"
-    assert any(
-        "broken" in p for p in paths_str
-    ), "feature com malformed status.json should be included (fail-safe)"
-    assert any(
-        "stateless" in p for p in paths_str
-    ), "feature sem campo state should be included (back-compat)"
+    expected = {
+        features_root / "legacy",
+        features_root / "broken",
+        features_root / "stateless",
+    }
+    assert set(scope.paths) == expected, (
+        "fail-safe edge cases (missing/malformed status.json, missing state) "
+        "devem todos ser incluídos; nada além disso deve aparecer"
+    )
