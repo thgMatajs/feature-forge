@@ -1,11 +1,12 @@
-"""Unit tests for CCResult dataclass + classify_function.
+"""Unit tests for CCResult dataclass + classify_range_against_hunks.
 
-Cobre o skeleton inicial de `validators/check_cyclomatic_complexity.py`
-(Task 3 do plan cc-gate). Aqui não exercitamos parsers nem orchestrator
-ainda — só a dataclass normalizada e o classificador `new/modified/
-unchanged` baseado em diff hunks.
+Cobre a dataclass normalizada do CC validator + o classificador
+``new/modified/unchanged`` baseado em diff hunks (agora vivendo em
+``validators/_diff.py`` após Phase 0 gate-infra-extract). Os símbolos
+``DiffHunk`` e ``classify_range_against_hunks`` são re-exportados pelo CC
+validator (back-compat), então os testes seguem importando via ``v``.
 
-Spec source: `docs/superpowers/specs/2026-06-03-cc-gate-design.md §3`
+Spec source: ``docs/superpowers/specs/2026-06-03-cc-gate-design.md §3``
 (CCResult shape) + §2 step 9 (regra de classificação via overlap entre
 range da função e hunks do diff).
 """
@@ -56,26 +57,26 @@ def test_ccresult_constructs_with_all_fields() -> None:
 
 def test_classify_new_function_entirely_in_added_hunk() -> None:
     # Function spans lines 10..20; the hunk also added lines 10..20.
-    hunks = [{"start": 10, "end": 20, "kind": "add"}]
-    assert v.classify_function((10, 20), hunks) == "new"
+    hunks = [v.DiffHunk(start=10, end=20, kind="add")]
+    assert v.classify_range_against_hunks((10, 20), hunks) == "new"
 
 
 def test_classify_modified_when_range_intersects_hunk() -> None:
     # Function spans 5..40; hunk touches 20..25 (partial overlap).
-    hunks = [{"start": 20, "end": 25, "kind": "add"}]
-    assert v.classify_function((5, 40), hunks) == "modified"
+    hunks = [v.DiffHunk(start=20, end=25, kind="add")]
+    assert v.classify_range_against_hunks((5, 40), hunks) == "modified"
 
 
 def test_classify_unchanged_when_no_overlap() -> None:
-    hunks = [{"start": 100, "end": 110, "kind": "add"}]
-    assert v.classify_function((5, 40), hunks) == "unchanged"
+    hunks = [v.DiffHunk(start=100, end=110, kind="add")]
+    assert v.classify_range_against_hunks((5, 40), hunks) == "unchanged"
 
 
 def test_classify_empty_hunks_means_unchanged() -> None:
-    assert v.classify_function((1, 100), []) == "unchanged"
+    assert v.classify_range_against_hunks((1, 100), []) == "unchanged"
 
 
 def test_classify_function_starts_above_hunk_ends_inside_is_modified() -> None:
     # Function 5..25; hunk 20..30 (function tail overlaps hunk head).
-    hunks = [{"start": 20, "end": 30, "kind": "add"}]
-    assert v.classify_function((5, 25), hunks) == "modified"
+    hunks = [v.DiffHunk(start=20, end=30, kind="add")]
+    assert v.classify_range_against_hunks((5, 25), hunks) == "modified"

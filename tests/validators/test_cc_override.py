@@ -9,7 +9,7 @@ Spec source: `docs/superpowers/specs/2026-06-03-cc-gate-design.md §4`
 Contrato:
 - Override válido (regex strict) → vira dict com {file, func, cc, reason}.
 - Override LOOSE (sem `— razão`) → não conta + warning emitido.
-- _apply_overrides retorna tupla (silenced, surviving) sobre CCResult list.
+- apply_overrides retorna tupla (silenced, surviving) sobre CCResult list.
 - Match key: (file, function). Sem wildcards.
 """
 
@@ -33,7 +33,7 @@ def _make(file: str, func: str, cc: int) -> v.CCResult:
 
 def test_override_parses_valid_single_line() -> None:
     body = "CC-OVERRIDE: app/foo.kt:bar cc=14 — DSL aninhado"
-    overrides = v._parse_overrides(body)
+    overrides = v.parse_overrides(body)
     assert len(overrides) == 1
     o = overrides[0]
     assert o["file"] == "app/foo.kt"
@@ -44,7 +44,7 @@ def test_override_parses_valid_single_line() -> None:
 
 def test_override_malformed_missing_dash_does_not_count() -> None:
     body = "CC-OVERRIDE: app/foo.kt:bar cc=14 no reason"
-    overrides, warnings = v._parse_overrides(body, return_warnings=True)
+    overrides, warnings = v.parse_overrides(body, return_warnings=True)
     assert overrides == []
     assert len(warnings) == 1
     assert "CC-OVERRIDE sem razão" in warnings[0]
@@ -56,7 +56,7 @@ def test_override_covers_only_declared_function() -> None:
         _make("app/foo.kt", "bar", 14),
         _make("app/foo.kt", "baz", 12),  # NOT covered — função diferente
     ]
-    silenced, surviving, _warnings = v._apply_overrides(fails, body)
+    silenced, surviving, _warnings = v.apply_overrides(fails, body)
     assert len(silenced) == 1 and silenced[0].function == "bar"
     assert len(surviving) == 1 and surviving[0].function == "baz"
 
@@ -69,7 +69,7 @@ def test_override_multiple_lines_cover_independently() -> None:
         ]
     )
     fails = [_make("a.kt", "foo", 14), _make("b.kt", "bar", 11)]
-    silenced, surviving, _warnings = v._apply_overrides(fails, body)
+    silenced, surviving, _warnings = v.apply_overrides(fails, body)
     assert len(silenced) == 2
     assert surviving == []
 
@@ -77,14 +77,14 @@ def test_override_multiple_lines_cover_independently() -> None:
 def test_override_file_mismatch_does_not_silence() -> None:
     body = "CC-OVERRIDE: a.kt:foo cc=14 — reason"
     fails = [_make("b.kt", "foo", 14)]  # arquivo diferente — não silencia
-    silenced, surviving, _warnings = v._apply_overrides(fails, body)
+    silenced, surviving, _warnings = v.apply_overrides(fails, body)
     assert silenced == []
     assert len(surviving) == 1
 
 
 def test_override_empty_body_returns_all_as_surviving() -> None:
     fails = [_make("a.kt", "foo", 14)]
-    silenced, surviving, _warnings = v._apply_overrides(fails, "")
+    silenced, surviving, _warnings = v.apply_overrides(fails, "")
     assert silenced == []
     assert surviving == fails
 
@@ -92,11 +92,11 @@ def test_override_empty_body_returns_all_as_surviving() -> None:
 def test_override_regex_anchors_at_line_start() -> None:
     # Não deve casar quando CC-OVERRIDE aparece mid-sentence (defensivo).
     body = "see also CC-OVERRIDE: a.kt:foo cc=14 — reason"
-    assert v._parse_overrides(body) == []
+    assert v.parse_overrides(body) == []
 
 
 def test_apply_overrides_surfaces_malformed_warnings() -> None:
-    """H4 — `_apply_overrides` must propagate malformed-override warnings.
+    """H4 — `apply_overrides` must propagate malformed-override warnings.
 
     Spec §4 step 5: malformed CC-OVERRIDE lines do NOT silence the fail,
     AND the validator must emit a warning so the user sees why their
@@ -111,7 +111,7 @@ def test_apply_overrides_surfaces_malformed_warnings() -> None:
         ]
     )
     fails = [_make("a.kt", "foo", 14), _make("b.kt", "bar", 11)]
-    silenced, surviving, warnings = v._apply_overrides(fails, body)
+    silenced, surviving, warnings = v.apply_overrides(fails, body)
     # b.kt:bar silenced by valid override; a.kt:foo survives the malformed.
     assert [s.function for s in silenced] == ["bar"]
     assert [s.function for s in surviving] == ["foo"]
@@ -123,7 +123,7 @@ def test_apply_overrides_surfaces_malformed_warnings() -> None:
 def test_apply_overrides_no_warnings_when_all_valid() -> None:
     """When every override is well-formed, warnings list is empty."""
     body = "CC-OVERRIDE: a.kt:foo cc=14 — irreducible DSL"
-    silenced, surviving, warnings = v._apply_overrides(
+    silenced, surviving, warnings = v.apply_overrides(
         [_make("a.kt", "foo", 14)], body
     )
     assert len(silenced) == 1
@@ -139,7 +139,7 @@ def test_override_trailing_dash_empty_reason_warns() -> None:
     `warnings.append`.
     """
     body = "feat: x\n\nCC-OVERRIDE: app/foo.kt:bar cc=12 — \n"
-    overrides, warnings = v._parse_overrides(body, return_warnings=True)
+    overrides, warnings = v.parse_overrides(body, return_warnings=True)
     # Strict regex exige reason concreta — não conta como override válido.
     assert overrides == []
     # Loose-pass agora detecta o tail vazio e emite warning (D-008).
@@ -151,7 +151,7 @@ def test_override_trailing_dash_empty_reason_warns() -> None:
 def test_override_trailing_dash_whitespace_only_reason_warns() -> None:
     """Variação D-008: vários espaços após `—` continuam sendo razão vazia."""
     body = "CC-OVERRIDE: x.py:y cc=11 —    \n"
-    overrides, warnings = v._parse_overrides(body, return_warnings=True)
+    overrides, warnings = v.parse_overrides(body, return_warnings=True)
     assert overrides == []
     assert len(warnings) == 1
     assert "CC-OVERRIDE sem razão" in warnings[0]

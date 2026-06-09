@@ -11,7 +11,7 @@ Runs in two contexts (per design spec §2):
 Threshold precedence (per design spec §2 + helpers in _common):
     card cc-gate-override > workflow-config cc-gate > DEFAULTS_CC
 
-On fail, emits the canonical 3-paths block (see _common.cc_format_three_paths).
+On fail, emits the canonical 3-paths block (see _common.format_three_paths_message).
 Override-justify: `CC-OVERRIDE: <file>:<func> cc=<N> — <reason>` in the commit
 body silences a specific function for THAT commit only — no persistent
 whitelist (auditable via `git log --grep='CC-OVERRIDE'`).
@@ -19,31 +19,40 @@ whitelist (auditable via `git log --grep='CC-OVERRIDE'`).
 
 from __future__ import annotations
 
-import json  # noqa: F401  — used by parser tasks (T4/T5)
-import os
-import re  # noqa: F401  — used by override-detect task (T7)
-import shutil  # noqa: F401  — used by tool-availability task (T6)
-import subprocess  # noqa: F401  — used by dispatch task (T6)
+import json
+import re
 import sys
-import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
 from _common import (
-    cc_format_three_paths,  # noqa: F401  — wired in T8 validate()
-    cc_threshold_lookup,  # noqa: F401  — wired in T8 validate()
-    make_paths,  # noqa: F401  — wired in T8 validate()
-    result_fail,  # noqa: F401  — wired in T8 validate()
+    format_three_paths_message,
+    gate_threshold_lookup,
+    make_paths,
+    result_fail,
     result_pass,
-    result_warn,  # noqa: F401  — wired in T6/T8
+    result_warn,
     run_cli,
+)
+from _diff import (
+    DiffHunk,
+    classify_range_against_hunks,
+    extract_diff_hunks,
+    git_staged_files,
+    read_commit_body,
+)
+from _gate_infra import (
+    DispatchResult,
+    apply_overrides as _gate_apply_overrides,
+    dispatch_native_tool,
+    parse_overrides as _gate_parse_overrides,
 )
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from engine.utils.paths import feature_dir  # noqa: E402,F401  — wired in T8
-from engine.utils.yaml_io import read_yaml_or_default  # noqa: E402,F401  — wired in T8
+from engine.utils.yaml_io import read_yaml_or_default  # noqa: E402
 
 
 SUPPORTED_EXTENSIONS = {
@@ -62,7 +71,7 @@ class CCResult:
 
     Emitted by the per-tool parsers (_parse_detekt, _parse_swiftlint,
     _parse_eslint, _parse_radon) and consumed by the rule-application
-    step (run + classify_function).
+    step (run + classify_range_against_hunks).
     """
 
     file: str           # path relative to project root
@@ -73,40 +82,6 @@ class CCResult:
     language: str       # "kotlin" | "swift" | "ts" | "python"
     status: str         # "new" | "modified" | "unchanged"
     cc_before: Optional[int]  # None when status == "new" or unknown
-
-
-def classify_function(
-    func_range: tuple[int, int],
-    diff_hunks: list[dict[str, Any]],
-) -> str:
-    """Classify a function as new | modified | unchanged using diff hunks.
-
-    Args:
-        func_range: (line_start, line_end) inclusive, 1-indexed.
-        diff_hunks: list of {"start": int, "end": int, "kind": "add"|"del"|"ctx"}.
-
-    Rules (per design spec §2 step 9):
-        - new       — entire func_range falls inside an "add" hunk
-        - modified  — func_range intersects any hunk (partial overlap)
-        - unchanged — no overlap with any hunk
-    """
-    if not diff_hunks:
-        return "unchanged"
-
-    f_start, f_end = func_range
-    add_hunks = [h for h in diff_hunks if h.get("kind", "add") == "add"]
-
-    # "new" — entire function range contained within a single add hunk
-    for h in add_hunks:
-        if h["start"] <= f_start and h["end"] >= f_end:
-            return "new"
-
-    # "modified" — any intersection
-    for h in diff_hunks:
-        if h["start"] <= f_end and h["end"] >= f_start:
-            return "modified"
-
-    return "unchanged"
 
 
 # ── Tool output parsers ──────────────────────────────────────────────────────
@@ -327,226 +302,83 @@ _TOOL_BIN = {
 _CONFIG_DIR = Path(__file__).resolve().parent.parent / "engine" / "_cc_configs"
 
 
-@dataclass(frozen=True)
-class _DispatchResult:
-    """Outcome of a single tool invocation.
+# ── Command builders (per-language cmd construction) ────────────────────────
+#
+# Cada cmd_builder recebe `(tool_bin, files, rendered_config_path)` e devolve
+# o cmd final pro subprocess.run em `dispatch_native_tool`. Builders ficam
+# aqui (CC-específicos pelas tools nativas que conhecem) enquanto o dispatch
+# canônico vive em `_gate_infra`. Próximos gates definem seus próprios
+# builders sem duplicar a lógica de subprocess / cleanup / error handling.
 
-    Contract:
-        tool_found=False  → tool not on PATH; caller emits result_warn with
-                            install hint. raw_stdout / crashed irrelevantes.
-        crashed=True      → non-zero exit (exceto eslint exit=1 benigno),
-                            timeout, ou OSError. error_message tem stderr
-                            snippet ou descrição. raw_stdout pode ter parcial.
-        otherwise         → raw_stdout vai para o parser correspondente
-                            (_parse_detekt / _parse_swiftlint / etc.).
+
+def _build_detekt_cmd(
+    tool_bin: str, files: list[str], rendered_config: Optional[str]
+) -> list[str]:
+    """Detekt: --input vírgula-separado + --config (rendered) + --report json:-.
+
+    Threshold é rendered dinamicamente no config (Detekt não aceita CLI
+    override por regra). Spec §3 threshold-via-CLI honored via tmpfile render
+    feito por `dispatch_native_tool` antes de chamar este builder.
+    """
+    return [
+        tool_bin,
+        "--input", ",".join(files),
+        "--config", str(rendered_config),
+        "--report", "json:-",
+    ]
+
+
+def _build_swiftlint_cmd(
+    tool_bin: str, files: list[str], rendered_config: Optional[str]
+) -> list[str]:
+    """SwiftLint: `lint` subcomando + --reporter json + --config (rendered).
+
+    Threshold rendered dinamicamente no config (SwiftLint não aceita CLI
+    override per-rule). Spec §3 threshold-via-CLI honored via tmpfile render.
+    """
+    return [
+        tool_bin, "lint",
+        "--reporter", "json",
+        "--config", str(rendered_config),
+        *files,
+    ]
+
+
+def _build_eslint_cmd_factory(threshold: int) -> Callable[
+    [str, list[str], Optional[str]], list[str]
+]:
+    """Factory para o cmd_builder do eslint (threshold via closure).
+
+    eslint aceita threshold via `--rule` inline, então não precisa render de
+    config (config_template fica None em `dispatch_native_tool`). Factory
+    captura o threshold no scope da iteração de `_run_tools_for_staged`.
     """
 
-    language: str
-    tool_found: bool
-    crashed: bool
-    raw_stdout: str
-    error_message: str
+    def _build(
+        tool_bin: str, files: list[str], rendered_config: Optional[str]
+    ) -> list[str]:
+        return [
+            tool_bin,
+            "--no-eslintrc",
+            "--rule", f'{{"complexity": ["error", {{"max": {threshold}}}]}}',
+            "--format", "json",
+            *files,
+        ]
+
+    return _build
 
 
-def _check_tool_available(tool: str) -> bool:
-    """Return True iff `tool` is on PATH (shutil.which lookup).
+def _build_radon_cmd(
+    tool_bin: str, files: list[str], rendered_config: Optional[str]
+) -> list[str]:
+    """radon cc -j -n A: JSON output, rank mínimo "A" (mostra TODAS as funções).
 
-    Não tenta executar — apenas PATH lookup. Suficiente porque tool crash
-    em runtime é tratado separadamente em _dispatch_tool.
+    H2 regression guard — flag `-n F` antigo mascarava CC ∈ [11..40], o sweet
+    spot do gate. Filtragem fina por threshold acontece no validator depois.
+    Threshold via CLI não aplicável (radon não aceita override per-tool aqui),
+    e gate filtra Python por threshold após parsing.
     """
-    return shutil.which(tool) is not None
-
-
-_CC_THRESHOLD_PLACEHOLDER = "__CC_THRESHOLD__"
-
-
-def _render_config_for_threshold(template_path: Path, threshold: int) -> str:
-    """Render a CC tool config template, substituting the threshold placeholder.
-
-    Spec §3 mandates "threshold passado via CLI args **sempre**" — but Detekt
-    and SwiftLint don't accept per-rule threshold via CLI flags. We honor the
-    contract by rendering the static template (`engine/_cc_configs/<tool>.yml`)
-    into a tempfile per invocation, swapping ``__CC_THRESHOLD__`` for the
-    resolved threshold. The tempfile path is passed via ``--config`` so each
-    invocation carries the correct dynamic value.
-
-    Caller is responsible for writing the rendered string to disk and cleaning
-    up the tempfile after subprocess returns.
-    """
-    raw = template_path.read_text(encoding="utf-8")
-    return raw.replace(_CC_THRESHOLD_PLACEHOLDER, str(threshold))
-
-
-def _dispatch_tool(
-    *,
-    language: str,
-    files: list[str],
-    threshold: int,
-    project_root: Path,
-) -> _DispatchResult:
-    """Invoke the per-language tool over `files`. Never raises (exceto KeyError
-    para language não suportada — contrato é caller filtra por SUPPORTED_EXTENSIONS).
-
-    Per spec §3 trust-but-verify:
-      - tool not on PATH → tool_found=False, no execution attempted.
-      - subprocess timeout → crashed=True, error_message contém "timeout".
-      - OSError (ex: permissions) → crashed=True, error_message com causa.
-      - exit != 0 (exceto eslint exit=1 que é benigno por design) → crashed=True
-        com stderr snippet (cap 400 chars).
-      - exit == 0 (ou eslint exit=1) → raw_stdout entregue ao caller.
-
-    Timeout fixo 60s — tools nativas em batches razoáveis de files (poucas
-    centenas) terminam bem antes disso. Timeout maior mascararia tool hang.
-    """
-    tool = _TOOL_BIN[language]
-    if not _check_tool_available(tool):
-        return _DispatchResult(
-            language=language,
-            tool_found=False,
-            crashed=False,
-            raw_stdout="",
-            error_message=f"{tool} not installed (PATH lookup failed)",
-        )
-
-    # Tempfile path is set only for languages whose tool does not accept
-    # per-rule threshold via CLI (Detekt, SwiftLint). We render the config
-    # template substituting __CC_THRESHOLD__ per invocation (spec §3), then
-    # remove the tempfile after subprocess returns regardless of outcome.
-    rendered_config: Optional[str] = None
-
-    try:
-        if language == "kotlin":
-            # Detekt: --input aceita lista vírgula-separada; --report json:- escreve
-            # JSON em stdout (sem precisar tempfile pro report). Threshold é
-            # rendered dinamicamente no config (Detekt não aceita CLI override
-            # por regra). Spec §3 threshold-via-CLI honored via tmpfile render.
-            rendered_config = tempfile.NamedTemporaryFile(
-                mode="w",
-                suffix=".yml",
-                prefix="detekt-cc-",
-                delete=False,
-                encoding="utf-8",
-            ).name
-            Path(rendered_config).write_text(
-                _render_config_for_threshold(
-                    _CONFIG_DIR / "detekt.yml", threshold
-                ),
-                encoding="utf-8",
-            )
-            cmd = [
-                tool,
-                "--input", ",".join(files),
-                "--config", rendered_config,
-                "--report", "json:-",
-            ]
-        elif language == "swift":
-            # SwiftLint: subcomando `lint` + reporter json. Threshold rendered
-            # dinamicamente no config (SwiftLint não aceita CLI override per-rule).
-            # Spec §3 threshold-via-CLI honored via tmpfile render.
-            rendered_config = tempfile.NamedTemporaryFile(
-                mode="w",
-                suffix=".yml",
-                prefix="swiftlint-cc-",
-                delete=False,
-                encoding="utf-8",
-            ).name
-            Path(rendered_config).write_text(
-                _render_config_for_threshold(
-                    _CONFIG_DIR / "swiftlint.yml", threshold
-                ),
-                encoding="utf-8",
-            )
-            cmd = [
-                tool, "lint",
-                "--reporter", "json",
-                "--config", rendered_config,
-                *files,
-            ]
-        elif language == "ts":
-            # eslint: --no-eslintrc ignora config do projeto consumidor (evita
-            # interferência); --rule inline com threshold dinâmico. Format json
-            # produz array file-by-file (parseado por _parse_eslint).
-            cmd = [
-                tool,
-                "--no-eslintrc",
-                "--rule", f'{{"complexity": ["error", {{"max": {threshold}}}]}}',
-                "--format", "json",
-                *files,
-            ]
-        elif language == "python":
-            # radon cc -j: JSON output sem rank filter (-n A é rank mínimo "A",
-            # mostra TODAS as funções). H2 fix: o flag `-n F` antigo mascarava
-            # toda função com CC ∈ [11..40] — exatamente o sweet spot do gate.
-            # Filtragem fina por threshold acontece no validator depois.
-            cmd = [
-                tool, "cc", "-j", "-n", "A",
-                *files,
-            ]
-        else:
-            # Inalcançável: _TOOL_BIN[language] já teria raised KeyError acima.
-            # Mantido por simetria/defesa.
-            return _DispatchResult(
-                language=language,
-                tool_found=False,
-                crashed=False,
-                raw_stdout="",
-                error_message=f"unsupported language: {language}",
-            )
-
-        try:
-            proc = subprocess.run(
-                cmd,
-                cwd=str(project_root),
-                capture_output=True,
-                text=True,
-                timeout=60,
-                check=False,
-            )
-        except subprocess.TimeoutExpired:
-            return _DispatchResult(
-                language=language,
-                tool_found=True,
-                crashed=True,
-                raw_stdout="",
-                error_message=f"{tool} timeout (>60s)",
-            )
-        except OSError as exc:
-            return _DispatchResult(
-                language=language,
-                tool_found=True,
-                crashed=True,
-                raw_stdout="",
-                error_message=f"{tool} OS error: {exc}",
-            )
-
-        # eslint exits 1 quando issues encontrados — NÃO é crash, é normal.
-        # Outros tools: exit != 0 é crash genuíno.
-        benign_nonzero = language == "ts" and proc.returncode == 1
-        if proc.returncode != 0 and not benign_nonzero:
-            return _DispatchResult(
-                language=language,
-                tool_found=True,
-                crashed=True,
-                raw_stdout=proc.stdout or "",
-                error_message=(proc.stderr or "").strip()[:400]
-                or f"{tool} exit={proc.returncode}",
-            )
-
-        return _DispatchResult(
-            language=language,
-            tool_found=True,
-            crashed=False,
-            raw_stdout=proc.stdout or "",
-            error_message="",
-        )
-    finally:
-        if rendered_config:
-            try:
-                os.unlink(rendered_config)
-            except OSError:
-                # Best-effort cleanup — tempfile leak is a minor leak, never
-                # a behavior bug. Don't shadow the real exception.
-                pass
+    return [tool_bin, "cc", "-j", "-n", "A", *files]
 
 
 # Subsequent tasks (7–8) append: override, run().
@@ -558,116 +390,65 @@ def _dispatch_tool(
 # (re.MULTILINE) so it can't be smuggled mid-sentence. The format is
 # load-bearing — `.claude/rules/disciplines.md §1` references it directly.
 #
-# Strict regex exige o trailing ` — <razão concreta>` (em-dash U+2014).
-# Loose regex captura tentativas malformadas (sem `—`) pra emitir warning;
-# isso mantém o gate honesto sobre tentativas de silenciar fails sem razão.
+# Parse + apply são generalizados em `_gate_infra.parse_overrides` /
+# `_gate_infra.apply_overrides`. Esta seção mantém apenas a especialização CC
+# (prefix + key_pattern + key fields + key_extractor + converter de `cc`).
 
-_CC_OVERRIDE_RE = re.compile(
-    r"^CC-OVERRIDE:\s+(?P<file>\S+):(?P<func>\S+)\s+cc=(?P<cc>\d+)\s+—\s+(?P<reason>.+)$",
-    re.MULTILINE,
-)
-
-_CC_OVERRIDE_LOOSE_RE = re.compile(
-    r"^CC-OVERRIDE:\s+(?P<file>\S+):(?P<func>\S+)\s+cc=(?P<cc>\d+)\b",
-    re.MULTILINE,
-)
+_CC_OVERRIDE_PREFIX = "CC-OVERRIDE"
+_CC_OVERRIDE_KEY_PATTERN = r"(?P<file>\S+):(?P<func>\S+)\s+cc=(?P<cc>\d+)"
+_CC_OVERRIDE_KEY_FIELDS = ["file", "func"]
+_CC_OVERRIDE_VALUE_CONVERTERS = {"cc": int}
 
 
-def _parse_overrides(
+def _cc_fail_key_extractor(fail: CCResult) -> tuple[str, str]:
+    """Extrai a tupla (file, function) do CCResult — cover key do CC gate."""
+    return (fail.file, fail.function)
+
+
+def parse_overrides(
     commit_body: str,
     *,
     return_warnings: bool = False,
 ):
-    """Parse CC-OVERRIDE lines from a commit body.
+    """Thin CC-specific wrapper around `_gate_infra.parse_overrides`.
 
-    Returns a list of override dicts (file/func/cc/reason). When
-    `return_warnings=True`, returns a (overrides, warnings) tuple.
-
-    Lines starting with CC-OVERRIDE but missing the `— <reason>` tail are
-    flagged as warnings and NOT counted as valid overrides — keeps the gate
-    honest about silenced fails.
+    Preserva o contrato do antigo `_parse_overrides`: dicts com
+    ``{file, func, cc: int, reason}``. Generalização vive em
+    `_gate_infra.parse_overrides` — esta wrapper fixa prefix/key_pattern/
+    value_converters do CC gate pra manter callsites enxutos e tests legíveis.
     """
-    overrides: list[dict[str, Any]] = []
-    warnings: list[str] = []
-
-    # First pass: strict regex (must have reason).
-    valid_spans: set[tuple[int, int]] = set()
-    for m in _CC_OVERRIDE_RE.finditer(commit_body):
-        try:
-            cc = int(m.group("cc"))
-        except (TypeError, ValueError):
-            continue
-        reason = m.group("reason").strip()
-        # D-008 — `.+` no regex casa whitespace puro após `—`. Sem este guard,
-        # `CC-OVERRIDE: foo:bar cc=11 —    ` viraria override válido com
-        # reason="". Skipa pro loose-pass, que emite o warning canônico.
-        if not reason:
-            continue
-        overrides.append(
-            {
-                "file": m.group("file"),
-                "func": m.group("func"),
-                "cc": cc,
-                "reason": reason,
-            }
-        )
-        valid_spans.add(m.span())
-
-    # Second pass: loose match — anything that LOOKS like an override but
-    # didn't pass strict regex is a malformed attempt → warn.
-    for m in _CC_OVERRIDE_LOOSE_RE.finditer(commit_body):
-        if m.span() in valid_spans:
-            continue
-        # Skip if the strict regex DID match on the same line (different span).
-        nl = commit_body.find("\n", m.start())
-        line_end = nl if nl != -1 else len(commit_body)
-        line = commit_body[m.start():line_end]
-        # Detect the em-dash and inspect what follows: a concrete reason after
-        # ` — ` means the strict regex already accepted it (skip); a trailing
-        # em-dash with empty/whitespace tail is still malformed and must warn
-        # (D-008 — the previous `if " — " in line: continue` swallowed these).
-        if " — " in line:
-            _, _, tail = line.partition(" — ")
-            if tail.strip():
-                continue
-        warnings.append(
-            f"CC-OVERRIDE sem razão concreta: '{line.strip()}' — adicione texto após —"
-        )
-
-    if return_warnings:
-        return overrides, warnings
-    return overrides
+    return _gate_parse_overrides(
+        commit_body,
+        prefix=_CC_OVERRIDE_PREFIX,
+        key_pattern=_CC_OVERRIDE_KEY_PATTERN,
+        value_converters=_CC_OVERRIDE_VALUE_CONVERTERS,
+        return_warnings=return_warnings,
+    )
 
 
-def _apply_overrides(
+def apply_overrides(
     fails: list[CCResult],
     commit_body: str,
 ) -> tuple[list[CCResult], list[CCResult], list[str]]:
-    """Split `fails` into (silenced, surviving, warnings) using CC-OVERRIDE lines.
+    """Thin CC-specific wrapper around `_gate_infra.apply_overrides`.
 
-    Match key: (file, function). Override cobre APENAS o par (file, func)
-    declarado — sem wildcards. Cada override aplica-se a UM commit; auditoria
-    via `git log --grep='CC-OVERRIDE'`.
+    Match key: ``(file, function)`` — cobre apenas o par declarado, sem
+    wildcards. Cada override aplica-se a UM commit; auditoria via
+    ``git log --grep='CC-OVERRIDE'``.
 
-    Malformed-override warnings (lines that look like CC-OVERRIDE but miss the
-    `— <razão>` tail) are surfaced as the third tuple element so the validator
-    can include them in the final result dict (H4 fix — spec §4 step 5
-    mandates "Validator emite warning 'CC-OVERRIDE sem razão — adicione texto
-    após —'. Mantém o fail.").
+    Malformed-override warnings (linhas com prefix mas sem ``— razão``)
+    sobem como terceiro elemento — preserva H4 do CC gate (warning emitido
+    mesmo quando o gate passa).
     """
-    overrides, warnings = _parse_overrides(commit_body, return_warnings=True)
-    if not overrides:
-        return [], list(fails), warnings
-
-    cover: set[tuple[str, str]] = {(o["file"], o["func"]) for o in overrides}
-    silenced: list[CCResult] = []
-    surviving: list[CCResult] = []
-    for f in fails:
-        if (f.file, f.function) in cover:
-            silenced.append(f)
-        else:
-            surviving.append(f)
-    return silenced, surviving, warnings
+    return _gate_apply_overrides(
+        fails,
+        commit_body,
+        prefix=_CC_OVERRIDE_PREFIX,
+        key_pattern=_CC_OVERRIDE_KEY_PATTERN,
+        fail_key_extractor=_cc_fail_key_extractor,
+        override_key_fields=_CC_OVERRIDE_KEY_FIELDS,
+        value_converters=_CC_OVERRIDE_VALUE_CONVERTERS,
+    )
 
 
 # ── Orchestrator ─────────────────────────────────────────────────────────────
@@ -681,12 +462,12 @@ def _apply_overrides(
 #   2. Coleta staged files (git diff --cached --name-only) filtrados pelas
 #      extensões suportadas (.kt .kts .swift .ts .tsx .py).
 #   3. Aplica ignore-paths (defaults pra tests + entradas do workflow-config).
-#   4. Resolve threshold por linguagem via cc_threshold_lookup (card override
+#   4. Resolve threshold por linguagem via gate_threshold_lookup (card override
 #      > workflow-config > DEFAULTS_CC).
 #   5. Extrai diff hunks pra classificar new/modified/unchanged.
 #   6. Dispatch tool per linguagem (Detekt/SwiftLint/eslint/radon) numa única
 #      invocação por batch. Tool missing/crash → warning, sem fail.
-#   7. Classifica cada função encontrada via classify_function.
+#   7. Classifica cada função encontrada via classify_range_against_hunks.
 #   8. Aplica a regra: new → fail se cc > threshold; modified → fail se
 #      cc_after > cc_before (delta-rule). unchanged → ignora.
 #   9. Aplica CC-OVERRIDE silencing lendo o commit body.
@@ -700,116 +481,6 @@ _TEST_IGNORE_DEFAULTS = [
     r"\.test\.(ts|tsx|js|jsx|kt|swift|py)$",
     r"_test\.(kt|swift|py)$",
 ]
-
-
-def _git_staged_files(project_root: Path) -> list[Path]:
-    """Return absolute paths of files in ``git diff --cached --name-only``.
-
-    Filtra pelas extensões em SUPPORTED_EXTENSIONS antes de devolver. Git
-    indisponível / não-repo / errors → lista vazia (caller trata como
-    "nenhum arquivo a checar"). Timeout 10s evita hang em repo gigante.
-    """
-    try:
-        # `-M80%`: rename detection per SDD §2 — função renomeada (até 20% de
-        # mudança) é classificada como "modified" pelo delta rule (cf. F-001),
-        # não como "new" + delete. Sem isso, renames viram falso-positivo de
-        # função nova com absolute-rule.
-        out = subprocess.run(
-            ["git", "-C", str(project_root), "diff", "--cached", "-M80%", "--name-only"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except (subprocess.SubprocessError, OSError):
-        return []
-    if out.returncode != 0:
-        return []
-    files: list[Path] = []
-    for line in out.stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        p = project_root / line
-        if p.is_file() and p.suffix in SUPPORTED_EXTENSIONS:
-            files.append(p)
-    return files
-
-
-def _extract_diff_hunks(
-    project_root: Path, files: list[Path]
-) -> dict[str, list[dict[str, Any]]]:
-    """For each staged file, return its add hunks as line-range dicts.
-
-    Hunk shape: ``{"start": int, "end": int, "kind": "add"}``. Apenas o lado
-    "+" do diff é capturado — caller usa pra classify_function (new vs
-    modified vs unchanged). git diff -U0 dá hunks compactos sem context.
-    """
-    by_file: dict[str, list[dict[str, Any]]] = {}
-    for f in files:
-        try:
-            rel = str(f.relative_to(project_root))
-        except ValueError:
-            # Arquivo fora do project_root — skip silenciosamente.
-            continue
-        try:
-            proc = subprocess.run(
-                ["git", "-C", str(project_root), "diff", "--cached", "-U0", "--", rel],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-        except (subprocess.SubprocessError, OSError):
-            by_file[rel] = []
-            continue
-        hunks: list[dict[str, Any]] = []
-        for line in proc.stdout.splitlines():
-            if not line.startswith("@@"):
-                continue
-            # Hunk header: @@ -a,b +c,d @@
-            m = re.search(r"\+(\d+)(?:,(\d+))?", line)
-            if not m:
-                continue
-            start = int(m.group(1))
-            length = int(m.group(2)) if m.group(2) else 1
-            hunks.append(
-                {"start": start, "end": start + max(length - 1, 0), "kind": "add"}
-            )
-        by_file[rel] = hunks
-    return by_file
-
-
-def _read_commit_body(project_root: Path) -> str:
-    """Best-effort read do commit message body (pra detectar CC-OVERRIDE).
-
-    Ordem:
-      1. ``.git/COMMIT_EDITMSG`` — populado pelo pre-commit hook (caso
-         comum em forge implement). Lê mesmo se commit ainda não foi feito.
-      2. ``git log -1 --format=%B HEAD`` — fallback pós-commit (forge verify
-         rodando depois do commit já formado).
-
-    Não-encontrado / erro → string vazia (sem overrides aplicáveis).
-    """
-    editmsg = project_root / ".git" / "COMMIT_EDITMSG"
-    if editmsg.is_file():
-        try:
-            return editmsg.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            pass
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(project_root), "log", "-1", "--format=%B"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if proc.returncode == 0:
-            return proc.stdout
-    except (subprocess.SubprocessError, OSError):
-        pass
-    return ""
 
 
 def _load_active_cards(project_root: Path) -> list[dict[str, Any]]:
@@ -890,7 +561,7 @@ def _run_tools_for_staged(
     *,
     files_by_lang: dict[str, list[str]],
     thresholds_by_lang: dict[str, int],
-    diff_hunks: dict[str, list[dict[str, Any]]],
+    diff_hunks: dict[str, list[DiffHunk]],
     project_root: Path,
 ) -> tuple[list[CCResult], list[str]]:
     """Dispatch every per-language tool. Return ``(results, warnings)``.
@@ -900,9 +571,10 @@ def _run_tools_for_staged(
     (não fail) por aquela linguagem; outras linguagens prosseguem (cascade
     alive per spec §3 trust-but-verify).
 
-    `status` em cada CCResult é re-classificado aqui via classify_function
-    contra ``diff_hunks`` — os parsers emitem ``status="unchanged"`` por
-    default (não conhecem o diff) e o orchestrator faz o overlay correto.
+    `status` em cada CCResult é re-classificado aqui via
+    ``classify_range_against_hunks`` contra ``diff_hunks`` — os parsers
+    emitem ``status="unchanged"`` por default (não conhecem o diff) e o
+    orchestrator faz o overlay correto.
     """
     parsers = {
         "kotlin": lambda raw: _parse_detekt(raw),
@@ -916,17 +588,53 @@ def _run_tools_for_staged(
         if not files:
             continue
         threshold = thresholds_by_lang.get(lang, 10)
-        d = _dispatch_tool(
-            language=lang,
-            files=files,
-            threshold=threshold,
-            project_root=project_root,
-        )
+        tool_bin = _TOOL_BIN[lang]
+        if lang == "kotlin":
+            d = dispatch_native_tool(
+                language=lang,
+                files=files,
+                cmd_builder=_build_detekt_cmd,
+                project_root=project_root,
+                tool_bin=tool_bin,
+                config_template=_CONFIG_DIR / "detekt.yml",
+                placeholders={"__CC_THRESHOLD__": str(threshold)},
+            )
+        elif lang == "swift":
+            d = dispatch_native_tool(
+                language=lang,
+                files=files,
+                cmd_builder=_build_swiftlint_cmd,
+                project_root=project_root,
+                tool_bin=tool_bin,
+                config_template=_CONFIG_DIR / "swiftlint.yml",
+                placeholders={"__CC_THRESHOLD__": str(threshold)},
+            )
+        elif lang == "ts":
+            d = dispatch_native_tool(
+                language=lang,
+                files=files,
+                cmd_builder=_build_eslint_cmd_factory(threshold),
+                project_root=project_root,
+                tool_bin=tool_bin,
+                benign_nonzero_codes=(1,),
+            )
+        elif lang == "python":
+            d = dispatch_native_tool(
+                language=lang,
+                files=files,
+                cmd_builder=_build_radon_cmd,
+                project_root=project_root,
+                tool_bin=tool_bin,
+            )
+        else:
+            # Unsupported language — caller (validate) filters by
+            # SUPPORTED_EXTENSIONS so this branch is defensive only.
+            continue
         # D-009 — antes ambos casos emitiam `d.error_message` cru, indistinguíveis
         # do ponto de vista do usuário. Prefixo `[<tool>] tool ausente:` vs
         # `[<tool>] tool crashou:` deixa claro o que aconteceu sem perder a
         # mensagem original (que ainda traz o caminho/snippet do stderr).
-        tool_bin = _TOOL_BIN[lang]
+        # `tool_bin` já foi resolvido antes do dispatch (linha acima).
         if not d.tool_found:
             warnings.append(f"[{tool_bin}] tool ausente: {d.error_message}")
             continue
@@ -935,7 +643,7 @@ def _run_tools_for_staged(
             continue
         for r in parsers[lang](d.raw_stdout):
             hunks = diff_hunks.get(r.file, [])
-            status = classify_function((r.line_start, r.line_end), hunks)
+            status = classify_range_against_hunks((r.line_start, r.line_end), hunks)
             results.append(
                 CCResult(
                     file=r.file,
@@ -972,7 +680,9 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
             "cc-gate disabled in workflow-config (cc-gate.enabled=false)"
         )
 
-    staged_paths = _git_staged_files(project_root)
+    staged_paths = git_staged_files(
+        project_root, extensions=set(SUPPORTED_EXTENSIONS)
+    )
     if not staged_paths:
         return result_pass("nenhum arquivo staged — nada a checar")
 
@@ -1012,7 +722,7 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
     thresholds_by_lang: dict[str, int] = {}
     for lang in files_by_lang:
         try:
-            thresholds_by_lang[lang] = cc_threshold_lookup(
+            thresholds_by_lang[lang] = gate_threshold_lookup(
                 lang, active_cards=active_cards, workflow_config=config
             )
         except ValueError:
@@ -1020,7 +730,7 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
             # antes), mas defesa contra desvio futuro em SUPPORTED_EXTENSIONS.
             thresholds_by_lang[lang] = 10
 
-    diff_hunks = _extract_diff_hunks(project_root, staged_paths)
+    diff_hunks = extract_diff_hunks(project_root, staged_paths)
 
     results, tool_warnings = _run_tools_for_staged(
         files_by_lang=files_by_lang,
@@ -1041,8 +751,8 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
         # "unchanged" ou modified sem regressão → não conta.
 
     # Override-justify aplicado antes de emitir fail (spec §4).
-    commit_body = _read_commit_body(project_root)
-    silenced, surviving, override_warnings = _apply_overrides(fails, commit_body)
+    commit_body = read_commit_body(project_root)
+    silenced, surviving, override_warnings = apply_overrides(fails, commit_body)
 
     # H4 — malformed CC-OVERRIDE attempts must surface as warnings even when
     # the gate passes. Spec §4 step 5: "Validator emite warning ...".
@@ -1087,11 +797,11 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
         r.language: thresholds_by_lang.get(r.language, 10) for r in surviving
     }
 
-    # H3 — render the canonical 3-paths block (cc_format_three_paths) AND
+    # H3 — render the canonical 3-paths block (format_three_paths_message) AND
     # attach it to the result dict so engine.implement._render_cc_gate_block
     # can surface mentor-calmo prose to the user. Spec §4 + disciplines §1
     # treat this render as load-bearing UX contract.
-    canonical_render = cc_format_three_paths(violations, affected_thresholds)
+    canonical_render = format_three_paths_message(violations, affected_thresholds)
 
     sample = ", ".join(
         f"{r.file}:{r.function}(cc={r.cc})" for r in surviving[:3]

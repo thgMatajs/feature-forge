@@ -498,7 +498,7 @@ def _run_cc_gate(project_root: Path) -> dict[str, Any]:
 def _render_cc_gate_block(result: dict[str, Any]) -> None:
     """Render the gate's 3-paths block when blocking.
 
-    Prefers the canonical `render` field (`cc_format_three_paths` output)
+    Prefers the canonical `render` field (`format_three_paths_message` output)
     when available — it carries the load-bearing UX contract from spec §4
     and disciplines §1 (literal header `🛑 Cyclomatic Complexity gate`,
     sections "O que falhou:", "Onde:", "Por que importa:", "Três caminhos
@@ -523,6 +523,131 @@ def _render_cc_gate_block(result: dict[str, Any]) -> None:
 
     # Fallback render — kept for results that lack the canonical block.
     renderer.write(renderer.bold(result.get("message") or "cc-gate hard fail"))
+    renderer.write("")
+    for p in result.get("paths") or []:
+        label = p.get("label") or p.get("kind") or "?"
+        motive = p.get("motive") or ""
+        renderer.write(f"  · {label}")
+        if motive:
+            renderer.write(f"      {motive}")
+    renderer.write("")
+    renderer.write(renderer.dim("Sem auto-fix aqui — escolha humana."))
+
+
+# ── Secrets gate per-task hook ───────────────────────────────────────────────
+
+
+def _secrets_bypass_log_path(project_root: Path) -> Path:
+    """Trilha de auditoria para invocações ``NO_SECRETS_GATE=1``.
+
+    Paralelo de ``_cc_bypass_log_path`` — cada bypass escreve uma linha
+    JSONL para auditoria via ``git log`` / scripts off-band. Path
+    consistente com o pattern do CC gate (mesma pasta ``.claude/state/``).
+    """
+    return project_root / ".claude" / "state" / "secrets-gate-bypass.jsonl"
+
+
+def _run_secrets_gate(project_root: Path) -> dict[str, Any]:
+    """Invoca ``validators.check_secrets.validate`` com stage="per_task".
+
+    Per-task hook usa gitleaks (regex, ~100ms — sem network roundtrip);
+    a cascade do ``forge verify`` é quem chama com stage="cascade"
+    (trufflehog --only-verified). Ver spec §2 brainstorm pra rationale
+    do split per-stage.
+
+    Returns:
+        Result dict augmentado com ``blocking: bool``:
+
+        - ``blocking=True``  → commit NÃO deve prosseguir; render 3-paths surface.
+        - ``blocking=False`` → pass / warn / bypass — handoff continua.
+
+    Bypass: ``NO_SECRETS_GATE=1`` env var faz short-circuit do validator e
+    appenda um registro em ``.claude/state/secrets-gate-bypass.jsonl`` pra
+    auditoria. Override-justify (``SECRETS-OVERRIDE: …``) no commit body é
+    tratado *dentro* do validator — pass-through aqui.
+
+    Modo defensivo (mentor calmo, sem rage-fail): import-fail, exceção do
+    validator, ou non-dict result → ``status=warn`` + ``blocking=False``.
+    Engine boot é resiliente — secrets-gate ausente NÃO bloqueia
+    ``forge implement``, só perde cobertura (warn surface ao usuário).
+    """
+    if os.environ.get("NO_SECRETS_GATE", "").strip().lower() in {"1", "true", "yes"}:
+        log_path = _secrets_bypass_log_path(project_root)
+        try:
+            ensure_dir(log_path.parent)
+            ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            with log_path.open("a", encoding="utf-8") as fh:
+                fh.write(
+                    json.dumps(
+                        {"at": ts, "reason": "NO_SECRETS_GATE env var set"},
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
+        except OSError:
+            # Audit best-effort — never let logging block the bypass.
+            pass
+        return {
+            "status": "warn",
+            "message": "NO_SECRETS_GATE=1 — gate bypassed",
+            "blocking": False,
+        }
+
+    # Lazy import — engine boot continua mesmo sem validators no path.
+    try:
+        from validators import check_secrets as secrets_validator
+    except ImportError:
+        return {
+            "status": "warn",
+            "message": "secrets-gate validator unavailable (import failed)",
+            "blocking": False,
+        }
+
+    try:
+        result = secrets_validator.validate(project_root, stage="per_task")
+    except Exception as exc:  # pragma: no cover — defensive; validator crashes warn
+        return {
+            "status": "warn",
+            "message": f"secrets-gate validator crashed: {exc}",
+            "blocking": False,
+        }
+
+    if not isinstance(result, dict):
+        return {
+            "status": "warn",
+            "message": "secrets-gate validator returned non-dict result",
+            "blocking": False,
+        }
+
+    result["blocking"] = result.get("status") == "fail"
+    return result
+
+
+def _render_secrets_gate_block(result: dict[str, Any]) -> None:
+    """Renderiza o bloco 3-paths do secrets-gate quando blocking.
+
+    Paralelo de ``_render_cc_gate_block`` — prefere o campo canonical
+    ``render`` (saída de ``_render_secrets_three_paths``) quando presente.
+    Esse render carrega o contrato UX literal do spec §3 + disciplina §1
+    (header ``🛑 Check Secrets gate`` + seções "O que falhou:", "Onde:",
+    "Por que importa:", "Três caminhos pra resolver:"). Fallback per-path
+    cobre results legacy que não trazem o canonical.
+    """
+    renderer.write("")
+    canonical = result.get("render")
+    if isinstance(canonical, str) and canonical.strip():
+        for line in canonical.splitlines():
+            renderer.write(line)
+        warnings = result.get("warnings") or []
+        if warnings:
+            renderer.write("")
+            renderer.write(renderer.dim("Avisos:"))
+            for w in warnings:
+                renderer.write(renderer.dim(f"  · {w}"))
+        return
+
+    # Fallback render — para results sem o canonical block.
+    renderer.write(renderer.bold(result.get("message") or "secrets-gate hard fail"))
     renderer.write("")
     for p in result.get("paths") or []:
         label = p.get("label") or p.get("kind") or "?"
@@ -560,6 +685,26 @@ def _apply_mode_handoff(task: TaskContract, slug: str, project_root: Path) -> No
         msg = cc_result.get("message", "")
         if msg:
             renderer.write(renderer.dim(f"cc-gate: {msg}"))
+            renderer.write("")
+
+    # Gates agrupados (anti-pattern de gate isolado) — secrets roda
+    # IMEDIATAMENTE após CC, mesma posição relativa que tem na cascade do
+    # forge verify (Sub-Task 5A: check_secrets segue check_cyclomatic_complexity
+    # em _DEFAULT_VALIDATORS).
+    secrets_result = _run_secrets_gate(project_root)
+    if secrets_result.get("blocking"):
+        _render_secrets_gate_block(secrets_result)
+        renderer.write("")
+        renderer.write(
+            "Resolva o gate antes de commitar. Re-rode `forge implement` "
+            "depois de remover/rotacionar ou adicionar SECRETS-OVERRIDE "
+            "no commit body."
+        )
+        return  # do not emit commit instructions while gate is blocking
+    if secrets_result.get("status") == "warn":
+        msg = secrets_result.get("message", "")
+        if msg:
+            renderer.write(renderer.dim(f"secrets-gate: {msg}"))
             renderer.write("")
 
     renderer.write(f"  1) forge verify {slug}    # roda as validações declaradas")

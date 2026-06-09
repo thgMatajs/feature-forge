@@ -7,6 +7,61 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed (PR #7 review fixes — 2026-06-08)
+
+- **`validators/_common.py`** — `gate_threshold_lookup` aceita kwargs
+  `card_override_key` / `workflow_block_key` / `defaults`;
+  `format_three_paths_message` aceita kwargs `gate_title` / `why_lines` /
+  `override_example` / `format_annotation`. Defaults preservam CC gate
+  byte-a-byte; outros gates numéricos (Cognitive Complexity, Function
+  Length) reusam direto. Fecha Gap GATE-INFRA-1 (4 PR threads, A1/A2).
+- **`validators/_gate_infra.py`** — quatro robustness fixes:
+  (B1) `render_config_with_placeholders` ordena placeholders por len
+  desc antes de replace (evita prefix-collision); (B2) write/close em
+  try/except com unlink + re-raise (sem leak de tempfile em disk-full);
+  (B3) `apply_overrides` valida `override_key_fields` contra named
+  groups do `key_pattern` up-front (ValueError em vez de KeyError
+  tardio); (B4) `parse_overrides` adiciona `KeyError` à tupla de
+  exceções do value_converter (match the docstring promise).
+- **`validators/check_cyclomatic_complexity.py`** — drop dead re-exports
+  `check_tool_available` / `render_config_with_placeholders` (C2).
+  Tests migraram pra importar direto de `_gate_infra`.
+- **`validators/_diff.py`** — (D1) `read_commit_body` resolve gitdir via
+  `git rev-parse --git-dir` + fallback parse manual de `.git` file,
+  suportando worktrees (`.git` é arquivo, não diretório). Antes
+  silently caía pro `git log` fallback (commit prévio em pre-commit
+  context). (E1) `DiffHunk.kind` promovido pra
+  `Literal["add", "del", "ctx"]` (alias `HunkKind`) — sem behavior
+  change em runtime.
+- **`docs/design/04-pending.md`** — Gap GATE-INFRA-1 marcado como
+  resolvido; novo Gap GATE-INFRA-2 (N+1 subprocess em
+  `extract_diff_hunks`) registrado como deferred YAGNI até 2º consumer
+  de hunks aparecer.
+
+10 testes novos cobrindo as 4 áreas: `test_common_cc_helpers.py` (+8),
+`test_gate_infra_robustness.py` (+6), `test_diff_worktree.py` (+3).
+Suite total continua verde (819 passed + 19 skipped + 1 known-fail em
+worktree environment).
+
+### Changed (Phase 0 — gate-infra extraction)
+
+- **Reusable gate infrastructure** extracted from CC gate into:
+  - `validators/_gate_infra.py` — `DispatchResult`, `check_tool_available`,
+    `dispatch_native_tool` (cmd_builder param), `render_config_with_placeholders`,
+    `parse_overrides`, `apply_overrides` (prefix/key_pattern/extractor params).
+  - `validators/_diff.py` — `DiffHunk`, `classify_range_against_hunks`,
+    `extract_diff_hunks`, `git_staged_files`, `read_commit_body`.
+- **Renamed in `validators/_common.py`:** `cc_threshold_lookup` →
+  `gate_threshold_lookup`, `cc_format_three_paths` → `format_three_paths_message`.
+  `DEFAULTS_CC` preserved (CC-specific).
+- **`check_cyclomatic_complexity.py`** refactored to compose from `_gate_infra`
+  + `_diff` + renamed `_common` helpers. ~1127 LOC → ~840 LOC. No behavior
+  change (suite delta: -1 test, justified — removed test of internal
+  `_TOOL_BIN[lang]` lookup that no longer exists post-refactor).
+- **Unblocks Wave R1+** (check_secrets, check_deps_cve, check_duplication,
+  check_cognitive_complexity, check_dead_code, check_arch_rules,
+  check_function_length_and_nesting): gates compõem em vez de copiar a infra.
+
 ### Added
 
 - **Plan auditor** — `.claude/rules/plan-auditor.md` define prompt
@@ -107,6 +162,22 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   `tests/validators/test_check_cyclomatic_complexity.py`,
   `tests/engine/test_*_cc_*.py`, `tests/integration/test_cc_gate_end_to_end.py`).
   Suite total cresce de 630 → 693 tests collected.
+- **Check Secrets gate (`check_secrets`)** — gate multi-tool que barra secrets
+  em staged files, com per-stage split: `gitleaks` roda no per-task hook de
+  `forge implement` (fast, regex-based, ~100ms) e `trufflehog --only-verified`
+  roda na cascade de `forge verify` (deep, verificação ativa contra a origem).
+  Posicionado **após** `check_cyclomatic_complexity` no cascade — fail-fast
+  Decision 23 preservado. Override via `SECRETS-OVERRIDE: <file>:<line>
+  kind=<token-type> — <razão>` no commit body silencia o finding `(file, line,
+  kind)` apenas naquele commit (auditável via `git log --grep='SECRETS-OVERRIDE'`).
+  Hard-fail sempre quando secret sobrevive; tool missing → warn (cascade segue
+  alive, mesmo contrato do CC gate). Bypass de emergência via `NO_SECRETS_GATE=1`,
+  logado em `.claude/state/secrets-gate-bypass.jsonl`. Composto inteiramente da
+  infra Phase 0 (`dispatch_native_tool`, `apply_overrides`, `check_tool_available`,
+  `git_staged_files`, `read_commit_body`, `result_*`). Doctor ganha 14ª categoria
+  `secrets-tools` (gitleaks + trufflehog + install hints). Validators 15→16.
+  Tests em `tests/validators/test_check_secrets*.py` +
+  `tests/integration/test_secrets_gate_end_to_end.py`.
 
 ### Added (CC gate refinements — final review fixes)
 

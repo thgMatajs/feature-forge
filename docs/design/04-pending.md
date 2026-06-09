@@ -1865,6 +1865,124 @@ revisitado.
   modo opt-in via `cleanup-bak`-style submenu em `forge reconfigure`
   ou flag no `card.yaml` próprio do local.
 
+## Phase 0 follow-ups (gate-infra extraction — 2026-06-05)
+
+### Gap GATE-INFRA-1 — Parametrize gate_threshold_lookup + format_three_paths_message
+
+**Categoria:** gate-infra
+**Severidade:** baixa (YAGNI — não bloqueia até 2º consumer numérico)
+**Status:** ✅ **resolvido** (PR #7 review fixes — commit 152cae0, 2026-06-08).
+Helpers aceitam kwargs `card_override_key` / `workflow_block_key` /
+`defaults` (em `gate_threshold_lookup`) + `gate_title` / `why_lines` /
+`override_example` / `format_annotation` (em `format_three_paths_message`).
+Defaults preservam comportamento CC byte-a-byte; testes em
+`tests/validators/test_common_cc_helpers.py` cobrem parametrização +
+defaults. Cognitive Complexity (R2.2) já consome direto, sem reescrever.
+
+**Histórico (preservado pra rastreabilidade):**
+
+`gate_threshold_lookup` ainda hardcoda `"cc-gate-override"` / `"cc-gate"` /
+`DEFAULTS_CC` internamente. Nome foi generalizado mas implementação permanece
+CC-específica. Quando 2º gate consumer **numérico** arriver, parametrizar via
+novos kwargs: `card_override_key` / `workflow_block_key` / `defaults` /
+`gate_title` / `why_lines`. Similar pra `format_three_paths_message`
+(parametrizar `gate_title`, `format_annotation`).
+
+**Confirmação R1.1 (2026-06-05):** `check_secrets` shipou como 2º consumer da
+infra Phase 0 e **NÃO** tocou `gate_threshold_lookup` — secrets é binário
+(detectou = fail), não tem threshold numérico por linguagem. O render
+3-caminhos do secrets é local (vocabulário próprio — "rotação"/"fixture" vs
+"refactor"/"split-task" do CC), por decisão de spec §3: fundir os dois renderia
+prose genérica que perde o ponto. Logo a parametrização permanece corretamente
+deferida até o 2º consumer **numérico** — provavelmente Cognitive Complexity
+(wave R2.2), que herda ~80% do CC gate e VAI precisar do threshold lookup
+generalizado. `forge graph` Q12/Q14 não detectaram near-duplicate em R1.1
+porque o secrets não copiou o helper — compôs `apply_overrides` /
+`dispatch_native_tool` / `check_tool_available` direto.
+
+### Gap GATE-INFRA-2 — extract_diff_hunks N+1 subprocess
+
+**Categoria:** gate-infra
+**Severidade:** baixa (performance — não bloqueia funcionalidade)
+**Status:** deferred (YAGNI até 2º consumer de hunks aparecer)
+
+Hoje `extract_diff_hunks` em `validators/_diff.py` dispara 1
+`git diff --cached -U0 -- <file>` por arquivo. Pre-commit em projeto grande
+(50+ arquivos staged) acumula 50 fork+exec — overhead linear na quantidade
+de staged files. `git diff` aceita N paths posicionais e o parser sabe
+separar por header `+++ b/<path>`, então a refator é mecânica.
+
+Defer YAGNI porque (a) CC gate atualmente é o ÚNICO consumer de hunks
+(secrets usa `staged_files` diretamente, sem hunk-level diffing) e
+(b) overhead empírico é minor em features típicas (<10 staged files).
+Revisitar quando consumer #2 de hunks chegar — provavelmente
+Cognitive Complexity (R2.2) ou Function Length & Nesting (R2.4), ambos
+precisam de classify_range_against_hunks pra delta-rule.
+
+**Fix sugerido:** batched git invocation + parser por arquivo. Estrutura:
+
+```python
+proc = subprocess.run(
+    ["git", "-C", root, "diff", "--cached", "-U0", "--", *rel_paths],
+    ...
+)
+# Parser split por linhas `diff --git a/<path> b/<path>` ou `+++ b/<path>`
+```
+
+Self-review thread relacionada: PR #7 comment 3375391361.
+
+### Gap SECRETS-1 — Custom rules per project (deferred v1.3+)
+
+**Categoria:** secrets-gate
+**Severidade:** baixa (default ruleset cobre o baseline)
+**Status:** deferred (reentra com pedido empírico de ≥2 projetos consumidores)
+
+`gitleaks` aceita regras customizadas via `gitleaks.toml`; `trufflehog` via
+`--config`. v1.2-dev usa o **default ruleset** das duas tools (AWS, GCP, Stripe,
+GitHub PATs, Firebase, etc.) — cobertura aceitável pra apps mobile e web sem
+inflar complexity. Custom rules (ex.: token interno da empresa com formato
+proprietário) ficam pra v1.3+. Critério pra reentrar: pedido empírico
+documentado de ≥2 projetos consumidores. O `cmd_builder` já recebe
+`rendered_config` (ignorado hoje) — o hook de extensão existe, falta só wirar
+config → tempfile render quando a demanda chegar.
+
+### Gap SECRETS-2 — History scan periódico (out-of-scope até phase 5)
+
+**Categoria:** secrets-gate
+**Severidade:** média (cobre vazamento histórico, não o diff atual)
+**Status:** out-of-scope v1.2-dev
+
+`check_secrets` é diff-mode — escaneia apenas staged files no commit atual.
+Vazamentos no histórico (PR mergeado há meses contendo token ainda ativo) só
+pegam num `trufflehog git --since=...` periódico. Forge não orquestra CI, então
+isso vale um GitHub Action separado no projeto consumidor. Critério pra
+reentrar: phase 5+ se forge ganhar componente de CI orchestration.
+
+### Gap SECRETS-3 — Webhook/notify on detection (out-of-scope até phase 6)
+
+**Categoria:** secrets-gate
+**Severidade:** baixa (mitigação manual existe — rotação imediata no 3-caminhos)
+**Status:** out-of-scope v1.2-dev
+
+Quando um secret verificado é detectado, o ideal seria notificar canal de
+segurança (Slack #security, email) automaticamente — assume comprometido até
+prova em contrário. Out-of-scope v1.2-dev. Pode entrar em phase 6 (LLM hookup)
+junto com auto-suggest-rotation. Critério pra reentrar: phase 6 quando a
+infraestrutura de notify existir.
+
+### Gap BOOTSTRAP-1 — test_bootstrap_is_idempotent falha em worktree context
+
+**Categoria:** test-infra
+**Severidade:** baixa (environmental, não regressão)
+**Status:** deferred
+
+`tests/integration/test_claude_rules_system.py::test_bootstrap_is_idempotent`
+falha em qualquer worktree porque `.git` é arquivo (não diretório) — bootstrap
+script tenta `ln .git/hooks/pre-commit` que falha com "Not a directory".
+
+Fix: `bootstrap.sh` detectar worktree via `git rev-parse --git-dir` antes de
+criar symlink — resolve gitdir real. Out-of-scope Phase 0; valid follow-up.
+
 ## Reading order for new contributors
 
 **For a fresh session retomando o projeto, use o handoff:**

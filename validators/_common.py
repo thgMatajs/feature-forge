@@ -299,11 +299,12 @@ def load_catalog(project_root: Path) -> CapabilityCatalog:
     )
 
 
-# ── Cyclomatic Complexity helpers ────────────────────────────────────────────
+# ── Gate helpers (threshold lookup + 3-paths render) ─────────────────────────
 #
-# Usados por `validators/check_cyclomatic_complexity.py`. Vivem em _common
-# pra serem testáveis isoladamente e pra deixar o validator principal mais
-# enxuto. Sem I/O — pura lookup + string formatting.
+# Usados hoje por `validators/check_cyclomatic_complexity.py`. Vivem em
+# _common pra serem testáveis isoladamente e pra deixar o validator principal
+# mais enxuto. Sem I/O — pura lookup + string formatting. Outros gates
+# (planejado: secrets, etc.) reusam mesma forma.
 
 DEFAULTS_CC: dict[str, int] = {
     "kotlin": 10,
@@ -313,28 +314,48 @@ DEFAULTS_CC: dict[str, int] = {
 }
 
 
-def cc_threshold_lookup(
+def gate_threshold_lookup(
     language: str,
     active_cards: list[dict[str, Any]],
     workflow_config: dict[str, Any],
+    *,
+    card_override_key: str = "cc-gate-override",
+    workflow_block_key: str = "cc-gate",
+    defaults: dict[str, int] | None = None,
 ) -> int:
-    """Resolve CC threshold for a language.
+    """Resolve gate threshold for a language (gate-agnóstico via kwargs).
 
-    Precedence: card cc-gate-override > workflow-config cc-gate > DEFAULTS_CC.
+    Precedence: card[card_override_key] > workflow_config[workflow_block_key]
+    > defaults.
+
+    Sem kwargs custom, comportamento idêntico ao CC gate original:
+        card "cc-gate-override" > workflow-config "cc-gate" > DEFAULTS_CC.
 
     Multiple cards conflicting: first card with a `threshold` key wins
     (deterministic, matches declaration order). Card override entries
     without an explicit `threshold` field fall through to the next layer.
 
+    Args:
+        language: Language name (matches keys em defaults).
+        active_cards: Lista de cards ativos (dicts).
+        workflow_config: Workflow config dict.
+        card_override_key: Chave de override no card.yaml (default
+            "cc-gate-override"). Outros gates: "cog-gate-override",
+            "func-length-override", etc.
+        workflow_block_key: Chave do block no workflow-config.yaml
+            (default "cc-gate"). Outros gates: "cog-gate", etc.
+        defaults: Tabela de defaults por linguagem (default DEFAULTS_CC).
+
     Note:
         Threshold ≤ 0 (configuração degenerada) é repassado raw pro caller.
         Helper é dumb-lookup; semântica "degraded" fica no validator caller
-        (Task 8 — check_cyclomatic_complexity.validate()).
+        (check_cyclomatic_complexity.validate() e equivalentes).
     """
+    effective_defaults = defaults if defaults is not None else DEFAULTS_CC
     for card in active_cards:
         if not isinstance(card, dict):
             continue
-        override = card.get("cc-gate-override") or {}
+        override = card.get(card_override_key) or {}
         if not isinstance(override, dict):
             continue
         lang_block = override.get(language)
@@ -346,56 +367,84 @@ def cc_threshold_lookup(
             except (TypeError, ValueError):
                 continue
 
-    cc_block = workflow_config.get("cc-gate") or {}
-    if isinstance(cc_block, dict) and language in cc_block:
+    cfg_block = workflow_config.get(workflow_block_key) or {}
+    if isinstance(cfg_block, dict) and language in cfg_block:
         try:
-            return int(cc_block[language])
+            return int(cfg_block[language])
         except (TypeError, ValueError):
             pass
 
-    if language not in DEFAULTS_CC:
+    if language not in effective_defaults:
         raise ValueError(
-            f"language {language!r} not in CC gate scope; "
-            f"supported: {sorted(DEFAULTS_CC)}"
+            f"language {language!r} not in gate scope; "
+            f"supported: {sorted(effective_defaults)}"
         )
-    return DEFAULTS_CC[language]
+    return effective_defaults[language]
 
 
-def cc_format_three_paths(
+_DEFAULT_CC_WHY_LINES = (
+    "Funções com CC alto são mais difíceis de testar, revisar e evoluir.",
+)
+
+_DEFAULT_CC_OVERRIDE_EXAMPLE = (
+    "CC-OVERRIDE: <file>:<func> cc=<N> — <razão concreta>"
+)
+
+
+def format_three_paths_message(
     violations: list[dict[str, Any]],
     thresholds: dict[str, int],
+    *,
+    gate_title: str = "🛑 Cyclomatic Complexity gate",
+    why_lines: list[str] | tuple[str, ...] | None = None,
+    override_example: str = _DEFAULT_CC_OVERRIDE_EXAMPLE,
+    format_annotation: Callable[[dict[str, Any]], str] | None = None,
 ) -> str:
-    """Render the canonical 3-paths message for a CC failure.
+    """Render the canonical 3-paths message (gate-agnóstico via kwargs).
+
+    Sem kwargs custom, snapshot CC gate preservado byte-a-byte. Outros gates
+    numéricos (Cognitive Complexity, Function Length, etc.) sobrescrevem
+    `gate_title` / `why_lines` / `override_example` / `format_annotation`
+    pra vocabulário próprio.
+
+    Args:
+        violations: Lista de dicts (file, line, function, cc, threshold,
+            status, cc_before, language).
+        thresholds: Threshold vigente por linguagem.
+        gate_title: Cabeçalho do gate (default CC).
+        why_lines: Lista de bullets "Por que importa". `None` usa default CC.
+        override_example: Linha-modelo do override-justify.
+        format_annotation: Callable opcional `(violation_dict) -> str` que
+            customiza a annotation per-row (default: CC-specific
+            "[new]" / "↑ de cc=N [modified]"). Permite outros gates terem
+            anotação própria sem reescrever todo o render.
 
     Snapshot in tests — keep wording stable. See
-    `.claude/rules/disciplines.md §1` for the template contract and
-    `docs/superpowers/specs/2026-06-03-cc-gate-design.md §4` for the
-    CC-specific instance.
+    `.claude/rules/disciplines.md §1` for the template contract.
     """
     if not violations:
-        raise ValueError("cc_format_three_paths requires at least one violation")
+        raise ValueError(
+            "format_three_paths_message requires at least one violation"
+        )
+    effective_why = list(why_lines) if why_lines is not None else list(_DEFAULT_CC_WHY_LINES)
+    annotate = format_annotation if format_annotation is not None else _default_cc_annotation
     lines: list[str] = []
-    lines.append("🛑 Cyclomatic Complexity gate")
+    lines.append(gate_title)
     lines.append("")
     lines.append("O que falhou:")
     lines.append(f"  {len(violations)} funções excederam o threshold permitido.")
     lines.append("")
     lines.append("Onde:")
     for v in violations:
-        annotation = ""
-        if v.get("status") == "new":
-            annotation = " [new]"
-        elif v.get("status") == "modified" and v.get("cc_before") is not None:
-            annotation = f"  ↑ de cc={v['cc_before']} [modified]"
+        annotation = annotate(v)
         lines.append(
             f"  · {v['file']}:{v['line']} — {v['function']}()"
             f"        cc={v['cc']}  (limite: {v['threshold']}){annotation}"
         )
     lines.append("")
     lines.append("Por que importa:")
-    lines.append(
-        "  · Funções com CC alto são mais difíceis de testar, revisar e evoluir."
-    )
+    for why in effective_why:
+        lines.append(f"  · {why}")
     th_str = ", ".join(f"{lang}={n}" for lang, n in sorted(thresholds.items()))
     lines.append(f"  · Threshold vigente: {th_str} (workflow-config.yaml)")
     lines.append("  · Decision 23 — cascade fail-fast; CC é gate hard.")
@@ -419,7 +468,7 @@ def cc_format_three_paths(
         "     DSL), adicionar ao commit body — EXATAMENTE este formato:"
     )
     lines.append("")
-    lines.append("         CC-OVERRIDE: <file>:<func> cc=<N> — <razão concreta>")
+    lines.append(f"         {override_example}")
     lines.append("")
     lines.append(
         "     Validator detecta a linha no commit body e libera APENAS este commit."
@@ -439,3 +488,12 @@ def cc_format_three_paths(
     lines.append("")
     lines.append("Sem auto-fix aqui — escolha humana.")
     return "\n".join(lines)
+
+
+def _default_cc_annotation(v: dict[str, Any]) -> str:
+    """Annotation per-row do CC gate — preserva snapshot byte-a-byte."""
+    if v.get("status") == "new":
+        return " [new]"
+    if v.get("status") == "modified" and v.get("cc_before") is not None:
+        return f"  ↑ de cc={v['cc_before']} [modified]"
+    return ""

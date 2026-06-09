@@ -12,7 +12,8 @@ Estratégia de mock:
 - `_run_tools_for_staged` é monkeypatchado pra simular cada combinação de
   resultados sem invocar Detekt/SwiftLint/eslint/radon de verdade. Subprocess
   fica completamente isolado.
-- `_git_staged_files` retorna paths fake controlados pelo teste.
+- `git_staged_files` (re-exportado de ``validators._diff``) retorna paths
+  fake controlados pelo teste.
 - `_load_workflow_config` injeta config arbitrária por cenário.
 """
 
@@ -50,15 +51,17 @@ def fake_context(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     """
     monkeypatch.setattr(
         v,
-        "_git_staged_files",
-        lambda root: [tmp_path / "app/A.kt"],
+        "git_staged_files",
+        lambda root, *, extensions=None: [tmp_path / "app/A.kt"],
     )
     monkeypatch.setattr(
         v,
-        "_extract_diff_hunks",
-        lambda root, files: {"app/A.kt": [{"start": 1, "end": 100, "kind": "add"}]},
+        "extract_diff_hunks",
+        lambda root, files: {
+            "app/A.kt": [v.DiffHunk(start=1, end=100, kind="add")]
+        },
     )
-    monkeypatch.setattr(v, "_read_commit_body", lambda root: "")
+    monkeypatch.setattr(v, "read_commit_body", lambda root: "")
     monkeypatch.setattr(v, "_load_active_cards", lambda root: [])
     monkeypatch.setattr(
         v,
@@ -66,7 +69,7 @@ def fake_context(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
         lambda root: {"cc-gate": {"enabled": True, "kotlin": 10}},
     )
     # Faz tmp_path / "app/A.kt" "existir" pra is_file() na coleta — vital pra
-    # _git_staged_files real, mas a versão mockada nem chama; deixamos por
+    # git_staged_files real, mas a versão mockada nem chama; deixamos por
     # robustez se algum teste reverter o mock.
     (tmp_path / "app").mkdir(exist_ok=True)
     (tmp_path / "app" / "A.kt").write_text("// stub\n", encoding="utf-8")
@@ -136,7 +139,7 @@ def test_fail_warnings_include_malformed_override_attempts(
     )
     monkeypatch.setattr(
         v,
-        "_read_commit_body",
+        "read_commit_body",
         lambda root: "feat: x\n\nCC-OVERRIDE: app/A.kt:bar cc=14 missing-dash\n",
     )
     result = v.validate(fake_context)
@@ -180,7 +183,7 @@ def test_override_silences_specific_function(monkeypatch, fake_context):
     )
     monkeypatch.setattr(
         v,
-        "_read_commit_body",
+        "read_commit_body",
         lambda root: "feat: x\n\nCC-OVERRIDE: app/A.kt:bar cc=14 — irreducible DSL\n",
     )
     result = v.validate(fake_context)
@@ -193,8 +196,8 @@ def test_ignore_paths_filters_test_files(monkeypatch, fake_context, tmp_path):
     (tmp_path / "tests" / "foo_test.kt").write_text("// stub\n", encoding="utf-8")
     monkeypatch.setattr(
         v,
-        "_git_staged_files",
-        lambda root: [tmp_path / "tests/foo_test.kt"],
+        "git_staged_files",
+        lambda root, *, extensions=None: [tmp_path / "tests/foo_test.kt"],
     )
     monkeypatch.setattr(
         v,
@@ -243,7 +246,9 @@ def test_tool_missing_emits_warn_not_fail(monkeypatch, fake_context):
 
 def test_no_staged_files_returns_pass(monkeypatch, fake_context):
     """git diff --cached vazio → pass com mensagem informativa, sem dispatch."""
-    monkeypatch.setattr(v, "_git_staged_files", lambda root: [])
+    monkeypatch.setattr(
+        v, "git_staged_files", lambda root, *, extensions=None: []
+    )
 
     def _should_not_run(**kw):
         raise AssertionError("no staged files must short-circuit before dispatch")
@@ -301,9 +306,13 @@ def test_compile_ignore_patterns_drops_invalid_and_keeps_valid():
 def test_run_tools_for_staged_distinguishes_missing_from_crashed(monkeypatch):
     """As duas mensagens de warning devem ter prefixos distintos."""
 
-    def _fake_dispatch(*, language, files, threshold, project_root):
+    def _fake_dispatch(**kwargs):
+        # Aceita a assinatura nova de `dispatch_native_tool` (kw-only). Olha
+        # só `language` — o resto (cmd_builder, tool_bin, etc.) é ignorado
+        # pelo fake porque ele já decide o outcome por linguagem.
+        language = kwargs["language"]
         if language == "kotlin":
-            return v._DispatchResult(
+            return v.DispatchResult(
                 language=language,
                 tool_found=False,
                 crashed=False,
@@ -311,7 +320,7 @@ def test_run_tools_for_staged_distinguishes_missing_from_crashed(monkeypatch):
                 error_message="detekt not installed (PATH lookup failed)",
             )
         # python — crashou em runtime
-        return v._DispatchResult(
+        return v.DispatchResult(
             language=language,
             tool_found=True,
             crashed=True,
@@ -319,7 +328,7 @@ def test_run_tools_for_staged_distinguishes_missing_from_crashed(monkeypatch):
             error_message="radon stderr: boom",
         )
 
-    monkeypatch.setattr(v, "_dispatch_tool", _fake_dispatch)
+    monkeypatch.setattr(v, "dispatch_native_tool", _fake_dispatch)
     _, warnings = v._run_tools_for_staged(
         files_by_lang={"kotlin": ["a.kt"], "python": ["b.py"]},
         thresholds_by_lang={"kotlin": 10, "python": 10},
@@ -336,7 +345,7 @@ def test_run_tools_for_staged_distinguishes_missing_from_crashed(monkeypatch):
     assert "crashou" not in missing_msg
 
 
-# ── F-006 — `_git_staged_files` aplica `-M80%` (rename detection) ──────────
+# ── F-006 — `git_staged_files` aplica `-M80%` (rename detection) ───────────
 
 
 @pytest.mark.integration
@@ -344,9 +353,10 @@ def test_git_staged_files_uses_rename_detection(tmp_path: Path) -> None:
     """SDD §2 manda `-M80%` no `git diff` pra detectar rename.
 
     Criamos um repo, commitamos um .py com função foo, depois renomeamos
-    o arquivo (git mv) e re-stagiamos. `_git_staged_files` deve reportar
-    o NOVO path — sem o flag, ele reportaria como new + delete e o pipeline
-    perderia a oportunidade de aplicar o delta rule no arquivo renomeado.
+    o arquivo (git mv) e re-stagiamos. `git_staged_files` (re-exportado de
+    ``validators._diff``) deve reportar o NOVO path — sem o flag, ele
+    reportaria como new + delete e o pipeline perderia a oportunidade de
+    aplicar o delta rule no arquivo renomeado.
 
     O teste é integration porque spawna subprocess git.
     """
@@ -380,7 +390,7 @@ def test_git_staged_files_uses_rename_detection(tmp_path: Path) -> None:
     )
     subprocess.run(["git", "add", "new_name.py"], cwd=repo, check=True)
 
-    staged = v._git_staged_files(repo)
+    staged = v.git_staged_files(repo, extensions=set(v.SUPPORTED_EXTENSIONS))
     rel = [p.relative_to(repo).as_posix() for p in staged]
     # Com `-M80%`, o rename vira UMA entrada (`new_name.py`).
     # Sem o flag, viria como `new_name.py` + `old_name.py` (delete) — o filtro

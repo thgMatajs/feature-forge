@@ -127,7 +127,7 @@ def test_render_cc_gate_block_uses_canonical_render(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """H3 — `_render_cc_gate_block` must surface the canonical 3-paths render
-    (cc_format_three_paths output) when the validator provides it.
+    (format_three_paths_message output) when the validator provides it.
 
     Spec §4 + disciplines §1: the literal `🛑 Cyclomatic Complexity gate`
     header and the `Três caminhos pra resolver` section are load-bearing
