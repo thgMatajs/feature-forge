@@ -87,6 +87,34 @@ mesmo overlay. Sem extensão = só os 4 core.
 Você termina Phase 2 e re-invoca `engine.qa.run_qa(run_id, resume="phase-3")`.
 Sandbox roda subprocess hardened contra cada fixture com `executable: true`.
 
+### Sandbox env (QA-11)
+
+O `conductor-handoff.json` inclui o campo `config.allowed_env_extras`
+(lista de env vars autorizadas pelos cards ativos do projeto + grants do
+user em `workflow-config.qa.sensitive-env-grants`). Quando você invocar
+o sandbox subprocess (direta ou indiretamente via
+`engine.qa.sandbox.run_sandbox`), PRECISA passar essa lista como
+parâmetro `extras=` pra que essas vars cheguem ao subprocess. Sem isso,
+o subprocess recebe apenas o `CORE_ALLOWLIST` minimal e cards que pedem
+`JAVA_HOME`, `ANDROID_HOME`, etc. quebram com erro de config ausente
+mesmo que o user já tenha declarado e granted as vars corretamente.
+
+Exemplo Python (caso você dispatche subprocess direto):
+
+```python
+from engine.qa.sandbox import run_sandbox
+import json
+handoff = json.loads((run_dir / "conductor-handoff.json").read_text())
+extras = handoff["config"].get("allowed_env_extras", [])
+results = run_sandbox(run_dir, fixtures, extras=extras, ...)
+```
+
+Vars sensitive (`TOKEN`/`SECRET`/`PASSWORD`/`AUTH`/`CREDENTIAL`/`API_KEY`/
+`PRIVATE_KEY`) que **não** tiveram grant explícito do user JÁ foram
+filtradas no engine antes de chegar ao handoff — `allowed_env_extras` só
+contém o que é seguro repassar. Sua responsabilidade é apenas propagar a
+lista intacta ao subprocess; sem filtragem extra, sem invenção de vars.
+
 **Phase 4 — Synthesis** (você dispatcha após Phase 3 completar):
 
 - `Agent[qa-synthesizer]` → consome `findings/*.json` (4 core + N extension)
