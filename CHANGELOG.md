@@ -7,6 +7,44 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed (load-bearing)
+
+- Revisita decisão 30: sandbox isolation guard via sitecustomize.py (não PYTHONSTARTUP) — texto da Decisão atualizado pra refletir mecanismo real implementado em engine/qa/sandbox.py. Comportamento de isolamento idêntico; só o mecanismo nomeado mudou.
+
+### Added (PR #8 forge qa CONF gaps + pause/resume, 2026-06-08)
+
+- `forge qa` Phase 0 inicializa `<run>/qa-report.json` com `verdict=pending` + finaliza após Phase 5 com verdict/findings/totals + completed_at (CONF-001).
+- `forge qa` Phase 0 faz snapshot dos artefatos resolvidos via hardlink (fallback copy) em `<run>/snapshot/` — preserva reprodutibilidade se user editar mid-run (CONF-002).
+- `forge qa` deriva findings determinísticos de SandboxResults problemáticos via `findings_from_sandbox_results` — `sandbox-breach` (critical, always BLOCK) e `timeout` (medium) não dependem mais do LLM synthesizer pra emitir (CONF-003).
+- `forge qa` pause/resume implementado via `<run>/checkpoint.json` (Decisão 27 + SDD §16 edge 6 + Gap QA-12 fechado). SIGINT salva checkpoint atomicamente; nova invocação detecta e retoma sem criar novo `run_id`. Auto-resume; corrupt checkpoint cai em 3-caminhos mentor calmo (CONF-004).
+- Novo módulo `engine/qa/checkpoint.py` (`Checkpoint` dataclass, `CheckpointCorruptError`, `write_checkpoint`/`read_checkpoint`/`find_resumable_run`).
+- Novo módulo `engine/qa/_common.py` (helper `utc_iso_z()` consolidado entre `__init__.py` e `checkpoint.py`).
+- Novo helper `sanitize_scope_target` em `engine/qa/ingest.py` (single source of truth pra regex de path sanitization).
+- `agents/qa-conductor.md` ensina conductor LLM a serializar SandboxResults em `<run>/sandbox-results.json` após Phase 3 (sem isso, CONF-003 fica dormente em produção — synthesis lê esse arquivo pra derivar findings determinísticos).
+
+### Changed (PR #8 forge qa CONF gaps + pause/resume, 2026-06-08)
+
+- E2E `tests/e2e/test_qa_cli_smoke.py` valida estrutura on-disk de `qa-report.json` (schema_version, run.id, run.scope, verdict ∈ {pending, PASS, FLAG, BLOCK}); disabled-path assert `qa-report.json` NÃO existe (CONF-007).
+- `engine/qa/synthesis.py` `dedup_findings` alinhado com `agents/qa-synthesizer.md`: duplicates vão em `evidence.duplicates` (lista de auditor names) — `evidence_extras` removido (spec alignment).
+- `engine/utils/sha256.py` promove `_normalise_description` → `normalise_description` (public API + `__all__`); alias deprecated mantido pra backward-compat.
+- `engine/qa/reconfigure` `_qa_list_disable_auditors` substitui (não une) a lista de desativados — user pode re-ativar auditor já desabilitado omitindo da seleção.
+- `engine/qa/sandbox.py` `_validate_paths_inside_sandbox` usa `Path.relative_to()` (robusto contra symlinks/mount points vs comparação string+os.sep anterior). Subprocess paths são `.resolve()`'d antes de `subprocess.run` pra evitar resolução relativa ao cwd do sandbox.
+
+### Fixed (PR #8 forge qa fixes da review wave 1, 2026-06-08)
+
+- `engine/qa/run_id.py` raise `ValueError` explícito se naive datetime é passado (antes: silenciosamente interpretado como local time pelo `astimezone`, gerando `run_id` offset incorreto).
+- `engine/qa/scope.py` `_list_features_for_paranoid` filtra dirs hidden (`.DS_Store`, `.git`); `_find_screen`/`_find_task` ordenam `iterdir()` pra determinismo cross-machine.
+- `engine/qa/ingest.py` `parse_qa_config` wrap `float()/int()` casts em warnings mentor-calmo + default fallback (antes: `ValueError` propagava raw traceback ao user). Sanitiza `scope.target` via whitelist `[A-Za-z0-9._-]` (preveniu path traversal).
+- `engine/qa/__init__.py` `json.loads` dos findings em try/except (degradação graciosa por arquivo malformado).
+- `engine/qa/emit.py` dedup por fingerprint antes de append em `proposed.yaml`; `yaml.safe_load` em try/except (OSError, YAMLError); read+merge preserva metadata pre-existente.
+- `validators/validate_qa_finding.py` regex `_ID_RE` aceita uppercase (ISO 8601 T/Z); `sandbox_result=null` aceito em drafts (template default).
+- `engine/reconfigure.py` `_qa_adjust_budgets` usa `float()` (preserva sub-second); rejeita valores ≤0 com mensagem mentor-calma.
+- `tests/engine/qa/test_synthesis.py` `pytest.raises((AttributeError, dataclasses.FrozenInstanceError))` (antes `Exception` vacuous).
+
+### Tests (PR #8, 2026-06-08)
+
+- **847 → 933 passed** (+86 tests). Cobertura: 20 fixes da review wave 1, 4 CONF gaps (001/002/003/007), CONF-004 pause/resume + 4 fixes do review CONF-004, helper `utc_iso_z` em `engine/qa/_common.py`.
+
 ### Changed (PR #7 review fixes — 2026-06-08)
 
 - **`validators/_common.py`** — `gate_threshold_lookup` aceita kwargs
@@ -137,6 +175,26 @@ worktree environment).
 - Coexistência paralela com `docs/design/` (lente arquitetura) e `docs/ux/` (roteiros) — sem mexer em load-bearing (`docs/design/00-vision.md` e `docs/design/ROADMAP.md` permanecem intactos).
 
 ### Added
+
+- `forge qa` — 13º comando (adversarial red-team gate). 4 attack vectors
+  (spec-vs-spec, chaos, coverage, validator-claim), 4 scope targets
+  (feature / screen / task / paranoid), 6 phases (ingest → static →
+  generative → sandbox → synthesis → emit), sandbox isolado (Decisão 30).
+  Spec: `docs/superpowers/specs/2026-06-05-forge-qa-design.md`.
+- Cards podem estender qa via campo aditivo `qa-extensions:` em
+  `card.yaml` (schema-version permanece 1; overlay-aware Gap 5).
+- Schemas novos: `docs/schemas/qa-report.md`, `docs/schemas/qa-finding.md`,
+  `docs/schemas/qa-extensions.md`.
+- Workflow-config ganha section `qa:` com 7 campos configuráveis.
+- `forge init` Step QA novo (após Step 7.5 do Gap 5).
+- `forge reconfigure` menu `[ ] qa` com 5 opções.
+- `forge doctor` categoria `qa-coherence` (13ª).
+- `forge implement` Phase 6 hook auto-run pré-retrospective (opt-in via
+  `qa.auto-run-on-feature-done`).
+- Roteiro UX: `docs/ux/forge-qa-roteiro.md` (8 cenas).
+- §11 nova em `docs/design/07-discipline.md` — "QA verdict não-bloqueante".
+
+### Added (CC gate)
 
 - **Cyclomatic Complexity gate (`check_cyclomatic_complexity`)** — multi-language
   CC validator que roda no cascade de `forge verify` (após
@@ -296,6 +354,11 @@ worktree environment).
   com `dict.get(kebab, dict.get(snake))` (refactor puro, sem mudança de
   comportamento) — endereça nit gemini-code-assist no PR #3 (commit
   `7313a30`).
+
+### Changed (load-bearing)
+
+- Revisita decisão 9: command surface 12 → 13 subcomandos — adiciona `forge qa` (adversarial red-team gate). Design completo em `docs/superpowers/specs/2026-06-05-forge-qa-design.md`. Locked at 12 histórico preservado em `docs/design/01-decisions.md` linha 9; novo lock em linha 29.
+- Adiciona decisão 30: sandbox isolation pra `forge qa` Phase 3 — subprocess CWD dedicado em `.planning/qa/<run-id>/fixtures/`, SandboxBreachError em writes fora, budget global configurável.
 
 ### Fixed (PR #4 review)
 

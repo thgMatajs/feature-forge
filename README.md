@@ -6,7 +6,7 @@ A standalone CLI skill that orchestrates end-to-end planning + implementation of
 
 ## What it is
 
-Skill CLI-first com 12 comandos canônicos (zero flags — toda parametrização via menu interativo) que dirige o ciclo completo de feature mobile:
+Skill CLI-first com 13 comandos canônicos (zero flags — toda parametrização via menu interativo) que dirige o ciclo completo de feature mobile:
 
 1. **`forge init`** — bootstrap em qualquer projeto KMP/mobile (greenfield ou brownfield). Step 11.5 escaneia o codebase atrás de duplicações já existentes (6 categorias de finding).
 2. **`forge plan {feature-slug}`** — 5 waves (intake/PRD → screen+contracts → tech-spec → tasks → readiness) com 16 templates. Subtypes: product / refactor / bugfix / spike / chore (cada um com waves específicas).
@@ -74,7 +74,7 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 | Preset | kmp-mobile (8 stack cards + 4 backend-candidates) |
 | Validators Python | 15 (+ 4 helper modules: `_common.py`, `_gate_infra.py`, `_diff.py`, `__init__.py`) — inclui `check_no_behavior_change` para refactor, `check_cyclomatic_complexity` multi-language (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon) refatorado em Phase 0 (v1.2-dev) pra compor de `_gate_infra` + `_diff`; `validate_card_yaml` + `validate_capability_labels` overlay-aware (Gap 5); `validate_extension_feature` novo em Gap 9 (EXT-001..004, cross-cutting) |
 | Hooks | 9 + 1 reuse incremental (`post-edit-detect-duplications.sh`) |
-| Tests | ~730 collected (rapid lane + integration/e2e — Gap 9 +42 (37 ship + 5 fix loop) + CC gate +~63 + Phase 0 -1 justificado + secrets gate +~30; cumulativo cobre PR #1 R1+R2+R3 + Gap 5 + power-review PR #2 R1 + Gap 9 + PR #4 CC gate + Phase 0 gate-infra + R1.1 secrets). v1.2.0 baseline 595+12 e Gap 9 baseline 637+12 preservados na timeline. |
+| Tests | ~730 collected (rapid lane + integration/e2e — Gap 9 +42 (37 ship + 5 fix loop) + CC gate +~63 + Phase 0 -1 justificado + secrets gate +~30 + forge qa +~60 cobrindo qa validators + engine + auditors; cumulativo cobre PR #1 R1+R2+R3 + Gap 5 + power-review PR #2 R1 + Gap 9 + PR #4 CC gate + Phase 0 gate-infra + R1.1 secrets + forge qa v1.2). v1.2.0 baseline 595+12 e Gap 9 baseline 637+12 preservados na timeline. |
 | LOC total | ~52.500 |
 | Engine LOC | ~22.000 (Python) |
 | Files total | ~400 |
@@ -123,7 +123,7 @@ Requer Python 3.11+ + PyYAML (única dep externa).
   presets/kmp-mobile/                   canonical preset v1
   validators/                           17 validators + helpers (inclui check_cyclomatic_complexity + check_secrets + validate_extension_feature)
   hooks/                                9 hooks + reuse incremental script
-  tests/                                637 passing tests (unit + integration + e2e) + 12 skipped
+  tests/                                933 passing tests (unit + integration + e2e) + 19 skipped
 
 [per project install via `forge init`]
 {project}/.claude/
@@ -133,9 +133,9 @@ Requer Python 3.11+ + PyYAML (única dep externa).
   hooks/post-edit-detect-duplications.sh    opt-in incremental detect
 ```
 
-## Command surface (12 + 2 hidden)
+## Command surface (13 + 2 hidden)
 
-12 comandos user-facing — zero flags — toda parametrização via prompts interativos (Decision 9 + 10 locked).
+13 comandos user-facing — zero flags — toda parametrização via prompts interativos (Decision 9 + 10 locked).
 
 ```
 forge init           bootstrap workflow num projeto (greenfield/brownfield)
@@ -162,7 +162,16 @@ forge evolve         review propostas (single-by-single) — 16 kinds
                      · 10 retrospective + 6 reuse-intelligence
 forge undo           reverter última ação
 forge raw            escape hatch (verify-card, edit-config, debug)
+forge qa             gate adversarial multi-agente (red-team)
+                     · 4 attack vectors (spec-vs-spec, chaos, coverage, validator-claim)
+                     · 4 scope targets (feature / screen / task / paranoid)
+                     · sandbox isolado em .planning/qa/<run-id>/fixtures/
+                     · verdict informativo (BLOCK/FLAG/PASS); findings → forge evolve
 ```
+
+- **`forge qa`** — gate adversarial multi-agente (red-team). Audita
+  feature/screen/task/paranoid com 4 attack vectors. Verdict
+  informativo (BLOCK/FLAG/PASS), findings → `forge evolve`.
 
 Hidden entrypoints (invocados por hooks, nunca tipados pelo usuário):
 
@@ -177,7 +186,7 @@ Start here:
 - **`docs/design/08-session-handoff.md`** — TL;DR completo + estado por fase + limites v1
 - `docs/design/00-vision.md` — arquitetura (6 layers, capability cards)
 - `docs/design/01-decisions.md` — 27 decisões locked
-- `docs/design/06-command-surface.md` — 12 comandos canônicos + 2 hidden
+- `docs/design/06-command-surface.md` — 13 comandos canônicos + 2 hidden
 - `docs/design/07-discipline.md` — 10 disciplinas universais (§8 non-product, §9 external-deps, §10 extension feature)
 - `docs/design/04-pending.md` — 18 Gaps inventoriados (Gap 1+2+8+18 em v1.1.0; Gap 5 em v1.2.0; Gap 9 em v1.2 cumulativo — extends-feature mechanic; multi-target out-of-scope permanente)
 - `docs/schemas/graph.md` — schema v2 com reuse_findings + module_deps + Q1-Q17

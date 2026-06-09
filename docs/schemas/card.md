@@ -91,6 +91,21 @@ novo required field).
 Validator (`validate_card_yaml.py`) aceita o campo intacto — quem age sobre
 o valor é o init Step 7.5.
 
+## qa-extensions field (since v1.2)
+
+`qa-extensions:` é campo opcional top-level (default ausente) que
+permite ao card estender o comando `forge qa` com auditores adicionais
+em Phase 1 (static) ou Phase 2 (generative). Phase 0/3/4/5 são core-only.
+
+Schema-version permanece `1` (adição aditiva, mesma política do
+`legacy-marker`).
+
+Shape completo + regras de validação em
+[`qa-extensions.md`](qa-extensions.md). Colisão de auditor name canon×local
+= hard fail (Approach A, Decisão 28 / Gap 5 overlay policy).
+
+Validator: `validators/validate_qa_extensions.py` (overlay-aware desde v1.2).
+
 ## The `card.yaml` schema (full annotated)
 
 ```yaml

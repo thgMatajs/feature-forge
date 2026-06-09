@@ -36,17 +36,28 @@ def string_sha256(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
-def _normalise_description(text: str) -> str:
+def normalise_description(text: str) -> str:
     """Apply discipline §4 normalisation: NFC + casefold + whitespace strip.
 
     NFC ensures precomposed vs decomposed accents hash the same.
     Casefold (not lower()) handles Unicode properly (German ß, Turkish dotless I).
     Whitespace strip collapses multi-space and trims.
+
+    Public per Mandamento #3 (reuse): consumers em outros módulos (ex.:
+    ``engine.qa.synthesis``) precisam compartilhar a mesma normalização
+    canônica de canonical-form fingerprint (Decisão 25).
     """
     nfc = unicodedata.normalize("NFC", text or "")
     folded = nfc.casefold()
     # Collapse internal whitespace to single space, strip ends.
     return " ".join(folded.split())
+
+
+# deprecated alias — use normalise_description.
+# Mantido por backward-compat com consumers internos que importavam o nome
+# privado antes da promoção pública. Pode ser removido quando todos os
+# call sites migrarem.
+_normalise_description = normalise_description
 
 
 def _sorted_unique(items: Iterable[str]) -> list[str]:
@@ -79,7 +90,7 @@ def canonical_form_fingerprint(proposal: dict[str, Any]) -> str:
     """
     p_type = str(proposal.get("type", ""))
     p_name = str(proposal.get("name", ""))
-    p_desc = _normalise_description(str(proposal.get("description", "")))
+    p_desc = normalise_description(str(proposal.get("description", "")))
 
     provenance = proposal.get("provenance") or {}
     slugs = provenance.get("feature-slugs") if isinstance(provenance, dict) else None

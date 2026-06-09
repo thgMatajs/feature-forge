@@ -491,6 +491,19 @@ da discipline §10. Cada string é uma frase curta descrevendo o sinal
 
 ---
 
+## Optional QA input (since v1.2)
+
+Quando `qa.auto-run-on-feature-done: true`, o hook em `engine/implement.py`
+Phase 6 invoca `forge qa scope=feature` antes do retrospective e anexa o
+exit code em `ctx.retrospective_inputs.qa_run_exit_code`.
+
+Você (retrospective-agent) considera esse insumo na análise — mas
+**verdict QA não força nada**. Findings já estão em
+`.claude/memory/L1/proposed-evolutions/proposed.yaml`; o gate humano via
+`forge evolve` é o caminho canônico de aplicação (Decisão 26).
+
+---
+
 ## Examples
 
 ### Example 1 — Smooth feature, 2 promotion candidates

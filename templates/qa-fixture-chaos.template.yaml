@@ -1,0 +1,20 @@
+# Chaos fixture template — gerado por agents/qa-auditor-chaos.md.
+# Cada fixture descreve um cenário hostil derivado de um contract.
+
+fixture_id: "{{fixture_id}}"
+derived_from:
+  contract_type: "{{contract_type}}"   # data | navigation | analytics | ui-state
+  contract_path: "{{contract_path}}"
+
+scenario:
+  name: "{{scenario_name}}"
+  category: "{{category}}"             # null | empty | malformed | race | overflow | regression | traversal
+  description: "{{description}}"
+
+payload: {}                            # shape malicioso preenchido pelo auditor
+
+expected:
+  validator_should_fail: true
+  reasoning: "{{reasoning}}"
+
+executable: false                      # se true, sandbox roda; se false, só análise estática

@@ -33,6 +33,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "evolve":      ("engine.evolve",      "run"),
     "undo":        ("engine.undo",        "run"),
     "raw":         ("engine.raw",         "run"),
+    "qa":          ("engine.cli",         "_qa_run"),
     # Hidden — never advertised in --help, only invoked by hooks.
     # See docs/design/06-command-surface.md §Hidden internal entrypoints.
     "ingest":      ("engine.ingest",      "run"),
@@ -41,8 +42,51 @@ COMMANDS: dict[str, tuple[str, str]] = {
 _VISIBLE_ORDER = (
     "init", "plan", "implement", "verify",
     "status", "doctor", "reconfigure", "graph",
-    "memory", "evolve", "undo", "raw",
+    "memory", "evolve", "undo", "raw", "qa",
 )
+
+
+def _qa_run(argv: list[str]) -> int:
+    """Wrapper that adapts the CLI dispatcher contract (``handler(argv)``)
+    to ``engine.qa.run_qa``'s richer signature.
+
+    The public ``run_qa`` API takes ``raw_target`` positional plus keyword-
+    only ``project_root`` / ``workflow_config`` — deliberately decoupled
+    from CLI argv parsing so it can be invoked by hooks or tests without
+    going through ``sys.argv``. This wrapper resolves the project root and
+    workflow-config inline, mirroring the pattern used by ``engine.verify``.
+
+    ``raw_target`` comes from ``argv[0]`` if present; an empty argv is
+    forwarded as ``""`` so ``resolve_scope`` can raise
+    ``ScopeMissingError`` with its own mentor-calmo remediation block.
+
+    Decision 10: no flags. The handler accepts only a positional target
+    token. Anything beyond ``argv[0]`` is ignored at this layer (matches
+    other handlers' tolerance for trailing hook-injected hints).
+    """
+    from engine.qa import run_qa
+    from engine.utils.paths import (
+        ProjectRootNotFoundError,
+        find_project_root,
+        workflow_config_path,
+    )
+    from engine.utils.yaml_io import read_yaml_or_default
+
+    try:
+        project_root = find_project_root()
+    except ProjectRootNotFoundError as exc:
+        sys.stderr.write(f"{exc}\n")
+        return 1
+
+    workflow_config = (
+        read_yaml_or_default(workflow_config_path(project_root), {}) or {}
+    )
+    raw_target = argv[0] if argv else ""
+    return run_qa(
+        raw_target,
+        project_root=project_root,
+        workflow_config=workflow_config,
+    )
 
 
 def _resolve(cmd: str) -> Callable[[list[str]], int | None]:
@@ -77,7 +121,7 @@ def _print_help() -> None:
     lines.append("")
     lines.append("Usage: forge <subcomando>")
     lines.append("")
-    lines.append("Subcomandos (12):")
+    lines.append("Subcomandos (13):")
     for cmd in _VISIBLE_ORDER:
         lines.append(f"  forge {cmd}")
     lines.append("")
