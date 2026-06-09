@@ -3,73 +3,85 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-05 (v1.2-dev — R1.1 secrets gate)
-**Estado:** v1.1 feito + Phase 0 mergeado; v1.2-dev R1.1 (`check_secrets`)
-shipping na mesma branch `worktree-feat+gate-infra-extract`, que consolida
-Phase 0 do roadmap de quality-gates expansion — refactor estrito
-(no-behavior-change)
-extrai infra reusável do CC gate em `validators/_gate_infra.py` +
-`validators/_diff.py` + rename de helpers em `validators/_common.py`. CC
-validator caiu de ~1127 LOC para ~840 LOC compondo helpers públicos.
-Suite 750 verde (baseline 751 - 1 justificado em T4: removed test do
-lookup `_TOOL_BIN[lang]` interno que não existe pós-refactor). Próximo
-passo: push + PR + Wave R1.1 `check_secrets` consume `_gate_infra` em
-vez de copiar — primeiro consumer real do helper extraído valida a
-generalização e pode disparar Gap GATE-INFRA-1 (parametrizar
-`gate_threshold_lookup` + `format_three_paths_message` quando 2º consumer
-chegar). Três linhas de trabalho convivem no Unreleased:
+**Última atualização:** 2026-06-08 (v1.2-dev — merge origin/main + Phase 0 gate-infra-extract + R1.1 secrets gate in-flight)
+**Estado:** v1.2.0 feito + Gap 9 cumulativo + CC gate v1 (PR #4) + PRD docs/product/ (PR #5) + plan-auditor (PR #6) tudo em `main`. Branch `worktree-feat+gate-infra-extract` agora consolida (após merge de origin/main) Phase 0 do roadmap de quality-gates expansion — refactor estrito (no-behavior-change) extrai infra reusável do CC gate em `validators/_gate_infra.py` + `validators/_diff.py` + rename de helpers em `validators/_common.py`. CC validator caiu de ~1127 LOC para ~840 LOC compondo helpers públicos. Phase 0 suite verde (baseline 751 - 1 justificado em T4: removed test do lookup `_TOOL_BIN[lang]` interno que não existe pós-refactor). Wave R1.1 `check_secrets` shipping na mesma branch — primeiro consumer real do helper extraído valida a generalização e fechou Gap GATE-INFRA-1 (parametrização de `gate_threshold_lookup` + `format_three_paths_message`); Gap GATE-INFRA-2 (kw-only `cmd_builder` API) registrado pra próximo consumer. Próximo passo: PR #7 mergeable + Wave R1.1 verde + considerar Gap 14 (preset coverage) + itens deferred v1.2.x. Várias linhas de trabalho convivem no Unreleased:
 
-- **Phase 0 (gate-infra-extract)** — refactor estrito: 7 commits de
-  extração + 1 doc-sync. Sem behavior change, sem decisão locked tocada,
-  sem novo validator. Apenas reorganização que destrava Wave R1+ (gates
-  pendentes compõem do shared em vez de copiar).
+- **Phase 0 (gate-infra-extract) — esta branch** — refactor estrito: 7 commits de
+  extração + 1 doc-sync + 4 robustness fixes pós-power-review (render_config,
+  parse/apply_overrides, diff worktree-safe, dead re-exports). Sem behavior
+  change, sem decisão locked tocada, sem novo validator. Apenas reorganização
+  que destrava Wave R1+ (gates pendentes compõem do shared em vez de copiar).
 
-- **PR #4 — Cyclomatic Complexity gate** (em review) — `check_cyclomatic_complexity`
+- **Wave R1.1 (check_secrets) — esta branch, in-flight** — primeiro consumer
+  real de `_gate_infra` + `_diff`. Valida generalização do refactor Phase 0.
+
+- **(1) CC gate v1 — em main** (PR #4 merged 2026-06-05) — `check_cyclomatic_complexity`
   multi-language (Kotlin/Swift/TS/Python) dispatcha pra Detekt/SwiftLint/
   eslint/Radon, roda em duas posições: cascade de `forge verify` (após
   `check_no_invented_behavior`) e per-task em `forge implement` (entre
   review e commit). Threshold via precedência card `cc-gate-override` >
-  workflow-config `cc-gate` > defaults built-in. Regra de fail: função
-  nova `cc > N` OU função modificada `cc_after > cc_before`. Override-
-  justify via linha `CC-OVERRIDE: <file>:<func> cc=<N> — <razão>` no commit
-  body, auditável via `git log --grep='CC-OVERRIDE'`. Bypass emergencial
-  via env `NO_CC_GATE=1`, logado em `.claude/state/cc-gate-bypass.jsonl`.
+  workflow-config `cc-gate` > defaults built-in (kotlin=10, swift=10,
+  ts=15, python=10). Regra de fail: função nova `cc > N` OU função
+  modificada `cc_after > cc_before`. Override-justify via linha
+  `CC-OVERRIDE: <file>:<func> cc=<N> — <razão>` no commit body,
+  auditável via `git log --grep='CC-OVERRIDE'`. Bypass emergencial via
+  env `NO_CC_GATE=1`, logado em `.claude/state/cc-gate-bypass.jsonl`.
   `forge doctor` ganha 13ª categoria `cc-gate-tools` (status + instruções
-  de install). Refinamentos pré-merge endereçados em final review (commit
-  `19d4348` + addendum): (H1) threshold dinâmico chega às tools nativas via
-  tempfile-render (Detekt/SwiftLint não aceitam threshold via CLI flag —
-  placeholder `__CC_THRESHOLD__` substituído em tempo de execução); (H2)
-  Radon trocado de `-n F` (mascarava CC ∈ [11..40]) pra `-n A` com
-  filtragem em Python; (H3) `cc_format_three_paths` render canônico chega
-  ao usuário via `result["render"]` consumido em `_render_cc_gate_block`;
-  (H4) warnings de overrides malformados propagam via 3-tupla `(silenced,
-  surviving, warnings)` até o result dict. Suite pós-refinements no branch:
-  682 passed, 17 skipped (+~71 vs baseline pré-CC-gate). PR #4 review-fix
-  loop adicionou +6 (D-006/D-008/D-009/F-006 + asserções tighter): 688
-  passed, 17 skipped. Sem revisitar decisões locked — Decisions 10/19/22/23
+  de install). Refinamentos pré-merge endereçados em final review: (H1)
+  threshold dinâmico chega às tools nativas via tempfile-render
+  (Detekt/SwiftLint não aceitam threshold via CLI flag — placeholder
+  `__CC_THRESHOLD__` substituído em tempo de execução); (H2) Radon trocado
+  de `-n F` (mascarava CC ∈ [11..40]) pra `-n A` com filtragem em Python;
+  (H3) `cc_format_three_paths` render canônico chega ao usuário via
+  `result["render"]` consumido em `_render_cc_gate_block`; (H4) warnings
+  de overrides malformados propagam via 3-tupla `(silenced, surviving,
+  warnings)` até o result dict. Suite cumulativa pós-merge: ~688 passed
+  + 17 skipped. Sem revisitar decisões locked — Decisions 10/19/22/23
   preservadas.
 
-- **Gap 9 — extends-feature mechanic** (shipped em `main` 2026-06-03) —
-  pattern leve product-derived: feature done pode ser estendida via novo
-  slug derivado com `extends-feature: {parent-slug}` aditivo no status.json
-  + intake — sem cards canon novos, sem mudança no enum platforms, sem
-  upgrade de inventory schema. Cena 1 do `forge plan` ganha 4º caminho
-  "Estender" (conditional state=done); validator novo EXT-001..004
-  (cross-cutting); discipline §10 formaliza semantics. **Multi-target
-  retroativo (watchOS / Wear OS / tvOS) movido pra out-of-scope permanente**
-  — feature-forge cobre mobile (Android + iOS + KMP); plataforma exótica
-  futura entra via Gap 5 overlay local, não via canon expansion. Suite
-  Gap 9 baseline: **637 passing + 12 skipped** (+42 desde v1.2.0: 37 Gap 9
-  + 5 fix loop).
+- **(2) PRD docs/product/ entregue** (PR #5) — 4 docs (~2205 LOC):
+  `00-prd.md` (583 LOC, 13 seções: Por-quê / Vision / Princípios /
+  Escopo IN-OUT / Personas-resumo / Scenarios-resumo / Roadmap-resumo /
+  Success criteria / Anti-personas / Cross-refs docs técnicos / Glossary
+  15 termos / FAQ 9 perguntas / Risks 6 + Open questions 4) +
+  `01-personas.md` (555 LOC, 8 personas em 3 camadas: Marina primária +
+  Bruno + Sub-agente Claude dedicadas; Carlos/Lucas/Carolina variantes
+  Marina; Patricia/Diego downstream read-only) + `02-scenarios.md`
+  (679 LOC, 6 user journeys end-to-end — C1 Brownfield init / C2 Feature
+  product / C3 Bugfix IN-37234 / C4 Retomar pausado / C5 Extension Gap 9 /
+  C6 Reuse intelligence) + `03-roadmap.md` (388 LOC, 3 ondas Autopilot
+  v1.3-1.4 / Catálogo evolutivo v1.5-2.0 / Inteligência adaptativa v2.x +
+  Matriz Eisenhower + anti-roadmap 8 items + cross-ref bidirecional pro
+  `docs/design/ROADMAP.md` técnico). Lente produto que coexiste paralelo
+  com `docs/design/` (lente arquitetura) e `docs/ux/` (roteiros) — sem
+  mexer em `docs/design/00-vision.md` nem `docs/design/ROADMAP.md`
+  (load-bearing). Spec: `docs/superpowers/specs/2026-06-04-prd-design.md`
+  (commit `2e1a266`). Plan: `docs/superpowers/plans/2026-06-04-product-docs.md`
+  (commit `4134744`).
 
-Após Phase 0 (gate-infra-extract), suite cumulativa na branch fica em
-**750 collected** (baseline 751 - 1 justificado em T4). Próximo: push
-+ PR Phase 0 + Wave R1.1 `check_secrets` (primeiro consumer real do
-`_gate_infra` extraído). Considerar Gap 14 (preset coverage) e itens
+- **(3) Plan auditor entregue** (PR #6, merged em main) — `.claude/rules/plan-auditor.md` define prompt determinístico + 12 checks com severity (2 Critical / 4 High / 3 Medium / 3 Low) pra auditoria pós-`superpowers:writing-plans`. Orquestrador dispatcha `gsd-code-reviewer` com este prompt antes do "Execution Handoff"; Critical findings bloqueiam até fix-dispatch. Output em `.planning/plan-reviews/<plan-slug>-review-r<N>.md` (gitignored). Re-audit cap em 3 rodadas; override inline via `<!-- audit-override: C-XXX — razão -->` no topo do plano. Integração documentada em `CLAUDE.md` §Workflow por verbo, `.claude/rules/superpowers.md`, `.claude/rules/subagent-workflow.md`, `.claude/rules/README.md`. Sync r3 (2026-06-05) fecha 4 findings do power-review externo (PR-001 high + PR-002/PR-003 medium + PR-004 low): verbatim Task 1 ≡ rule vivo, spec back-portada pós refinements, override dash flex (`-`/`–`/`—`/`--`), meta-finding §"snapshot-vs-vivo" ganha case-1 factual. Spec: `docs/superpowers/specs/2026-06-04-plan-auditor-design.md`. Plan: `docs/superpowers/plans/2026-06-04-plan-auditor.md`.
+
+- **(4) Phase 0 gate-infra-extract + Wave R1.1 check_secrets — branch `worktree-feat+gate-infra-extract` (PR #7)** — descrita em detalhe no header desta nota (refactor estrito + primeiro consumer). Após Phase 0, suite cumulativa na branch fica em **750 collected** (baseline 751 - 1 justificado em T4). Wave R1.1 adiciona testes pra `check_secrets` (fixtures em `tests/fixtures/secrets/` + integration em `tests/integration/test_secrets_gate_end_to_end.py`). Gap GATE-INFRA-1 fechado (parametrização habilitada); Gap GATE-INFRA-2 (kw-only `cmd_builder` API) registrado pra 2º consumer downstream.
+
+Anterior (Gap 9 + /resolve-pr-comments cleanup): extends-feature mechanic
+shipado em `feat/gap9-extends-feature` (PR #3 merged 2026-06-05). Pattern
+leve product-derived: feature done pode ser estendida via novo slug
+derivado com `extends-feature: {parent-slug}` aditivo no status.json +
+intake — sem cards canon novos, sem mudança no enum platforms, sem
+upgrade de inventory schema. Cena 1 do `forge plan` ganha 4º caminho
+"Estender" (conditional state=done); validator novo EXT-001..004
+(cross-cutting); discipline §10 formaliza semantics. **Multi-target
+retroativo (watchOS / Wear OS / tvOS) movido pra out-of-scope permanente**
+— feature-forge cobre mobile (Android + iOS + KMP); plataforma exótica
+futura entra via Gap 5 overlay local, não via canon expansion. Suite Gap 9
+baseline: **637 passing + 12 skipped** (+42 desde v1.2.0: 37 Gap 9 + 5
+fix loop).
+
+Próximo: PR #7 merged + considerar Gap 14 (preset coverage) e itens
 deferred v1.2.x em `04-pending.md` (lenient local loader C1, re-detection
 inline no Step 7.5 N2-a, ADR-suspension audit log N13, catalog_overlay
-refactor N17, Gap GATE-INFRA-1 parametrização quando 2º consumer
-chegar, Gap BOOTSTRAP-1 worktree-aware bootstrap).
+refactor N17, Gap GATE-INFRA-2 parametrização quando 2º consumer chegar,
+Gap BOOTSTRAP-1 worktree-aware bootstrap).
 
 ### Histórico — v1.2.0 (2026-06-03)
 

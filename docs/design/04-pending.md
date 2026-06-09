@@ -3,6 +3,75 @@
 What still needs to be drafted, in dependency order. Use this as the
 checklist for next sessions.
 
+## Fechado em [Unreleased]
+
+- **Auditoria pós-plano** — gap identificado em 2026-06-04 (não estava
+  listado em `04-pending.md` antes, mas surgiu no fluxo: o
+  `superpowers:writing-plans` Self-Review é leve demais pra capturar
+  load-bearing edits sem justificativa, ausência de "Revisita decisão
+  N", doc-sync gaps, reuse-first ignorado, voz quebrada). Resolvido via
+  `.claude/rules/plan-auditor.md` + integração — ver CHANGELOG
+  `[Unreleased]`. Spec: `docs/superpowers/specs/2026-06-04-plan-auditor-design.md`.
+
+### Gaps abertos pós plan-auditor v1
+
+Deferidos no spec `docs/superpowers/specs/2026-06-04-plan-auditor-design.md`
+§"Considerações futuras (fora do v1)":
+
+- **`forge plan-audit` CLI wrapper** — comando first-class que invoca o
+  auditor sem dependência do fluxo writing-plans. Implementação só se
+  o auditor provar valor em uso recorrente. Target: v1.2+.
+- **Refinamento do severity mapping baseado em smoke real** — após 5-10
+  smokes em planos genuínos, avaliar se algum check mudou de severity
+  por padrão observado. Inicial: 2 Critical / 4 High / 3 Medium / 3 Low.
+  Target: contínuo (sem versão fixa — gatilho é frequência de dados).
+- **Tracking estatístico** — coletar contagem média de rodadas por
+  auditoria, quais checks disparam mais, distribuição de overrides
+  aceitos. Target: v1.2+ se `forge plan-audit` materializar.
+
+### Meta-findings r2 (refinements pra plan-auditor v1.1)
+
+Observações dos smokes r1 + r2 que não foram acionadas no v1, anotadas
+pra revisita quando padrão recorrer em smokes futuros (precisamos de
+3-5 smokes em planos genuínos pra confirmar valor):
+
+- **Sync verbatim quando rule refina durante implementação do próprio
+  plano** — meta #1 r2. Caso degenerado: o plano-auditor cria o
+  arquivo do auditor, e meta-findings do smoke r1 refinaram o arquivo,
+  desincronizando o verbatim da Task 1. Resolvido em v1 via Caminho A
+  manual; pra v1.1 considerar orientação no rule pra "atualizar
+  verbatim no mesmo fix-dispatch" OU isenção do H1 quando refinement
+  registrado em CHANGELOG/04-pending.
+- **PASS_WITH_NOTES validado no piloto** — meta #2 r2. Tier introduzido
+  no fix de r1 foi exercitado no r2 e cumpriu papel: orquestrador
+  apresenta nota sem ritual de 3-caminhos formal. Mantém-se no v1.
+- **"Triggers que não dispararam" valida-se como contramedida pro ruído
+  de "0 findings"** — meta #3 r2. Seção nova permite distinguir
+  no-trigger de trigger-passou. Mantém-se no v1.
+- **Resolved count comprova loop de fix-dispatch** — meta #4 r2. r1 → r2
+  fechou 3 findings via Caminho A em 100%. Hipótese do design
+  (3-caminhos + verdict tier dão ao orquestrador material suficiente)
+  confirmada no piloto. Mantém-se no v1.
+- **Tensão plano-como-snapshot vs rule-como-vivo** — meta #5 r2. Plano
+  é contrato histórico, rule é artefato vivo. Decisão implícita do
+  projeto até aqui: plano não é re-editado pós-execução (refinements
+  vivem em commits subsequentes ao rule). Se padrão recorrer (planos
+  futuros + refinements pós-implementação criando H-002-like findings),
+  registrar como decisão direcional em `docs/design/01-decisions.md`
+  com ADR-style commit note.
+
+  > **Case-1 (2026-06-05, power-review PR #6):** finding PR-001 [high
+  > gap-spec] confirmou o gap factualmente — bloco verbatim Task 1 do
+  > plano divergiu do rule vivo depois de 3 commits de refinement
+  > (`b4676dd`, `95aa5a2`, `0d43b394`) que o sync r2 declarou cobrir
+  > mas só patcheou parcialmente. Resolução nesta PR (commit `60cde77`)
+  > sincronizou os blocos divergentes; gap permanece aberto pra
+  > mecanismo preventivo (Caminhos B "verbatim → referência" ou C
+  > "isenção H1 quando refinement registrado em CHANGELOG" do meta #1
+  > r2). **Contagem: 1/3 (case-1).**
+
+Target: contínuo (sem versão fixa — gatilho é dados de mais smokes).
+
 ## Phase 1 — Espinha dorsal (schemas + estrutura)
 
 - [x] workflow-config.yaml schema → `docs/schemas/workflow-config.md`

@@ -64,6 +64,80 @@ worktree environment).
 
 ### Added
 
+- **Plan auditor** — `.claude/rules/plan-auditor.md` define prompt
+  determinístico + 12 checks com severity (2 Critical / 4 High / 3
+  Medium / 3 Low) pra auditoria pós-`superpowers:writing-plans`.
+  Orquestrador dispatcha `gsd-code-reviewer` com este prompt antes do
+  "Execution Handoff" do SKILL.md; Critical findings bloqueiam o handoff
+  até fix-dispatch resolver. Output em `.planning/plan-reviews/<plan-slug>-review-r<N>.md`
+  (gitignored). Re-audit cap em 3 rodadas, override inline via
+  `<!-- audit-override: C-XXX — razão -->` no topo do plano. Integração
+  documentada em `CLAUDE.md` §Workflow por verbo,
+  `.claude/rules/superpowers.md`, `.claude/rules/subagent-workflow.md`,
+  `.claude/rules/README.md`. Spec:
+  `docs/superpowers/specs/2026-06-04-plan-auditor-design.md`. Plano:
+  `docs/superpowers/plans/2026-06-04-plan-auditor.md`.
+
+  Refinements pós-smoke r1 (2026-06-04): H1 chicken-and-egg exception
+  quando task cria target do plano; nova seção "Triggers que não
+  dispararam" no output pra distinguir no-trigger de trigger-passou;
+  M2 esclarece que anti-goals do spec contam; L2 exceção pra placeholders
+  em blocos verbatim; novo verdict tier `PASS_WITH_NOTES` entre
+  `PASS_WITH_WARNINGS` e `PASS` pra findings com mitigação contextual
+  escrita.
+
+  Sync r2 (2026-06-04): bloco verbatim da Task 1 do plano sincronizado
+  com `.claude/rules/plan-auditor.md` atual (341 linhas, refinements
+  inclusos) — endereça H-002 Caminho A do smoke r2. 5 meta-findings de
+  r2 anotados em `docs/design/04-pending.md` §"Meta-findings r2
+  (refinements pra plan-auditor v1.1)" como gaps deferidos pra revisita
+  quando padrão recorrer em smokes futuros.
+
+  Ultra-review r1 (2026-06-05): engine externo (`ultra-review-deep`) pegou
+  11 findings que a dogfood interna de 3 rounds não viu (bias confirmação
+  LLM-auditing-LLM — exatamente F-001 articulado). 10 fixes aplicados
+  nesta rodada: §Verdict logic ganha critério determinístico pra
+  PASS_WITH_NOTES (cita exceção ou mandamento; sem isso é WARNINGS); §Override
+  mechanism trata check-ID inválido explicitamente; template `**Verdict:**`
+  lista 4 tiers (incluía só 3); CLAUDE.md row "Editar schema/template"
+  ganha plan-auditor (coverage consistente); linha de plan-auditor
+  removida da tabela "Skills do superpowers" (Decision 22: skills ≠ rules
+  locais — info preservada em §Extensão local); handoff ganha ref ao
+  histórico v1.2.0 em git; §C1 valida que N é número real (não literal
+  template); §H2 trigger inclui `.claude/rules/**`; subagent-workflow
+  ganha cross-ref §"Loop pós-plano (plan-auditor)"; §H4 ganha nota sobre
+  hooks. F-009 (README rule count) marcado como FP — README não lista
+  per-rule count.
+
+  Power-review PR #6 r3 (2026-06-05): power-review externo (mode
+  `code_review`, sonnet) pegou 4 findings pendentes além dos já
+  fixados (PR-001 high gap-spec, PR-002/PR-003 medium code-quality,
+  PR-004 low code-quality). Endereçado em 4 commits atômicos: sync
+  verbatim Task 1 ≡ rule vivo (commit `60cde77` — drift em §Verdict
+  logic, §Override mechanism, H2 trigger, H4 nota hooks, C1 cond 4);
+  back-port da spec inteira pós refinements r1/r2/ultra-review
+  (commit `3f77879` — §Fluxo decisório 4 tiers, §Output format,
+  §Integração doc-sync correcta, nota de sync ao final);
+  override mechanism aceita qualquer dash separator unicode (commit
+  `9282e88` — flex de `-`/`–`/`—`/`--`, propagado pro plan
+  verbatim); meta-finding r2 §"Tensão snapshot-vs-vivo" ganha
+  case-1 factual citando PR-001 (commit `997a21a` — contagem 1/3
+  pra threshold de revisita ficar visível). Spec passa a apontar
+  rule vivo como veredito; quando divergir de novo, rule vence.
+
+### Added (PRD docs/product/, 2026-06-04)
+
+- **`docs/product/`** — PRD consolidado do feature-forge com 4 docs (~2205 LOC totais):
+  - `docs/product/00-prd.md` (583 LOC) — porta de entrada, 13 seções (Por-quê / Vision / Princípios / Escopo IN-OUT / Personas-resumo / Scenarios-resumo / Roadmap-resumo / Success criteria / Anti-personas / Cross-refs docs técnicos / Glossary 15 termos / FAQ 9 perguntas / Risks 6 + Open questions 4).
+  - `docs/product/01-personas.md` (555 LOC) — 8 personas em 3 camadas: Marina (primária) + Bruno + Sub-agente Claude (dedicadas) / Carlos + Lucas + Carolina (variantes Marina) / Patricia + Diego (downstream read-only).
+  - `docs/product/02-scenarios.md` (679 LOC) — 6 user journeys end-to-end (C1 Brownfield init / C2 Feature product / C3 Bugfix IN-37234 / C4 Retomar pausado / C5 Extension Gap 9 / C6 Reuse intelligence).
+  - `docs/product/03-roadmap.md` (388 LOC) — 3 ondas (Autopilot v1.3-1.4 / Catálogo evolutivo v1.5-2.0 / Inteligência adaptativa v2.x) + Matriz Eisenhower + Anti-roadmap (8 items NÃO entrarão) + cross-ref bidirecional pro `docs/design/ROADMAP.md` técnico.
+- Spec fonte: `docs/superpowers/specs/2026-06-04-prd-design.md` (commit `2e1a266`).
+- Plan executado: `docs/superpowers/plans/2026-06-04-product-docs.md` (commit `4134744`).
+- Coexistência paralela com `docs/design/` (lente arquitetura) e `docs/ux/` (roteiros) — sem mexer em load-bearing (`docs/design/00-vision.md` e `docs/design/ROADMAP.md` permanecem intactos).
+
+### Added
+
 - **Cyclomatic Complexity gate (`check_cyclomatic_complexity`)** — multi-language
   CC validator que roda no cascade de `forge verify` (após
   `check_no_invented_behavior`) e per-task em `forge implement` (entre review e
