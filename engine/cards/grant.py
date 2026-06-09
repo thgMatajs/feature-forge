@@ -89,7 +89,7 @@ def evaluate_sensitive_grants(
     for var in sorted(var_to_cards):
         cards_requesting = var_to_cards[var]
         decision = _prompt_sensitive_grant(
-            card_name=", ".join(cards_requesting),
+            card_name=", ".join(sorted(cards_requesting)),
             var=var,
         )
         if decision == "grant":
@@ -144,7 +144,7 @@ def _prompt_sensitive_grant(*, card_name: str, var: str) -> str:
     em prod.
     """
     block = mentor_calmo.three_paths_block(
-        gate_name=f"Card pede acesso a variável sensitive: {var}",
+        f"Card pede acesso a variável sensitive: {var}",
         what_failed=(
             f"O card {card_name!r} declarou {var!r} em "
             f"`qa-extensions.env-needs`. Esta var bate o pattern de var "

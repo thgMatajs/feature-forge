@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from engine._sandbox.env import CORE_ALLOWLIST, inspect_dropped, is_sensitive
+from engine.cards import CardError
 from engine.cards.loader import load_all_cards
 from engine.persona import three_paths_block
 from engine.qa._common import utc_iso_z as _utc_iso_z
@@ -583,9 +584,14 @@ def _maybe_alert_sensitive_drops(
         granted = set(
             (workflow_config or {}).get("qa", {}).get("sensitive-env-grants", []) or []
         )
-        allowed_extras = card_env_needs & (set(CORE_ALLOWLIST) | granted)
+        # Non-sensitive vars sempre passam (user instalou o card).
+        # Sensitive vars so passam se ja tem grant explicito do user.
+        allowed_extras = {
+            v for v in card_env_needs
+            if not is_sensitive(v) or v in granted
+        }
         _alert_sensitive_drops(allowed_extras)
-    except Exception as exc:  # noqa: BLE001 — fail-safe por contrato
+    except (CardError, OSError, ValueError, KeyError) as exc:
         print(
             f"⚠ Alert layer QA-11 falhou ({type(exc).__name__}: {exc}); "
             f"seguindo sem aviso de env vars sensitive.",

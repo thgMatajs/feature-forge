@@ -331,8 +331,14 @@ def load_card(card_dir: Path) -> CardManifest:
     # em validate_qa_extensions (Task 2.1), invocada via validate_card_yaml acima.
     qa_ext = data.get("qa-extensions") or {}
     env_needs_raw = qa_ext.get("env-needs") or []
-    env_needs = tuple(env_needs_raw) if isinstance(env_needs_raw, list) else ()
-    sensitive_env_needs = tuple(v for v in env_needs if is_sensitive(v))
+    env_needs = (
+        tuple(v for v in env_needs_raw if isinstance(v, str))
+        if isinstance(env_needs_raw, list)
+        else ()
+    )
+    sensitive_env_needs = tuple(
+        v for v in env_needs if isinstance(v, str) and is_sensitive(v)
+    )
 
     return CardManifest(
         name=str(identity.get("name", "")),
