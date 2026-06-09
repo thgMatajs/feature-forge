@@ -26,6 +26,19 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   `qa.auto-run-on-feature-done`).
 - Roteiro UX: `docs/ux/forge-qa-roteiro.md` (8 cenas).
 - §11 nova em `docs/design/07-discipline.md` — "QA verdict não-bloqueante".
+- `engine/_sandbox/env.py` — safe env builder pra subprocess de validators
+  (`build_safe_env`, `inspect_dropped`, `is_sensitive`); pure stdlib, zero
+  deps em `engine.*` (QA-11).
+- Campo `qa-extensions.env-needs` em cards (lista opcional de env vars
+  que o card declara precisar no sandbox; QA-11).
+- Campo `workflow-config.qa.sensitive-env-grants` (lista de env vars
+  sensitive autorizadas explicitamente pelo user; QA-11).
+- `engine/cards/grant.py` — `evaluate_sensitive_grants` + `GrantDecision`
+  + `UserAbortError`. Prompt 3-caminhos mentor-calmo dispara em
+  `forge init` / `forge reconfigure` quando card pede sensitive var sem
+  grant prévio (QA-11).
+- `engine.qa._alert_sensitive_drops` — alert mentor-calmo pré Phase 3
+  quando vars sensitive serão dropadas e nenhum card as declara (QA-11).
 
 ### Added (CC gate)
 
@@ -171,11 +184,28 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   com `dict.get(kebab, dict.get(snake))` (refactor puro, sem mudança de
   comportamento) — endereça nit gemini-code-assist no PR #3 (commit
   `7313a30`).
+- `engine/qa/sandbox.py._hardened_env` agora delega base do env pra
+  `build_safe_env(extras=...)` em vez de `dict(os.environ)`. Refactor
+  mantém PYTHONPATH guard + FORGE_QA_SANDBOX marker (QA-11).
+- `engine.verify` linha 624 — `subprocess.run` pra validator agora usa
+  `env=build_safe_env()` (era default: herdar env completo do pai). Bug
+  silente de leak fechado (QA-11).
 
 ### Changed (load-bearing)
 
 - Revisita decisão 9: command surface 12 → 13 subcomandos — adiciona `forge qa` (adversarial red-team gate). Design completo em `docs/superpowers/specs/2026-06-05-forge-qa-design.md`. Locked at 12 histórico preservado em `docs/design/01-decisions.md` linha 9; novo lock em linha 29.
 - Adiciona decisão 30: sandbox isolation pra `forge qa` Phase 3 — subprocess CWD dedicado em `.planning/qa/<run-id>/fixtures/`, SandboxBreachError em writes fora, budget global configurável.
+
+### Security
+
+- **QA-11 fechado.** Secrets do processo pai (`AWS_TOKEN`, `GITHUB_TOKEN`,
+  `DB_PASSWORD`, `*_SECRET`, etc.) não vazam mais pro subprocess de
+  validators rodando em `forge qa` Phase 3 sandbox nem em `forge verify`.
+  Mitigação cobre dois threats: card extension malicioso (`qa-extensions.
+  auditors` lendo `os.environ`) e leak acidental em validator canon
+  (traceback que printa env em debug). Defesa = allowlist core
+  (`CORE_ALLOWLIST` hardcoded em `engine/_sandbox/env.py`) + per-card
+  opt-in declarativo + grant explícito do user pra vars sensitive.
 
 ### Fixed (PR #4 review)
 
