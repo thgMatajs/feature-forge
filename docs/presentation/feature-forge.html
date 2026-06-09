@@ -494,7 +494,7 @@
     <p class="tagline">Um sistema operacional para o desenvolvimento de features mobile — Android, iOS, KMP e Web — com zero ambiguidade.</p>
     <p class="hint">pressione <span class="key">→</span> para começar &nbsp;·&nbsp; <span class="key">?</span> para atalhos</p>
   </div>
-  <div class="slide-footer"><span>01 / 22</span><span>Abertura</span></div>
+  <div class="slide-footer"><span>01 / 24</span><span>Abertura</span></div>
 </section>
 
 <!-- 02 O PROBLEMA -->
@@ -509,7 +509,7 @@
       <li><span><strong>Cada projeto inventa sua skill.</strong> <span class="dim">Nada portável. Nada absorvível. Conhecimento evapora a cada migração.</span></span></li>
     </ul>
   </div>
-  <div class="slide-footer"><span>02 / 22</span><span>Abertura · o problema</span></div>
+  <div class="slide-footer"><span>02 / 24</span><span>Abertura · o problema</span></div>
 </section>
 
 <!-- 03 PRINCÍPIOS -->
@@ -526,7 +526,7 @@
       <div class="card"><h3>06 · reversibilidade</h3><p>Toda ação é <strong>undo-able</strong>. Sem estado oculto.</p></div>
     </div>
   </div>
-  <div class="slide-footer"><span>03 / 22</span><span>Princípios</span></div>
+  <div class="slide-footer"><span>03 / 24</span><span>Princípios</span></div>
 </section>
 
 <!-- 04 O QUE NÃO É -->
@@ -542,14 +542,14 @@
     </ul>
     <p class="lede" style="margin-top: var(--s5);">Quando perguntam qualquer dessas, redireciona oferecendo o valor adjacente que <em>pode</em> entregar.</p>
   </div>
-  <div class="slide-footer"><span>04 / 22</span><span>Princípios · escopo OUT</span></div>
+  <div class="slide-footer"><span>04 / 24</span><span>Princípios · escopo OUT</span></div>
 </section>
 
 <!-- 05 OS 12 COMANDOS -->
 <section class="slide" data-act="Princípios">
   <div class="slide-inner">
     <p class="eyebrow">a interface</p>
-    <h1 class="slide-title">12 verbos. <span class="accent">Zero flags.</span></h1>
+    <h1 class="slide-title">13 verbos. <span class="accent">Zero flags.</span></h1>
     <table class="cmd-grid">
       <tr>
         <td><span class="num">01</span><span class="cmd">forge init</span><span class="desc">scan do projeto, propõe cards, escreve config, semeia memória</span></td>
@@ -571,10 +571,13 @@
         <td><span class="num">11</span><span class="cmd">forge undo</span><span class="desc">reverte a última ação que mudou estado</span></td>
         <td><span class="num">12</span><span class="cmd">forge raw</span><span class="desc">escape hatch pra scripts internos</span></td>
       </tr>
+      <tr>
+        <td colspan="3" style="border-color: var(--accent-dim);"><span class="num">13 · novo em v1.2</span><span class="cmd">forge qa</span><span class="desc">gate adversarial red-team — 4 attack vectors × 4 escopos, sandbox isolado, verdict informativo (BLOCK/FLAG/PASS)</span></td>
+      </tr>
     </table>
-    <p class="lede" style="margin-top: var(--s4); font-size: 0.95em;">100% conversacional. Cada parâmetro é coletado por prompt interativo, dentro de um dos 12.</p>
+    <p class="lede" style="margin-top: var(--s4); font-size: 0.95em;">100% conversacional. Cada parâmetro é coletado por prompt interativo, dentro de um dos 13.</p>
   </div>
-  <div class="slide-footer"><span>05 / 22</span><span>Princípios · 12 comandos</span></div>
+  <div class="slide-footer"><span>05 / 24</span><span>Princípios · 13 comandos</span></div>
 </section>
 
 <!-- 06 6 CAMADAS VISÃO GERAL -->
@@ -599,7 +602,7 @@
 <span class="dim">└────────────────────────────────────────────────────────────────────┘</span></pre>
     <p class="lede" style="margin-top: var(--s4); font-size: 0.95em;">Cada camada serve a de cima. Cada uma é trocável sem reescrever as outras.</p>
   </div>
-  <div class="slide-footer"><span>06 / 22</span><span>Anatomia · visão geral</span></div>
+  <div class="slide-footer"><span>06 / 24</span><span>Anatomia · visão geral</span></div>
 </section>
 
 <!-- 07 L0 ENGINE CORE -->
@@ -630,7 +633,7 @@ artifacts:
       </div>
     </div>
   </div>
-  <div class="slide-footer"><span>07 / 22</span><span>Anatomia · L0 Engine Core</span></div>
+  <div class="slide-footer"><span>07 / 24</span><span>Anatomia · L0 Engine Core</span></div>
 </section>
 
 <!-- 08 L1 KNOWLEDGE -->
@@ -641,7 +644,7 @@ artifacts:
     <div class="grid-2">
       <div>
         <ul class="bullets">
-          <li><span><strong>codebase-graph.db</strong> <span class="dim">— SQLite vivo, atualizado via hooks. Responde "onde está X?" em ms.</span></span></li>
+          <li><span><strong>codebase-graph.db</strong> <span class="dim">— SQLite vivo (schema v2, 17 queries Q1–Q17 + reuse-intelligence). Responde "onde está X?" em ms.</span></span></li>
           <li><span><strong>inventory/</strong> <span class="dim">— design-system, i18n, conventions em YAML, extraídos automaticamente.</span></span></li>
           <li><span><strong>memory L1–L5</strong> <span class="dim">— do efêmero ao canônico.</span></span></li>
         </ul>
@@ -656,7 +659,7 @@ artifacts:
     </div>
     <p class="lede" style="margin-top: var(--s4); font-size: 0.95em;">Meta: na feature N o questionário é <em>menor</em> que na feature 1.</p>
   </div>
-  <div class="slide-footer"><span>08 / 22</span><span>Anatomia · L1 Knowledge</span></div>
+  <div class="slide-footer"><span>08 / 24</span><span>Anatomia · L1 Knowledge</span></div>
 </section>
 
 <!-- 09 L2 INTEGRATIONS -->
@@ -683,7 +686,7 @@ artifacts:
       </div>
     </div>
   </div>
-  <div class="slide-footer"><span>09 / 22</span><span>Anatomia · L2 Integrations</span></div>
+  <div class="slide-footer"><span>09 / 24</span><span>Anatomia · L2 Integrations</span></div>
 </section>
 
 <!-- 10 L3 CAPABILITY CARDS -->
@@ -716,7 +719,7 @@ contributes:
       </div>
     </div>
   </div>
-  <div class="slide-footer"><span>10 / 22</span><span>Anatomia · L3 Cards</span></div>
+  <div class="slide-footer"><span>10 / 24</span><span>Anatomia · L3 Cards</span></div>
 </section>
 
 <!-- 11 L4 ORCHESTRATION -->
@@ -748,7 +751,7 @@ contributes:
     </div>
     <p class="lede" style="margin-top: var(--s4); font-size: 0.95em;">~3.700 linhas de prompts. Cada agente recebe context-pack mínimo. Despacho paralelo onde dá.</p>
   </div>
-  <div class="slide-footer"><span>11 / 22</span><span>Anatomia · L4 Orchestration</span></div>
+  <div class="slide-footer"><span>11 / 24</span><span>Anatomia · L4 Orchestration</span></div>
 </section>
 
 <!-- 12 L5 SELF-EVOLUTION -->
@@ -762,7 +765,7 @@ contributes:
   <span class="accent">retrospective-agent</span>  <span class="dim">→ detecta padrões repetidos, drift, gaps</span>
         │
         ▼
-  <span class="accent">proposed-evolutions.yaml</span>  <span class="dim">→ patches · novos cards · regras</span>
+  <span class="accent">proposed-evolutions.yaml</span>  <span class="dim">→ 16 kinds: patches · cards · regras · reuse</span>
         │
         ▼
   <span class="accent">forge evolve</span>  <span class="dim">→ user revisa, aceita, rejeita ou adia</span>
@@ -771,7 +774,7 @@ contributes:
   <span class="ok">aplicado</span> <span class="dim">·</span> <span class="warn">rejeitado</span> <span class="dim">·</span> <span class="dim">deferido</span></pre>
     <p class="lede" style="margin-top: var(--s4);">A engine nunca se modifica sem aprovação. Cada proposta vem com rationale e diff.</p>
   </div>
-  <div class="slide-footer"><span>12 / 22</span><span>Anatomia · L5 Self-evolution</span></div>
+  <div class="slide-footer"><span>12 / 24</span><span>Anatomia · L5 Self-evolution</span></div>
 </section>
 
 <!-- 13 BIG PICTURE -->
@@ -790,7 +793,7 @@ contributes:
   │ <span class="ok">readiness=ready</span> │      │                    │      │                │
   └─────────────────┘      └────────────────────┘      └─────────────────┘</pre>
   </div>
-  <div class="slide-footer"><span>13 / 22</span><span>Fluxo · big picture</span></div>
+  <div class="slide-footer"><span>13 / 24</span><span>Fluxo · big picture</span></div>
 </section>
 
 <!-- 14 FORGE PLAN -->
@@ -823,10 +826,41 @@ open_questions: 0</pre>
       </div>
     </div>
   </div>
-  <div class="slide-footer"><span>14 / 22</span><span>Fluxo · forge plan</span></div>
+  <div class="slide-footer"><span>14 / 24</span><span>Fluxo · forge plan</span></div>
 </section>
 
-<!-- 15 ARTEFATOS -->
+<!-- 15 SUBTYPES + BUGFIX -->
+<section class="slide" data-act="Fluxo">
+  <div class="slide-inner">
+    <p class="eyebrow">subtypes</p>
+    <h1 class="slide-title">plan não é só feature nova. <span class="accent">É bug, refactor, spike.</span></h1>
+    <div class="grid-2">
+      <div>
+        <ul class="bullets">
+          <li><span><strong>product</strong> <span class="dim">— feature nova, 5 waves completas.</span></span></li>
+          <li><span><strong>bugfix</strong> <span class="dim">— detecta o ticket (IN-37234), pula o PRD, vai ao reparo.</span></span></li>
+          <li><span><strong>refactor</strong> <span class="dim">— contrato no-behavior-change, gate dedicado.</span></span></li>
+          <li><span><strong>spike · chore</strong> <span class="dim">— exploração e manutenção, waves enxutas.</span></span></li>
+        </ul>
+      </div>
+      <div>
+<pre class="terminal"><span class="prompt">$</span> forge plan bugfix-IN-37234
+
+subtype: <span class="accent">bugfix</span>   <span class="comment"># detectado pelo ticket</span>
+ticket:  IN-37234 · NullPointerException
+
+<span class="accent">1.</span> reproduz com <span class="accent">regression test</span>   <span class="comment"># falha primeiro</span>
+<span class="accent">2.</span> corrige o mínimo
+<span class="accent">3.</span> test fica <span class="ok">verde</span>
+<span class="accent">4.</span> 5-whys auto-retro → forge evolve</pre>
+      </div>
+    </div>
+    <p class="lede" style="margin-top: var(--s4); font-size: 0.95em;">Bug urgente não pula rigor: o <strong>regression test que falha primeiro</strong> é hard-gate. Velocidade sem sacrificar a rede de segurança.</p>
+  </div>
+  <div class="slide-footer"><span>15 / 24</span><span>Fluxo · subtypes</span></div>
+</section>
+
+<!-- 16 ARTEFATOS -->
 <section class="slide" data-act="Fluxo">
   <div class="slide-inner">
     <p class="eyebrow">artefatos do plan</p>
@@ -841,10 +875,10 @@ open_questions: 0</pre>
     </div>
     <p class="lede" style="margin-top: var(--s4); font-size: 0.95em;">Cada arquivo tem schema. Validação programática bloqueia drift.</p>
   </div>
-  <div class="slide-footer"><span>15 / 22</span><span>Fluxo · artefatos</span></div>
+  <div class="slide-footer"><span>16 / 24</span><span>Fluxo · artefatos</span></div>
 </section>
 
-<!-- 16 FORGE IMPLEMENT -->
+<!-- 17 FORGE IMPLEMENT -->
 <section class="slide" data-act="Fluxo">
   <div class="slide-inner">
     <p class="eyebrow">forge implement</p>
@@ -861,10 +895,10 @@ open_questions: 0</pre>
   <span class="accent">▸ Commit</span>        <span class="dim">— atômico. Mensagem padronizada. Próxima task só depois do verde.</span></pre>
     <p class="lede" style="margin-top: var(--s4);">Se algo desvia do contrato, <strong>para imediatamente</strong>. Sem improviso.</p>
   </div>
-  <div class="slide-footer"><span>16 / 22</span><span>Fluxo · forge implement</span></div>
+  <div class="slide-footer"><span>17 / 24</span><span>Fluxo · forge implement</span></div>
 </section>
 
-<!-- 17 FORGE VERIFY -->
+<!-- 18 FORGE VERIFY -->
 <section class="slide" data-act="Fluxo">
   <div class="slide-inner">
     <p class="eyebrow">forge verify</p>
@@ -883,12 +917,44 @@ open_questions: 0</pre>
         <p>Sem argumento? Detecta automaticamente onde o estado está e roda o escopo apropriado.</p>
       </div>
     </div>
-    <p class="lede" style="margin-top: var(--s4);">A engine <strong>nunca muta</strong> em verify. Só relata <span class="accent">pass</span> ou <span style="color:var(--warn)">fail</span> com evidências.</p>
+    <p class="lede" style="margin-top: var(--s4); font-size: 0.95em;">Cascade de <span class="accent">20 validators</span>, fail-fast no primeiro erro duro: <strong>complexity</strong> (CC multi-lang), <strong>secrets</strong> (gitleaks · trufflehog), <strong>no-behavior-change</strong> (refactor). A engine <strong>nunca muta</strong> — só relata <span class="accent">pass</span> ou <span style="color:var(--warn)">fail</span> com evidências.</p>
   </div>
-  <div class="slide-footer"><span>17 / 22</span><span>Fluxo · forge verify</span></div>
+  <div class="slide-footer"><span>18 / 24</span><span>Fluxo · forge verify</span></div>
 </section>
 
-<!-- 18 COMO O FORGE APRENDE -->
+<!-- 19 FORGE QA -->
+<section class="slide" data-act="Fluxo">
+  <div class="slide-inner">
+    <p class="eyebrow">forge qa</p>
+    <h1 class="slide-title">Um <span class="accent">red-team</span> contra os próprios artefatos.</h1>
+    <div class="grid-2">
+      <div>
+        <ul class="bullets">
+          <li><span><strong>4 attack vectors</strong> <span class="dim">spec-vs-spec · chaos · coverage · validator-claim. Inventa cenários hostis.</span></span></li>
+          <li><span><strong>4 escopos</strong> <span class="dim">feature · screen · task · paranoid (cross-feature).</span></span></li>
+          <li><span><strong>Sandbox isolado</strong> <span class="dim">fixtures sintéticos em .planning/qa/&lt;run-id&gt;/ — nunca tocam o repo.</span></span></li>
+          <li><span><strong>Verdict informativo</strong> <span class="dim">BLOCK · FLAG · PASS. Relata, não bloqueia o commit.</span></span></li>
+        </ul>
+      </div>
+      <div>
+<pre class="terminal"><span class="prompt">$</span> forge qa
+
+scope: <span class="accent">feature register</span>
+vectors: 4 · fixtures: 12   <span class="comment"># sandbox isolado</span>
+
+<span class="warn">FLAG</span>  spec-vs-spec: nav contract
+      contradiz screen-analysis §3
+<span class="ok">PASS</span>  chaos · coverage · validator-claim
+
+findings → <span class="accent">forge evolve</span></pre>
+      </div>
+    </div>
+    <p class="lede" style="margin-top: var(--s4); font-size: 0.95em;">Findings viram propostas em <em>forge evolve</em>. O veredito final continua humano (Decisão 5).</p>
+  </div>
+  <div class="slide-footer"><span>19 / 24</span><span>Fluxo · forge qa</span></div>
+</section>
+
+<!-- 20 COMO O FORGE APRENDE -->
 <section class="slide" data-act="Auto-evolução">
   <div class="slide-inner">
     <p class="eyebrow">auto-evolução</p>
@@ -900,10 +966,10 @@ open_questions: 0</pre>
       <li><span><strong>Propostas vão pra fila.</strong> <span class="dim">proposed-evolutions.yaml — esperando review humano.</span></span></li>
     </ul>
   </div>
-  <div class="slide-footer"><span>18 / 22</span><span>Auto-evolução · aprendizado</span></div>
+  <div class="slide-footer"><span>20 / 24</span><span>Auto-evolução · aprendizado</span></div>
 </section>
 
-<!-- 19 FORGE EVOLVE -->
+<!-- 21 FORGE EVOLVE -->
 <section class="slide" data-act="Auto-evolução">
   <div class="slide-inner">
     <p class="eyebrow">forge evolve</p>
@@ -930,73 +996,73 @@ open_questions: 0</pre>
       ...</pre>
       </div>
     </div>
-    <p class="lede" style="margin-top: var(--s4); font-size: 0.95em;">Engine sugere, user decide. Sempre.</p>
+    <p class="lede" style="margin-top: var(--s4); font-size: 0.95em;">16 kinds — 10 retrospective + 6 reuse-intelligence. Engine sugere, user decide. Sempre.</p>
   </div>
-  <div class="slide-footer"><span>19 / 22</span><span>Auto-evolução · forge evolve</span></div>
+  <div class="slide-footer"><span>21 / 24</span><span>Auto-evolução · forge evolve</span></div>
 </section>
 
-<!-- 20 STATUS HOJE -->
+<!-- 22 STATUS HOJE -->
 <section class="slide" data-act="Status">
   <div class="slide-inner">
-    <p class="eyebrow">status hoje · 2026-05-29</p>
+    <p class="eyebrow">status · 2026-06-09</p>
     <h1 class="slide-title">Onde estamos.</h1>
     <ul class="bullets lg">
-      <li><span><strong><span class="dot ok"></span>Fase 1 — Espinha dorsal</strong> <span class="dim">schemas, esqueleto de pastas, decisões locked.</span></span></li>
-      <li><span><strong><span class="dot ok"></span>Fase 2 — Cérebros</strong> <span class="dim">10 sub-agents, 7 roteiros UX, 27 decisões locked.</span></span></li>
-      <li><span><strong><span class="dot warn"></span>Fase 3 — Conteúdo</strong> <span class="dim">16 templates + 12 cards canônicos. Em andamento.</span></span></li>
-      <li><span><strong><span class="dot dim"></span>Fase 4 — Músculos</strong> <span class="dim">Python engine + bash dispatcher. Pendente.</span></span></li>
-      <li><span><strong><span class="dot dim"></span>Fase 5 — Pele e validação</strong> <span class="dim">Hooks, validators, E2E. Pendente.</span></span></li>
+      <li><span><strong><span class="dot ok"></span>Fases 1–5 concluídas</strong> <span class="dim">espinha dorsal · cérebros · conteúdo · engine Python · validação E2E.</span></span></li>
+      <li><span><strong><span class="dot ok"></span>v1.0 → v1.2 shipadas</strong> <span class="dim">planning · implement · verify · memory · graph · reuse-intelligence.</span></span></li>
+      <li><span><strong><span class="dot ok"></span>13 comandos · 20 validators</strong> <span class="dim">22 cards canônicos · 18 templates · 17 graph queries.</span></span></li>
+      <li><span><strong><span class="dot ok"></span>Bugfix · gates fortes · forge qa</strong> <span class="dim">subtypes, CC + secrets gates, red-team adversarial — tudo em v1.2.</span></span></li>
+      <li><span><strong><span class="dot warn"></span>Próximo</strong> <span class="dim">Autopilot (Apply Mode automatizado) · catálogo evolutivo de cards.</span></span></li>
     </ul>
     <p class="lede" style="margin-top: var(--s5); font-family: var(--mono); font-size: 0.9em;">
-      27 decisões locked &nbsp;·&nbsp; ~3.700 linhas de prompts &nbsp;·&nbsp; 0 código de produção
+      27 decisões locked + 7 direcionais &nbsp;·&nbsp; ~52.5K LOC &nbsp;·&nbsp; 1113 tests &nbsp;·&nbsp; ~400 arquivos
     </p>
   </div>
-  <div class="slide-footer"><span>20 / 22</span><span>Status · onde estamos</span></div>
+  <div class="slide-footer"><span>22 / 24</span><span>Status · onde estamos</span></div>
 </section>
 
-<!-- 21 ROADMAP -->
+<!-- 23 ROADMAP -->
 <section class="slide" data-act="Status">
   <div class="slide-inner">
     <p class="eyebrow">roadmap</p>
-    <h1 class="slide-title">Cinco fases. <span class="accent">16–22 sessões focadas</span>.</h1>
+    <h1 class="slide-title">De v1.0 a v1.2. <span class="accent">Agora, autopilot.</span></h1>
     <div class="roadmap">
       <div class="phase done">
-        <div class="n">FASE 1</div>
-        <div class="title">Espinha dorsal</div>
-        <div class="state">✓ concluída</div>
-        <div class="desc">Schemas + esqueleto. 2–3 sessões.</div>
+        <div class="n">v1.0</div>
+        <div class="title">Pipeline completo</div>
+        <div class="state">✓ shipped</div>
+        <div class="desc">5 fases · plan → implement → verify.</div>
       </div>
       <div class="phase done">
-        <div class="n">FASE 2</div>
-        <div class="title">Cérebros</div>
-        <div class="state">✓ concluída</div>
-        <div class="desc">10 sub-agents + 7 roteiros UX. 3–4 sessões.</div>
+        <div class="n">v1.1</div>
+        <div class="title">Subtypes + reuse</div>
+        <div class="state">✓ shipped</div>
+        <div class="desc">bugfix · refactor · reuse-intelligence.</div>
+      </div>
+      <div class="phase done">
+        <div class="n">v1.2</div>
+        <div class="title">Gates + qa</div>
+        <div class="state">✓ shipped</div>
+        <div class="desc">card overlay · CC + secrets · forge qa.</div>
       </div>
       <div class="phase active">
-        <div class="n">FASE 3</div>
-        <div class="title">Conteúdo</div>
-        <div class="state">⏳ agora</div>
-        <div class="desc">16 templates + 12 cards canônicos. 4–5 sessões.</div>
+        <div class="n">v1.3 – v1.4</div>
+        <div class="title">Autopilot</div>
+        <div class="state">→ próximo</div>
+        <div class="desc">Apply Mode automatizado · review real.</div>
       </div>
       <div class="phase pending">
-        <div class="n">FASE 4</div>
-        <div class="title">Músculos</div>
-        <div class="state">○ pendente</div>
-        <div class="desc">Python engine + bash dispatcher. 5–7 sessões.</div>
-      </div>
-      <div class="phase pending">
-        <div class="n">FASE 5</div>
-        <div class="title">Pele &amp; validação</div>
-        <div class="state">○ pendente</div>
-        <div class="desc">Hooks + validators + E2E. 2–3 sessões.</div>
+        <div class="n">v1.5 – v2.x</div>
+        <div class="title">Catálogo evolutivo</div>
+        <div class="state">○ planejado</div>
+        <div class="desc">marketplace de cards · adaptativo.</div>
       </div>
     </div>
-    <p class="lede" style="margin-top: var(--s5); font-size: 0.95em;">Dependências mandam. Cada fase desbloqueia a próxima.</p>
+    <p class="lede" style="margin-top: var(--s5); font-size: 0.95em;">Cada versão fechou um ciclo. O próximo é tirar o humano do loop mecânico — sem tirar do loop de decisão.</p>
   </div>
-  <div class="slide-footer"><span>21 / 22</span><span>Status · roadmap</span></div>
+  <div class="slide-footer"><span>23 / 24</span><span>Status · roadmap</span></div>
 </section>
 
-<!-- 22 ENCERRAMENTO -->
+<!-- 24 ENCERRAMENTO -->
 <section class="slide" data-act="Encerramento">
   <div class="slide-inner">
     <p class="eyebrow">encerramento</p>
@@ -1004,17 +1070,18 @@ open_questions: 0</pre>
     <ul class="doc-links">
       <li><code>README.md</code><span class="desc">entrada rápida · estado atual · onde olhar</span></li>
       <li><code>docs/design/00-vision.md</code><span class="desc">a visão completa · 6 layers · capability cards</span></li>
-      <li><code>docs/design/06-command-surface.md</code><span class="desc">os 12 comandos, locked. zero flags.</span></li>
+      <li><code>docs/product/00-prd.md</code><span class="desc">PRD · personas · scenarios — lente produto</span></li>
+      <li><code>docs/design/06-command-surface.md</code><span class="desc">os 13 comandos, locked. zero flags.</span></li>
       <li><code>docs/design/02-phases.md</code><span class="desc">as 5 fases de implementação</span></li>
-      <li><code>docs/design/07-discipline.md</code><span class="desc">as 6 políticas universais</span></li>
+      <li><code>docs/design/07-discipline.md</code><span class="desc">as 10 disciplinas universais</span></li>
       <li><code>agents/planning-conductor.md</code><span class="desc">o prompt do super-agent</span></li>
-      <li><code>presets/kmp-mobile-firebase/</code><span class="desc">preset canônico em construção</span></li>
+      <li><code>presets/kmp-mobile/</code><span class="desc">preset canônico v1</span></li>
     </ul>
     <p class="hint" style="margin-top: var(--s5); font-family: var(--mono); color: var(--fg-dim); font-size: 0.9em;">
       pressione <span class="key" style="display:inline-block;border:1px solid var(--rule);background:var(--bg-elev);padding:2px 10px;border-radius:4px;color:var(--fg);margin:0 4px;">Esc</span> para overview &nbsp;·&nbsp; <span class="key" style="display:inline-block;border:1px solid var(--rule);background:var(--bg-elev);padding:2px 10px;border-radius:4px;color:var(--fg);margin:0 4px;">Home</span> para voltar ao início
     </p>
   </div>
-  <div class="slide-footer"><span>22 / 22</span><span>fim · obrigado</span></div>
+  <div class="slide-footer"><span>24 / 24</span><span>fim · obrigado</span></div>
 </section>
 
 </main>

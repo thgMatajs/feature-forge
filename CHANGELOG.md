@@ -7,6 +7,10 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Apresentação (`docs/presentation/feature-forge.html`) atualizada para v1.2-dev: 22 → 24 slides — adicionados slides de subtypes/bugfix e forge qa, slide verify enriquecido com os gates fortes (CC + secrets + no-behavior-change), status e roadmap reescritos (todas as fases shipadas, timeline v1.0→v1.2→autopilot). DESIGN.md sincronizado.
+
 ### Changed (load-bearing)
 
 - Revisita decisão 30: sandbox isolation guard via sitecustomize.py (não PYTHONSTARTUP) — texto da Decisão atualizado pra refletir mecanismo real implementado em engine/qa/sandbox.py. Comportamento de isolamento idêntico; só o mecanismo nomeado mudou.

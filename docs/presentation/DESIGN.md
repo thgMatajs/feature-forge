@@ -1,7 +1,7 @@
 # feature-forge presentation — design spec
 
 > Date: 2026-05-29
-> Status: design approved, pending implementation
+> Status: implemented · refreshed 2026-06-09
 > Output: `docs/presentation/feature-forge.html` (single self-contained file)
 
 ## Purpose
@@ -17,12 +17,12 @@ serves both.
 ## Format
 
 - **Deck of slides**, navigated by keyboard arrows.
-- 22 slides (one concept per slide).
+- 24 slides (one concept per slide).
 - Visual style: terminal / monospace / dark — matches feature-forge's CLI
   identity (`forge plan`, `forge implement`).
 - One concept per slide, no walls of text.
 
-## Slide map (22 slides, 5 acts)
+## Slide map (24 slides, 5 acts)
 
 ### Act 1 — Opening (slides 1–2)
 | # | Title | Purpose |
@@ -48,23 +48,25 @@ serves both.
 | 11 | L4 Orchestration | planning-conductor + execution-conductor + sub-agents |
 | 12 | L5 Self-evolution | retrospective → proposed-evolutions → forge evolve |
 
-### Act 4 — A feature end-to-end (slides 13–17)
+### Act 4 — A feature end-to-end (slides 13–19)
 | # | Title | Purpose |
 |---|---|---|
 | 13 | Big picture | fluxo plan → implement → verify (3 grandes blocos) |
 | 14 | forge plan | Waves A–E do planning-conductor, output = readiness=ready |
-| 15 | Os artefatos | PRD · BDD · screen-analysis · tech-spec · task-contracts |
-| 16 | forge implement | Plan Mode → Apply Mode → review → commit, 1 task por vez |
-| 17 | forge verify | gates duros, scope (task/feature), read-only |
+| 15 | Subtypes + bugfix | forge plan adapta-se: product/refactor/bugfix/spike/chore, com o caminho bugfix (ticket → regression-test-first → 5-whys) |
+| 16 | Os artefatos | PRD · BDD · screen-analysis · tech-spec · task-contracts |
+| 17 | forge implement | Plan Mode → Apply Mode → review → commit, 1 task por vez |
+| 18 | forge verify | gates duros, scope (task/feature), read-only |
+| 19 | forge qa | red-team adversarial: 4 attack vectors × 4 escopos, sandbox, verdict informativo |
 
-### Act 5 — Self-evolution + closing (slides 18–22)
+### Act 5 — Self-evolution + closing (slides 20–24)
 | # | Title | Purpose |
 |---|---|---|
-| 18 | Como o forge aprende | retrospective após cada feature, padrões viram propostas |
-| 19 | forge evolve | user revisa propostas, aceita/rejeita; engine nunca decide sozinho |
-| 20 | Status hoje | fases 1+2 ✅, fase 3 ⏳, 4+5 pendentes |
-| 21 | Roadmap | 5 fases visualmente, com marker em onde estamos |
-| 22 | Encerramento | 1 frase forte + links pros docs canônicos |
+| 20 | Como o forge aprende | retrospective após cada feature, padrões viram propostas |
+| 21 | forge evolve | user revisa propostas, aceita/rejeita; engine nunca decide sozinho |
+| 22 | Status hoje | fases 1–5 ✅, v1.0→v1.2 shipadas, autopilot a seguir |
+| 23 | Roadmap | timeline v1.0 → v1.2 → autopilot, com marker em onde estamos |
+| 24 | Encerramento | 1 frase forte + links pros docs canônicos |
 
 ## Visual system
 
@@ -106,7 +108,7 @@ serves both.
 | `.slide.terminal` | title + terminal-style `<pre>` block with green `$` prompt |
 
 Footer on every slide:
-- Bottom-left: slide number `07 / 22` (mono, dim)
+- Bottom-left: slide number `07 / 24` (mono, dim)
 - Bottom-right: act label `Anatomia · L1 Knowledge` (mono, dim)
 - Top: thin 2px progress bar in `--accent`
 
@@ -132,9 +134,9 @@ Behavior:
 Single self-contained file:
 
 ```
-docs/presentation/feature-forge.html      ~600–800 lines
+docs/presentation/feature-forge.html      ~1280 lines
   ├── <style>     inline CSS, custom properties + block classes
-  ├── <main>      22 sequential <section class="slide ..."> elements
+  ├── <main>      24 sequential <section class="slide ..."> elements
   └── <script>    inline JS: keyboard, hash sync, overview, progress (~80 lines)
 ```
 
@@ -148,7 +150,7 @@ Constraints:
 
 - Schema YAML dumps slide-by-slide (linked, not pasted)
 - Each sub-agent prompt explained (mentioned, not detailed)
-- The full command surface migration table (linked in slide 22)
+- The full command surface migration table (linked in slide 24)
 - Animations beyond fade+rise on slide change
 - Server-side rendering, build pipeline, or framework
 - Speaker notes mode (can be added later if needed)
