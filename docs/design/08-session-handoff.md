@@ -3,8 +3,8 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-08 (v1.2.x + Gap 9 + PR #4 CC + PR #8 QA + QA-11 sandbox hardening)
-**Estado:** v1.2 com `forge qa` shipado; QA-11 fechado; pré-piloto restrito a QA-13 (paranoid state filter).
+**Última atualização:** 2026-06-08 (v1.2.x + Gap 9 + PR #4 CC + PR #8 QA + QA-11 sandbox hardening + closeout post-review)
+**Estado:** v1.2 com `forge qa` shipado; QA-11 fechado (impl + final review + remediação); pré-piloto restrito a QA-13 (paranoid state filter).
 
 `forge qa` entregue como 13º comando (red-team adversarial gate). 4
 attack vectors (spec-vs-spec, chaos, coverage, validator-claim) × 4
