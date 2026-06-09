@@ -533,6 +533,37 @@ qa:
 `forge doctor` reporta warning se `qa.enabled: false` AND
 `qa.auto-run-on-feature-done: true` (config inconsistente).
 
+### qa.sensitive-env-grants (opcional, since v1.2 — QA-11)
+
+Lista de env vars sensitive autorizadas pelo user neste projeto. Cards
+que declaram `qa-extensions.env-needs` com vars sensitive precisam ter
+todas elas presentes nesta lista pra serem ativados sem novo prompt.
+
+```yaml
+qa:
+  sensitive-env-grants:
+    - GITHUB_TOKEN      # granted em init/reconfigure pelo user
+    - AWS_TOKEN         # granted via prompt 3-caminhos
+```
+
+### Semântica
+
+- Lista vazia ou ausente: zero grants — qualquer card com sensitive
+  env-needs dispara prompt na próxima ativação.
+- Edição manual da lista é suportada (e auditável via git diff).
+  Remoção de var → próxima ativação re-pergunta.
+- Adição manual (sem passar pelo prompt) é tecnicamente possível mas
+  desencorajada — log da decisão fica fora da auditoria.
+- Shape malformado (não-lista) é tratado como `[]` com warning em
+  stderr (não raise).
+
+### Não-revoke automático
+
+Quando um card declarando GITHUB_TOKEN é desinstalado, o grant
+permanece em workflow-config. Revoke explícito: edite manualmente OU
+aguarde gap opt-in `forge reconfigure --revoke-grants` (não
+implementado v1.2).
+
 ## Deliberately OUT of config
 
 | Decision | Why not in config |

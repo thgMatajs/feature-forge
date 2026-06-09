@@ -220,6 +220,46 @@ overlay-aware desde Gap 5 (registrado em `docs/design/07-discipline.md
 
 ---
 
+## env-needs (opcional, since v1.2 — QA-11)
+
+Lista de env vars que o card declara precisar no subprocess do sandbox.
+
+```yaml
+qa-extensions:
+  env-needs:
+    - GITHUB_TOKEN      # bate pattern sensitive → exige grant
+    - JAVA_HOME         # non-sensitive → passa direto
+```
+
+### Semântica
+
+- Cada item é o nome literal da env var (case-sensitive no lookup).
+- Vars **non-sensitive** (não batem `SENSITIVE_PATTERN` —
+  `TOKEN|SECRET|PASSWORD|AUTH|CREDENTIAL|API_KEY|PRIVATE_KEY`,
+  case-insensitive) são injetadas direto no subprocess sem prompt.
+- Vars **sensitive** disparam prompt 3-caminhos pro user no momento de
+  `forge init` ou `forge reconfigure` (não no momento de `forge qa`).
+- Grant é persistido em `workflow-config.qa.sensitive-env-grants` —
+  per-projeto, não per-card. Mesma var declarada por 2 cards = prompt
+  único pro user.
+
+### Regras de validação (validator: validate_qa_extensions.py)
+
+| Regra | Comportamento |
+|---|---|
+| Tipo deve ser `list[str]` | shape errado → `QAExtensionsValidationError` |
+| Item non-string | raise com índice + tipo recebido |
+| Item vazio ou com whitespace interno | raise |
+| Var sensitive sem grant | NÃO rejeita em load-time; runtime (init/reconfigure) dispara grant |
+
+### Cross-refs
+
+- Grant flow: `engine/cards/grant.py`
+- Storage: `docs/schemas/workflow-config.md §qa.sensitive-env-grants`
+- Spec: `docs/superpowers/specs/2026-06-08-qa-sandbox-env-hardening-design.md`
+
+---
+
 ## Cross-refs
 
 | Tópico | Arquivo |
