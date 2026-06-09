@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from engine.cards.loader import CardManifest
 from engine.persona import mentor_calmo
@@ -75,21 +75,24 @@ def evaluate_sensitive_grants(
 
     # Coleta universo de sensitive vars NEW (não-granted), com quais cards
     # as pedem (dedup cross-cards: prompt único por var).
-    var_to_cards: dict[str, list[str]] = {}
+    # deep-019: usa set internamente para dedup quando um mesmo card
+    # declara a mesma var duas vezes por engano de yaml (CardManifest
+    # apenas tipa como tupla — não dedupliza).
+    var_to_cards: dict[str, set[str]] = {}
     for card in cards_list:
         for var in card.sensitive_env_needs:
             if var in already_granted:
                 continue
-            var_to_cards.setdefault(var, []).append(card.name)
+            var_to_cards.setdefault(var, set()).add(card.name)
 
     granted: list[str] = []
     denied_vars: set[str] = set()
 
     # Prompt único per var (ordem estável pra UX determinística)
     for var in sorted(var_to_cards):
-        cards_requesting = var_to_cards[var]
+        cards_requesting = sorted(var_to_cards[var])
         decision = _prompt_sensitive_grant(
-            card_name=", ".join(sorted(cards_requesting)),
+            card_name=", ".join(cards_requesting),
             var=var,
         )
         if decision == "grant":
@@ -107,10 +110,15 @@ def evaluate_sensitive_grants(
             )
 
     # Cards com pelo menos 1 var denied → denied_cards
+    # deep-009: short-circuit quando nenhuma var foi denied — economiza
+    # O(N*M) cards × env_needs no caminho comum (re-run sem novos prompts).
+    # NB: denied_vars só contém vars denied NESTA sessão; cards que dependem
+    # apenas de already_granted não são afetados.
     denied_cards: list[str] = []
-    for card in cards_list:
-        if any(v in denied_vars for v in card.sensitive_env_needs):
-            denied_cards.append(card.name)
+    if denied_vars:
+        for card in cards_list:
+            if any(v in denied_vars for v in card.sensitive_env_needs):
+                denied_cards.append(card.name)
 
     return GrantDecision(
         granted=tuple(granted),
@@ -125,8 +133,10 @@ def _load_existing_grants(workflow_config: dict[str, Any]) -> set[str]:
     raw = qa_section.get("sensitive-env-grants", [])
     if not isinstance(raw, list):
         # Fail-safe: shape ruim vira [] (não raise); warning visível.
+        # deep-015: emoji padronizado para '⚠' plain (sem variation
+        # selector U+FE0F) para render consistente cross-terminal.
         print(
-            f"⚠️  qa.sensitive-env-grants tem shape inesperado ({type(raw).__name__}); "
+            f"⚠ qa.sensitive-env-grants tem shape inesperado ({type(raw).__name__}); "
             f"tratando como vazio. Reconcilie via `forge reconfigure → qa`.",
             file=sys.stderr,
         )
@@ -134,14 +144,24 @@ def _load_existing_grants(workflow_config: dict[str, Any]) -> set[str]:
     return {v for v in raw if isinstance(v, str)}
 
 
-def _prompt_sensitive_grant(*, card_name: str, var: str) -> str:
+def _prompt_sensitive_grant(
+    *,
+    card_name: str,
+    var: str,
+    prompt_fn: Callable[[str], str] = input,
+) -> str:
     """Dispara prompt 3-caminhos mentor-calmo. Retorna 'grant'|'deny'|'abort'.
 
     Reusa ``mentor_calmo.three_paths_block`` (helper canônico do projeto —
     discipline §1, 3 caminhos exatos).
 
-    Tests mockam esta fn inteira via monkeypatch; ``input()`` real só roda
-    em prod.
+    deep-017: DI seam via ``prompt_fn`` (default ``input``). Tests injetam
+    callable em vez de monkeypatch global, mantendo a fn pura e fácil de
+    re-utilizar (futuras variantes TTY-aware com getpass-like).
+
+    deep-004: input não-reconhecido NÃO mais cai em abort silencioso —
+    re-prompta até 3x antes de declarar abort, e captura EOFError
+    explicitamente pra ambiente não-interativo (CI sem TTY).
     """
     block = mentor_calmo.three_paths_block(
         f"Card pede acesso a variável sensitive: {var}",
@@ -173,5 +193,24 @@ def _prompt_sensitive_grant(*, card_name: str, var: str) -> str:
         ],
     )
     print(block, file=sys.stderr)
-    choice = input("Escolha [1/2/3]: ").strip()
-    return {"1": "grant", "2": "deny", "3": "abort"}.get(choice, "abort")
+    for _attempt in range(3):
+        try:
+            choice = prompt_fn("Escolha [1/2/3]: ").strip()
+        except EOFError:
+            # Ambiente sem stdin interativo (CI pipeline, forge init
+            # automatizado): aborta com mensagem explícita em vez de
+            # bubble do EOFError nu.
+            print(
+                "stdin fechado — abortando grant. Use `forge reconfigure` "
+                "interativo para ajustar manualmente.",
+                file=sys.stderr,
+            )
+            return "abort"
+        mapped = {"1": "grant", "2": "deny", "3": "abort"}.get(choice)
+        if mapped is not None:
+            return mapped
+        print(
+            f"Entrada {choice!r} não reconhecida — esperado 1, 2 ou 3.",
+            file=sys.stderr,
+        )
+    return "abort"  # 3 tentativas inválidas → abort explícito
