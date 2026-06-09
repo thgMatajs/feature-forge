@@ -1,12 +1,12 @@
 # Testing — disciplina
 
-Mandamento #2: verde antes de "pronto". 1014 tests collected é estado-base (v1.2.x pós-QA-11).
+Mandamento #2: verde antes de "pronto". 1113 tests collected é estado-base (v1.2-dev pós-PR #9 — 2026-06-09).
 
 ## Comandos canônicos
 
 ```bash
 # Lane completa (default)
-pytest                              # ~1014 tests, default lane (QA-11 baseline)
+pytest                              # ~1113 tests, default lane (pós-PR #9 baseline)
 
 # Lane rápida (skip integration + e2e)
 pytest -m "not integration and not e2e"
@@ -133,7 +133,7 @@ Novo validator em `validators/` exige:
 Você só pode reportar trabalho "concluído" se TODOS:
 
 - [ ] `pytest` (full suite) sai com 0 falhas
-- [ ] Count de tests >= baseline (1014 em v1.2.x pós-QA-11; consulte
+- [ ] Count de tests >= baseline (1113 em v1.2-dev pós-PR #9; consulte
       `docs/design/08-session-handoff.md` pra current count)
 - [ ] `forge verify` passa cascade sem hard fail
 - [ ] Doc-sync executado (rule [doc-sync.md](doc-sync.md))

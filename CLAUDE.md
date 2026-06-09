@@ -68,7 +68,7 @@ Detalhe: `.claude/rules/decisions.md`.
 
 ### 2. Verde antes de "pronto"
 
-`pytest` (637 tests baseline + 12 skipped, v1.2.0 + Gap 9) verde + `forge
+`pytest` (1113 tests baseline, v1.2-dev pós-PR #9) verde + `forge
 verify` verde + validators sem hard fail. Sem isso, não dizemos
 "implementado". Subagente que implementa SEMPRE recebe
 `superpowers:verification-before-completion` como hard gate no context-pack.
