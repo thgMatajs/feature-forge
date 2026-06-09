@@ -127,14 +127,23 @@ def parse_qa_config(workflow_config: dict[str, Any] | None) -> QAConfig:
     if not isinstance(extensions, dict):
         extensions = {}
 
-    disabled_raw = extensions.get("disabled") or []
-    extensions_disabled = tuple(disabled_raw)
-
     # Cast defensivo: se o YAML carregou string ao inves de numero
     # (ex.: `agent-timeout-seconds: "15"` por engano), nao queremos
     # ValueError vazar — emite warning mentor-calmo e usa o default.
     # Pattern espelha o approach de engine.reconfigure._qa_adjust_budgets.
     warnings_collected: list[str] = []
+
+    disabled_raw = extensions.get("disabled")
+    if disabled_raw is None:
+        extensions_disabled: tuple[str, ...] = ()
+    elif not isinstance(disabled_raw, list):
+        warnings_collected.append(
+            f"qa.extensions.disabled={disabled_raw!r} não é lista — "
+            f"usando default (). Ajuste via `forge reconfigure → qa`."
+        )
+        extensions_disabled = ()
+    else:
+        extensions_disabled = tuple(v for v in disabled_raw if isinstance(v, str))
 
     def _safe_float(key: str, default: float, source: dict[str, Any]) -> float:
         raw = source.get(key, default)

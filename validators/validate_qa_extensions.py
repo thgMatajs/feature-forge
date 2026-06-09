@@ -117,7 +117,7 @@ def validate_qa_extensions(
             if not item or any(c.isspace() for c in item):
                 raise QAExtensionsValidationError(
                     f"{card_path}: qa-extensions.env-needs[{idx}] inválido "
-                    f"({item!r}): deve ser non-empty sem whitespace interno"
+                    f"({item!r}): deve ser non-empty sem whitespace"
                 )
 
     disabled = extensions_disabled or set()

@@ -634,6 +634,7 @@ def _invoke_validator(spec: _ValidatorSpec, project_root: Path) -> _ValidatorRes
             text=True,
             timeout=60,
             env=build_safe_env(extras=("JAVA_HOME", "ANDROID_HOME", "GRADLE_USER_HOME")),     # QA-11: env reduzido pra subprocess de validator
+            cwd=str(project_root),
         )
     except subprocess.TimeoutExpired:
         return _ValidatorResult(
