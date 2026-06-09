@@ -100,7 +100,9 @@ def hydrate_sandbox_results(
             status = "error"
 
         exit_code = entry.get("exit_code")
-        if exit_code is not None and not isinstance(exit_code, int):
+        if exit_code is not None and (
+            isinstance(exit_code, bool) or not isinstance(exit_code, int)
+        ):
             exit_code = None
 
         stdout = entry.get("stdout", "")
@@ -369,6 +371,14 @@ def dedup_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
         else:
             survivor = dict(f)
             survivor["fingerprint"] = fp
+            # Deep-ish copy de evidence pra impedir mutação do input quando
+            # findings subsequentes acrescentarem entradas em
+            # ``evidence.duplicates`` (path do branch ``fp in by_fp``).
+            if isinstance(survivor.get("evidence"), dict):
+                evidence_copy = dict(survivor["evidence"])
+                if isinstance(evidence_copy.get("duplicates"), list):
+                    evidence_copy["duplicates"] = list(evidence_copy["duplicates"])
+                survivor["evidence"] = evidence_copy
             by_fp[fp] = survivor
             order.append(fp)
     return [by_fp[fp] for fp in order]
@@ -401,6 +411,10 @@ def compute_verdict(findings: list[dict[str, Any]]) -> Verdict:
         sev = f.get("severity")
         if sev in _SEVERITY_KEYS:
             sev_count[sev] += 1
+        else:
+            # Docstring promete: findings sem severity reconhecida contam
+            # como info (não pesa em BLOCK/FLAG). Alinha impl à promessa.
+            sev_count["info"] += 1
 
     if sev_count["critical"] >= 1 or sev_count["high"] >= 3:
         return "BLOCK"
@@ -460,7 +474,15 @@ def synthesize(draft_findings: list[dict[str, Any]]) -> SynthesisResult:
         if sev in _SEVERITY_KEYS:
             by_sev[sev] += 1
 
-    by_vec: dict[str, int] = {}
+    # Inicializa todos os 4 vectors core com 0 — validate_qa_report exige
+    # presença das 4 keys (_REQUIRED_VECTOR_KEYS.issubset). Sem isso, run
+    # com zero findings em algum vector quebraria a validação downstream.
+    by_vec: dict[str, int] = {
+        "spec-vs-spec": 0,
+        "coverage": 0,
+        "chaos": 0,
+        "validator-claim": 0,
+    }
     for f in deduped:
         vec = f.get("vector")
         if isinstance(vec, str) and vec:
