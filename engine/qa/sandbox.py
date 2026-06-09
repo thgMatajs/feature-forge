@@ -37,7 +37,6 @@ externamente é imutável".
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 import time
@@ -46,6 +45,14 @@ from pathlib import Path
 from typing import Iterable, Literal
 
 from engine._sandbox.env import build_safe_env
+
+
+# deep-007: spawn overhead floor — abaixo disso o subprocess nem começa
+# trabalho útil; preferimos skipped-budget a um timeout near-instant.
+# Tunable se portarmos pra plataforma com spawn mais lento (Windows +
+# bundled Python).
+_MIN_REMAINING_S_FOR_SPAWN = 0.05
+
 
 _CHDIR_GUARD = """\
 # sitecustomize.py preload — bloqueia mudança de CWD no subprocess do sandbox.
@@ -146,11 +153,21 @@ def _write_chdir_guard(run_dir: Path) -> Path:
     """Escreve sitecustomize.py em um diretório dedicado para PYTHONPATH preload.
 
     Retorna o diretório que deve ser prepended ao PYTHONPATH (não o arquivo).
+
+    deep-020: aplica permissões restritivas (0700 no dir, 0600 no arquivo)
+    em best-effort — em multi-tenant POSIX evita que co-tenant leia ou
+    troque o guard entre write e subprocess spawn (TOCTOU). Windows ignora
+    chmod silenciosamente (OSError swallowed).
     """
     guard_dir = run_dir / "_sandbox_guard"
     guard_dir.mkdir(parents=True, exist_ok=True)
     guard_file = guard_dir / "sitecustomize.py"
     guard_file.write_text(_CHDIR_GUARD, encoding="utf-8")
+    try:
+        guard_file.chmod(0o600)
+        guard_dir.chmod(0o700)
+    except OSError:
+        pass  # best-effort; Windows não honra POSIX modes
     return guard_dir
 
 
@@ -163,15 +180,16 @@ def _hardened_env(
 
     Refactor (QA-11): delega base pra build_safe_env(extras=...);
     adiciona PYTHONPATH guard e FORGE_QA_SANDBOX=1 por cima.
+
+    SEGURANÇA (deep-001): NÃO herda PYTHONPATH do parent. PYTHONPATH é
+    vetor de code-execution — qualquer módulo sob ele pode ser importado
+    pelo validator subprocess, então herdar do parent burla a allowlist
+    pro var que mais importa (defesa-em-profundidade quebrada).
+    Callers que precisem de paths extras devem declará-los via `extras`,
+    cruzando o grant flow primeiro.
     """
     env = build_safe_env(extras=extras)
-    # PYTHONPATH não está em CORE_ALLOWLIST; lemos do os.environ direto pra
-    # preservar herança defensiva quando caller já configurou paths extras.
-    existing = os.environ.get("PYTHONPATH", "")
-    if existing:
-        env["PYTHONPATH"] = f"{guard_dir}{os.pathsep}{existing}"
-    else:
-        env["PYTHONPATH"] = str(guard_dir)
+    env["PYTHONPATH"] = str(guard_dir)
     env["FORGE_QA_SANDBOX"] = "1"
     return env
 
@@ -268,7 +286,7 @@ def run_sandbox(
         # synthesis depende dessa distinção (timeout = validator lento;
         # skipped-budget = orchestrator decidiu pular).
         remaining = min(per_validator_s, budget_total_s - elapsed)
-        if remaining < 0.05:
+        if remaining < _MIN_REMAINING_S_FOR_SPAWN:
             results.append(SandboxResult(fixture=fixture, status="skipped-budget"))
             continue
 

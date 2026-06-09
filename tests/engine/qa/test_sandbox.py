@@ -469,16 +469,27 @@ def test_hardened_env_delegates_to_build_safe_env(tmp_path, monkeypatch):
     assert "AWS_SECRET" not in env, "env do sandbox não pode incluir var sensitive do pai"
 
 
-def test_hardened_env_preserves_pythonpath_guard_prepend(tmp_path, monkeypatch):
-    """guard_dir é prepended ao PYTHONPATH existente."""
-    monkeypatch.setenv("PYTHONPATH", "/existing/path")
-    # guard_dir prepended; existing /existing/path preserved após separator
+def test_hardened_env_drops_parent_pythonpath(tmp_path, monkeypatch):
+    """deep-001: PYTHONPATH do parent é DROPADO — não herda.
+
+    Regressão crítica: a versão anterior concatenava
+    ``os.environ['PYTHONPATH']`` ao guard_dir, permitindo que um parent
+    process hostil (ou shell poluído) injetasse paths de import arbitrários
+    no subprocess do sandbox. PYTHONPATH é vetor de code-execution — todo
+    módulo sob ele pode ser importado pelo validator. Defense-in-depth
+    exige drop incondicional; callers que precisem de paths extras devem
+    declarar via ``extras`` (que passa pelo grant flow).
+    """
+    monkeypatch.setenv("PYTHONPATH", "/evil/path:/another/evil")
     guard_dir = tmp_path / "guard"
     guard_dir.mkdir()
 
     env = _hardened_env(guard_dir)
 
-    assert env["PYTHONPATH"] == f"{guard_dir}{os.pathsep}/existing/path"
+    # Só o guard_dir, sem traço do PYTHONPATH herdado
+    assert env["PYTHONPATH"] == str(guard_dir)
+    assert "/evil/path" not in env["PYTHONPATH"]
+    assert "/another/evil" not in env["PYTHONPATH"]
 
 
 def test_hardened_env_preserves_forge_qa_sandbox_marker(tmp_path):
