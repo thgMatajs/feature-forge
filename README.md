@@ -2,7 +2,7 @@
 
 A standalone CLI skill that orchestrates end-to-end planning + implementation of mobile features across Android, iOS, KMP, and Web. Backend-agnostic (Firebase, REST, GraphQL, local-only).
 
-> **State:** v1.2-dev (2026-06-09) — QA-11 ultra-review + PR #9 merged em main; 1113 tests; 20 validators. ~400 arquivos, ~52.5K LOC. v1.2.0 adicionou Gap 5 (card local overlay — Approach A) + 2 cards canon (`retrofit-client` + `shared-preferences-prefs` com `legacy-marker`) + power-review PR #2 R1. Gap 9 adicionou extends-feature mechanic (pattern leve product-derived) + novo validator EXT-001..004 + discipline §10. Multi-target watchOS/Wear/TV permanente out-of-scope.
+> **State:** v1.2-dev · 2026-06-09 · 1113 tests · 20 validators · 13 comandos · ~400 arquivos · ~52.5K LOC
 
 ## What it is
 
@@ -14,7 +14,8 @@ Skill CLI-first com 13 comandos canônicos (zero flags — toda parametrização
 4. **`forge verify`** — cascade de 20 validators com 3-caminhos discipline (inclui `check_no_behavior_change` para refactor, `check_cyclomatic_complexity` multi-language, `check_secrets` multi-tool security gate, e `validate_extension_feature` cross-cutting pra Gap 9 extensions)
 5. **`forge doctor`** — health check em 14 categorias (inclui reuse-intelligence findings agregados + `cc-gate-tools` + `secrets-tools`)
 6. **`forge reconfigure`** — single entrypoint pra TODA mutação post-init (cards, paths, conventions, graph rebuild que re-queue reuse proposals)
-7. Outros: `status`, `evolve` (review proposals — 16 kinds), `undo`, `graph` (Q1-Q17), `memory`, `raw`
+7. **`forge qa`** — gate adversarial multi-agente (red-team). 4 attack vectors × 4 scope targets em sandbox isolado. Verdict informativo (BLOCK/FLAG/PASS), findings → `forge evolve`.
+8. Outros: `status`, `evolve` (review proposals — 16 kinds), `undo`, `graph` (Q1-Q17), `memory`, `raw`
 
 ## Identity
 
@@ -72,9 +73,9 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 | Templates canônicos | 18 (16 produto + feature-intake-bugfix + feature-intake-refactor) |
 | Cards canônicos | 22 (8 stack + 6 Firebase + 6 REST + retrofit-client + shared-preferences-prefs com `legacy-marker`); overlay local em `.claude/cards/local/<name>/` desde Gap 5 (2026-06-02) |
 | Preset | kmp-mobile (8 stack cards + 4 backend-candidates) |
-| Validators Python | 20 (+ 4 helper modules: `_common.py`, `_gate_infra.py`, `_diff.py`, `__init__.py`) — inclui `check_no_behavior_change` para refactor, `check_cyclomatic_complexity` multi-language (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon) refatorado em Phase 0 (v1.2-dev) pra compor de `_gate_infra` + `_diff`; `validate_card_yaml` + `validate_capability_labels` overlay-aware (Gap 5); `validate_extension_feature` novo em Gap 9 (EXT-001..004, cross-cutting) |
+| Validators Python | 20 + 3 helpers (`_gate_infra`, `_diff`, `_common`) — inclui `check_cyclomatic_complexity` (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon), `check_secrets` (gitleaks + trufflehog), `check_no_behavior_change` (refactor), `validate_extension_feature` (extends-feature cross-cutting) |
 | Hooks | 9 + 1 reuse incremental (`post-edit-detect-duplications.sh`) |
-| Tests | ~1113 collected (rapid lane + integration/e2e — Gap 9 +42 (37 ship + 5 fix loop) + CC gate +~63 + Phase 0 -1 justificado + secrets gate +~30 + forge qa +~60 cobrindo qa validators + engine + auditors + QA-11 sandbox env hardening +~30 + QA-13 paranoid scope filter +3; cumulativo cobre PR #1 R1+R2+R3 + Gap 5 + power-review PR #2 R1 + Gap 9 + PR #4 CC gate + Phase 0 gate-infra + R1.1 secrets + forge qa v1.2 + QA-11/QA-13). v1.2.0 baseline 595+12 e Gap 9 baseline 637+12 preservados na timeline. |
+| Tests | ~1113 (unit + integration + e2e · ~20 skipped · baseline histórico em CHANGELOG.md) |
 | LOC total | ~52.500 |
 | Engine LOC | ~22.000 (Python) |
 | Files total | ~400 |
@@ -144,7 +145,7 @@ forge plan           plan feature (waves A-E, subtype-aware)
                      · subtypes: product / refactor / bugfix / spike / chore
                      · `forge plan refactor-{slug}` lê L1 status e pula Wave A
 forge implement      execute task-by-task
-forge verify         validator cascade (17 validators)
+forge verify         validator cascade (20 validators)
                      · check_no_behavior_change gate quando subtype=refactor
                      · check_cyclomatic_complexity gate multi-language
                      · check_secrets gate multi-tool (gitleaks per-task / trufflehog cascade)
@@ -169,10 +170,6 @@ forge qa             gate adversarial multi-agente (red-team)
                      · verdict informativo (BLOCK/FLAG/PASS); findings → forge evolve
 ```
 
-- **`forge qa`** — gate adversarial multi-agente (red-team). Audita
-  feature/screen/task/paranoid com 4 attack vectors. Verdict
-  informativo (BLOCK/FLAG/PASS), findings → `forge evolve`.
-
 Hidden entrypoints (invocados por hooks, nunca tipados pelo usuário):
 
 - `forge ingest --event <type> [payload]` — graph/memory/inventory updater
@@ -187,8 +184,8 @@ Start here:
 - `docs/design/00-vision.md` — arquitetura (6 layers, capability cards)
 - `docs/design/01-decisions.md` — 27 decisões locked
 - `docs/design/06-command-surface.md` — 13 comandos canônicos + 2 hidden
-- `docs/design/07-discipline.md` — 10 disciplinas universais (§8 non-product, §9 external-deps, §10 extension feature)
-- `docs/design/04-pending.md` — 18 Gaps inventoriados (Gap 1+2+8+18 em v1.1.0; Gap 5 em v1.2.0; Gap 9 em v1.2 cumulativo — extends-feature mechanic; multi-target out-of-scope permanente)
+- `docs/design/07-discipline.md` — 10 disciplinas universais (3-caminhos, fail-fast, pause/abort, vocabulário, fingerprint)
+- `docs/design/04-pending.md` — gaps abertos + itens deferred por versão
 - `docs/schemas/graph.md` — schema v2 com reuse_findings + module_deps + Q1-Q17
 - `docs/schemas/proposed-evolutions.md` — 16 proposal kinds (10 retrospective + 6 reuse-intelligence)
 - `docs/schemas/capability-labels.md` — catálogo canônico de capabilities
@@ -197,7 +194,7 @@ Start here:
 - `docs/ux/forge-evolve-roteiro.md` — Cenas 15-20 para os 6 reuse kinds
 - `agents/planning-conductor.md` — super-agent prompt (subtypes + waves)
 - `presets/kmp-mobile/README.md` — preset base v1
-- `CHANGELOG.md` — release notes v1.0.0 + v1.1.0 + v1.2.0
+- `CHANGELOG.md` — release notes + histórico de mudanças
 
 **PRD sub-docs** (lente produto detalhada):
 
@@ -205,7 +202,7 @@ Start here:
 - `docs/product/02-scenarios.md` — 6 user journeys end-to-end
 - `docs/product/03-roadmap.md` — 3 ondas + Eisenhower + anti-roadmap
 
-## Conhecidos limites v1.1
+## Limites conhecidos
 
 Documentados em `docs/design/08-session-handoff.md § Conhecidos limites v1` + `CHANGELOG.md § Conhecidos limites v1.1`:
 
