@@ -2348,11 +2348,13 @@ Ao trocar `backend.provider: firebase → rest`, seção `backend.firebase.{dev-
 
 **Acoplamento com DET-6:** alto. Cleanup logic depende de qual modelo prevalece.
 
-#### DET-3 — Scanner cego pra `libs.versions.toml` (Alto)
+#### ✅ resolvido 2026-06-10: DET-3 — Scanner cego pra `libs.versions.toml` (Alto)
 
 Cards `ktor-client` (`cards/ktor-client/detection/signals.yaml`) + `retrofit-client` (`cards/retrofit-client/detection/signals.yaml`) declaram signals apenas em `**/build.gradle*`. Projetos modernos usam Gradle version catalogs (`gradle/libs.versions.toml`) onde as deps são declaradas. Scanner não cobre esse pattern → cards não matcham → todos os backend-candidates do preset `kmp-mobile` mostram `(cards matched: 0/N)` → default vence por ser primeiro da lista, não por evidência.
 
 **Acoplamento com DET-6:** baixo. Detection layer é independente do modelo de bundles vs eixos.
+
+**Resolução shipped 2026-06-10:** Plan `docs/superpowers/plans/det-3-gradle-dep-signal.md`. Novo signal type `gradle-dep` + helper `_eval_gradle_dep` em `engine/init.py` + regra CARD-020 em `engine/cards/loader.py` + migration de 9 signals em 8 cards (crashlytics, firebase-auth ×2, firebase-storage, firestore-persistence, firestore-realtime, koin-annotations, kotlinx-serialization-json, ktor-client/core). Catálogo `gradle/libs.versions.toml` agora coberto. Audit determinístico em `.planning/det-3/migration-audit.json`. Suite: 1125 passed.
 
 #### DET-5 — `retrofit-client` fora do preset kmp-mobile (Alto)
 
@@ -2392,6 +2394,40 @@ Todos UX/microcopy/persona do piloto fallback CLI:
 - `bin/forge:22` `FORGE_VERSION="1.0.0"` hardcoded (dead variable)
 
 Quando Phase A entregar protocolo Claude-Code-fronted, essas UX issues desvanecem porque persona+microcopy passam a ser responsabilidade da Claude Code, não do Python. Não vale fixar enquanto o engine ainda emite as strings.
+
+### DET-3 follow-ups não-bloqueantes (2026-06-10)
+
+Anotados conforme SPEC §"Considerações futuras" pra rastreio sem bloquear shipping de DET-3.
+
+#### Vapor cleanup — signal type `dependency` (follow-up de DET-3)
+
+`docs/schemas/card.md` declara o signal type `dependency` mas
+`engine/init.py:_eval_detection_signals` nunca implementou — cards com
+`type: dependency` são silenciosamente ignorados. Sucessor canônico
+pra Gradle deps é `gradle-dep` (DET-3, shipped 2026-06-10).
+
+Decisão pendente: (A) implementar `dependency` cobrindo
+npm/pip/swift/pod (multi-ecossistema), (B) remover do schema e marcar
+como vapor histórico, (C) renomear `dependency` → `package-manager-dep`
+pra esclarecer scope. Sem brainstorm aberto ainda.
+
+Não-bloqueante. Anotado pra abrir 3-caminhos quando tiver bandwidth.
+
+#### `signals.yaml` schema-version bump (follow-up de DET-3)
+
+Hoje `cards/*/detection/signals.yaml` não declara schema-version uniforme
+(alguns têm `schema-version: 1`, outros não). DET-3 migrou 9 signals em
+8 cards de `file-content` → `gradle-dep` sem versionamento explícito,
+dependendo do git log pra rastrear "antes/depois". Pra migrations
+futuras (próximos signal types, mudanças de shape), adicionar
+`schema-version: 2` no topo dos cards migrados (e `schema-version: 1`
+default implícito nos não-tocados, ou explícito via reconfigure).
+
+Decisão pendente: timing — bumpar nos 8 cards migrados agora (escopo
+de DET-3) ou esperar próximo signal type e bumpar batched. Default
+atual: esperar, registrar aqui.
+
+Não-bloqueante. Anotado pra próxima rodada de migration cross-card.
 
 ## Reading order for new contributors
 

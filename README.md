@@ -2,7 +2,7 @@
 
 A standalone CLI skill that orchestrates end-to-end planning + implementation of mobile features across Android, iOS, KMP, and Web. Backend-agnostic (Firebase, REST, GraphQL, local-only).
 
-> **State:** v1.2-dev · 2026-06-09 · 1113 tests · 20 validators · 13 comandos · ~400 arquivos · ~52.5K LOC
+> **State:** v1.2-dev · 2026-06-10 · 1125 tests · 20 validators · 13 comandos · ~400 arquivos · ~52.5K LOC
 
 ## What it is
 
@@ -75,7 +75,7 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 | Preset | kmp-mobile (8 stack cards + 4 backend-candidates) |
 | Validators Python | 20 + 3 helpers (`_gate_infra`, `_diff`, `_common`) — inclui `check_cyclomatic_complexity` (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon), `check_secrets` (gitleaks + trufflehog), `check_no_behavior_change` (refactor), `validate_extension_feature` (extends-feature cross-cutting) |
 | Hooks | 9 + 1 reuse incremental (`post-edit-detect-duplications.sh`) |
-| Tests | ~1113 (unit + integration + e2e · ~20 skipped · baseline histórico em CHANGELOG.md) |
+| Tests | ~1125 (unit + integration + e2e · ~20 skipped · baseline histórico em CHANGELOG.md) |
 | LOC total | ~52.500 |
 | Engine LOC | ~22.000 (Python) |
 | Files total | ~400 |
@@ -124,7 +124,7 @@ Requer Python 3.11+ + PyYAML (única dep externa).
   presets/kmp-mobile/                   canonical preset v1
   validators/                           20 validators + helpers (inclui check_cyclomatic_complexity + check_secrets + validate_extension_feature)
   hooks/                                9 hooks + reuse incremental script
-  tests/                                ~1113 collected tests (unit + integration + e2e) + 20 skipped
+  tests/                                ~1125 collected tests (unit + integration + e2e) + 20 skipped
 
 [per project install via `forge init`]
 {project}/.claude/

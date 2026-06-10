@@ -7,13 +7,22 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Documentation
+### Added
 
-- v1.2-dev pilot 2026-06-10 capturado em `docs/design/04-pending.md` — 6 findings (DRIFT-1 conceitual primário, B1, B2, DET-3, DET-5, DET-6) + sequenciamento Phase 0 → Phase A (DRIFT-1) → Phase B (DET-6) decidido com user. UX/microcopy/persona findings do modo fallback CLI deferred até Phase A (engine emite intent estruturado pra Claude Code → strings deixam de ser responsabilidade do Python).
+- Signal type `gradle-dep` em `engine/init.py:_eval_detection_signals` — abstrai presença de coordenada Maven em catálogo `gradle/*.versions.toml` (TOML moderno, formato `module = "<group>:<artifact>"` e `group + name` split) OU em `**/build.gradle*` (legado). Card declara `type: gradle-dep` + `coordinate: <group>:<artifact>`; engine resolve onde procurar. Resolve DET-3 do pilot v1.2-dev 2026-06-10 (scanner cego pra libs.versions.toml). Helper privado `_eval_gradle_dep(project_root, coordinate)` ao lado de `_glob_any`, com curto-circuito no primeiro match e try/except silencioso pra TOML mal-formado. Plan: `docs/superpowers/plans/det-3-gradle-dep-signal.md`.
+- Regra de validação CARD-020 em `engine/cards/loader.py` — `detection.signals[*].coordinate` (quando `type=gradle-dep`) deve ser `<group>:<artifact>`, sem versão sufixada, sem espaços. (ID alocado como CARD-020 porque CARD-019 já é usado por `legacy-marker`; SPEC §AC-8 autorizou "CARD-019 ou next free".)
 
 ### Changed
 
+- 9 signals em 8 cards canônicos migrados de `file-content` em `**/build.gradle*` pra `gradle-dep` (mesma coordenada, semântica mais ampla cobrindo catálogos modernos): crashlytics, firebase-auth (base + ktx), firebase-storage, firestore-persistence, firestore-realtime, koin-annotations, kotlinx-serialization-json, ktor-client (variante ktor-client-core). Confidence preservada em cada signal — CARD-016 sanity intacta. Audit determinístico em `.planning/det-3/migration-audit.json`.
+- Signals em `**/*.kt`, `**/Podfile*`, `**/Package.swift`, e prefixos de família (`androidx.compose`, `androidx.datastore`, `androidx.room`, `navigation3`, `kotlinx-serialization` sem `-json`, `io.ktor:ktor-client` sem suffix, plugin DSL `kotlin("multiplatform")`) preservados como `file-content` per SPEC §Migration policy. Backward compat de `file-content` integralmente mantida.
+- `docs/schemas/card.md` §"Signal types" lista `gradle-dep` com schema completo; nota explícita sobre o vapor `dependency` (declared no schema mas nunca implementado no avaliador) — cleanup separado tracked em `04-pending.md`.
 - Apresentação (`docs/presentation/feature-forge.html`) atualizada para v1.2-dev: 22 → 24 slides — adicionados slides de subtypes/bugfix e forge qa, slide verify enriquecido com os gates fortes (CC + secrets + no-behavior-change), status e roadmap reescritos (todas as fases shipadas, timeline v1.0→v1.2→autopilot). DESIGN.md sincronizado.
+
+### Documentation
+
+- v1.2-dev pilot 2026-06-10 capturado em `docs/design/04-pending.md` — 6 findings (DRIFT-1 conceitual primário, B1, B2, DET-3, DET-5, DET-6) + sequenciamento Phase 0 → Phase A (DRIFT-1) → Phase B (DET-6) decidido com user. UX/microcopy/persona findings do modo fallback CLI deferred até Phase A (engine emite intent estruturado pra Claude Code → strings deixam de ser responsabilidade do Python).
+- DET-3 (Phase 0) marcado ✅ resolvido em `04-pending.md`. Follow-ups não-bloqueantes registrados na mesma página: (1) cleanup do vapor `dependency`, (2) `signals.yaml` schema-version bump nos cards migrados.
 
 ### Changed (load-bearing)
 
