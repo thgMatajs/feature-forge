@@ -98,7 +98,18 @@ class InitError(RuntimeError):
 
 @dataclass
 class _InitCheckpoint:
-    """State serialized on Ctrl+C, so a follow-up `forge init` can offer resume."""
+    """State serialized on Ctrl+C, so a follow-up `forge init` can offer resume.
+
+    DRIFT-1 W2.T3b — extend: campo ``intent_id`` adicionado pra correlacao
+    com ``.claude/state/forge-response.json`` no protocolo intent. Default
+    ``None`` preserva o contract dos call sites legacy (Ctrl+C pause sem
+    prompt ativo). Quando o pause vem do chokepoint (PausedForInputError),
+    o handler grava intent_id ANTES do ask — re-invocacao usa esse campo
+    pra confirmar que a response no disco corresponde ao prompt esperado.
+
+    Outcome C: dataclass per-subcommand mantido — sem import de
+    ``engine.qa.checkpoint`` (Decision 22).
+    """
 
     step: str
     at: str
@@ -106,6 +117,7 @@ class _InitCheckpoint:
     preset: str | None = None
     selected_card_names: list[str] = field(default_factory=list)
     backend_choice: str | None = None
+    intent_id: str | None = None
 
 
 def _checkpoint_path(project_root: Path) -> Path:
@@ -125,6 +137,7 @@ def _save_checkpoint(cp: _InitCheckpoint) -> None:
             "preset": cp.preset,
             "selected-card-names": cp.selected_card_names,
             "backend-choice": cp.backend_choice,
+            "intent-id": cp.intent_id,
         },
         atomic=True,
     )
@@ -849,13 +862,42 @@ def _run_pipeline(project_root: Path) -> int:
         # Decision 27 — sempre 3 caminhos em gate violation legítimo. Resume
         # completo entra plenamente em Phase 5+; por enquanto resume = restart
         # mantendo o checkpoint pra audit, discard apaga, abort sai sem tocar.
+        #
+        # DRIFT-1 W2.T3b — persist intent-id da pergunta de resume ANTES de
+        # invocar ``ui_question.ask``. Mantemos o resto do payload do
+        # checkpoint anterior intacto (preset, selected_card_names,
+        # backend_choice) — so atualizamos o campo intent_id. Re-invocacao
+        # apos exit 2 consome o response correspondente sem re-perguntar.
+        _resume_options = {
+            "resume": "começar do zero mantendo o checkpoint como audit",
+            "discard": "apagar o checkpoint e começar limpo",
+            "abort": "sair sem mexer em nada",
+        }
+        _save_checkpoint(
+            _InitCheckpoint(
+                step=str(existing_checkpoint.get("step") or "step-1-greeting"),
+                at=_utc_now_iso(),
+                project_root=str(project_root),
+                preset=existing_checkpoint.get("preset"),
+                selected_card_names=list(
+                    existing_checkpoint.get("selected-card-names") or []
+                ),
+                backend_choice=existing_checkpoint.get("backend-choice"),
+                intent_id=ui_question._stable_intent_id(
+                    "ask",
+                    "Resume de init pendente?",
+                    _resume_options,
+                    extra={
+                        "default": "discard",
+                        "min-selected": None,
+                        "validator-hint": None,
+                    },
+                ),
+            )
+        )
         resume_choice = ui_question.ask(
             "Resume de init pendente?",
-            {
-                "resume": "começar do zero mantendo o checkpoint como audit",
-                "discard": "apagar o checkpoint e começar limpo",
-                "abort": "sair sem mexer em nada",
-            },
+            _resume_options,
             default="discard",
         )
         if resume_choice == "discard":
