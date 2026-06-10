@@ -58,13 +58,23 @@ def _write_checkpoint(
     status: str,
     remaining_ids: list[str],
     note: str = "",
+    intent_id: Optional[str] = None,
 ) -> None:
+    """Write the evolve checkpoint atomically.
+
+    DRIFT-1 W2.T3b — outcome C "extend": preservamos o payload legacy
+    (status, saved-at, remaining-proposal-ids, note) e adicionamos o
+    campo ``intent-id``. Default ``None`` quando o pause nao vem do
+    chokepoint de prompts (L2 overflow, por ex.); quando vem, o campo
+    correlaciona com ``.claude/state/forge-response.json`` na re-invocacao.
+    """
     payload: dict[str, Any] = {
         "schema-version": 1,
         "status": status,
         "saved-at": _utc_now_iso(),
         "remaining-proposal-ids": remaining_ids,
         "note": note,
+        "intent-id": intent_id,
     }
     ensure_dir(claude_dir(project_root))
     write_yaml(_checkpoint_path(project_root), payload, atomic=True, backup=False)
@@ -183,15 +193,36 @@ def _diff_preview(p: DistillationProposal) -> None:
     renderer.write("")
 
 
+_ACTION_OPTIONS = {
+    "a": "aplicar",
+    "r": "rejeitar (permanente)",
+    "d": "depois (manter na fila)",
+    "v": "ver detalhe completo",
+}
+
+
+def _action_intent_id(proposal_id: str) -> str:
+    """Pre-compute the deterministic intent-id for the action ask on a proposal.
+
+    DRIFT-1 W2.T3b — outcome C: exposed as helper so the run loop can
+    persist intent-id no checkpoint ANTES de invocar question.ask
+    (mantem o invariante de §3 — pending intent aponta pra state ja
+    em disco). Question text espelha exatamente o usado em
+    ``_action_for`` — qualquer drift entre as duas strings quebra o
+    matching com forge-response.json.
+    """
+    return question._stable_intent_id(
+        "ask",
+        f"O que fazer com {proposal_id}?",
+        _ACTION_OPTIONS,
+        extra={"default": "d", "min-selected": None, "validator-hint": None},
+    )
+
+
 def _action_for(p: DistillationProposal) -> str:
     return question.ask(
         f"O que fazer com {p.id}?",
-        {
-            "a": "aplicar",
-            "r": "rejeitar (permanente)",
-            "d": "depois (manter na fila)",
-            "v": "ver detalhe completo",
-        },
+        _ACTION_OPTIONS,
         default="d",
         allow_pause=True,
     )
@@ -408,6 +439,18 @@ def run(argv: list[str]) -> int:
         index = cursor + 1
         _render_proposal_detail(p, index=index, total=total, full=False)
         _diff_preview(p)
+
+        # DRIFT-1 W2.T3b — persist checkpoint with the deterministic
+        # intent-id for ``_action_for(p)`` BEFORE invoking the chokepoint.
+        # If question.ask raises PausedForInputError, the host can pick
+        # the response that matches this intent-id on re-invocation.
+        _write_checkpoint(
+            project_root,
+            status="awaiting-action-response",
+            remaining_ids=[pp.id for pp in proposals[cursor:]],
+            note=f"awaiting action for {p.id}",
+            intent_id=_action_intent_id(p.id),
+        )
 
         try:
             action = _action_for(p)
