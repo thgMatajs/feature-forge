@@ -313,12 +313,12 @@ def main(command_module: str, argv: list[str]) -> int:
         ).returncode
         if rc != 2:
             return rc  # 0 success, 1 error, 130 SIGINT
-        intent = read_json(".claude/state/forge-pending.json")
+        intent = read_pending(project_root)
         try:
             response = prompt_user_via_stdin(intent)  # reusa renderer
         except KeyboardInterrupt:
             return 130
-        write_json(".claude/state/forge-response.json", response)
+        write_response(project_root, response)
 ```
 
 - Env var `FORGE_INTERNAL_TTY_BRIDGE=1` marca origem; engine pode usar
