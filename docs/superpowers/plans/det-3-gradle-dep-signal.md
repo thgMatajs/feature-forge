@@ -574,8 +574,8 @@ Expected: green. CARD-019 não dispara (todas as coordinates são `<group>:<arti
 
 - [ ] **Step 7.3: Verificar pytest baseline preservada**
 
-Run: `pytest -q 2>&1 | tail -3`
-Expected: `1125 passed` (sem novos tests adicionados nesta task — migration não introduz tests novos, AC-7 é coberto via integration que já existe).
+Run: `pytest --collect-only -q 2>&1 | tail -1 && pytest -q 2>&1 | tail -3`
+Expected: count ≥ `BASELINE + N` (onde `BASELINE` = `pytest --collect-only -q | tail -1` rodado em Task 0.2 antes do plano; `N` = soma de tests adicionados em Tasks 2 e 4 — 9 gradle-dep + 3 CARD-019 = 12). Sem novos tests nesta task (migration não introduz tests novos, AC-7 é coberto via integration que já existe). Zero failures.
 
 - [ ] **Step 7.4: AC-7 — verificar zero regressão em e2e**
 
@@ -643,7 +643,7 @@ Se stats mencionam "1113 tests" → atualizar para "1125 tests" (1113 + 9 gradle
 - [ ] **Step 9.1: pytest full suite**
 
 Run: `pytest 2>&1 | tail -10`
-Expected: `1125 passed, 0 failed` (ou superior, se hooks de coleta capturarem novos). Zero failures.
+Expected: count ≥ `BASELINE + N` passed, `0 failed` (onde `BASELINE` foi capturado em Task 0.2 via `pytest --collect-only -q | tail -1`; `N` = 12 = 9 novos tests gradle-dep da Task 2 + 3 novos tests CARD-019 da Task 4 + 0 da Task 7 + qualquer test adicional incidental). Zero failures, zero skips novos.
 
 - [ ] **Step 9.2: forge verify**
 
