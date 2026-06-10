@@ -78,11 +78,40 @@ grep -n "_save_checkpoint\|_load_checkpoint\|_clear_checkpoint\|checkpoint" engi
 Resultado (verificado em pré-flight): 71 matches em `init.py`, incluindo
 `_InitCheckpoint` dataclass (linha 104), `_save_checkpoint` (linha 120),
 `_load_checkpoint` (linha 138), `_clear_checkpoint` (linha 145), helper
-`_checkpoint_path` (linha 116). **Caminho escolhido:** reusar o pattern,
-não promover ainda pra helper genérico — cada subcommand mantém seu
-dataclass próprio porque os campos divergem (`preset`, `selected-card-names`,
-`backend-choice` são init-specific). Promoção pra `engine.utils.checkpoint`
-fica como follow-up gap se ≥3 subcommands materializarem o mesmo shape.
+`_checkpoint_path` (linha 116).
+
+Auditado também `engine/qa/checkpoint.py` (módulo compartilhado de QA):
+`Checkpoint` dataclass linhas 31-56, `write_checkpoint` linhas 82-138,
+`read_checkpoint` linhas 141-222, `find_resumable_run` linhas 225-285.
+
+**W2.T0 outcome (locked): C — justificar incompatibilidade.** `Checkpoint`
+em `engine/qa/checkpoint.py` é semanticamente atado a QA: o dataclass
+exige `scope_type` (linha 52, valores canônicos `feature|screen|task|paranoid`
+documentados linha 43), `scope_target` (linha 53, sanitizado via
+`engine.qa.ingest.sanitize_scope_target` linhas 28/253), e
+`last_phase_completed` (linha 54) com range hard-validado `0..5` (linha 200)
+representando as 5 phases canônicas do pipeline QA (linhas 35-39 docstring).
+Além disso, `find_resumable_run` (linha 225) ancora a busca em
+`.planning/qa/<scope_target>/<run_id>/qa-report.json` com sentinela
+`verdict == "pending"` (linhas 257, 267, 278) — diretório e contrato de
+arquivo que DRIFT-1 não compartilha. DRIFT-1 precisa de `intent_id`,
+`kind` (ask/ask_text/ask_multi/confirm/ask_three_paths), `pending_state`,
+timestamp — zero overlap com phase-ordinals QA ou scope-types QA.
+
+Outcome B (extract base shared) também foi avaliado e rejeitado: a única
+superfície genuinamente genérica (atomic JSON write + timestamp ISO 8601 Z)
+já é coberta pelos módulos que W1 entrega — `engine/utils/json_io.py`
+(W1.T2) + `engine/ui/intent_state.py` (W1.T3). Não há resíduo
+generalizável depois desses dois landed; promover campos QA-específicos
+pra base inverteria a dependência (engine root passaria a importar
+conceitos QA), violando o layering atual.
+
+Caminho efetivo (consequência do outcome C): cada subcommand DRIFT-1
+mantém dataclass dedicada análoga a `_InitCheckpoint` (linhas 100-108
+de `engine/init.py`) com campos próprios (`step`, `at`, `project_root`
++ campos por-comando). Promoção pra `engine.utils.checkpoint` fica como
+follow-up gap se ≥3 subcommands materializarem o mesmo shape após a
+entrega real de W2.T3b.
 
 ### Atomic write
 
