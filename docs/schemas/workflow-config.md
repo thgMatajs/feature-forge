@@ -145,22 +145,68 @@ conventions:
     convention-skill:  create-branch    # external skill if available
 
 
-# ── BACKEND — what features write to ──────────────────────────────────────
+# ── BACKEND (multi-axis) — what features write to ────────────────────────
+# Since Phase B (DET-6), `backend:` é mapa de 8 eixos canônicos
+# (data / auth / observability / analytics / storage / persistence /
+# notifications / flags), cada um mapa de <platform> → cell-object | null.
+#
+# Cell schema:
+#   { card: <card-identity-name>, status: active|migrating-to|deprecated,
+#     migrating-to: <card-identity-name>  (REQUIRED quando status=migrating-to,
+#                                         MUST be absent caso contrário) }
+#
+# `null` = opt-out explícito (essa plataforma não tem provedor para esse
+# eixo neste projeto; ex.: iOS consome via KMP shared, ou app local-only
+# sem analytics).
+#
+# Plataformas vêm de `platforms.active` (não muda).
+#
+# Schema completo + naming rationale (`auth` vs `identity`) + detection
+# composer + starter bundles: ver `docs/schemas/backend-axes.md`.
+#
+# Campos legacy removidos em Phase B (clean break, pre-production):
+#   - `identity.backend-choice` (escolha monolítica)
+#   - `backend.provider` + sub-blocos provider-específicos
+#     (`backend.firebase:`, `backend.rest:`, ...)
 backend:
-  provider: firebase                    # one of: firebase, rest, graphql, supabase, mixed, none
-  
-  firebase:
-    dev-project:       bonsai-meo-dev
-    prod-project:      bonsai-meo
-    services-active:   [auth, firestore, storage, crashlytics]
-    emulator-strategy: dev-project      # one of: dev-project, emulators, both
-    block-prod-writes: true             # agents refuse if target == prod-project
-  
-  # rest:
-  #   base-url:      https://api.example.com
-  #   auth-scheme:   bearer
-  #   error-format:  rfc7807-problem-details
-  
+  data:
+    android:
+      card: retrofit-client
+      status: migrating-to
+      migrating-to: ktor-client
+    kmp:
+      card: ktor-client
+      status: active
+    ios: null
+  auth:
+    android: { card: firebase-auth, status: active }
+    ios:     { card: firebase-auth, status: active }
+    kmp:     { card: firebase-auth, status: active }
+  observability:
+    android: { card: firebase-crashlytics, status: active }
+    ios:     { card: firebase-crashlytics, status: active }
+    kmp: null
+  analytics:
+    android: { card: firebase-analytics, status: active }
+    ios:     { card: firebase-analytics, status: active }
+    kmp: null
+  storage:
+    android: { card: firebase-storage, status: active }
+    ios:     { card: firebase-storage, status: active }
+    kmp: null
+  persistence:
+    android: { card: room-database, status: active }
+    ios: null
+    kmp:     { card: sqldelight, status: active }
+  notifications:
+    android: { card: fcm, status: active }
+    ios:     { card: fcm, status: active }
+    kmp: null
+  flags:
+    android: { card: firebase-remote-config, status: active }
+    ios:     { card: firebase-remote-config, status: active }
+    kmp: null
+
   e2e-required: true                    # requires backend_e2e in test-strategy.yaml
 
 
@@ -373,7 +419,7 @@ doctor:
 | `cards` | yes | reconfigure (menu: adicionar/remover/atualizar card) | sha256 is integrity check. |
 | `paths` | yes | reconfigure | Auto-detect at init; user can override. |
 | `conventions` | yes | re-extract during reconfigure | Init extracts from existing features; greenfield = defaults. |
-| `backend` | yes | reconfigure | Provider-specific block (`firebase:`, `rest:`, etc.). |
+| `backend` | yes | reconfigure | Multi-axis platform-keyed (8 eixos × N plataformas → cell\|null). Ver [`backend-axes.md`](backend-axes.md) e [`card.md § Backend axes`](card.md). |
 | `ticketing` | no | reconfigure | `provider: none` if features live only in repo. |
 | `workflow` | yes | reconfigure | Strictness affects `validate_readiness.py`. |
 | `persona` | yes | reconfigure | Changing this affects tone of ALL prompts. |
@@ -395,8 +441,15 @@ RULE-006  every card's recorded sha256 must match disk
 RULE-007  cards must satisfy each other's requires/conflicts-with (per card schema)
 RULE-008  paths.* must point to existing directories (warn, not block, if optional)
 RULE-009  conventions must be present and non-null in all sub-keys
-RULE-010  backend.provider must have its block populated (firebase/rest/etc)
-RULE-011  if backend.provider == firebase, dev-project must look like [a-z][a-z0-9-]{4,29}
+RULE-010  backend.<axis> ∈ {data, auth, observability, analytics, storage,
+          persistence, notifications, flags}
+          (since Phase B / DET-6; legacy `backend.provider` removido)
+RULE-011  backend.<axis>.<platform> ∈ platforms.active OR é `null`
+RULE-011a cell.card (quando cell != null) deve referenciar card em cards/
+RULE-011b cell.status ∈ {active, migrating-to, deprecated}
+RULE-011c cell.migrating-to REQUIRED quando status=migrating-to;
+          MUST be absent caso contrário; (quando presente) deve referenciar
+          card em cards/
 RULE-012  if ticketing.provider != none, mcp-tool-prefix must be a callable MCP
 RULE-013  workflow.readiness-strictness ∈ {strict, standard, lean}
 RULE-014  persona.name must reference an installed persona spec
@@ -636,6 +689,23 @@ implementado v1.2).
 
 Config = "what we chose." Inventory = "what exists." Memory = "what we learned."
 Graph = "how it's connected." Each with its own cycle.
+
+## Related schemas
+
+- [`backend-axes.md`](backend-axes.md) — bloco `backend:` multi-axis
+  platform-keyed (8 eixos × N plataformas → cell\|null), cell-object
+  shape, status enum, detection composer, starter bundles. Fonte canônica
+  do modelo backend desde Phase B / DET-6.
+- [`card.md`](card.md) — `identity.category` (categorias enumeradas
+  incluindo os 8 axes), `identity.platforms`, CARD-001..022.
+- [`capability-labels.md`](capability-labels.md) — catálogo de labels;
+  singulares `auth-provider`, `http-client`, `crash-reporting` foram
+  removidas em W3 porque cardinalidade já é enforçada pelo schema
+  multi-axis.
+
+<!-- open-detail #6: Phase A AskUserQuestion intent protocol shape — W7 (init/reconfigure UX) consome esse API. Forma exata do payload ainda não definida; W7 fica blocked até Phase A SPEC. Default conservador: AskUserQuestion single-call por cell. -->
+
+<!-- open-detail #7: crashlytics card rename — considerar rename `crashlytics` → `firebase-crashlytics` (paridade com firebase-auth, firebase-storage, firebase-analytics). Decisão delegada à task de W4 — se rename, registra como deviation tracked no PLAN. -->
 
 ## Final notes
 
