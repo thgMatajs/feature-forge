@@ -317,18 +317,46 @@ recebido, não ao argv do processo pai (HI-002 fix do W2 review).
 
 ### 5. Reentrancy
 
-Cada subcommand já tem (ou ganhará) seu próprio checkpoint:
+Cada um dos 10 callsite modules tem seu próprio checkpoint per-subcommand,
+seguindo o template canônico de `_InitCheckpoint` (`engine/init.py:100-108`)
+— outcome C do W2.T0 ("init-pattern", sem import de `engine.qa.checkpoint`,
+respeitando Decision 22).
 
-- `forge init` → `.claude/.init-checkpoint.yaml` (já existe — `engine/init.py:117`)
-- `forge plan` → `.claude/.plan-checkpoint.yaml` (verificar; criar se ausente)
-- Outros (`reconfigure`, `verify`, `evolve`, `undo`, `implement`,
-  `memory_cli`, `graph_cli`, `doctor`) → audit per-comando. Comandos
-  read-only (graph_cli `forge graph <query>`) podem ser stateless se
-  todos seus prompts são opcionais ou de saída-imediata; comandos
-  read-write devem ganhar checkpoint análogo a init.
+**Status final pós W2.T3b (10/10):**
+
+| # | Subcomando | Checkpoint path | T3a action |
+|---|---|---|---|
+| 1 | `forge init` | `.claude/.init-checkpoint.yaml` | extend (já tinha; +intent_id) |
+| 2 | `forge plan` | `.claude/.plan-checkpoint.yaml` | add-new |
+| 3 | `forge implement` | `.claude/.implement-checkpoint.yaml` | add-new |
+| 4 | `forge verify` | `.claude/.verify-checkpoint.yaml` | add-new |
+| 5 | `forge reconfigure` | `.claude/.reconfigure-checkpoint.yaml` | add-new |
+| 6 | `forge evolve` | `.claude/.evolve-checkpoint.yaml` | extend (payload dict já existia; +intent_id) |
+| 7 | `forge undo` | `.claude/.undo-checkpoint.yaml` | add-new |
+| 8 | `forge memory_cli` | `.claude/.memory_cli-checkpoint.yaml` | add-new |
+| 9 | `forge graph_cli` | `.claude/.graph_cli-checkpoint.yaml` | add-new |
+| 10 | `forge doctor` | `.claude/.doctor-checkpoint.yaml` | add-new |
+
+Pattern conventions (uniformes em todos os módulos):
+
+- **Dataclass shape:** mínimo `step` + `at` + `project_root` + `intent_id`,
+  mais campos específicos do módulo (ex.: `feature_slug` em plan/implement,
+  `menu_path` em reconfigure, `target_kind` em undo).
+- **Save strategy:** checkpoint persistido ANTES de cada `question.ask*`
+  call (ou ANTES de menu/submenu dispatch — em módulos com 16-40 callsites
+  isso vira ~5-7 save sites estratégicos, não save per-prompt).
+- **Clear strategy:** clear apenas em **clean completion**; pause /
+  `PromptAbortedError` / `UserAbortError` DELIBERADAMENTE preserva o
+  checkpoint pra forense de resume. Invalid-response paths também
+  preservam (per §3 deste SPEC).
+
+Detalhe operacional do audit T3a + decisões pré-impl: `.planning/drift-1/checkpoint-audit.json`.
 
 > **Acceptance:** smoke test pra cada um dos 10 callsite modules confirmar
-> que pause→resume retoma sem perda de input já coletado.
+> que pause→resume retoma sem perda de input já coletado. Cobertura
+> atual em `tests/unit/test_engine_*_resume.py` (10 arquivos, 30 testes:
+> 3 por módulo — dataclass smoke + save/load/clear roundtrip + resume-
+> from-checkpoint).
 
 ### 6. `engine/ui/tty_bridge.py` (sub-Q **Sc**)
 

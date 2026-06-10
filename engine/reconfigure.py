@@ -23,6 +23,7 @@ import re as _re
 import shutil
 import sys
 from copy import deepcopy
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -62,11 +63,105 @@ from engine.utils.paths import (
     workflow_config_path,
 )
 from engine.utils.sha256 import file_sha256
-from engine.utils.yaml_io import backup_file, read_yaml, write_yaml
+from engine.utils.paths import ensure_dir as _ensure_dir
+from engine.utils.yaml_io import backup_file, read_yaml, read_yaml_or_default, write_yaml
 
 _DRAFT_NAME = ".reconfigure-draft.yaml"
 _HISTORY_NAME = "workflow-config-history.jsonl"
 _DEFAULT_BAK_RETENTION_DAYS = 7
+
+
+# ── Checkpoint (DRIFT-1 W2.T3b — intent-resume, outcome C) ───────────────────
+#
+# Per the T3a audit (.planning/drift-1/checkpoint-audit.json,
+# action="add-new", reuse_path="init-pattern"), reconfigure ganha a
+# maior superficie interativa entre os 10 modulos (40 callsites). A
+# estrategia de save eh deliberadamente NAO per-callsite: o pattern
+# canonico de reconfigure tem ja um draft (.reconfigure-draft.yaml) que
+# persiste o estado da config-em-construcao por categoria. O checkpoint
+# de intent-resume e ortogonal ao draft — captura o ponto de pausa
+# dentro do FLUXO (qual menu/submenu/prompt esperava resposta). Os save
+# sites estrategicos sao ~5-7 pontos cobrindo:
+#   - entry (draft-resume confirm)
+#   - category-menu (ask_multi)
+#   - per-category-dispatch (breadcrumb update antes do handler rodar)
+#   - apply-confirm (final "aplicar mudancas?")
+# O question.ask* internamente calcula intent-id de cada prompt — a
+# re-invocacao consome via intent_state.read_response sem precisar de
+# save per-prompt.
+#
+# Mirrors ``_InitCheckpoint`` (engine/init.py:100-108) — outcome C, sem
+# import de ``engine.qa.checkpoint`` (Decision 22).
+#
+# Refs:
+#   - docs/superpowers/specs/drift-1-intent-protocol.md §3, §5, §8
+#   - engine/init.py:100-108 (canonical template)
+
+
+@dataclass
+class _ReconfigureCheckpoint:
+    """State serialized at strategic save sites in ``reconfigure.run``.
+
+    Carries ``menu_path`` (breadcrumb das escolhas de menu/submenu — ex.:
+    ``["cards", "add"]`` quando o handler estava em _cards_add) e
+    ``card_name`` (quando o pause aconteceu dentro de um fluxo
+    card-especifico). Save em entry, em category-menu, e em cada
+    category-dispatch.
+    """
+
+    step: str
+    at: str
+    project_root: str
+    intent_id: str | None = None
+    menu_path: list[str] = field(default_factory=list)
+    card_name: str | None = None
+
+
+def _reconfigure_checkpoint_path(project_root: Path) -> Path:
+    return claude_dir(project_root) / ".reconfigure-checkpoint.yaml"
+
+
+def _save_reconfigure_checkpoint(cp: _ReconfigureCheckpoint) -> None:
+    """Persist the reconfigure checkpoint atomically (mirrors init's _save_checkpoint)."""
+    path = _reconfigure_checkpoint_path(Path(cp.project_root))
+    _ensure_dir(path.parent)
+    write_yaml(
+        path,
+        {
+            "schema-version": 1,
+            "step": cp.step,
+            "at": cp.at,
+            "project-root": cp.project_root,
+            "intent-id": cp.intent_id,
+            "menu-path": list(cp.menu_path),
+            "card-name": cp.card_name,
+        },
+        atomic=True,
+    )
+
+
+def _load_reconfigure_checkpoint(project_root: Path) -> dict[str, Any] | None:
+    """Read the reconfigure checkpoint, returning ``None`` when absent."""
+    path = _reconfigure_checkpoint_path(project_root)
+    if not path.exists():
+        return None
+    data = read_yaml_or_default(path, None)
+    return data if isinstance(data, dict) else None
+
+
+def _clear_reconfigure_checkpoint(project_root: Path) -> None:
+    """Remove the checkpoint — best-effort; idempotent."""
+    path = _reconfigure_checkpoint_path(project_root)
+    if path.exists():
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
+def _utc_now_iso_reconfigure() -> str:
+    """ISO-8601 UTC timestamp matching the format used by ``_InitCheckpoint``."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────
@@ -105,6 +200,26 @@ def run(argv: list[str]) -> int:
     draft_path = claude_dir(project_root) / _DRAFT_NAME
     draft = _load_draft(draft_path)
     if draft is not None:
+        # DRIFT-1 W2.T3b — save checkpoint ANTES do draft-confirm prompt.
+        # Outcome C — per-subcommand dataclass, no engine.qa.checkpoint import.
+        _save_reconfigure_checkpoint(
+            _ReconfigureCheckpoint(
+                step="step-draft-confirm",
+                at=_utc_now_iso_reconfigure(),
+                project_root=str(project_root),
+                intent_id=question._stable_intent_id(
+                    "confirm",
+                    "Detectei um draft de reconfigure não aplicado. Retomar?",
+                    {"s": "sim", "n": "não"},
+                    extra={
+                        "default": "s",
+                        "min-selected": None,
+                        "validator-hint": None,
+                    },
+                ),
+                menu_path=["draft-confirm"],
+            )
+        )
         if question.confirm(
             "Detectei um draft de reconfigure não aplicado. Retomar?",
             default=True,
@@ -118,9 +233,21 @@ def run(argv: list[str]) -> int:
 
     _show_snapshot(current)
 
+    # DRIFT-1 W2.T3b — save checkpoint ANTES do category-menu prompt.
+    _save_reconfigure_checkpoint(
+        _ReconfigureCheckpoint(
+            step="step-category-menu",
+            at=_utc_now_iso_reconfigure(),
+            project_root=str(project_root),
+            intent_id=None,  # intent-id derived inside _choose_categories
+            menu_path=["category-menu"],
+        )
+    )
     categories = _choose_categories()
     if not categories:
         renderer.write("Nada selecionado — saindo sem mudar nada.")
+        # DRIFT-1 W2.T3b — clean completion clears the intent-resume checkpoint.
+        _clear_reconfigure_checkpoint(project_root)
         return 0
 
     try:
@@ -128,6 +255,20 @@ def run(argv: list[str]) -> int:
             handler = _CATEGORY_HANDLERS.get(cat)
             if handler is None:
                 continue
+            # DRIFT-1 W2.T3b — breadcrumb update ANTES de cada category dispatch.
+            # O handler internamente faz seus proprios prompts via question.*;
+            # intent-id de cada um deriva da assinatura do prompt. O save aqui
+            # registra qual categoria estava em curso pra forensics + para
+            # eventual logic de resume por categoria no futuro.
+            _save_reconfigure_checkpoint(
+                _ReconfigureCheckpoint(
+                    step=f"step-category:{cat}",
+                    at=_utc_now_iso_reconfigure(),
+                    project_root=str(project_root),
+                    intent_id=None,
+                    menu_path=[cat],
+                )
+            )
             handler(project_root, current, working)
             _save_draft(draft_path, working)
     except question.PromptAbortedError:
@@ -141,6 +282,8 @@ def run(argv: list[str]) -> int:
     if working == current:
         renderer.write("Nenhuma mudança detectada — saindo sem escrever nada.")
         draft_path.unlink(missing_ok=True)
+        # DRIFT-1 W2.T3b — clean completion clears intent-resume checkpoint.
+        _clear_reconfigure_checkpoint(project_root)
         return 0
 
     # QA-11: grant flow pra sensitive env-needs declaradas em qa-extensions.
@@ -194,11 +337,33 @@ def run(argv: list[str]) -> int:
         )
 
     _show_diff(current, working)
+    # DRIFT-1 W2.T3b — save checkpoint ANTES do final apply-confirm prompt.
+    _save_reconfigure_checkpoint(
+        _ReconfigureCheckpoint(
+            step="step-apply-confirm",
+            at=_utc_now_iso_reconfigure(),
+            project_root=str(project_root),
+            intent_id=question._stable_intent_id(
+                "confirm",
+                "Aplicar essas mudanças?",
+                {"s": "sim", "n": "não"},
+                extra={
+                    "default": "n",
+                    "min-selected": None,
+                    "validator-hint": None,
+                },
+            ),
+            menu_path=["apply-confirm"],
+        )
+    )
     if not question.confirm("Aplicar essas mudanças?", default=False):
         renderer.write(
             "Cancelado. Draft salvo em .claude/.reconfigure-draft.yaml."
         )
         _save_draft(draft_path, working)
+        # DRIFT-1 W2.T3b — user cancellation is a clean completion (no
+        # writes applied). Clear intent-resume checkpoint; draft remains.
+        _clear_reconfigure_checkpoint(project_root)
         return 0
 
     before_sha = file_sha256(config_path)
@@ -218,6 +383,10 @@ def run(argv: list[str]) -> int:
     renderer.write("")
     renderer.write(renderer.colored("Reconfigure aplicado.", "green"))
     _run_quick_doctor(project_root, working)
+    # DRIFT-1 W2.T3b — full success: clears intent-resume checkpoint.
+    # PromptAbortedError branch above DELIBERATELY preserves it (forensic
+    # resume after user pause, mirroring the draft-resume semantics).
+    _clear_reconfigure_checkpoint(project_root)
     return 0
 
 
