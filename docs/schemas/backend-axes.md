@@ -191,7 +191,12 @@ nesta phase. Pós-ship DET-6, o único shape válido é o multi-axis acima.
 
 ## Validação enforçada
 
-Pela `validate_workflow_config.py` (W7 - update):
+RULE-019..024 abaixo são os **IDs canônicos** referenciados por
+`validate_workflow_config.py` (W7 - update) quando aplicados ao bloco
+`backend:` em `workflow-config.yaml`. `docs/schemas/workflow-config.md`
+§"Validation rules" cita essa mesma faixa (RULE-019..024) e mantém os
+slots RULE-010/011 reservados como audit-trail dos campos legacy
+(`backend.provider`) removidos em Phase B / DET-6.
 
 ```text
 RULE-019  backend.<axis> ∈ {data, auth, observability, analytics, storage,

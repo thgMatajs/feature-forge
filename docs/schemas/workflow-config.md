@@ -441,15 +441,12 @@ RULE-006  every card's recorded sha256 must match disk
 RULE-007  cards must satisfy each other's requires/conflicts-with (per card schema)
 RULE-008  paths.* must point to existing directories (warn, not block, if optional)
 RULE-009  conventions must be present and non-null in all sub-keys
-RULE-010  backend.<axis> ∈ {data, auth, observability, analytics, storage,
-          persistence, notifications, flags}
-          (since Phase B / DET-6; legacy `backend.provider` removido)
-RULE-011  backend.<axis>.<platform> ∈ platforms.active OR é `null`
-RULE-011a cell.card (quando cell != null) deve referenciar card em cards/
-RULE-011b cell.status ∈ {active, migrating-to, deprecated}
-RULE-011c cell.migrating-to REQUIRED quando status=migrating-to;
-          MUST be absent caso contrário; (quando presente) deve referenciar
-          card em cards/
+RULE-010  (reservado — antes `backend.provider`; removido em Phase B / DET-6.
+          Validação do bloco `backend:` multi-axis migrou para RULE-019..024
+          abaixo; ver `backend-axes.md` §"Validação enforçada" como fonte
+          canônica.)
+RULE-011  (reservado — antes `backend.<provider>` sub-bloco; removido em
+          Phase B / DET-6 junto com RULE-010. Ver RULE-019..024 abaixo.)
 RULE-012  if ticketing.provider != none, mcp-tool-prefix must be a callable MCP
 RULE-013  workflow.readiness-strictness ∈ {strict, standard, lean}
 RULE-014  persona.name must reference an installed persona spec
@@ -457,6 +454,16 @@ RULE-015  memory.*.location must be writable
 RULE-016  graph.location must exist or be createable; backend must be supported
 RULE-017  every hook in hooks.active must exist and be executable
 RULE-018  operations that mutate cards (all routed through `forge reconfigure` — menu opções "adicionar card", "remover card", "atualizar card do canonical") must verify no L1 feature has state in {planning, implementing, verifying}
+RULE-019  backend.<axis> ∈ {data, auth, observability, analytics, storage,
+          persistence, notifications, flags}
+          (canônico em `backend-axes.md`; aplicado pela
+          `validate_workflow_config.py` ao bloco `backend:`)
+RULE-020  backend.<axis>.<platform> ∈ platforms.active OR é `null`
+RULE-021  cell.card (quando cell != null) deve referenciar card em cards/
+RULE-022  cell.status ∈ {active, migrating-to, deprecated}
+RULE-023  cell.migrating-to REQUIRED quando status=migrating-to;
+          MUST be absent caso contrário
+RULE-024  cell.migrating-to (quando presente) deve referenciar card em cards/
 ```
 
 Each failure has code + dedicated message. `forge doctor` returns 0 if all
