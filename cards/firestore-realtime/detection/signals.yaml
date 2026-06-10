@@ -26,11 +26,10 @@ signals:
     rationale:  "Extensão `.snapshots()` da lib KTX/KMP retorna Flow a partir de DocumentReference/Query — padrão idiomático Kotlin para listeners."
 
   - id:         gradle-firestore-dep
-    type:       file-content
-    glob:       "**/build.gradle*"
-    contains:   "firebase-firestore"
+    type:       gradle-dep
+    coordinate: "com.google.firebase:firebase-firestore"
     confidence: 0.2
-    rationale:  "Dependência firebase-firestore é pré-requisito (compartilhado com firestore-persistence). Confidence baixo porque sozinho não diferencia realtime de one-shot."
+    rationale:  "Dependência firebase-firestore é pré-requisito (compartilhado com firestore-persistence). Confidence baixo porque sozinho não diferencia realtime de one-shot. Migrado de file-content em DET-3."
 
   - id:         swift-add-snapshot-listener
     type:       file-content

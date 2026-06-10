@@ -29,11 +29,10 @@ signals:
     rationale:  "@ComponentScan acompanha @Module e indica varredura via KSP."
 
   - id:         koin-annotations-gradle-dep
-    type:       file-content
-    glob:       "**/build.gradle*"
-    contains:   "koin-annotations"
+    type:       gradle-dep
+    coordinate: "io.insert-koin:koin-annotations"
     confidence: 0.5
-    rationale:  "Dependência io.insert-koin:koin-annotations declarada em build.gradle(.kts) é evidência forte."
+    rationale:  "Dependência io.insert-koin:koin-annotations declarada em libs.versions.toml ou build.gradle(.kts) é evidência forte. Migrado de file-content em DET-3."
 
   - id:         koin-viewmodel-annotation
     type:       file-content

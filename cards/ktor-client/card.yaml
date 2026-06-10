@@ -102,9 +102,8 @@ detection:
       contains:   "io.ktor:ktor-client"
       confidence: 0.5
 
-    - type:       file-content
-      glob:       "**/build.gradle*"
-      contains:   "ktor-client-core"
+    - type:       gradle-dep
+      coordinate: "io.ktor:ktor-client-core"
       confidence: 0.3
 
     - type:       file-content
