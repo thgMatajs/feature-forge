@@ -111,15 +111,16 @@ def test_force_intent_mode_routes_to_engine_cli() -> None:
     )
 
 
-def test_claude_code_host_env_routes_to_intent_mode() -> None:
-    """``CLAUDE_CODE_HOST`` set → intent-only path even with no other hint.
+def test_claudecode_env_routes_to_intent_mode() -> None:
+    """``CLAUDECODE`` set → intent-only path even with no other hint.
 
-    Mirrors the Claude Code harness scenario. Once the env hint is
-    present the bridge stays out of the way and the engine speaks
-    intents only.
+    Mirrors the Claude Code harness scenario. Claude Code 2.1.153 sets
+    ``CLAUDECODE=1`` in the child env (verified empirically); once the
+    hint is present the bridge stays out of the way and the engine
+    speaks intents only.
     """
     result = _run_forge(
-        ["--version"], env_overrides={"CLAUDE_CODE_HOST": "test-harness"}
+        ["--version"], env_overrides={"CLAUDECODE": "1"}
     )
     assert result.returncode == 0, (
         f"exit {result.returncode}; stderr={result.stderr!r}"
@@ -141,7 +142,7 @@ def test_default_non_tty_invocation_routes_to_intent_mode() -> None:
     env["FORGE_PYTHON"] = sys.executable
     env.pop("FORGE_FORCE_INTENT_MODE", None)
     env.pop("FORGE_FORCE_TTY_MODE", None)
-    env.pop("CLAUDE_CODE_HOST", None)
+    env.pop("CLAUDECODE", None)
     result = subprocess.run(
         [str(BIN_FORGE), "--version"],
         env=env,

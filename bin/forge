@@ -31,12 +31,12 @@ PYTHON="${FORGE_PYTHON:-python3}"
 # real terminal where the legacy interactive prompts must keep working.
 #
 # Detection signals (in priority order, any one trips intent-only mode):
-#   - CLAUDE_CODE_HOST set       — Claude Code env hint. Hardcoded per
-#                                  PLAN W4.T1; verified 2026-06-10. If
-#                                  Claude Code renames the var the TTY
-#                                  checks below still cover us, so this
-#                                  is an early-detection bonus, not the
-#                                  load-bearing signal.
+#   - CLAUDECODE set             — set to "1" by Claude Code (verified vs
+#                                  2.1.153); also see CLAUDE_CODE_ENTRYPOINT/
+#                                  SESSION_ID/EXECPATH companions. Early-
+#                                  detection bonus; the TTY checks below
+#                                  remain the load-bearing fallback if
+#                                  Claude Code ever renames this.
 #   - stdin or stdout not a TTY  — CI, redirect, subprocess. Canonical
 #                                  Unix non-interactive signal.
 #   - FORGE_FORCE_INTENT_MODE=1  — explicit override for tests / debug.
@@ -46,7 +46,7 @@ PYTHON="${FORGE_PYTHON:-python3}"
 # engine/ui/tty_bridge.py docstring for the protocol contract.
 #
 # exec so Ctrl+C goes straight to the engine (Decision 27: pause vs abort).
-if [[ -n "${CLAUDE_CODE_HOST:-}" ]] \
+if [[ -n "${CLAUDECODE:-}" ]] \
    || [[ ! -t 0 ]] \
    || [[ ! -t 1 ]] \
    || [[ -n "${FORGE_FORCE_INTENT_MODE:-}" ]]; then
