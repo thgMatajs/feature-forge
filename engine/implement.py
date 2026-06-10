@@ -44,15 +44,95 @@ from engine.ui import question, renderer
 from engine.ui.question import PromptAbortedError
 from engine.utils.paths import (
     ProjectRootNotFoundError,
+    claude_dir,
     ensure_dir,
     feature_dir,
     find_project_root,
     workflow_config_path,
 )
-from engine.utils.yaml_io import read_yaml, read_yaml_or_default
+from engine.utils.yaml_io import read_yaml, read_yaml_or_default, write_yaml
 
 _SLUG_PATTERN = re.compile(r"^[a-z][a-z0-9-]{1,48}[a-z0-9]$")
 _TASK_ID_PATTERN = re.compile(r"^TASK-(\d{4})$")
+
+
+# ── Checkpoint (DRIFT-1 W2.T3b — intent-resume, outcome C) ───────────────────
+#
+# Per the T3a audit (.planning/drift-1/checkpoint-audit.json,
+# action="add-new", reuse_path="init-pattern"), implement ganha
+# checkpoint pra cobrir os 7 callsites interativos: ask_text de slug,
+# confirm de plan-mode, confirm bonus de out-of-scope, ask_three_paths
+# em out-of-scope-edit e qa.auto-run, ask_text de finding description e
+# allowed_files-path. Mirrors ``_InitCheckpoint`` (engine/init.py:100-108)
+# — outcome C, sem import de ``engine.qa.checkpoint`` (Decision 22).
+#
+# Refs:
+#   - docs/superpowers/specs/drift-1-intent-protocol.md §3, §5, §8
+#   - engine/init.py:100-108 (canonical template)
+
+
+@dataclass
+class _ImplementCheckpoint:
+    """State serialized before each ``question.ask*`` call in ``implement.run``.
+
+    Carries ``feature_slug`` + ``task_id`` (quando ja resolvidos pelo
+    fluxo) pra que o host saiba em que feature/task o pause aconteceu.
+    Prompts antes da resolucao do slug recebem ``feature_slug=None``.
+    """
+
+    step: str
+    at: str
+    project_root: str
+    intent_id: str | None = None
+    feature_slug: str | None = None
+    task_id: str | None = None
+
+
+def _implement_checkpoint_path(project_root: Path) -> Path:
+    return claude_dir(project_root) / ".implement-checkpoint.yaml"
+
+
+def _save_implement_checkpoint(cp: _ImplementCheckpoint) -> None:
+    """Persist the implement checkpoint atomically (mirrors init's _save_checkpoint)."""
+    path = _implement_checkpoint_path(Path(cp.project_root))
+    ensure_dir(path.parent)
+    write_yaml(
+        path,
+        {
+            "schema-version": 1,
+            "step": cp.step,
+            "at": cp.at,
+            "project-root": cp.project_root,
+            "intent-id": cp.intent_id,
+            "feature-slug": cp.feature_slug,
+            "task-id": cp.task_id,
+        },
+        atomic=True,
+    )
+
+
+def _load_implement_checkpoint(project_root: Path) -> dict[str, Any] | None:
+    """Read the implement checkpoint, returning ``None`` when absent."""
+    path = _implement_checkpoint_path(project_root)
+    if not path.exists():
+        return None
+    data = read_yaml_or_default(path, None)
+    return data if isinstance(data, dict) else None
+
+
+def _clear_implement_checkpoint(project_root: Path) -> None:
+    """Remove the checkpoint — best-effort; idempotent."""
+    path = _implement_checkpoint_path(project_root)
+    if path.exists():
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
+def _utc_now_iso_implement() -> str:
+    """ISO-8601 UTC timestamp matching the format used by ``_InitCheckpoint``."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # ── Data shapes ──────────────────────────────────────────────────────────────
@@ -1030,6 +1110,29 @@ def _elicit_slug(argv_slug: Optional[str], project_root: Path) -> str:
             )
         return argv_slug
 
+    # DRIFT-1 W2.T3b — persist checkpoint com intent-id determinado da
+    # pergunta de slug ANTES de invocar ``question.ask_text``. On exit-2 +
+    # re-invoke, ``question.ask_text`` finds the matching forge-response
+    # and returns the value without re-prompting. Outcome C — per-subcommand
+    # dataclass, no import from ``engine.qa.checkpoint``.
+    _save_implement_checkpoint(
+        _ImplementCheckpoint(
+            step="step-elicit-slug",
+            at=_utc_now_iso_implement(),
+            project_root=str(project_root),
+            intent_id=question._stable_intent_id(
+                "ask_text",
+                "Qual feature implementar? (slug kebab-case)",
+                None,
+                extra={
+                    "default": None,
+                    "min-selected": None,
+                    "validator-hint": "kebab-case lowercase, 2..50 chars.",
+                },
+            ),
+            feature_slug=None,
+        )
+    )
     return question.ask_text(
         "Qual feature implementar? (slug kebab-case)",
         validator=_is_valid_slug,
@@ -1055,12 +1158,27 @@ def run(argv: list[str]) -> int:
         sys.stderr.write("\n— interrompido antes do slug, nada salvo.\n")
         return 130
 
+    # DRIFT-1 W2.T3b — agora que temos slug, atualiza checkpoint com
+    # feature_slug; demais prompts deste handler (plan-mode confirm,
+    # out-of-scope flow, qa-auto-run) herdam intent-resume via
+    # question.ask*. Outcome C — sem import de engine.qa.checkpoint.
+    _save_implement_checkpoint(
+        _ImplementCheckpoint(
+            step="step-post-slug",
+            at=_utc_now_iso_implement(),
+            project_root=str(project_root),
+            intent_id=None,
+            feature_slug=slug,
+        )
+    )
+
     feature_path = _feature_path(project_root, slug)
     if not feature_path.is_dir():
         sys.stderr.write(
             f"forge implement: feature '{slug}' não existe em "
             f"{feature_path}. Rode `forge plan {slug}` primeiro.\n"
         )
+        _clear_implement_checkpoint(project_root)
         return 4
 
     is_ready, observed = _check_readiness(feature_path)
@@ -1069,6 +1187,7 @@ def run(argv: list[str]) -> int:
             f"forge implement: readiness='{observed}' — precisa estar 'ready'. "
             f"Rode `forge plan {slug}` e finalize Wave E.\n"
         )
+        _clear_implement_checkpoint(project_root)
         return 5
 
     tasks = _collect_tasks(feature_path)
@@ -1077,6 +1196,7 @@ def run(argv: list[str]) -> int:
             f"forge implement: nenhum tasks/TASK-*.yaml em {feature_path}. "
             "Wave D do plano não foi concluída.\n"
         )
+        _clear_implement_checkpoint(project_root)
         return 6
 
     # Discipline §9 — recompute feature blocked state at startup.
@@ -1137,6 +1257,8 @@ def run(argv: list[str]) -> int:
             append_history(slug, project_root, {"event": "feature-done"})
         # Garante release do lock mesmo quando state era None ou já 'done'.
         release_phase_lock(slug, project_root)
+        # DRIFT-1 W2.T3b — clear intent-resume checkpoint on clean completion.
+        _clear_implement_checkpoint(project_root)
         return 0
 
     # Discipline §9 — refuse to start a task with unresolved blocking deps.
@@ -1193,6 +1315,8 @@ def run(argv: list[str]) -> int:
         # without authorization — violating the single-writer invariant.
         # If a stale lock genuinely exists from this aborted flow, `forge
         # undo` is the canonical recovery path.
+        # DRIFT-1 W2.T3b — clear intent-resume checkpoint on hard-gate return.
+        _clear_implement_checkpoint(project_root)
         return 7  # distinct exit code — caller scripts can switch behavior
 
     # Acquire task-scoped phase lock via context manager (MD-03 refactor).
@@ -1209,6 +1333,8 @@ def run(argv: list[str]) -> int:
                 f"forge implement: '{slug}' phase-locked by '{held}'. "
                 "Run `forge undo` to release, or wait.\n"
             )
+            # DRIFT-1 W2.T3b — clear intent-resume checkpoint on lock-deny.
+            _clear_implement_checkpoint(project_root)
             return 3
 
         try:
@@ -1266,6 +1392,8 @@ def run(argv: list[str]) -> int:
                     project_root,
                     {"event": "plan-mode-rejected", "task": task.task_id},
                 )
+                # DRIFT-1 W2.T3b — clear intent-resume checkpoint on rejection.
+                _clear_implement_checkpoint(project_root)
                 return 0
 
             append_history(
@@ -1288,6 +1416,8 @@ def run(argv: list[str]) -> int:
             ):
                 _prompt_out_of_scope_paths(slug, project_root, feature_path, task)
 
+            # DRIFT-1 W2.T3b — clear intent-resume checkpoint on clean completion.
+            _clear_implement_checkpoint(project_root)
             return 0
 
         except PromptAbortedError:
@@ -1304,6 +1434,10 @@ def run(argv: list[str]) -> int:
                     slug=slug, resume_command=f"forge implement {slug}"
                 )
             )
+            # DRIFT-1 W2.T3b — pause is clean exit, clear checkpoint.
+            # SPEC §3 forensic preservation aplica-se a invalid-response
+            # branches (ValueError), nao a user pause.
+            _clear_implement_checkpoint(project_root)
             return 130
 
 
