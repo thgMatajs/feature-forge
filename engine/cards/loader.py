@@ -1,7 +1,7 @@
 """Card loader + `card.yaml` validation.
 
 Loads a card directory into a `CardManifest` and runs schema validation
-(CARD-001..CARD-019 from `docs/schemas/card.md §Validation`).
+(CARD-001..CARD-020 from `docs/schemas/card.md §Validation`).
 
 The capability-label catalog (`docs/schemas/capability-labels.md`) is parsed
 lazily from the markdown source-of-truth via `_parse_capability_catalog`.
@@ -522,13 +522,15 @@ def _validate_qa_extensions_overlay(
 
 
 def validate_card_yaml(manifest_dict: dict[str, Any], source_path: Path) -> list[str]:
-    """Validate a parsed `card.yaml` dict against CARD-001..CARD-019.
+    """Validate a parsed `card.yaml` dict against CARD-001..CARD-020.
 
     Returns a list of violation strings. Empty list = card is valid.
     Implements the static checks only — cross-card validation (CARD-007/008/017)
     lives in the resolver.
 
     CARD-019  legacy-marker, se presente, deve ser bool (opcional, default false).
+    CARD-020  detection.signals[*].coordinate (when type=gradle-dep) must be
+              `<group>:<artifact>`, no version sufixada, no spaces (DET-3).
     """
     violations: list[str] = []
 
@@ -647,6 +649,34 @@ def validate_card_yaml(manifest_dict: dict[str, Any], source_path: Path) -> list
                 conf = sig.get("confidence")
                 if isinstance(conf, (int, float)):
                     confidence_sum += float(conf)
+                # CARD-020: shape validation pra signal type `gradle-dep`.
+                # `coordinate` deve ser string `<group>:<artifact>` sem versão
+                # sufixada e sem espaços (introduzido em DET-3 / 2026-06-10).
+                # Note: ID alocado como CARD-020 porque CARD-019 já é usado
+                # por `legacy-marker` (Gap 5).
+                if sig.get("type") == "gradle-dep":
+                    coord = sig.get("coordinate")
+                    if not isinstance(coord, str) or not coord:
+                        violations.append(
+                            "CARD-020: gradle-dep signal requires `coordinate` (string)"
+                        )
+                    elif coord.count(":") != 1:
+                        violations.append(
+                            f"CARD-020: gradle-dep coordinate must be `<group>:<artifact>` "
+                            f"(got {coord!r})"
+                        )
+                    elif " " in coord:
+                        violations.append(
+                            f"CARD-020: gradle-dep coordinate must not contain spaces "
+                            f"(got {coord!r})"
+                        )
+                    else:
+                        group, _, artifact = coord.partition(":")
+                        if not group or not artifact:
+                            violations.append(
+                                f"CARD-020: gradle-dep coordinate missing group or "
+                                f"artifact (got {coord!r})"
+                            )
             # CARD-016 hard-fail: confidence_sum > 2.0 indica detection over-stacked.
             # Cards reais devem manter sinais ortogonais — somar > 2.0 sinaliza
             # heurísticas redundantes ou inflação de confiança.
