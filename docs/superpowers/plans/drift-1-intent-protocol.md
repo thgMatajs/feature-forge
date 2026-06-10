@@ -680,24 +680,63 @@ A forma de T3a/T3b consome essa decisão — sem ela, T3 não inicia.
   4. `§Conhecidos limites` se houver — ex.: race detection sem lockfile
      real (gap aberto)
 
-#### Task W6.T3 — `docs/design/04-pending.md`
+#### Task W6.T3 — `docs/design/04-pending.md` — move DRIFT-1 to "Fechado em [Unreleased]"
 
 - **Files:** `docs/design/04-pending.md` (MODIFY)
+- **Justificativa (M-002 da rodada r1 do plan-auditor):** DRIFT-1
+  NÃO está em lista de pendentes ativos do arquivo — está documentado
+  na seção static `## v1.2-dev pilot 2026-06-10 — findings + phase
+  sequencing` (sub-seção `### Achado conceitual primário — DRIFT-1`).
+  Portanto, "riscar de 04-pending" como verbo não se aplica
+  literalmente; o trabalho real é **mover/copiar** a entry pra
+  `## Fechado em [Unreleased]` marcando entrega por este PR.
 - **Steps:**
-  1. Risca DRIFT-1 da seção `## v1.2-dev pilot 2026-06-10` → mover pra
-     `## Fechado em [Unreleased]` com link pro SPEC + PLAN
-  2. Adiciona seção `### Findings pós DRIFT-1 (a revisitar)`:
+  1. Read da entry atual em
+     `docs/design/04-pending.md` seção
+     `## v1.2-dev pilot 2026-06-10 — findings + phase sequencing`
+     sub-seção `### Achado conceitual primário — DRIFT-1`.
+     Identificar bloco completo (do heading até próxima `###` ou
+     `##`).
+  2. Append nova entry em `## Fechado em [Unreleased]` (criar a seção
+     se ainda não existir no arquivo), com shape:
+     ```
+     ### DRIFT-1 — Intent Protocol (Engine intent-only + tty_bridge)
+     - **PR:** `feat/drift-1-intent-protocol`
+     - **SPEC:** `docs/superpowers/specs/drift-1-intent-protocol.md`
+     - **PLAN:** `docs/superpowers/plans/drift-1-intent-protocol.md`
+     - **Resumo:** engine deixa de ler stdin diretamente; emite intent
+       via state files; tty_bridge faz fallback TTY; bin/forge dispatcher
+       detecta contexto. Exit code 2 = paused-for-input.
+     ```
+  3. Opcional (recomendado): marcar a entry original na seção pilot com
+     sufixo `(resolved by Phase A — see "Fechado em [Unreleased]")` —
+     preserva histórico do achado sem deletar.
+  4. Adicionar seção/sub-seção `### Findings pós DRIFT-1 (a revisitar)`
+     em ## Pendentes (ou similar), listando follow-ups:
      - Race detection via `fcntl.flock` (deferido — adicionar se padrão
-       aparecer em produção)
-     - Subcommand checkpoint promotion pra `engine.utils.checkpoint`
-       (gap se ≥3 subcommands materializarem mesmo shape)
+       aparecer em produção).
+     - Subcommand checkpoint promotion pra helper genérico (gap se ≥3
+       subcommands materializarem mesmo shape; outcome de W2.T0 pode
+       já ter feito esta promoção — atualizar conforme entrega real).
      - `engine.utils.paths.state_dir()` promotion (gap se ≥2
-       consumidores)
+       consumidores).
      - Findings deferred da Phase A continuam parcialmente válidos pra
        fallback TTY (persona+microcopy do tty_bridge ainda precisam UX
-       review; Phase B continua o trabalho)
+       review; Phase B continua o trabalho).
      - Hooks audit conclusivo (W4.T2) — se nenhum hook quebrou, anotar;
-       se algum quebrou, adicionar fix-task
+       se algum quebrou, adicionar fix-task.
+- **Critério de sucesso:**
+  - DRIFT-1 entry presente em `## Fechado em [Unreleased]` com links
+    PR/SPEC/PLAN.
+  - Entry original da pilot section mantida (com marca de resolução)
+    OU explicitamente removida — escolha consistente, documentada no
+    commit body.
+  - Follow-ups listados em seção própria.
+- **Anti-padrões:**
+  - NÃO deletar a entry pilot sem deixar trace ("resolved by ...")
+    — histórico do achado é informação.
+  - NÃO inventar entries que não correspondem ao trabalho real
+    entregue pelas waves anteriores.
 
 #### Task W6.T4 — `docs/schemas/intent-protocol.md`
 
