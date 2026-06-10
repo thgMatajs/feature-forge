@@ -2322,6 +2322,83 @@ script tenta `ln .git/hooks/pre-commit` que falha com "Not a directory".
 Fix: `bootstrap.sh` detectar worktree via `git rev-parse --git-dir` antes de
 criar symlink — resolve gitdir real. Out-of-scope Phase 0; valid follow-up.
 
+## Phase A W2 — Code review follow-ups (DRIFT-1 intent protocol, 2026-06-10)
+
+Itens identificados durante o fix-loop dos 10 findings do REVIEW de W2.T1+T2
+(`.planning/drift-1-w2-review/REVIEW.md`) + integração T3b nos 10 subcommands.
+Cada um é decisão consciente de não-fazer-em-W2, com critério explícito pra
+reentrar. Referência cruzada: SPEC §5 (tabela final 10/10) +
+`.planning/drift-1/checkpoint-audit.json`.
+
+### W2-FU-1 — Docstring count drift em `test_ui_question_api_signatures.py`
+
+**Categoria:** test-docs
+**Severidade:** baixa (cosmético — não afeta behavior nem coverage)
+**Status:** deferred (próxima task que tocar o arquivo)
+
+`tests/unit/test_ui_question_api_signatures.py` cita "125 callsites" na docstring,
+herdada de pre-W2 grep. O número atual após o refactor é 108 callsites (mensurado
+em rapid lane pós-W2). O REVIEW fixer não atualizou porque o arquivo ficou fora
+do FILE BUDGET do dispatch — touch fora do escopo do fix-loop.
+
+**Por que defer:** atualizar exige re-medir e justificar metodologia (grep
+pattern, scope dirs, exclusões); fora do escopo de doc-sync. Próxima task que
+tocar o arquivo reconcilia o número ou substitui por "verificado contra
+codebase atual em <data>".
+
+### W2-FU-2 — TDD shape sem commit RED separado em commits 90d1463 / 9980f41
+
+**Categoria:** process-learning
+**Severidade:** baixa (process drift, não bug)
+**Status:** acknowledged (não retrofit; aplicar regra prospectivamente)
+
+REVIEW finding MD-003 apontou que os dois commits maiores do W2 (90d1463
+question.py refactor, 9980f41 cli.py exit handler) carregaram test + impl no
+mesmo commit em vez de RED commit separado. TDD shape do projeto pede commit
+de teste falhando ANTES da implementação (rule `testing.md` §Para feature).
+
+**Por que defer (não retrofit):** rewriting história pós-merge no W2 não vale o
+ruído; aprendizado é prospectivo. Em refactors >300 LOC futuros (W3+? W5
+integration?), executor deve fazer commit RED separado obrigatoriamente — o
+context-pack do dispatch precisa exigir explicitamente. Anotado aqui pra
+reentrar em retrospective do branch quando W6 fechar.
+
+### W2-FU-3 — `PromptAbortedError` preservada como legacy export inerte
+
+**Categoria:** dead-code-scaffolding
+**Severidade:** baixa (cleanup, não afeta runtime)
+**Status:** deferred (callsite-migration de W3+ ou sessão de cleanup pós-W6)
+
+Os 10 callsite modules integrados em T3b mantêm `except PromptAbortedError:`
+scaffolding herdado do pre-W2. No path intent-only atual, a sentinel é
+preservada como re-export de `engine/ui/question.py` mas nunca raised internally
+— os except blocks são dead code que silencia uma exceção que não chega a
+ocorrer.
+
+**Por que defer:** cleanup cross-cutting toca os 10 subcommands; faz sentido
+fechar junto com callsite-migration task (W3+) ou em sessão dedicada de cleanup
+pós-W6 quando todas as migrações estabilizarem. Remover agora arrisca quebrar
+hosts não-Claude-Code que dependiam do legacy raise.
+
+### W2-FU-4 — Outcome C revisitable se 3º+ subcommand emergir com pattern similar
+
+**Categoria:** decision-direcional
+**Severidade:** baixa (revisita programada, não débito ativo)
+**Status:** deferred (gatilho de dados — 3+ ocorrências)
+
+W2.T0 lockou outcome C (per-subcommand `_<Module>Checkpoint` dataclass + 3
+helpers + path resolver) em vez de promover pra `engine/utils/checkpoint.py`
+shared module. Decisão consciente: pattern apareceu em 10 subcommands MAS com
+shape suficientemente variável (campos diferentes por handler) pra que abstração
+prematura custasse mais que copy. Decision 22 (no runtime deps inter-skills)
+não força mudança, mas regra de reuse (Mandamento #3) pede revisita se padrão
+muito similar emergir 3+x nas próximas waves.
+
+**Critério pra reentrar:** se W3-W6 (ou DRIFT-2+) adicionarem 3+ subcommands
+com mesma shape de campos (intent_id + 2-3 campos contextuais + breadcrumb),
+abrir brainstorming pra promote-to-shared. Senão, manter pattern atual e
+revisitar em retrospective de v1.3+.
+
 ## Reading order for new contributors
 
 **For a fresh session retomando o projeto, use o handoff:**

@@ -7,6 +7,25 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (Phase A W2 — DRIFT-1 intent protocol chokepoint refactor, 2026-06-10)
+
+Phase A W2 entrega o refactor do chokepoint (`engine/ui/question.py`) + integração de checkpoint em todos os 10 subcommands. 15 commits acumulados sobre o foundation W1 (commit `1b1d289`). Outcome C "init-pattern" locked em W2.T0: per-subcommand dataclass + 3 helpers + handler wiring; sem promoção a shared module enquanto pattern não se repetir 3+x.
+
+- Três sentinels exportadas de `engine/ui/question.py`: `PausedForInputError` (intent emitido, host deve sair com exit 2), `UserCancelledError` (response com `cancelled: true` mapeia exit 130 + Ctrl+C path) e `UserPausedError` (alias direcional pra futuro tty_bridge). `PromptAbortedError` legado preservado como re-export pra back-compat.
+- 10 per-subcommand checkpoint dataclasses, cada uma com 3 helpers (`_save_*`, `_load_*`, `_clear_*`) + `_*_checkpoint_path` resolver: `_InitCheckpoint`, `_PlanCheckpoint`, `_ImplementCheckpoint`, `_VerifyCheckpoint`, `_ReconfigureCheckpoint`, `_EvolveCheckpoint`, `_UndoCheckpoint`, `_MemoryCliCheckpoint`, `_GraphCliCheckpoint`, `_DoctorCheckpoint`. Cobertura per checkpoint-audit.json: 8 add-new + 2 extend (init e evolve já tinham checkpoints próprios; ganharam campo `intent_id` aditivo).
+- 10 novos arquivos de teste em `tests/unit/test_engine_*_resume.py` cobrindo save → exit 2 → re-invoke → consume → resume. Rapid lane: 1046 → 1114 passed (+68 tests; 11 skipped agregam migrações legadas do stdin).
+- Campo `paths-detail` no payload de `ask_three_paths` intent — host renderiza o bloco 3-caminhos completo (motive de cada caminho preservado na serialização). Fecha REVIEW CR-003.
+- Schema canônico `docs/schemas/intent-protocol.md` atualizado em W2.T1+T2 (paths-detail, hash de validator_hint, contextvar argv).
+- `.planning/drift-1/checkpoint-audit.json` (W2.T3a artifact) — classifica os 10 módulos antes da integração + serve de referência pros commits T3b PART A/B/C.
+
+### Changed (Phase A W2 — chokepoint refactor)
+
+- `engine/ui/question.py` migrado de stdin reader pra intent emitter. As 5 funções públicas (`ask`, `ask_three_paths`, `ask_yes_no`, `ask_text`, `ask_number`) preservam API surface bit-a-bit; internamente emitem intent via `intent_state` + `json_io` e levantam sentinel apropriada em vez de bloquear leitura. Hosts não-Claude-Code chamando essas funções recebem exceção em vez de prompt — comportamento documentado no SPEC §1.
+- `engine/cli.py::main()` ganhou ramos exit 2 (Paused*) + exit 130 (UserCancelledError) antes do `except KeyboardInterrupt`. Ladder de exit codes documentada em SPEC §4. Argv capturado via contextvar pra re-invocação determinística pelo host.
+- `engine/init.py` e `engine/evolve.py` — checkpoints existentes estendidos com campo `intent_id` aditivo (sem quebrar payloads em disco de sessões pré-W2; `intent_id=None` é fallback aceito).
+- Forensic preservation honrado: invalid responses (schema fail / value fora de options) NÃO chamam `_clear_state()` antes do raise — state files permanecem em disco como pista pro host (SPEC §3 + REVIEW CR-002 fix).
+- SPEC `docs/superpowers/specs/drift-1-intent-protocol.md` §2.1, §4, §5 (tabela final 10/10), §8 e AC-5 atualizados inline ao longo dos 15 commits — fonte de verdade do contrato.
+
 ### Changed
 
 - Apresentação (`docs/presentation/feature-forge.html`) atualizada para v1.2-dev: 22 → 24 slides — adicionados slides de subtypes/bugfix e forge qa, slide verify enriquecido com os gates fortes (CC + secrets + no-behavior-change), status e roadmap reescritos (todas as fases shipadas, timeline v1.0→v1.2→autopilot). DESIGN.md sincronizado.
