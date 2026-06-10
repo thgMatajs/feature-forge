@@ -164,12 +164,12 @@ Antes de propor helpers novos, evidência de reuso (consulta `forge graph` + `en
 - **Files:**
   - `engine/cards/loader.py`
 - **Steps:**
-  1. **TDD red:** adicionar test em `tests/unit/test_cards_loader.py` que carrega card com `category: analytics` (categoria nova) — confirma FAIL antes de impl.
-     - Pytest: `pytest tests/unit/test_cards_loader.py::test_loader_accepts_analytics_category -xvs`.
+  1. **TDD red:** adicionar test em `tests/validators/test_cards_loader.py` que carrega card com `category: analytics` (categoria nova) — confirma FAIL antes de impl.
+     - Pytest: `pytest tests/validators/test_cards_loader.py::test_loader_accepts_analytics_category -xvs`.
   2. **TDD green:** atualizar lista enumerated de categories em `engine/cards/loader.py` (CARD-004 validation) pra incluir `analytics, notifications, flags, data, auth, observability, storage, persistence`. Remove `backend, network`.
   3. Re-run test → PASS.
 - **AC coverage:** AC-9.
-- **Verification:** `pytest tests/unit/test_cards_loader.py` green.
+- **Verification:** `pytest tests/validators/test_cards_loader.py` green.
 
 #### W2.4 — Run validator cascade
 
@@ -219,11 +219,11 @@ Antes de propor helpers novos, evidência de reuso (consulta `forge graph` + `en
   - `engine/cards/resolver.py` (se houver lógica baseada em labels removidas)
   - `docs/schemas/capability-labels.md` (load-bearing — justificativa: catalog é canônico, atualizá-lo é parte do DET-6)
 - **Steps:**
-  1. **TDD red:** test em `tests/unit/test_cards_resolver.py` que tenta resolver projeto com 2 cards proveendo `auth-provider` (cenário legacy) — agora deve PASSAR (não há mais conflito porque label removida).
+  1. **TDD red:** test em `tests/validators/test_cards_resolver.py` que tenta resolver projeto com 2 cards proveendo `auth-provider` (cenário legacy) — agora deve PASSAR (não há mais conflito porque label removida).
   2. **TDD green:** remove enforcement de singular labels em `engine/cards/loader.py` + `resolver.py`.
   3. Atualiza `docs/schemas/capability-labels.md` marcando `auth-provider`, `http-client`, `crash-reporting` como **removed in v1.2 — superseded by schema enforcement** (mantém histórico, não deleta inteiro — Decision 22 audit-trail).
 - **AC coverage:** AC-10.
-- **Verification:** `pytest tests/unit/test_cards_loader.py tests/unit/test_cards_resolver.py` green; `forge verify` green.
+- **Verification:** `pytest tests/validators/test_cards_loader.py tests/validators/test_cards_resolver.py` green; `forge verify` green.
 
 ---
 
@@ -242,16 +242,33 @@ Antes de propor helpers novos, evidência de reuso (consulta `forge graph` + `en
   - `cards/firebase-analytics/README.md`
   - `cards/firebase-analytics/detection/signals.yaml`
   - `cards/firebase-analytics/templates/firebase-analytics-tech-spec.md` (stub minimal)
+  - `tests/validators/test_firebase_analytics_detection.py` (NEW)
+  - `tests/fixtures/firebase-analytics-positive/` (fixture project NEW)
 - **Steps:**
-  1. Lê `cards/firebase-auth/card.yaml` como template.
-  2. Cria card.yaml com `identity.category: analytics`, `identity.platforms: [android, ios]` (KMP shared não tem analytics nativo).
-  3. `provides: [analytics-events]` (label NÃO singular — é descritivo apenas).
-  4. `requires: [firebase-platform]` (analog ao firestore).
-  5. Detection signals: `gradle-dep com.google.firebase:firebase-analytics` (conf 0.5) + `file-content google-services.json` (conf 0.3) + `file-content import com.google.firebase.analytics` (conf 0.2). Threshold 0.5.
-  6. README curto: 1 parágrafo identity + link pra `docs/schemas/backend-axes.md`.
-  7. Template stub: 1 seção `Analytics events` com placeholder.
+  1. **RED:** Write failing detection/validation test FIRST in
+     `tests/validators/test_firebase_analytics_detection.py`:
+     - Create fixture project at `tests/fixtures/firebase-analytics-positive/` com
+       `build.gradle` contendo `com.google.firebase:firebase-analytics` + `google-services.json`
+       stub matching signals.yaml.
+     - Assert `_eval_gradle_dep(...)` retorna match esperado para o fixture.
+     - Assert `validate_card_yaml("cards/firebase-analytics/card.yaml")` retorna zero
+       violations (vai FALHAR — card ainda não existe).
+     - Run `pytest tests/validators/test_firebase_analytics_detection.py -xvs` → confirma FAIL.
+  2. Lê `cards/firebase-auth/card.yaml` como template (reuse-first).
+  3. Cria `cards/firebase-analytics/card.yaml` com `identity.category: analytics`,
+     `identity.platforms: [android, ios]` (KMP shared não tem analytics nativo).
+     - `provides: [analytics-events]` (label NÃO singular — é descritivo apenas).
+     - `requires: [firebase-platform]` (analog ao firestore).
+  4. Cria `detection/signals.yaml`: `gradle-dep com.google.firebase:firebase-analytics`
+     (conf 0.5) + `file-content google-services.json` (conf 0.3) + `file-content import
+     com.google.firebase.analytics` (conf 0.2). Threshold 0.5.
+  5. Cria README minimal: 1 parágrafo identity + link pra `docs/schemas/backend-axes.md`.
+  6. Cria template stub: 1 seção `Analytics events` com placeholder.
+  7. **GREEN:** Re-run `pytest tests/validators/test_firebase_analytics_detection.py -xvs`
+     → confirma PASS.
 - **AC coverage:** AC-4.
-- **Verification:** `validate_card_yaml.py cards/firebase-analytics/` green.
+- **Verification:** `validate_card_yaml.py cards/firebase-analytics/` green; pytest
+  passa.
 
 #### W4.2 — `posthog-analytics`
 
@@ -260,8 +277,26 @@ Antes de propor helpers novos, evidência de reuso (consulta `forge graph` + `en
   - `cards/posthog-analytics/README.md`
   - `cards/posthog-analytics/detection/signals.yaml`
   - `cards/posthog-analytics/templates/posthog-analytics-tech-spec.md`
-- **Steps:** detection via `gradle-dep com.posthog:posthog-android` + `file-content import com.posthog.android`. Demais: análogo.
+  - `tests/validators/test_posthog_analytics_detection.py` (NEW)
+  - `tests/fixtures/posthog-analytics-positive/` (fixture project NEW)
+- **Steps:**
+  1. **RED:** Write failing detection/validation test FIRST em
+     `tests/validators/test_posthog_analytics_detection.py`:
+     - Cria fixture project em `tests/fixtures/posthog-analytics-positive/` com signals
+       matching (`gradle-dep com.posthog:posthog-android` + `file-content import
+       com.posthog.android`).
+     - Assert `_eval_gradle_dep(...)` retorna match esperado.
+     - Assert `validate_card_yaml("cards/posthog-analytics/card.yaml")` retorna zero
+       violations (vai FALHAR).
+     - Run pytest → confirma FAIL.
+  2. Cria `cards/posthog-analytics/card.yaml` + `detection/signals.yaml` + README minimal +
+     template stub. Categoria `analytics`, platforms `[android, ios]`, fork-and-adapt do
+     `cards/firebase-analytics/` (reuse-first análogo via W4.1).
+  3. Detection: `gradle-dep com.posthog:posthog-android` + `file-content import
+     com.posthog.android`.
+  4. **GREEN:** Re-run pytest → confirma PASS.
 - **AC coverage:** AC-4.
+- **Verification:** `validate_card_yaml.py cards/posthog-analytics/` green; pytest passa.
 
 #### W4.3 — `fcm` (Firebase Cloud Messaging)
 
@@ -270,8 +305,24 @@ Antes de propor helpers novos, evidência de reuso (consulta `forge graph` + `en
   - `cards/fcm/README.md`
   - `cards/fcm/detection/signals.yaml`
   - `cards/fcm/templates/fcm-tech-spec.md`
-- **Steps:** detection: `gradle-dep com.google.firebase:firebase-messaging` + manifest receiver pattern via `file-content "FirebaseMessagingService"`. `requires: [firebase-platform]`.
+  - `tests/validators/test_fcm_detection.py` (NEW)
+  - `tests/fixtures/fcm-positive/` (fixture project NEW)
+- **Steps:**
+  1. **RED:** Write failing detection/validation test FIRST em
+     `tests/validators/test_fcm_detection.py`:
+     - Cria fixture project em `tests/fixtures/fcm-positive/` com signals matching
+       (`gradle-dep com.google.firebase:firebase-messaging` + `file-content
+       "FirebaseMessagingService"`).
+     - Assert `_eval_gradle_dep(...)` + `_eval_file_content(...)` retornam matches
+       esperados.
+     - Assert `validate_card_yaml("cards/fcm/card.yaml")` zero violations (vai FALHAR).
+     - Run pytest → confirma FAIL.
+  2. Cria `cards/fcm/card.yaml` (category `notifications`, platforms `[android, ios]`,
+     `requires: [firebase-platform]`) + `detection/signals.yaml` + README minimal +
+     template stub. Reuse-first análogo a `cards/firebase-auth/`.
+  3. **GREEN:** Re-run pytest → confirma PASS.
 - **AC coverage:** AC-4.
+- **Verification:** `validate_card_yaml.py cards/fcm/` green; pytest passa.
 
 #### W4.4 — `onesignal`
 
@@ -280,8 +331,22 @@ Antes de propor helpers novos, evidência de reuso (consulta `forge graph` + `en
   - `cards/onesignal/README.md`
   - `cards/onesignal/detection/signals.yaml`
   - `cards/onesignal/templates/onesignal-tech-spec.md`
-- **Steps:** detection: `gradle-dep com.onesignal:OneSignal-Android-SDK`.
+  - `tests/validators/test_onesignal_detection.py` (NEW)
+  - `tests/fixtures/onesignal-positive/` (fixture project NEW)
+- **Steps:**
+  1. **RED:** Write failing detection/validation test FIRST em
+     `tests/validators/test_onesignal_detection.py`:
+     - Cria fixture project em `tests/fixtures/onesignal-positive/` com signals matching
+       (`gradle-dep com.onesignal:OneSignal-Android-SDK`).
+     - Assert `_eval_gradle_dep(...)` retorna match esperado.
+     - Assert `validate_card_yaml("cards/onesignal/card.yaml")` zero violations (vai
+       FALHAR).
+     - Run pytest → confirma FAIL.
+  2. Cria `cards/onesignal/card.yaml` (category `notifications`) + `detection/signals.yaml`
+     + README minimal + template stub. Reuse-first análogo a `cards/fcm/` (mesma axis).
+  3. **GREEN:** Re-run pytest → confirma PASS.
 - **AC coverage:** AC-4.
+- **Verification:** `validate_card_yaml.py cards/onesignal/` green; pytest passa.
 
 #### W4.5 — `firebase-remote-config`
 
@@ -290,8 +355,24 @@ Antes de propor helpers novos, evidência de reuso (consulta `forge graph` + `en
   - `cards/firebase-remote-config/README.md`
   - `cards/firebase-remote-config/detection/signals.yaml`
   - `cards/firebase-remote-config/templates/firebase-remote-config-tech-spec.md`
-- **Steps:** detection: `gradle-dep com.google.firebase:firebase-config`. `requires: [firebase-platform]`.
+  - `tests/validators/test_firebase_remote_config_detection.py` (NEW)
+  - `tests/fixtures/firebase-remote-config-positive/` (fixture project NEW)
+- **Steps:**
+  1. **RED:** Write failing detection/validation test FIRST em
+     `tests/validators/test_firebase_remote_config_detection.py`:
+     - Cria fixture project em `tests/fixtures/firebase-remote-config-positive/` com
+       signals matching (`gradle-dep com.google.firebase:firebase-config`).
+     - Assert `_eval_gradle_dep(...)` retorna match esperado.
+     - Assert `validate_card_yaml("cards/firebase-remote-config/card.yaml")` zero
+       violations (vai FALHAR).
+     - Run pytest → confirma FAIL.
+  2. Cria `cards/firebase-remote-config/card.yaml` (category `flags`, `requires:
+     [firebase-platform]`) + `detection/signals.yaml` + README minimal + template stub.
+     Reuse-first análogo a `cards/firestore-persistence/`.
+  3. **GREEN:** Re-run pytest → confirma PASS.
 - **AC coverage:** AC-4.
+- **Verification:** `validate_card_yaml.py cards/firebase-remote-config/` green; pytest
+  passa.
 
 #### W4.6 — `posthog-flags`
 
@@ -300,17 +381,45 @@ Antes de propor helpers novos, evidência de reuso (consulta `forge graph` + `en
   - `cards/posthog-flags/README.md`
   - `cards/posthog-flags/detection/signals.yaml`
   - `cards/posthog-flags/templates/posthog-flags-tech-spec.md`
-- **Steps:** detection: `gradle-dep com.posthog:posthog-android` + `file-content posthog.isFeatureEnabled`.
-- **AC coverage:** AC-4.
-
-#### W4.7 — Validation pass
-
-- **Files:** N/A (verification step)
+  - `tests/validators/test_posthog_flags_detection.py` (NEW)
+  - `tests/fixtures/posthog-flags-positive/` (fixture project NEW)
 - **Steps:**
-  1. `validate_card_yaml.py` cada um dos 6.
-  2. `forge verify` cascade.
-  3. **Open implementation detail #7 resolution:** se decidir rename `crashlytics` → `firebase-crashlytics`, criar como sub-task aqui (rename diretório + atualizar referências em `presets/kmp-mobile/preset.yaml § backend-candidates` que serão removidas em W6/W7 mesmo). Deviation tracking: registra no commit body.
-- **Verification:** 22 + 6 = 28 cards passam validator.
+  1. **RED:** Write failing detection/validation test FIRST em
+     `tests/validators/test_posthog_flags_detection.py`:
+     - Cria fixture project em `tests/fixtures/posthog-flags-positive/` com signals
+       matching (`gradle-dep com.posthog:posthog-android` + `file-content
+       posthog.isFeatureEnabled`).
+     - Assert `_eval_gradle_dep(...)` + `_eval_file_content(...)` retornam matches
+       esperados.
+     - Assert `validate_card_yaml("cards/posthog-flags/card.yaml")` zero violations (vai
+       FALHAR).
+     - Run pytest → confirma FAIL.
+  2. Cria `cards/posthog-flags/card.yaml` (category `flags`) + `detection/signals.yaml`
+     + README minimal + template stub. Reuse-first análogo a `cards/posthog-analytics/`
+     (mesmo vendor) + `cards/firebase-remote-config/` (mesma axis).
+  3. Detection: `gradle-dep com.posthog:posthog-android` + `file-content
+     posthog.isFeatureEnabled`.
+  4. **GREEN:** Re-run pytest → confirma PASS.
+- **AC coverage:** AC-4.
+- **Verification:** `validate_card_yaml.py cards/posthog-flags/` green; pytest passa.
+
+#### W4.7 — Full validator cascade across all 6 cards
+
+- **Files:** N/A (verification step — TDD per-card já coberto em W4.1-W4.6)
+- **Steps:**
+  1. Run full validator cascade across all 6 cards: `forge verify` + `validate_card_yaml.py`
+     em cada um dos 6 cards novos; confirma zero violations.
+  2. Run `pytest tests/validators/test_firebase_analytics_detection.py
+     tests/validators/test_posthog_analytics_detection.py
+     tests/validators/test_fcm_detection.py
+     tests/validators/test_onesignal_detection.py
+     tests/validators/test_firebase_remote_config_detection.py
+     tests/validators/test_posthog_flags_detection.py` → todos green.
+  3. **Open implementation detail #7 resolution:** se decidir rename `crashlytics` →
+     `firebase-crashlytics`, criar como sub-task aqui (rename diretório + atualizar
+     referências em `presets/kmp-mobile/preset.yaml § backend-candidates` que serão
+     removidas em W6/W7 mesmo). Deviation tracking: registra no commit body.
+- **Verification:** 22 + 6 = 28 cards passam validator; 6 detection tests green.
 
 ---
 
@@ -326,14 +435,14 @@ Antes de propor helpers novos, evidência de reuso (consulta `forge graph` + `en
   - `engine/detection/__init__.py` (NEW, empty)
   - `engine/detection/composer.py` (NEW)
 - **Steps:**
-  1. **TDD red:** test em `tests/unit/test_detection_composer.py::test_composer_emits_active_cell_when_single_card_above_threshold` — confirma FAIL (módulo não existe).
+  1. **TDD red:** test em `tests/engine/test_detection_composer.py::test_composer_emits_active_cell_when_single_card_above_threshold` — confirma FAIL (módulo não existe).
   2. **TDD green:** implementa `compose_backend_axes(project_root, active_cards) -> dict[axis][platform] -> Cell | Conflict | None`. Reusa `engine/init.py:_eval_detection_signals` + `_eval_gradle_dep` (import + chamada — não reimplementa).
   3. **TDD red:** test `test_composer_emits_conflict_when_two_cards_above_threshold`.
   4. **TDD green:** add ranking + conflict detection.
   5. **TDD red:** test `test_composer_emits_null_when_no_match`.
   6. **TDD green:** trivial (empty cell case).
 - **AC coverage:** AC-5.
-- **Verification:** `pytest tests/unit/test_detection_composer.py -xvs` green.
+- **Verification:** `pytest tests/engine/test_detection_composer.py -xvs` green.
 
 #### W5.2 — Integration test with fixture
 
@@ -381,7 +490,7 @@ Antes de propor helpers novos, evidência de reuso (consulta `forge graph` + `en
   - `validators/validate_presets.py` (ou similar — confirm via `ls validators/`)
 - **Steps:**
   1. Adiciona schema check pros bundle YAMLs (campos requeridos, axes válidos).
-  2. **TDD shape:** test em `tests/unit/test_validate_presets.py` cria fixture bundle inválido (axis desconhecido) — confirma FAIL antes da validator extension.
+  2. **TDD shape:** test em `tests/validators/test_validate_presets.py` cria fixture bundle inválido (axis desconhecido) — confirma FAIL antes da validator extension.
 - **AC coverage:** AC-3.
 
 ---
@@ -591,7 +700,7 @@ forge doctor                       # 12 categories green
 # Tests
 pytest                             # baseline 1113 + novos (~15-25)
 pytest -m integration              # integration tests específicos
-pytest tests/unit/test_detection_composer.py -xvs
+pytest tests/engine/test_detection_composer.py -xvs
 
 # Card validation manual
 for c in cards/*/card.yaml; do python -m validators.validate_card_yaml "$c"; done
