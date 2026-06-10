@@ -13,6 +13,53 @@ checklist for next sessions.
   `.claude/rules/plan-auditor.md` + integração — ver CHANGELOG
   `[Unreleased]`. Spec: `docs/superpowers/specs/2026-06-04-plan-auditor-design.md`.
 
+### DRIFT-1 — Intent Protocol (Engine intent-only + tty_bridge)
+
+- **Branch:** `feat/drift-1-intent-protocol`
+- **SPEC:** `docs/superpowers/specs/drift-1-intent-protocol.md`
+- **PLAN:** `docs/superpowers/plans/drift-1-intent-protocol.md`
+- **Resumo:** engine deixa de ler stdin diretamente; emite intent via
+  state files (`.claude/state/forge-pending.json` /
+  `forge-response.json`); `engine/ui/tty_bridge.py` faz fallback TTY
+  subprocess loop; `bin/forge` dispatcher detecta contexto via TTY +
+  env `CLAUDECODE`. Exit code 2 = paused-for-input; exit 130 =
+  UserCancelledError / KeyboardInterrupt; exit 0/1 preservados.
+  AC-1..AC-9 verificados em 15 integration + 3 e2e pty tests.
+- **21 commits** (range `1b1d289..50203f3`) cobrindo W1 (foundation),
+  W2 (chokepoint refactor + 10/10 intent-resume), W3 (tty_bridge),
+  W4 (bin/forge dispatcher + hooks audit), W5 (integration + e2e
+  tests), W6 (este doc-sync).
+
+### Findings pós DRIFT-1 (a revisitar)
+
+Follow-ups capturados durante Phase A pra reentrar quando dados
+justificarem. Cada um tem critério explícito.
+
+- **Race detection via `fcntl.flock`** — `engine/ui/intent_state.py`
+  hoje detecta race via timestamp `created-at` (> 10 min = stale,
+  varre; ≤ 10 min = erro mentor calmo apontando PID). Lock real via
+  `fcntl.flock` foi considerado e deferido. Critério pra reentrar:
+  race aparecer em produção (orquestrador OR usuário tropeçando em
+  pending recente de outra sessão).
+- **`_XxxCheckpoint` promotion pra `engine.utils.checkpoint`** —
+  W2-FU-4 já documentado em `## Phase A W2 — Code review follow-ups`
+  abaixo. Outcome C lockou per-subcommand dataclass (10 ocorrências);
+  promoção a shared só se 3+ subcommands materializarem shape
+  idêntico em waves futuras (DRIFT-2+ ou v1.3).
+- **`engine.utils.paths.state_dir()` promotion** — `intent_state.py`
+  define `_state_dir(project_root)` privado (`.claude/state/`).
+  Promote-to-shared quando ≥2 consumidores aparecerem. Hoje é único.
+- **`PromptAbortedError` dead-code cleanup em 10 callsite modules** —
+  W2-FU-3 já documentado. Cleanup cross-cutting (10 subcommands)
+  agendado pra sessão dedicada pós-W6 OU callsite-migration task
+  futura. Remover agora arrisca quebrar hosts não-Claude-Code que
+  dependiam do legacy raise.
+- **W4-FU env var name `CLAUDECODE`** — confirmado empiricamente vs
+  Claude Code 2.1.153 em W4-FU (commit `b149678`). Revisitar se
+  Claude Code renomear OU expor distinção main-vs-subagent oficial
+  no hook protocol (já gap separado em `.claude/rules/doc-sync.md`
+  §Per-tool-use Mandamento 0 block).
+
 ### Gaps abertos pós plan-auditor v1
 
 Deferidos no spec `docs/superpowers/specs/2026-06-04-plan-auditor-design.md`
@@ -2322,7 +2369,7 @@ script tenta `ln .git/hooks/pre-commit` que falha com "Not a directory".
 Fix: `bootstrap.sh` detectar worktree via `git rev-parse --git-dir` antes de
 criar symlink — resolve gitdir real. Out-of-scope Phase 0; valid follow-up.
 
-## Phase A W2 — Code review follow-ups (DRIFT-1 intent protocol, 2026-06-10)
+## Phase A W2 — Code review follow-ups (DRIFT-1 intent protocol, 2026-06-10) (resolved by Phase A — see "Fechado em [Unreleased]")
 
 Itens identificados durante o fix-loop dos 10 findings do REVIEW de W2.T1+T2
 (`.planning/drift-1-w2-review/REVIEW.md`) + integração T3b nos 10 subcommands.

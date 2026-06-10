@@ -7,6 +7,50 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (Phase A — DRIFT-1 intent protocol close, 2026-06-10)
+
+Fechamento da Phase A em 6 commits W3-W6 sobre a base W2 (range total
+`1b1d289..50203f3`, 21 commits). Engine deixa de ler stdin diretamente;
+intent JSON emitido em `.claude/state/forge-pending.json`, response
+consumida de `.claude/state/forge-response.json`, exit code 2 sinaliza
+pausa pro host (Claude Code OR `tty_bridge` em fallback). AC-1..AC-9
+verificados em integration + e2e pty.
+
+- `engine/ui/tty_bridge.py` (W3.T1) — loop subprocess pra fallback TTY
+  fora de contexto Claude Code. Lê pending, prompta no stdin com
+  helpers per `kind`, escreve response via `intent_state.write_response`
+  e re-invoca o subcomando até exit 0/1/130. Estende
+  `engine/ui/intent_state.py` com `read_pending` + `write_response`.
+- `bin/forge` dispatcher (W4.T1+W4-FU) — detecta TTY via `[[ -t 0 ]]`
+  e contexto Claude Code via env var `CLAUDECODE` (verificado
+  empiricamente vs Claude Code 2.1.153). Roteia entre intent mode
+  (host loop) e tty_bridge fallback; overrides `FORGE_FORCE_INTENT_MODE`
+  / `FORGE_FORCE_TTY_MODE` pra teste. Hooks audit (W4.T2) não exigiu
+  patches — invocações existentes continuam funcionando.
+- 15 integration tests
+  (`tests/integration/test_intent_protocol_e2e.py`,
+  `tests/integration/test_callsites_smoke.py`) + 3 e2e pty tests
+  (`tests/e2e/test_tty_bridge_e2e.py`) cobrindo AC-1..AC-9 (W5.T1+T3+T4
+  + W5.T2). Integration lane: 119 collected. E2E lane: 17 collected.
+- Exit code 2 (paused-for-input) documentado em
+  `docs/design/06-command-surface.md` (seção `## Exit codes` nova) —
+  ladder completa 0/1/2/130 vinculada ao SPEC §4.
+
+### Changed (Phase A — DRIFT-1 close)
+
+- `docs/design/06-command-surface.md` ganha seção `## Exit codes`
+  formalizando o contrato 0/1/2/130. Load-bearing edit justificado por
+  Mandamento #6 (doc-sync): exit code contract mudou (adicionado 2).
+- `.claude/rules/subagent-workflow.md` ganha subseção
+  `## Quando subagent invoca \`forge\`` esclarecendo que exit 2 é
+  contrato (não erro) e responsabilidade do orquestrador, não do
+  subagente sozinho. Load-bearing edit justificado por Mandamento #6
+  — protocolo afeta workflow de dispatch.
+- README + handoff atualizados pra refletir 21 commits de Phase A na
+  branch `feat/drift-1-intent-protocol`. Test count: rapid lane 1151
+  passed / 11 skipped preservada (1162 collected pós-W5);
+  integration 119; e2e 17; total 1298.
+
 ### Added (Phase A W2 — DRIFT-1 intent protocol chokepoint refactor, 2026-06-10)
 
 Phase A W2 entrega o refactor do chokepoint (`engine/ui/question.py`) + integração de checkpoint em todos os 10 subcommands. 15 commits acumulados sobre o foundation W1 (commit `1b1d289`). Outcome C "init-pattern" locked em W2.T0: per-subcommand dataclass + 3 helpers + handler wiring; sem promoção a shared module enquanto pattern não se repetir 3+x.
