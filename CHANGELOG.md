@@ -7,6 +7,10 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Documentation
+
+- v1.2-dev pilot 2026-06-10 capturado em `docs/design/04-pending.md` — 6 findings (DRIFT-1 conceitual primário, B1, B2, DET-3, DET-5, DET-6) + sequenciamento Phase 0 → Phase A (DRIFT-1) → Phase B (DET-6) decidido com user. UX/microcopy/persona findings do modo fallback CLI deferred até Phase A (engine emite intent estruturado pra Claude Code → strings deixam de ser responsabilidade do Python).
+
 ### Changed
 
 - Apresentação (`docs/presentation/feature-forge.html`) atualizada para v1.2-dev: 22 → 24 slides — adicionados slides de subtypes/bugfix e forge qa, slide verify enriquecido com os gates fortes (CC + secrets + no-behavior-change), status e roadmap reescritos (todas as fases shipadas, timeline v1.0→v1.2→autopilot). DESIGN.md sincronizado.
