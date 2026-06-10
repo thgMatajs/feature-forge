@@ -677,7 +677,50 @@ Prefixar título com `✅ resolvido 2026-06-10:`. Adicionar bloco curto após a 
 **Resolução shipped 2026-06-10:** Plan `docs/superpowers/plans/det-3-gradle-dep-signal.md`. Novo signal type `gradle-dep` + helper `_eval_gradle_dep` em `engine/init.py` + CARD-019 em loader + migration de N cards. Catálogo `gradle/libs.versions.toml` agora coberto.
 ```
 
-- [ ] **Step 8.4: README.md stats — verificar**
+- [ ] **Step 8.4: 04-pending.md — registrar follow-ups não-bloqueantes do SPEC**
+
+O SPEC §"Considerações futuras" anota 2 follow-ups que não entram em DET-3 mas precisam de rastreio. Adicionar entradas em `docs/design/04-pending.md` (seção adequada — `## Pós-v1.2-dev` ou nova subseção dentro da pilot 2026-06-10 marcada como follow-ups de DET-3):
+
+Entrada 1 — vapor `dependency` cleanup:
+
+```markdown
+#### Vapor cleanup — signal type `dependency` (follow-up de DET-3)
+
+`docs/schemas/card.md` declara o signal type `dependency` mas
+`engine/init.py:_eval_detection_signals` nunca implementou — cards com
+`type: dependency` são silenciosamente ignorados. Sucessor canônico
+pra Gradle deps é `gradle-dep` (DET-3, shipped 2026-06-10).
+
+Decisão pendente: (A) implementar `dependency` cobrindo
+npm/pip/swift/pod (multi-ecossistema), (B) remover do schema e marcar
+como vapor histórico, (C) renomear `dependency` → `package-manager-dep`
+pra esclarecer scope. Sem brainstorm aberto ainda.
+
+Não-bloqueante. Anotado pra abrir 3-caminhos quando tiver bandwidth.
+```
+
+Entrada 2 — `signals.yaml` schema-version:
+
+```markdown
+#### `signals.yaml` schema-version bump (follow-up de DET-3)
+
+Hoje `cards/*/detection/signals.yaml` não declara schema-version. DET-3
+migrou N cards de `file-content` → `gradle-dep` sem versionamento
+explícito, dependendo do git log pra rastrear "antes/depois". Pra
+migrations futuras (próximos signal types, mudanças de shape), adicionar
+`schema-version: 2` no topo dos cards migrados (e `schema-version: 1`
+default implícito nos não-tocados, ou explícito via reconfigure).
+
+Decisão pendente: timing — bumpar nos N cards migrados agora (escopo
+de DET-3) ou esperar próximo signal type e bumpar batched. Default
+atual: esperar, registrar aqui.
+
+Não-bloqueante. Anotado pra próxima rodada de migration cross-card.
+```
+
+**NÃO fazer:** mexer no schema doc `docs/schemas/card.md` aqui (DET-3 já adicionou a nota sobre vapor em Task 5.2); essas duas entradas vão estritamente em `04-pending.md`.
+
+- [ ] **Step 8.5: README.md stats — verificar**
 
 Run: `grep -E "tests|validators|cards" README.md | head -5`
 
@@ -767,4 +810,4 @@ Verification (Task 9) é leitura — não gera commit.
 
 ## Pending gaps coverage (Mandamento #4 / M2)
 
-Este plano fecha DET-3 de `docs/design/04-pending.md` §"v1.2-dev pilot 2026-06-10 — findings + phase sequencing". Task 8.3 atualiza o pending. Anti-goals novos (cleanup do vapor `dependency`, ecossistemas npm/swift/pod, schema-version normalization em signals.yaml) são anotados na seção "Considerações futuras" do SPEC.
+Este plano fecha DET-3 de `docs/design/04-pending.md` §"v1.2-dev pilot 2026-06-10 — findings + phase sequencing". Task 8.3 atualiza o pending marcando DET-3 ✅. Task 8.4 adiciona em `04-pending.md` as duas entradas de follow-up declaradas no SPEC §"Considerações futuras": (1) vapor `dependency` cleanup, (2) `signals.yaml` schema-version bump. Anti-goals adicionais (npm/swift/pod) ficam apenas no SPEC — não geram entry em pending até decisão explícita de cobrir.
