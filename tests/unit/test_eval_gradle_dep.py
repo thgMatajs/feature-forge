@@ -100,16 +100,21 @@ def test_helper_handles_malformed_toml(tmp_path: Path) -> None:
 
 
 def _minimal_card(detection_signals: list[dict]) -> dict:
-    """Build minimal valid card.yaml dict with custom detection.signals."""
+    """Build minimal valid card.yaml dict with custom detection.signals.
+
+    Uses categories/maturities/provides labels that the canonical catalog
+    accepts — keeps CARD-020 as the only violation under test (vs noise
+    from CARD-004/005/006).
+    """
     return {
         "schema-version": 1,
         "identity": {
             "name": "test-card",
             "version": "1.0.0",
-            "category": "stack",
-            "maturity": "canonical",
+            "category": "network",
+            "maturity": "stable",
         },
-        "provides": ["test-capability"],
+        "provides": ["http-client"],
         "detection": {"signals": detection_signals},
     }
 
