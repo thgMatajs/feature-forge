@@ -634,9 +634,50 @@ agent. No autonomous gate decision by sub-agent.
      - Sub-axes formal (data → transport/contract/realtime/rules).
      - 9º axis (messaging direta) — anotar como possível.
      - Card composability dentro da mesma cell além de migrating-to.
-     - `firestore-realtime`/`firestore-security-rules` fate (Open implementation detail #4 e #5).
      - Validation de bundle YAMLs caso scope expanda.
-- **Pending gaps coverage:** AC mapping verifica todos os items.
+  3. **Cobrir TODOS os 8 Open implementation details do SPEC.** Para cada item,
+     adicionar entry em `04-pending.md` documentando a decisão tomada (resolved
+     inline) ou o defer (com 3-caminhos). Lista canônica obrigatória:
+
+     - **#1 bundle YAML path resolution** — *Phase B implementation note
+       (resolved):* bundles vivem em `presets/kmp-mobile/bundles/*.yaml`
+       (referenciados via `bundles-dir: ./bundles/` em preset.yaml). Rationale:
+       co-locado com preset; sem path discovery dinâmico.
+     - **#2 composer module location** — *Phase B implementation note (resolved):*
+       composer vive em `engine/detection/composer.py` (novo subpackage
+       `engine/detection/`). Rationale: detection é dimensão própria do engine,
+       cabe subpackage dedicado.
+     - **#3 status enum `deprecated` cell-vs-card semantics** — *Phase B
+       implementation note (resolved):* `deprecated` é semântica per-cell (não
+       per-card). Um card pode estar `active` em uma cell `(axis, platform)` e
+       `deprecated` em outra. Rationale: status descreve estado do uso, não da
+       capability em si.
+     - **#4 firestore-realtime fate** — *Deferred to v1.x.y.* 3-caminhos:
+       (✅ implementar) absorver em `firestore-persistence` como sub-feature;
+       (⏭️ não implementar) manter card separado coexistindo;
+       (🤔 investigar) brainstorm separado pós-DET-6 com user.
+     - **#5 sub-cards model (rest-api-contract / firestore-security-rules)** —
+       *Deferred to v1.x.y.* 3-caminhos:
+       (✅ implementar) sub-cards formais via `parent-card` field;
+       (⏭️ não implementar) manter como cards independentes;
+       (🤔 investigar) avaliar se outros axes precisam do mesmo pattern.
+     - **#6 Phase A intent API consumed by W7** — *Phase B implementation note
+       (resolved):* consume API canônica entregue por Phase A (DRIFT-1) —
+       AskUserQuestion intent protocol em `engine/ui/question.py`. Reference:
+       `docs/superpowers/specs/drift-1-intent-protocol.md`.
+     - **#7 crashlytics → firebase-crashlytics rename** — *Phase B implementation
+       note (resolved):* decisão tomada em W4.7 (subagent decide rename ou keep
+       baseado em consistency com outros firebase-* cards; default = keep
+       `crashlytics` se rename adicionar churn cross-references). Deviation
+       tracking no commit body.
+     - **#8 platform-applicability source** — *Phase B implementation note
+       (resolved):* novo campo `identity.platforms: [android, ios, kmp]` em
+       card.yaml (documented em W1.2). Default ausente = card aplicável a todas
+       as plataformas ativas. Rationale: explicit > derived; composer consome
+       campo direto.
+
+- **Pending gaps coverage:** AC mapping verifica todos os items; 8/8 open
+  implementation details cobertos.
 
 #### W8.4 — `README.md` stats
 
