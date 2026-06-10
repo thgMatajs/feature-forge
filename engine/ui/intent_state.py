@@ -26,8 +26,13 @@ Surface delivered in W1.T3 (foundation):
   ``RaceDetectedError`` if a recent pending with a different intent-id
   is still parked
 
-Companion helpers (``read_pending``, ``write_response``) arrive with
-``tty_bridge`` in W3 — same module, same atomic strategy.
+Companion helpers added in W3 (caller-side of the loop, consumed by
+``engine.ui.tty_bridge``):
+
+- ``read_pending(project_root)`` — None if absent, dict otherwise.
+  Counterpart to ``read_response`` from the bridge's perspective.
+- ``write_response(project_root, response)`` — atomic emit using the
+  same tempfile-rename strategy.
 
 Refs:
 - ``docs/superpowers/specs/drift-1-intent-protocol.md`` §2, §3, §9
@@ -96,6 +101,47 @@ def write_pending(intent: dict[str, Any], project_root: Path) -> None:
     in-tree consumer.
     """
     json_io.write_json(_pending_path(project_root), intent)
+
+
+# --- read_pending (W3 companion) -------------------------------------------
+
+
+def read_pending(project_root: Path) -> dict[str, Any] | None:
+    """Read ``.claude/state/forge-pending.json`` if present.
+
+    Mirrors ``read_response`` but for the engine→caller direction: the
+    ``tty_bridge`` loop calls this whenever the subprocess exits with
+    code 2, to discover what input the engine is asking for.
+
+    Returns:
+    - ``None`` when no pending file is on disk. The caller treats this
+      as a clean exit-2 path (e.g. CR-003: user paused via response and
+      the engine cleared state).
+    - The decoded dict otherwise.
+
+    Raises ``json_io.JsonIOError`` (propagated) on a malformed file —
+    same contract as ``read_response``. Forensic preservation per SPEC §3
+    is the caller's choice; this function does not touch the file.
+    """
+    path = _pending_path(project_root)
+    if not path.exists():
+        return None
+    return json_io.read_json(path)
+
+
+# --- write_response (W3 companion) -----------------------------------------
+
+
+def write_response(project_root: Path, response: dict[str, Any]) -> None:
+    """Emit the response payload atomically.
+
+    Counterpart to ``write_pending``: same tempfile-rename strategy via
+    ``engine.utils.json_io.write_json``, same trust contract (the caller
+    formed a schema-compliant dict). Used by ``tty_bridge`` after the
+    user supplies input via stdin; the engine then consumes it through
+    ``read_response`` on the next invocation.
+    """
+    json_io.write_json(_response_path(project_root), response)
 
 
 # --- read_response ---------------------------------------------------------
