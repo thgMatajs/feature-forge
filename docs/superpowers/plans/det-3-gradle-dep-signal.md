@@ -51,7 +51,8 @@ Decisões de reuso:
 | Criar | `tests/fixtures/gradle-dep-negative/` | Fixture AC-5 (TOML com outras deps) |
 | Criar | `tests/fixtures/gradle-dep-file-content-preserved/` | Fixture AC-6 (file-content backward compat) |
 | Criar | `tests/unit/test_eval_gradle_dep.py` | Tests unitários cobrindo AC-1..AC-6 + edge cases + CARD-019 |
-| Modificar | `cards/<each>/detection/signals.yaml` + `cards/<each>/card.yaml` | Migração avaliada 1-a-1 conforme política do SPEC (Task 7 cobre cada card) |
+| Criar | `.planning/det-3/migration-audit.json` | Audit determinístico de migration (output Task 6 → input Task 7) |
+| Modificar | `cards/<each>/detection/signals.yaml` + `cards/<each>/card.yaml` | Migração avaliada 1-a-1 conforme política do SPEC (Task 7 lê migration-audit.json) |
 | Modificar | `CHANGELOG.md` | `### Added` — gradle-dep signal type. `### Changed` — N cards migrados |
 | Modificar | `docs/design/08-session-handoff.md` | "Última atualização" + estado: Phase 0 DET-3 entregue |
 | Modificar | `docs/design/04-pending.md` | Marca DET-3 como ✅ resolvido na seção pilot |
@@ -489,9 +490,10 @@ Expected: ≥ 4 (tabela + nota + exemplo + CARD-019).
 
 ## Task 6: Migration audit — listar candidatos 1-a-1
 
-**Files:** none (read-only audit)
+**Files:**
+- Create: `.planning/det-3/migration-audit.json` (persistência do resultado do audit; input determinístico pra Task 7)
 
-Antes de migrar qualquer card, audit explícito de cada um pra decidir migrate vs preserve segundo a política do SPEC §"Migration policy".
+Antes de migrar qualquer card, audit explícito de cada um pra decidir migrate vs preserve segundo a política do SPEC §"Migration policy". Resultado é persistido em JSON pra que Task 7 leia uma lista determinística — sem ambiguidade entre "audit mental" e "execução da migration".
 
 - [ ] **Step 6.1: Gerar mapa de signals build.gradle*-tocando**
 
@@ -508,7 +510,7 @@ done > /tmp/det3-audit.txt
 cat /tmp/det3-audit.txt | head -60
 ```
 
-Expected: bloco por card listando signals candidatos. Salvar mental ou em scratch — é input pra Task 7.
+Expected: bloco por card listando signals candidatos. Output cru — input pra classificação em Step 6.2.
 
 - [ ] **Step 6.2: Aplicar regra do SPEC pra cada candidate**
 
@@ -521,47 +523,96 @@ Pra cada signal listado em Step 6.1, classificar:
 | String não-coordenada (palavra-chave, plugin id) | `**/build.gradle*` | Preserve | keep file-content |
 | Qualquer string | `**/*.kt`, `**/*.swift`, `**/Podfile*`, etc. | Preserve | keep file-content |
 
-Anotar decisão por card no commit body de Task 7. Cards com ambiguidade → preserve por conservadorismo.
+Cards com ambiguidade → preserve por conservadorismo.
 
 - [ ] **Step 6.3: Confirmar CARD-016 sanity post-audit**
 
 Pra cada card que vai migrar, confirmar que a soma de confidences NÃO muda (apenas renomeamos o tipo). Garante que CARD-016 não dispara após migration.
 
-**Critério de sucesso da task:** lista determinística de cards a migrar (com coordinate exata) + lista de cards a preservar (com razão). Esta task é puramente analítica — não modifica arquivos.
+- [ ] **Step 6.4: Persistir audit em `.planning/det-3/migration-audit.json`**
+
+Run:
+```bash
+mkdir -p .planning/det-3
+```
+
+Escrever o arquivo `.planning/det-3/migration-audit.json` com o shape canônico:
+
+```json
+[
+  {
+    "card": "ktor-client",
+    "path": "cards/ktor-client/detection/signals.yaml",
+    "action": "migrate",
+    "signal_id": "<preserved-id>",
+    "coordinate": "io.ktor:ktor-client-core",
+    "preserved_confidence": 0.5,
+    "reason": "build.gradle* file-content com coordenada completa — caso canônico da política SPEC"
+  },
+  {
+    "card": "<other-card>",
+    "path": "cards/<other-card>/detection/signals.yaml",
+    "action": "preserve",
+    "reason": "file-content em `**/*.kt` — não-Gradle, preservar"
+  }
+]
+```
+
+Uma entrada por signal `build.gradle*`-tocando identificado em Step 6.1. Campos:
+
+- `card` (str) — nome do diretório do card
+- `path` (str) — path do `signals.yaml` (e implicitamente o `card.yaml` espelhado)
+- `action` (enum) — `"migrate"` | `"preserve"`
+- `signal_id` (str, opcional, apenas se `migrate`) — id do signal preservado
+- `coordinate` (str, opcional, apenas se `migrate`) — coordenada Maven canônica `<group>:<artifact>`
+- `preserved_confidence` (float, opcional, apenas se `migrate`) — confidence a manter intacta
+- `reason` (str) — justificativa da classificação per tabela Step 6.2
+
+**Critério de sucesso da task:** `.planning/det-3/migration-audit.json` existe, parseia como JSON array, contém entrada por candidate de Step 6.1, e classificação alinha com tabela de Step 6.2. Esta task é analítica + persistência — NÃO modifica `cards/`.
 
 ---
 
 ## Task 7: Migration dos cards canônicos
 
-**Files (depende de Task 6 — lista exata determinada lá):**
-- Modify: `cards/<each-migration-target>/detection/signals.yaml` (audit-trail)
-- Modify: `cards/<each-migration-target>/card.yaml` (canonical mirror)
+**Files (depende de `.planning/det-3/migration-audit.json` produzido em Task 6.4):**
+- Read: `.planning/det-3/migration-audit.json` (input determinístico — lista de cards a migrar e a preservar)
+- Modify: `cards/<each-migration-target>/detection/signals.yaml` (audit-trail) — apenas entradas com `"action": "migrate"`
+- Modify: `cards/<each-migration-target>/card.yaml` (canonical mirror) — apenas entradas com `"action": "migrate"`
 
-Espera-se que a lista cubra pelo menos: `ktor-client`, `retrofit-client`, `kotlinx-serialization-json`, `room-database`, `firebase-auth`, `firestore-persistence`, `firestore-realtime`, `firestore-security-rules`, `firebase-storage`, `crashlytics`, `datastore-prefs`, `koin-annotations`, `compose-screens`, `kmp-shared`, `kotlin-language`, `nav3`, `skie-bridge` — mas o número exato depende de Task 6 (alguns podem ser preserve-as-is).
+Espera-se que `.planning/det-3/migration-audit.json` cubra pelo menos: `ktor-client`, `retrofit-client`, `kotlinx-serialization-json`, `room-database`, `firebase-auth`, `firestore-persistence`, `firestore-realtime`, `firestore-security-rules`, `firebase-storage`, `crashlytics`, `datastore-prefs`, `koin-annotations`, `compose-screens`, `kmp-shared`, `kotlin-language`, `nav3`, `skie-bridge` — mas o número exato depende de Task 6 (alguns podem ter `"action": "preserve"`).
 
-- [ ] **Step 7.1: Para CADA card-alvo (atômico per card)**
+- [ ] **Step 7.0: Carregar audit determinístico**
 
-Sub-passos (repetir por card):
+Run:
+```bash
+test -f .planning/det-3/migration-audit.json || { echo "ERROR: Task 6.4 não foi executada"; exit 1; }
+python3 -c "import json,sys; data=json.load(open('.planning/det-3/migration-audit.json')); assert isinstance(data, list) and all('card' in e and 'action' in e for e in data), 'shape inválido'; print(f'{sum(1 for e in data if e[\"action\"]==\"migrate\")} migrate, {sum(1 for e in data if e[\"action\"]==\"preserve\")} preserve')"
+```
+Expected: parse OK + contagem migrate/preserve. Sem esse arquivo, **abort** — Task 6.4 é pré-requisito.
 
-a) Abrir `cards/<name>/detection/signals.yaml` e localizar o signal a migrar.
+- [ ] **Step 7.1: Para CADA entrada com `"action": "migrate"` (atômico per card)**
+
+Iterar sobre as entradas `migrate` do JSON (NÃO tocar entradas `preserve`). Sub-passos por entrada:
+
+a) Abrir `cards/<entry.card>/detection/signals.yaml` e localizar o signal cujo `id` casa com `entry.signal_id`.
 b) Substituir o bloco:
    ```yaml
-   - id:         <preserved-id>
+   - id:         <entry.signal_id>
      type:       file-content
      glob:       "**/build.gradle*"
      contains:   "<coordinate-or-artifact>"
-     confidence: <preserved-value>
+     confidence: <entry.preserved_confidence>
      rationale:  "<preserved-rationale>"
    ```
    por:
    ```yaml
-   - id:         <preserved-id>
+   - id:         <entry.signal_id>
      type:       gradle-dep
-     coordinate: "<canonical-maven-coordinate>"
-     confidence: <preserved-value>
+     coordinate: "<entry.coordinate>"
+     confidence: <entry.preserved_confidence>
      rationale:  "<preserved-rationale> Migrado de file-content em DET-3 (libs.versions.toml + build.gradle)."
    ```
-c) Abrir `cards/<name>/card.yaml` e fazer a mesma substituição no bloco `detection.signals`.
+c) Abrir `cards/<entry.card>/card.yaml` e fazer a mesma substituição no bloco `detection.signals`.
 d) Salvar.
 
 - [ ] **Step 7.2: Rodar loader validation por card**
