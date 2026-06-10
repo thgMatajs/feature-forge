@@ -32,7 +32,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from engine._sandbox.env import build_safe_env
 from engine.memory.l1 import (
@@ -47,12 +47,13 @@ from engine.ui.question import PromptAbortedError
 from engine.utils.paths import (
     ProjectRootNotFoundError,
     cards_dir,
+    claude_dir,
     ensure_dir,
     find_project_root,
     memory_dir,
     workflow_config_path,
 )
-from engine.utils.yaml_io import read_yaml_or_default
+from engine.utils.yaml_io import read_yaml_or_default, write_yaml
 
 _DEFAULT_RUNS_ON = "verify-task"
 
@@ -82,6 +83,90 @@ class _ValidatorResult:
     what_failed: str = ""
     where: str = ""
     why: list[str] = field(default_factory=list)
+
+
+# ── Checkpoint (DRIFT-1 W2.T3b — intent-resume, outcome C) ───────────────────
+#
+# Per the T3a audit (action="add-new", reuse_path="init-pattern"), verify
+# needs a minimal checkpoint so the host can pause at the scope
+# disambiguation ask and re-invoke cleanly. Mirrors ``_InitCheckpoint``
+# at ``engine/init.py:100-108`` — per-subcommand dataclass, no import
+# from ``engine.qa.checkpoint`` (Decision 22 + outcome C lock-in).
+#
+# Verify has 2 interactive callsites — both ``question.ask`` em
+# ``_infer_active_feature`` (interactive scope resolution) e
+# ``_scope_to_feature_slug`` (run_scope multi-feature disambiguation).
+# Ambas disparam apenas quando ha multiplas features ativas; intent-
+# resume garante que a escolha sobrevive a re-invocacao.
+#
+# Refs:
+#   - docs/superpowers/specs/drift-1-intent-protocol.md §3, §5, §8
+#   - engine/init.py:100-108 (canonical template)
+
+
+@dataclass
+class _VerifyCheckpoint:
+    """State serialized before each ``question.ask`` call in ``verify.run``.
+
+    Carrega ``scope_kind`` + ``scope_target`` adicionais (alem de step,
+    at, project_root, intent_id) porque verify resolve esses dois antes
+    de chegar nos prompts ambiguos — preservar evita re-resolucao na
+    invocacao seguinte (e mantem auditoria do que ja foi inferido).
+    """
+
+    step: str
+    at: str
+    project_root: str
+    intent_id: str | None = None
+    scope_kind: str | None = None
+    scope_target: str | None = None
+
+
+def _verify_checkpoint_path(project_root: Path) -> Path:
+    return claude_dir(project_root) / ".verify-checkpoint.yaml"
+
+
+def _save_verify_checkpoint(cp: _VerifyCheckpoint) -> None:
+    """Persist the verify checkpoint atomically (mirrors _save_checkpoint em init)."""
+    path = _verify_checkpoint_path(Path(cp.project_root))
+    ensure_dir(path.parent)
+    write_yaml(
+        path,
+        {
+            "schema-version": 1,
+            "step": cp.step,
+            "at": cp.at,
+            "project-root": cp.project_root,
+            "intent-id": cp.intent_id,
+            "scope-kind": cp.scope_kind,
+            "scope-target": cp.scope_target,
+        },
+        atomic=True,
+    )
+
+
+def _load_verify_checkpoint(project_root: Path) -> dict[str, Any] | None:
+    """Read the verify checkpoint, returning ``None`` when absent."""
+    path = _verify_checkpoint_path(project_root)
+    if not path.exists():
+        return None
+    data = read_yaml_or_default(path, None)
+    return data if isinstance(data, dict) else None
+
+
+def _clear_verify_checkpoint(project_root: Path) -> None:
+    """Remove the checkpoint — best-effort; idempotent."""
+    path = _verify_checkpoint_path(project_root)
+    if path.exists():
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
+def _utc_now_iso_verify() -> str:
+    """ISO-8601 UTC timestamp matching ``_InitCheckpoint`` format."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -213,6 +298,8 @@ def run_scope(
             warnings_list=[],
         )
         _restore_l1_status(project_root, previous_state, failed=False, note="")
+        # DRIFT-1 W2.T3b — clear intent-resume checkpoint on clean completion.
+        _clear_verify_checkpoint(project_root)
         return 0
 
     fail_fast = _resolve_fail_fast(config)
@@ -250,9 +337,16 @@ def run_scope(
             failed=True,
             note=f"verify-failed: {hard_fail.name}",
         )
+        # DRIFT-1 W2.T3b — hard fail is a normal verdict (not invalid response),
+        # so clear the intent-resume checkpoint per ``_clear_state`` contract.
+        # SPEC §3 forensic preservation applies to invalid-response branches,
+        # not to validator hard fails.
+        _clear_verify_checkpoint(project_root)
         return 1
 
     _restore_l1_status(project_root, previous_state, failed=False, note="")
+    # DRIFT-1 W2.T3b — clear intent-resume checkpoint on clean completion.
+    _clear_verify_checkpoint(project_root)
     return 0
 
 
@@ -314,6 +408,27 @@ def _scope_to_feature_slug(
     if interactive:
         try:
             options = {slug: f"feature ativa ({slug})" for slug in active}
+            # DRIFT-1 W2.T3b — persist checkpoint with the deterministic
+            # intent-id for this ask BEFORE invoking ``question.ask``.
+            _save_verify_checkpoint(
+                _VerifyCheckpoint(
+                    step="step-scope-disambiguation",
+                    at=_utc_now_iso_verify(),
+                    project_root=str(project_root),
+                    intent_id=question._stable_intent_id(
+                        "ask",
+                        "Múltiplas features ativas — qual escopo da verificação?",
+                        options,
+                        extra={
+                            "default": active[0],
+                            "min-selected": None,
+                            "validator-hint": None,
+                        },
+                    ),
+                    scope_kind=scope_type,
+                    scope_target=scope_target,
+                )
+            )
             return question.ask(
                 "Múltiplas features ativas — qual escopo da verificação?",
                 options,
@@ -458,6 +573,29 @@ def _infer_active_feature(project_root: Path, *, allow_prompt: bool) -> str:
     if not allow_prompt:
         return candidates[0]
     options = {slug: f"feature {slug}" for slug in candidates}
+    # DRIFT-1 W2.T3b — persist checkpoint with the deterministic intent-id
+    # for this ask BEFORE invoking ``question.ask``. On exit-2 + re-invoke,
+    # ``question.ask`` finds the matching ``forge-response.json`` and
+    # returns the value without re-prompting.
+    _save_verify_checkpoint(
+        _VerifyCheckpoint(
+            step="step-infer-active-feature",
+            at=_utc_now_iso_verify(),
+            project_root=str(project_root),
+            intent_id=question._stable_intent_id(
+                "ask",
+                "Mais de um feature ativo. Qual?",
+                options,
+                extra={
+                    "default": None,
+                    "min-selected": None,
+                    "validator-hint": None,
+                },
+            ),
+            scope_kind="feature",
+            scope_target=None,
+        )
+    )
     return question.ask("Mais de um feature ativo. Qual?", options)
 
 
