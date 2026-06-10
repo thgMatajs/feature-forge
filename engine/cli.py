@@ -10,6 +10,13 @@ collects its own parameters via interactive prompts inside its handler.
 Ctrl+C is treated as **pause**, never abort (Decision 27 / discipline §7):
 the subcommand handler is responsible for saving deferred state before the
 exception bubbles back here, where we exit with 130 (standard SIGINT code).
+
+DRIFT-1 W2.T2 adds the **paused-for-input** clause. When a handler calls
+``engine.ui.question.ask*`` and no response is on disk, the chokepoint
+writes ``.claude/state/forge-pending.json`` and raises
+``PausedForInputError`` — we catch it here and exit with code 2, the new
+contract-bearer that says "intent emitted, caller please respond and
+re-invoke" (SPEC §8).
 """
 
 from __future__ import annotations
@@ -17,6 +24,8 @@ from __future__ import annotations
 import importlib
 import sys
 from typing import Callable
+
+from engine.ui.question import PausedForInputError
 
 # Lazy imports — each command module is loaded only on first use, keeping
 # cold-start fast for read-only commands like `forge status`.
@@ -152,6 +161,13 @@ def main(argv: list[str] | None = None) -> int:
     handler = _resolve(cmd)
     try:
         result = handler(rest)
+    except PausedForInputError:
+        # DRIFT-1 §8 — chokepoint emitted .claude/state/forge-pending.json.
+        # The caller (Claude Code host or engine.ui.tty_bridge) is expected
+        # to read that file, write a response, and re-invoke us with the
+        # same argv. No traceback, no message on stdout — the host renders
+        # whatever it needs to from the intent payload itself.
+        return 2
     except KeyboardInterrupt:
         # Decision 27 / discipline §7 — Ctrl+C = pause.
         # Each command is responsible for serializing deferred state before
