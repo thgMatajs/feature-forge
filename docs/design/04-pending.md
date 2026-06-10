@@ -2429,6 +2429,92 @@ atual: esperar, registrar aqui.
 
 Não-bloqueante. Anotado pra próxima rodada de migration cross-card.
 
+### Phase 0b — Code review follow-ups (2026-06-10)
+
+Discovered during DET-3 code review. None bloqueante — merge unlocked.
+Cada um é fix-forward, capturado aqui pra evitar perda de contexto até
+phase futura endereçar.
+
+#### FU-1 — Custom catalog path discovery (Medium)
+
+**Context:** `engine/init.py:_eval_gradle_dep` só procura
+`<root>/gradle/*.versions.toml`. Catálogos declarados em path
+customizado via `settings.gradle.kts versionCatalogs { from(...) }`
+são invisíveis ao scanner. O fallback de `build.gradle*` ainda pega
+deps declaradas inline, mas catálogos custom-path miss o caminho de
+detecção via version-catalog.
+
+**Reference:** `engine/init.py` (região de `_eval_gradle_dep`,
+~linha 658).
+
+**Outcome esperado (3-caminhos):**
+- (a) Estender resolver pra parsear `settings.gradle*` por
+  `versionCatalogs { from(...) }` e seguir o path.
+- (b) Documentar limitação explicitamente, manter scope reduzido a
+  `gradle/*.versions.toml` standard.
+- (c) Deprecar `gradle-dep` em favor de signal v2 com declared
+  catalog paths no card YAML.
+
+#### FU-2 — `signals.yaml` mirror vs source-of-truth (Medium)
+
+**Context:** Arquivos `cards/*/detection/signals.yaml` existem como
+mirror documental de `card.yaml.detection.signals`. O card loader
+(`engine/cards/loader.py:354`) lê SÓ `card.yaml` em runtime —
+`signals.yaml` NUNCA é consumido. A migração da Phase 0b tocou 9
+arquivos `signals.yaml` por paridade, mas o efeito funcional vem
+exclusivamente das edições em `card.yaml`. Manter mirrors é
+disciplina documental; risco real de drift existe.
+
+**Reference:** `cards/*/detection/signals.yaml` (22 arquivos no repo
+atual); `engine/cards/loader.py:354` (único consumer de `card.yaml`).
+
+**Outcome esperado (3-caminhos):**
+- (a) Formalizar `signals.yaml` como source-of-truth, refactor
+  loader pra consumir, deprecar `card.yaml.detection`.
+- (b) Remover mirrors `signals.yaml` inteiramente, apontar readers
+  pra `card.yaml.detection` via tooling/doc.
+- (c) Manter discipline atual de mirror, adicionar CI check
+  enforcing parity entre `card.yaml.detection.signals` e
+  `detection/signals.yaml`.
+
+#### FU-3 — Substring match no fallback build.gradle (Low)
+
+**Context:** `_glob_any("**/build.gradle*", coordinate)` faz
+substring match. Coordenada `"io.ktor:ktor-client-core"` casa
+também `"io.ktor:ktor-client-core-jvm"` (artifact diferente).
+Comportamento pre-migration `file-content` era idêntico — zero
+regression — mas o branding "exact coordinate" do novo signal
+`gradle-dep` fica enganoso.
+
+**Reference:** `engine/init.py` (fallback `_glob_any` após
+`libs.versions.toml` miss, ~linha 686).
+
+**Outcome esperado (3-caminhos):**
+- (a) Renomear pra `gradle-dep-prefix` OU documentar semântica
+  substring em `docs/schemas/card.md`.
+- (b) Tighten pra word-boundary match (regex
+  `(^|[^.\w-])<coord>([^.\w-]|$)`).
+- (c) Deixar as-is, documentar caveat.
+
+#### FU-5 — Bootstrap idempotency em worktree context (Medium)
+
+**Context:** `tests/integration/test_bootstrap.py::test_bootstrap_is_idempotent`
+falha quando rodado de dentro de git worktree
+(`.claude/worktrees/<...>/`). Root cause: `.claude/bootstrap.sh`
+assume `.git` é diretório, mas em worktrees `.git` é ARQUIVO
+contendo `gitdir: <path>`. Afeta: qualquer um rodando pytest
+de worktree; Phase A W1 surfou isso em step de verificação.
+
+**Reference:** `.claude/bootstrap.sh` (idempotency check);
+`tests/integration/test_bootstrap.py::test_bootstrap_is_idempotent`;
+Phase A W1 verification log em
+`.planning/drift-1/w1-verification.md`.
+
+**Outcome esperado:** bootstrap handles ambos `.git` dir AND
+`.git` arquivo (worktree). Provável fix 1-2 linhas usando
+`git rev-parse --git-dir` ou similar. Phase-independente —
+pode ser endereçado a qualquer momento.
+
 ## Reading order for new contributors
 
 **For a fresh session retomando o projeto, use o handoff:**

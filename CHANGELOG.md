@@ -28,6 +28,10 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 - Revisita decisão 30: sandbox isolation guard via sitecustomize.py (não PYTHONSTARTUP) — texto da Decisão atualizado pra refletir mecanismo real implementado em engine/qa/sandbox.py. Comportamento de isolamento idêntico; só o mecanismo nomeado mudou.
 
+### Fixed
+
+- Tighten CARD-020 whitespace validation to reject tab/newline in gradle-dep coordinate (M-001 from DET-3 code review; commit 475f695).
+
 ### Fixed (QA-11 ultra-review remediação — PR #9, 2026-06-09)
 
 Remediação de 16 findings do ultra-review (deep.json) sobre QA-11 sandbox env hardening + QA-13. Severities variam de critical (1) a suggestion (7); todas aplicadas exceto onde indicado.
