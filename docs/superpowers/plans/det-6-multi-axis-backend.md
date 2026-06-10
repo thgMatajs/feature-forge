@@ -501,15 +501,45 @@ Antes de propor helpers novos, evidência de reuso (consulta `forge graph` + `en
 
 **Justificativa load-bearing:** W7 toca `engine/init.py` + `engine/reconfigure.py` (chokepoints). Justificativa: orchestration nova substitui handler legacy (bundle escolha) por composer + bundle picker + per-axis prompts.
 
-**Phase A dependency explicit:** W7 não inicia antes de Phase A shippar. Sub-task 0 verifica:
+**Phase A dependency explicit:** W7 não inicia antes de Phase A shippar. Sub-task W7.0
+(BLOCKING) executa o gate decision com 2 caminhos determinísticos abaixo.
 
-```bash
-ls docs/superpowers/specs/drift-1-intent-protocol.md  # exists?
-ls docs/superpowers/plans/drift-1-intent-protocol.md  # exists?
-grep "AskUserQuestion\|intent_state" engine/ui/question.py  # API materializada?
-```
+#### W7.0 — Phase A dependency gate (BLOCKING)
 
-Se qualquer condição falha → W7 não inicia, anota em STATE.md, segue pra W8.
+This wave requires Phase A (DRIFT-1 intent protocol) to be merged to main before
+execution. Two paths:
+
+**Path A — Phase A is merged (HAPPY PATH):**
+- Proceed to W7.1 (brownfield) → W7.2 (greenfield) → W7.3 (reconfigure)
+- ACs AC-6, AC-7, AC-8 fully covered via Claude-Code-fronted intent protocol
+- W7.4 cleanup of legacy backend-choice runs as final cleanup
+
+**Path B — Phase A NOT merged (FALLBACK):**
+- HALT W7 execution
+- Update `docs/design/04-pending.md` adding new entry: "Phase B W7 deferred pending
+  Phase A merge — re-dispatch when Phase A lands"
+- Skip W7.1-W7.4 entirely
+- Proceed directly to W8 (doc-sync) WITH NOTE: ACs AC-6, AC-7, AC-8 marked as
+  PARTIAL (schema + detection + bundles ready; UX integration deferred)
+- W8 commit message + handoff explicit: "DET-6 Phase B partial ship — W7 UX
+  deferred pending Phase A"
+
+The orchestrator decides Path A or Path B BEFORE dispatching W7 implementation
+agent. No autonomous gate decision by sub-agent.
+
+- **Files:** N/A (gate decision step)
+- **Steps:**
+  1. Orchestrator runs gate checks:
+     ```bash
+     ls docs/superpowers/specs/drift-1-intent-protocol.md  # exists?
+     ls docs/superpowers/plans/drift-1-intent-protocol.md  # exists?
+     git log --all --oneline | grep -i "drift-1\|intent protocol"  # merged?
+     grep -rn "AskUserQuestion\|intent_state" engine/ui/question.py  # API materializada?
+     ```
+  2. Se TODAS as checks passam → Path A (proceed W7.1-W7.4).
+  3. Se QUALQUER check falha → Path B (halt + 04-pending entry + skip to W8).
+  4. Decision logged in commit body or session handoff.
+- **Verification:** Path decision documented before W7.1 dispatch.
 
 #### W7.1 — Init flow brownfield
 
