@@ -2753,6 +2753,48 @@ Phase A W1 verification log em
 `git rev-parse --git-dir` ou similar. Phase-independente —
 pode ser endereçado a qualquer momento.
 
+## Phase B — DET-6 multi-axis backend code review follow-ups (2026-06-10 W1)
+
+Deferidos do review de Phase B W1 (`.planning/det-6-w1-review/REVIEW.md`)
+durante doc-sync W1. Não-bloqueantes pro avanço W2; revisitar em W2 ou
+cleanup pass dedicado dentro da própria branch `feat/det-6-multi-axis-backend`
+antes do PR final ao fim de W8.
+
+### W1-L-002 — Open-details #6/#7 em `workflow-config.md` em vez de `card.md` / `backend-axes.md`
+
+**Categoria:** schema-foundation (doc placement)
+**Severidade:** baixa (deviation cosmética; placement semanticamente correto)
+**Status:** deferred — revisitar em W8 doc-sync se quisermos uniformizar
+
+PLAN W1.4 nominou apenas `docs/schemas/card.md` e `docs/schemas/backend-axes.md`
+como locais pra inline `<!-- open-detail -->` comments. Os anchors #6 (Phase A
+API shape — referência ao formato de `signal-id`/`detector` que Phase A
+consolidará) e #7 (rename `crashlytics` → `crash-reporting` discutido em
+Phase B brainstorm) acabaram em `docs/schemas/workflow-config.md` porque
+semanticamente pertencem ao contexto desse schema (axes-resolution + status
+enum vivem lá). Não é regressão — só desvio do nominal do PLAN.
+
+Fix forward: ao consolidar W8 (final doc-sync da Phase B antes do PR), mover
+os 2 anchors pra `backend-axes.md` se a sentence ainda fizer sentido lá; ou
+manter onde estão com nota cross-ref. Decisão fica pro W8.
+
+### W1-L-003 — `docs/schemas/card.md:164` `# di OR dependency-injection` contradiz CARD-004
+
+**Categoria:** schema-foundation (pre-existente fora W1)
+**Severidade:** baixa (contradição interna do schema; sem efeito runtime)
+**Status:** deferred — candidate fix em W2 (category cleanup) ou cleanup pass
+
+`docs/schemas/card.md` linha 164 carrega um comentário pré-existente
+`# di OR dependency-injection` que sugere alternância no enum de
+`identity.category`. CARD-004 (revisado em W1) enumera apenas
+`dependency-injection` — o "di" curto não está no enum canônico. Zero diff
+sobre essa linha em W1 (`c60eeb1` + `26c0822` não tocaram a linha 164).
+
+Fix forward: remover o `# di OR ` do comentário, deixando apenas
+`# dependency-injection`. Trivial — pode entrar no próximo commit de W2
+quando outras refinements em CARD-004 estiverem na mesa. Anti-padrão a
+evitar: deixar pra W8 e arriscar drift adicional pelo caminho.
+
 ## Reading order for new contributors
 
 **For a fresh session retomando o projeto, use o handoff:**

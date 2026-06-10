@@ -29,6 +29,14 @@ o pattern dos 9 outros checkpoint-loaders já refatorados via
 `engine/utils/checkpoint_io.py`. Sem mudança de behavior pra cases válidos;
 elimina crash silencioso em payload mal-formado.
 
+**Nota rebase Phase B (2026-06-11):** a entrada de doc-sync W1 deste
+commit foi colapsada no rebase contra `origin/main` — a versão mais
+nova do header (acima) já existe em `main`, e o conteúdo factual da
+Phase B W1 está preservado na "Linha paralela" logo abaixo. W8
+reescreverá a seção quando Phase B fechar.
+
+Linha paralela (2026-06-10): branch `feat/det-6-multi-axis-backend` (worktree `det-6-w1`) consolida **Phase B W1 — DET-6 multi-axis backend foundation**: novo schema doc `docs/schemas/backend-axes.md` formaliza o modelo platform-keyed (8 axes × N plataformas → cell-object com `provider`/`status`/`notes?`); `docs/schemas/card.md` atualiza CARD-004 enum (+analytics/notifications/flags; −backend/network) + adiciona campo opcional `identity.platforms` + CARD-020 + seção "Backend axes"; `docs/schemas/workflow-config.md` reescreve bloco `backend:` para shape multi-axis, remove `backend.provider` monolítico, canoniza RULE-019..024 como referenciados (autoridade em `backend-axes.md`). Sub-IDs alfanuméricos eliminados; RULE-010/011 ficam como audit-trail dos campos legacy. Doc-only — sem touch em engine/validators/cards/presets. Phase B é multi-wave (W1-W8): W1 done; W2-W6 paralelizáveis com Phase A pendentes; W7-W8 ainda blocked em Phase A merge. PR final só ao fim de W8. Refs commits `c60eeb1` (schema foundation) + `26c0822` (review-fix canonicalizando RULE-019..024). Findings deferidos do REVIEW registrados como W1-L-002 e W1-L-003 em `docs/design/04-pending.md`. Suite rapid lane na branch: **1015 passed** (baseline mantido).
+
 Linha paralela `worktree-forge-qa` (PR #8) consolidou pós-rebase contra
 `main`: CONF-001..008 entregues, Gap QA-12 fechado (pause/resume via
 checkpoint.json), 4 fixes pós-review CONF-004 aplicados (H-1, M-2, M-4,

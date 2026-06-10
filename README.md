@@ -67,7 +67,7 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 
 | Categoria | Conteúdo |
 |---|---|
-| Schemas | 10 schemas (inclui `intent-protocol.md` novo em v1.2-dev / Phase A DRIFT-1) + capability-labels catalog + schema v2 (reuse_findings, module_deps) |
+| Schemas | 14 schemas (inclui `intent-protocol.md` novo em v1.2-dev / Phase A DRIFT-1 + `backend-axes.md` v1.2-dev Phase B W1) + capability-labels catalog + schema v2 (reuse_findings, module_deps) |
 | Agent prompts | 10 (planning-conductor + 9 sub-agents) |
 | UX roteiros | 7 (init, plan, implement, verify, doctor, reconfigure, evolve) — todos cobrem subtypes + reuse intelligence |
 | Templates canônicos | 18 (16 produto + feature-intake-bugfix + feature-intake-refactor) |

@@ -7,6 +7,15 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (Phase B W1 — DET-6 multi-axis backend foundation, 2026-06-10)
+
+- `docs/schemas/backend-axes.md` — novo schema doc formalizando o modelo multi-axis platform-keyed do bloco `backend:` em `workflow-config.yaml`. 8 axes canônicos (auth / persistence-server / realtime / file-storage / crash-reporting / analytics / notifications / flags) × N plataformas → cell-object (`provider`, `status ∈ {planned, configured, in-use, disabled}`, `notes?`). RULE-019..024 declaradas como autoritativas aqui (estrutura cell-object + status enum + axes inalteráveis sem revisita). Refs: commits `c60eeb1` + `26c0822` em `feat/det-6-multi-axis-backend`.
+
+### Changed (Phase B W1 — DET-6 multi-axis backend foundation, 2026-06-10)
+
+- `docs/schemas/card.md` — CARD-004 enum revisado: `+ analytics`, `+ notifications`, `+ flags`; `- backend`, `- network` (granularidade backend-axes substitui o blob monolítico). Novo campo opcional `identity.platforms` + CARD-022 (platforms enum dentro do conjunto canônico; ID alocado pós-rebase contra `main` que já consumia CARD-020/021 pra DET-3). Adicionada seção "Backend axes — when identity.category is an axis" cross-referenciando `backend-axes.md`. Open-detail anchors preservados.
+- `docs/schemas/workflow-config.md` — bloco `backend:` reescrito para shape multi-axis `backend.<axis>.<platform>` → cell|null. Removidos `identity.backend-choice` (legacy single-pick) e `backend.provider` string monolítico + sub-blocos provider-específicos. Slots RULE-010 e RULE-011 ficam reservados como audit-trail dos campos legacy + cross-ref pra RULE-019..024 (autoridade em `backend-axes.md`); sub-IDs alfanuméricos eliminados. Top-level table sincronizada.
+
 ### Fixed (PR #11 master-review remediação — 2026-06-11)
 
 Remediação completa dos 28 findings do master-review de PR #11
