@@ -215,6 +215,66 @@ ZERO touch em `question.py`.
 **Goal:** `question.py` deixa de ler stdin. Emite intent + raise sentinel.
 API surface preservada bit-a-bit.
 
+#### Task W2.T0 — Analyze existing checkpoint infrastructure (Mandamento #3 — Reuse-first)
+
+- **Files (read-only nesta task):** `engine/qa/checkpoint.py`,
+  `engine/init.py` (`_save_checkpoint`/`_load_checkpoint`/`_clear_checkpoint`
+  region linhas 104-152), `engine/plan.py` (se houver checkpoint pattern).
+- **Justificativa (Mandamento #3 — Reuse-first):** SPEC §Reuse-first
+  evidence cita `engine/init.py:104-152` como precedente, MAS existe
+  também `engine/qa/checkpoint.py` com infra compartilhada
+  (`Checkpoint` dataclass + `find_resumable_run`). Antes de W2.T3
+  decidir "cada subcommand mantém dataclass próprio" (linhas 82-85
+  deste plano), é mandatório avaliar reuso da infra de `qa/checkpoint`
+  — Reuse-first é mandamento, não sugestão.
+- **Steps (decision-task; nenhum write em código nesta task):**
+  1. `grep -n "class \|^def \|@dataclass" engine/qa/checkpoint.py` —
+     mapeia API exportada (`Checkpoint`, `find_resumable_run`, helpers
+     de persistência).
+  2. Ler o módulo inteiro pra entender shape: fields da dataclass,
+     contrato de `find_resumable_run`, formato de persistência (JSON?
+     YAML?), invariantes.
+  3. Comparar contra shape esperado pra DRIFT-1 (intent-resume per
+     subcommand: `intent_id`, `kind`, `pending_state`, timestamp).
+  4. Decidir qual dos 3 outcomes aplica:
+     - **A. Reuse direto** — se `Checkpoint` é genérica o suficiente
+       (sem fields QA-específicos como chaos rounds / attack vectors),
+       importar `engine.qa.checkpoint` em cada subcommand DRIFT-1 sem
+       mudança.
+     - **B. Extrair base shared** — se `qa/checkpoint` tem fields
+       QA-específicos mas o pattern é generalizável, refactor pra
+       `engine/_checkpoint.py` (base) + `engine/qa/checkpoint.py`
+       (subclass com fields QA). DRIFT-1 usa base. Essa promoção
+       supera a justificativa atual em §Reuse-first evidence (linhas
+       82-85) de "cada subcommand mantém dataclass próprio".
+     - **C. Justificar incompatibilidade** — se `qa/checkpoint` é
+       semanticamente tied a QA (não generalizável sem deformar shape),
+       documentar no §Architecture deste plano por que NÃO reusar; só
+       nesse caso, prosseguir com dataclass dedicada per subcommand
+       (status quo do §Reuse-first evidence).
+  5. Patch ao §Architecture do plano (ou bloco "Reuse-first evidence")
+     declarando o outcome escolhido + 1-parágrafo de justificativa
+     concreta apontando linhas-âncora de `qa/checkpoint.py` que
+     fundamentam a decisão.
+- **Critério de sucesso:**
+  - Outcome (A | B | C) escolhido e documentado no plano antes de
+    W2.T3 começar.
+  - Se B: `engine/_checkpoint.py` entra como módulo adicional na lista
+    de "Módulos novos" do §Architecture (linhas 51-58).
+  - Se A: lista de subcommands que vão importar `qa.checkpoint` é
+    explícita no plano.
+  - Se C: justificativa textual referencia campo(s) específico(s) de
+    `Checkpoint` que tornam reuso impossível.
+- **Anti-padrões:**
+  - NÃO ignorar `engine/qa/checkpoint.py` repetindo a justificativa
+    atual sem analisar — H-001 da rodada r1 do plan-auditor exige
+    análise concreta deste módulo.
+  - NÃO modificar `engine/qa/checkpoint.py` nesta task (read-only).
+  - NÃO prosseguir pra W2.T3 sem outcome locked.
+
+**Dependency:** W2.T3 (audit multi-subcommand) PRECISA do outcome desta
+task antes de iniciar — a forma de T3 depende do path A/B/C escolhido.
+
 #### Task W2.T1 — `PausedForInputError` + check-response-first contract
 
 - **Files:** `engine/ui/question.py` (MODIFY), `tests/ui/test_question_intent.py` (NOVO)
@@ -270,39 +330,140 @@ API surface preservada bit-a-bit.
 
 #### Task W2.T2 — `engine/cli.py::main()` captura sentinel
 
-- **Files:** `engine/cli.py` (MODIFY), `tests/cli/test_cli_exit_codes.py` (NEW or extend existing)
+- **Files (test, novo):** `tests/engine/test_cli_exit_codes.py` (NEW;
+  extend existing `tests/cli/test_cli_exit_codes.py` se já existir —
+  T3a confirma).
+- **Files (impl, modify):** `engine/cli.py` (MODIFY).
 - **Justificativa load-bearing:** `engine/cli.py` é top-level handler.
   Mudança escopada: novo `except PausedForInputError` ramo, exit 2.
-- **Steps:**
-  1. **RED:** test que invoca `cli.main(["init"])` simulando subcommand
-     que raise `PausedForInputError` → assert return value == 2
-  2. **GREEN:** adiciona `except PausedForInputError: return 2` em
-     `engine/cli.py::main()` (linha 153-160 region, paralelo ao
-     `KeyboardInterrupt`).
-  3. Mensagem mentor-calmo em stderr quando aplicável (opcional;
-     pode ficar silent porque host renderiza)
-- **Critério:** exit code 2 emitido limpo
+- **Steps (TDD shape rigoroso — Mandamento #2):**
+  1. **RED — write failing test FIRST:**
+     `tests/engine/test_cli_exit_codes.py::test_sentinel_exception_maps_to_exit_2`.
+     Assert: `cli.main(["init"])` quando handler raise
+     `PausedForInputError` retorna exit code 2. Estrutura sugerida:
+     monkeypatch `engine.init.run` pra raise `PausedForInputError`,
+     invoca `cli.main(["init"])`, assert return value == 2.
+  2. **Confirma RED:** rodar
+     `pytest tests/engine/test_cli_exit_codes.py::test_sentinel_exception_maps_to_exit_2 -xvs`
+     → confirmar FAIL (porque ou `PausedForInputError` ainda não existe
+     OU `cli.main` ainda não captura). Documenta o motivo do FAIL no
+     output do plan execution.
+  3. **GREEN:** implementa em duas frentes:
+     - Garante `from engine.ui.question import PausedForInputError`
+       no topo de `engine/cli.py` (W2.T1 já definiu o sentinel).
+     - Adiciona `except PausedForInputError: return 2` em
+       `engine/cli.py::main()` (linha 153-160 region, paralelo ao
+       `KeyboardInterrupt`).
+  4. **Confirma GREEN:** re-rodar
+     `pytest tests/engine/test_cli_exit_codes.py::test_sentinel_exception_maps_to_exit_2 -xvs`
+     → confirmar PASS.
+  5. **Regressão:** rodar `pytest tests/engine/` → confirmar baseline
+     intacto (zero teste novo quebrado, zero teste antigo regredido).
+  6. Mensagem mentor-calmo em stderr quando aplicável (opcional;
+     pode ficar silent porque host renderiza).
+- **Critério de sucesso:**
+  - `pytest tests/engine/test_cli_exit_codes.py::test_sentinel_exception_maps_to_exit_2 -xvs`
+    verde.
+  - `pytest tests/engine/` verde (regressão zero).
+  - Exit code 2 emitido limpo via subprocess smoke (opcional).
+- **Anti-padrões:**
+  - NÃO pular o RED step — TDD shape é mandamento, não sugestão.
+  - NÃO escrever a impl antes do test falhar primeiro.
 
-#### Task W2.T3 — Subcommand checkpoint audit + minimal patches
+#### Task W2.T3 — Subcommand checkpoint audit + minimal patches (split em T3a + T3b)
 
-- **Files:** audit `engine/{plan,implement,verify,reconfigure,evolve,undo,memory_cli,graph_cli,doctor}.py`; patches MINIMAL onde checkpoint ausente
-- **Justificativa:** SPEC §5 Reentrancy — cada subcommand precisa
-  poder retomar. Audit confirma quais já têm; cria stubs onde falta.
+**Pré-condição:** W2.T0 outcome (A | B | C) já está locked no plano.
+A forma de T3a/T3b consome essa decisão — sem ela, T3 não inicia.
+
+##### Task W2.T3a — Discover checkpoint candidates (read-only, persistence)
+
+- **Files (read-only nesta sub-task):** `engine/plan.py`,
+  `engine/implement.py`, `engine/verify.py`, `engine/reconfigure.py`,
+  `engine/evolve.py`, `engine/undo.py`, `engine/memory_cli.py`,
+  `engine/graph_cli.py`, `engine/doctor.py`, `engine/init.py`.
+- **Files (write nesta sub-task):**
+  - `.planning/drift-1/checkpoint-audit.json` (NOVO; artefato de
+    discovery — persistido pra T3b consumir)
+- **Justificativa (Mandamento #4 — escopo whitelist explícita):** scope
+  whitelist exige paths concretos por sub-task. T3a é puro discovery;
+  T3b é puro patching. Separação evita scope-creep "while I'm here".
 - **Steps:**
-  1. Audit (grep `_save_checkpoint\|checkpoint_path` em cada módulo)
-  2. Pra cada subcommand SEM checkpoint, criar
-     `_{cmd}_checkpoint.yaml` analogamente a init — MAS apenas se o
-     comando interage (ler usuário). Read-only (`graph_cli` em modo
-     query) skipa.
-  3. Doc decision em `docs/superpowers/specs/drift-1-intent-protocol.md`
-     §5 (UPDATE inline, mesmo commit) com lista final dos módulos que
-     ganham checkpoint nesta wave.
-- **Critério:**
-  - Cada subcommand interativo tem checkpoint que sobrevive a pause
-  - Smoke test per comando: invoca, força intent, exit 2; re-invoca,
-    confirma retoma
-- **Anti-padrões:** NÃO expandir comportamento de comandos além do
-  checkpoint. NÃO renomear nada.
+  1. Grep over os 10 módulos:
+     `grep -n "question\.\(ask\|confirm\|ask_text\|ask_multi\|ask_three_paths\)" engine/<module>.py`
+     pra contar callsites interativos.
+  2. Grep adicional:
+     `grep -n "_save_checkpoint\|checkpoint_path\|find_resumable_run\|Checkpoint(" engine/<module>.py`
+     pra detectar se módulo já tem checkpoint.
+  3. Pra cada módulo, produzir entrada JSON:
+     ```json
+     {
+       "module": "engine/init.py",
+       "interactive_callsites": 8,
+       "checkpoint_status": "already-has",
+       "action": "skip" | "extend" | "add-new",
+       "reuse_path": "qa-checkpoint" | "init-pattern" | "shared-base",
+       "reason": "<frase concreta apontando o outcome de W2.T0>"
+     }
+     ```
+  4. Persistir array em `.planning/drift-1/checkpoint-audit.json`.
+- **Critério de sucesso:**
+  - `.planning/drift-1/checkpoint-audit.json` existe, válido (10
+     entradas — uma por módulo auditado).
+  - Cada entrada com `action: "extend"` ou `"add-new"` tem `reason`
+    citando o outcome de W2.T0 (A/B/C).
+- **Anti-padrões:**
+  - NÃO escrever em `engine/*.py` nesta sub-task — T3a é discovery
+    puro.
+  - NÃO criar dataclass nova sem referência ao outcome de W2.T0.
+
+##### Task W2.T3b — Patch checkpoint integration (per-module, TDD)
+
+- **Files (write nesta sub-task):** apenas módulos com
+  `action: "extend"` ou `"add-new"` no audit JSON. Lista concreta vai
+  ser determinada pelo output de T3a; expected superset (a confirmar
+  por T3a): `engine/plan.py`, `engine/implement.py`,
+  `engine/verify.py`, `engine/reconfigure.py`, `engine/evolve.py`,
+  `engine/undo.py`. Read-only (`graph_cli` em modo query, `doctor`
+  read-only) skipa.
+- **Files (test, novo):** pra cada módulo patcheado, um arquivo
+  `tests/engine/test_<module>_resume.py` (ex.:
+  `tests/engine/test_plan_resume.py`, `tests/engine/test_evolve_resume.py`).
+- **Files (doc-update, mesmo commit):**
+  `docs/superpowers/specs/drift-1-intent-protocol.md` §5 (UPDATE inline)
+  com lista final dos módulos que ganharam checkpoint nesta wave.
+- **Justificativa (Mandamento #2 — TDD obrigatório):** H-002 da
+  rodada r1 do plan-auditor exige TDD shape rigoroso per módulo.
+- **Steps (TDD per módulo, repete pra cada entry com action em
+  `["extend", "add-new"]` no audit JSON):**
+  1. **RED:** escrever failing test em
+     `tests/engine/test_<module>_resume.py::test_resume_from_checkpoint`
+     — assert: módulo retoma do checkpoint após exit 2 (state files
+     deletados + estado interno preservado).
+  2. Rodar `pytest tests/engine/test_<module>_resume.py -xvs` →
+     confirmar FAIL (checkpoint ainda não existe nesse módulo OU
+     existe mas não cobre o caso).
+  3. **GREEN:** implementar checkpoint per outcome de W2.T0:
+     - Se outcome A: `from engine.qa.checkpoint import Checkpoint,
+       find_resumable_run` + integrar.
+     - Se outcome B: `from engine._checkpoint import Checkpoint` (base
+       extraída).
+     - Se outcome C: criar dataclass `_{Module}Checkpoint` análoga a
+       `_InitCheckpoint` (linhas 104 de `engine/init.py`).
+  4. Rodar test → confirmar PASS.
+  5. Rodar `pytest tests/engine/` → confirmar zero regressão no módulo.
+  6. Smoke test E2E per comando: invoca, força intent, exit 2;
+     re-invoca, confirma retoma.
+- **Critério de sucesso:**
+  - Cada subcommand interativo identificado em T3a tem
+    `tests/engine/test_<module>_resume.py::test_resume_from_checkpoint`
+    verde.
+  - SPEC §5 atualizada inline (mesmo commit que o último patch) com
+    lista final dos módulos que ganham checkpoint.
+- **Anti-padrões:**
+  - NÃO pular o RED step — TDD shape é mandamento, não sugestão.
+  - NÃO expandir comportamento de comandos além do checkpoint.
+  - NÃO renomear nada.
+  - NÃO incluir módulos com `action: "skip"` no audit JSON.
 
 **Commit W2:** `refactor(ui): question.py emits intent + cli exits 2 on pause`
 
