@@ -132,14 +132,41 @@ Antes de propor helpers novos, evidência de reuso (consulta `forge graph` + `en
 
 **Justificativa load-bearing:** W2 toca `cards/**` (whitelist load-bearing). Justificativa: categorias são fonte-de-verdade pra detection composer (W5) — sem alinhamento, composer não funciona. Mudança canônica dentro de DET-6.
 
-#### W2.1 — Audit current state
+#### W2.1 — Category cleanup audit (read-only, materialize JSON)
+
+Grep over `cards/*/card.yaml` para enumerar `identity.category` values atuais. Pra
+cada card:
+- Decide se renomear (per Phase B SPEC §"identity.category cleanup")
+- Justifica decisão (qual axis + por quê)
+
+Padrão DET-3 audit JSON — SEMPRE materializar (sem ambiguidade "agent decide
+inline").
 
 - **Files:**
-  - `.planning/det-6/category-migration-audit.json` (NEW — auxiliar, não em FILE BUDGET; agente decide se materializa como artifact ou inline em commit body)
+  - `.planning/det-6/category-migration-audit.json` (NEW — mandatory artifact,
+    consumido por W2.2)
 - **Steps:**
-  1. `grep -E "^\s*category:" cards/*/card.yaml > audit-raw.txt`.
-  2. Build JSON: `{ card-name: { current: <cat>, proposed: <cat>, reason: <txt> } }`.
-  3. Persiste em `.planning/det-6/` pra rastreabilidade.
+  1. `grep -E "^\s*category:" cards/*/card.yaml` enumera valores atuais.
+  2. Pra cada card, decide rename ou keep conforme SPEC mapping.
+  3. Persiste resultado em `.planning/det-6/category-migration-audit.json` com
+     shape:
+     ```json
+     [
+       {
+         "card": "firebase-auth",
+         "path": "cards/firebase-auth/card.yaml",
+         "current_category": "backend",
+         "new_category": "auth",
+         "axis": "auth",
+         "action": "rename",
+         "reason": "firebase-auth provides identity, maps to auth axis per SPEC"
+       }
+     ]
+     ```
+  4. W2.2 reads JSON, itera entries com `action: "rename"`, aplica renames.
+     Hard-abort se JSON ausente.
+- **Verification:** `.planning/det-6/category-migration-audit.json` exists with
+  entries for all 9 candidate cards listed in W2.2.
 
 #### W2.2 — Rename `backend` cards by axis
 
@@ -188,15 +215,48 @@ Antes de propor helpers novos, evidência de reuso (consulta `forge graph` + `en
 
 **Justificativa load-bearing:** W3 toca `cards/**` + `engine/cards/loader.py` (chokepoint). Justificativa: schema novo enforça cardinalidade per-cell, então labels singulares são redundantes; remoção é canônica.
 
-#### W3.1 — Audit current state
+#### W3.1 — Label refactor audit (read-only, materialize JSON)
+
+Grep over `cards/*/card.yaml` + `engine/` para enumerar referências a singular
+labels deprecated (`auth-provider`, `http-client`, `crash-reporting`,
+`auth-token-bearer`). Pra cada ocorrência:
+- Identifica owner (card ou engine file)
+- Decide ação (remove from provides, remove from conflicts-with, etc.)
+
+Padrão DET-3 audit JSON — SEMPRE materializar (sem ambiguidade "agent decide
+inline").
 
 - **Files:**
-  - `.planning/det-6/label-refactor-audit.json` (NEW auxiliar)
+  - `.planning/det-6/label-refactor-audit.json` (NEW — mandatory artifact,
+    consumido por W3.2 + W3.3)
 - **Steps:**
-  1. `grep -rn "auth-provider\|http-client\|crash-reporting\|auth-token-bearer" cards/*/card.yaml`.
-  2. Identifica engine references: `grep -rn "auth-provider\|http-client\|crash-reporting" engine/`.
-  3. Persiste audit JSON.
-- **Verification:** audit JSON listing complete.
+  1. `grep -rn "auth-provider\|http-client\|crash-reporting\|auth-token-bearer"
+     cards/*/card.yaml` enumera ocorrências em cards.
+  2. `grep -rn "auth-provider\|http-client\|crash-reporting" engine/` enumera
+     ocorrências em engine code.
+  3. Persiste resultado em `.planning/det-6/label-refactor-audit.json` com shape:
+     ```json
+     [
+       {
+         "file": "cards/firebase-auth/card.yaml",
+         "label": "auth-provider",
+         "context": "provides",
+         "action": "remove",
+         "reason": "singular label superseded by schema enforcement (W3)"
+       },
+       {
+         "file": "engine/cards/loader.py",
+         "label": "auth-provider",
+         "context": "enforcement-list",
+         "action": "remove-enforcement",
+         "reason": "loader stops enforcing singular cardinality"
+       }
+     ]
+     ```
+  4. W3.2 (card edits) + W3.3 (engine edits) read JSON, aplicam action by file.
+     Hard-abort se JSON ausente.
+- **Verification:** `.planning/det-6/label-refactor-audit.json` exists with
+  entries covering all matched files.
 
 #### W3.2 — Remove singular labels from card.yaml files
 
