@@ -665,9 +665,9 @@ def validate_card_yaml(manifest_dict: dict[str, Any], source_path: Path) -> list
                             f"CARD-020: gradle-dep coordinate must be `<group>:<artifact>` "
                             f"(got {coord!r})"
                         )
-                    elif " " in coord:
+                    elif any(c.isspace() for c in coord):
                         violations.append(
-                            f"CARD-020: gradle-dep coordinate must not contain spaces "
+                            f"CARD-020: gradle-dep coordinate must not contain whitespace "
                             f"(got {coord!r})"
                         )
                     else:
