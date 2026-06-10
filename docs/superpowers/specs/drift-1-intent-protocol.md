@@ -34,8 +34,12 @@ responsabilidade do orquestrador/host renderizando o intent emitido.
 
 - **NÃO redesenha a API surface.** `ask()`, `ask_text()`, `confirm()`,
   `ask_three_paths()`, `ask_multi()` mantêm assinaturas atuais (`engine/ui/question.py`
-  linhas 43, 84, 127, 158, 185). Os 125 callsites em 10 módulos do engine
+  linhas 43, 84, 127, 158, 185). Os 108 callsites em 10 módulos do engine
   permanecem intocados — só a implementação interna do chokepoint muda.
+  (Contagem canônica: `grep -rEn "question\.(ask|ask_text|ask_multi|confirm|ask_three_paths)" engine/`.
+  Esta é a metodologia autoritativa; números anteriores — 106 no docstring
+  do módulo, 125 em rascunhos antigos do SPEC/PLAN — foram reconciliados
+  por LO-003 do W2 review.)
 - **NÃO toca B1/B2/DET-5/DET-6** (Phase B — multi-axis backend redesign).
   DRIFT-1 é prerrequisito mas a refator do modelo de backend é fase
   posterior.
@@ -106,8 +110,9 @@ Campos canônicos:
 | `options` | dict[str,str] | quando `kind in {ask, ask_multi, confirm, ask_three_paths}` | `{key: human_label}` |
 | `default` | str \| null | optional | Default key (apenas `ask`/`ask_text`) |
 | `allow-pause` | bool | sim | Se `false`, tokens de pause são rejeitados |
-| `validator-hint` | str \| null | optional | Apenas `ask_text` |
+| `validator-hint` | str \| null | optional | Apenas `ask_text`. Entra no hash do `intent-id` (MD-001 fix) pra dois prompts iguais com validators diferentes não colidirem |
 | `min-selected` | int | optional | Apenas `ask_multi` |
+| `paths-detail` | list[dict] | optional | Apenas `ask_three_paths`. Lista de 3 entradas `{key, label, motive}` — host usa pra renderizar o bloco 3-caminhos canônico (discipline §1). HI-001 fix do W2 review |
 | `created-at` | str (ISO-8601 UTC) | sim | Timestamp da pausa |
 | `pid` | int | sim | PID do processo Python que pausou (debug) |
 | `checkpoint-path` | str \| null | optional | Path do checkpoint da subcommand-em-execução (ex.: `.claude/.init-checkpoint.yaml`) |
@@ -186,6 +191,11 @@ Campos canônicos:
     "b": "Reverter o commit",
     "c": "Override-justify via commit body"
   },
+  "paths-detail": [
+    {"key": "a", "label": "Refatorar pra reduzir complexidade", "motive": "reduz risco no longo prazo, custo maior agora"},
+    {"key": "b", "label": "Reverter o commit", "motive": "preserva baseline, exige re-planejamento"},
+    {"key": "c", "label": "Override-justify via commit body", "motive": "destrava o gate, mas mantém débito visível"}
+  ],
   "allow-pause": true,
   "created-at": "...",
   "pid": 84210,
@@ -248,31 +258,62 @@ sucesso. Estado limpo entre pausas. Detalhe:
   correspondente): emite mensagem clara e exita 1. NÃO deleta — opera
   como pista forense.
 
-### 4. Sentinel exception + handler
+### 4. Sentinel exceptions + handler
 
-- Nova exception em `engine/ui/question.py`:
-  ```python
-  class PausedForInputError(RuntimeError):
-      """Raised pelo chokepoint quando precisa de input e não há response disponível."""
-      intent: dict  # forge-pending.json payload (sem schema-version)
-  ```
-- Captura no top-level: **`engine/cli.py::main()`** (mesmo nível onde
-  `KeyboardInterrupt` é capturado pra Decision 27). Sequência:
-  1. Handler chama o subcommand normalmente.
-  2. Subcommand chama `question.ask(...)`.
-  3. Question lê `forge-response.json` (se existir e intent-id bate, consome
-     + retorna). Se não existir: escreve `forge-pending.json` + raise
-     `PausedForInputError`.
-  4. Subcommand DEVE persistir seu próprio checkpoint ANTES de invocar
-     `question.*()` (já é prática hoje pra Ctrl+C — Decision 27). Isso
-     significa que cada subcommand garante que o `forge-pending.json`
-     campo `checkpoint-path` aponta pra estado já gravado em disco.
-  5. `engine/cli.py::main()` captura `PausedForInputError`, exita **2**.
-  6. Caller re-invoca o mesmo comando com mesmos args.
-  7. Subcommand carrega seu checkpoint (já fazem isso hoje — ver
-     `engine/init.py:_load_checkpoint`) e retoma. Quando chega no ponto
-     que pausou, `question.ask(...)` agora encontra `forge-response.json`
-     com intent-id matching, consome, retorna o valor, segue.
+`engine/ui/question.py` expõe TRÊS sentinels distintos pro chokepoint:
+
+```python
+class PausedForInputError(Exception):
+    """Engine emitiu pending e ainda não há response — exit 2."""
+    intent: dict  # forge-pending.json payload
+
+class UserPausedError(Exception):
+    """Host response carregou paused: true com allow_pause=True — exit 2."""
+
+class UserCancelledError(Exception):
+    """Host response carregou cancelled: true — exit 130."""
+```
+
+Três sentinels separados (CR-001 + CR-003 do W2 review) ao invés de
+reusar `PromptAbortedError` pra ambos os canais — assim `cli.main` mapeia
+cada um pra exit code distinto sem ambiguidade. `PromptAbortedError` e
+`NonInteractiveError` legados permanecem exportados pra backward-compat
+com os 10 callsites; nenhum deles é levantado internamente pelo chokepoint
+no protocolo novo.
+
+Captura no top-level: **`engine/cli.py::main()`** (mesmo nível onde
+`KeyboardInterrupt` é capturado pra Decision 27). Sequência:
+
+1. Handler chama o subcommand normalmente.
+2. Subcommand chama `question.ask(...)`.
+3. Question lê `forge-response.json` (se existir e intent-id bate, consome).
+   Resolução do response (na ordem checada por `_check_pause_response`):
+   - `cancelled: true` → `UserCancelledError` → cli mapeia exit 130.
+     Ordering MD-002: cancel vem antes de pause; se vier ambos, cancel
+     vence (semântica mais forte).
+   - `paused: true` + `allow_pause=True` → `UserPausedError` → cli
+     mapeia exit 2.
+   - `paused: true` + `allow_pause=False` → `ValueError` (pause forbidden).
+     State NÃO é limpo — preserva forense conforme §3.
+   - Caso válido sem flags → retorna value.
+   Se NÃO existir response: escreve `forge-pending.json` + raise
+   `PausedForInputError` → cli mapeia exit 2.
+4. Subcommand DEVE persistir seu próprio checkpoint ANTES de invocar
+   `question.*()` (já é prática hoje pra Ctrl+C — Decision 27). Isso
+   significa que cada subcommand garante que o `forge-pending.json`
+   campo `checkpoint-path` aponta pra estado já gravado em disco.
+5. `engine/cli.py::main()` captura os sentinels e mapeia per tabela §8.
+6. Caller re-invoca o mesmo comando com mesmos args.
+7. Subcommand carrega seu checkpoint (já fazem isso hoje — ver
+   `engine/init.py:_load_checkpoint`) e retoma. Quando chega no ponto
+   que pausou, `question.ask(...)` agora encontra `forge-response.json`
+   com intent-id matching, consome, retorna o valor, segue.
+
+`cli.main` também publica `(command, command-args)` num `ContextVar`
+ANTES de despachar o handler. `_command_context()` lê esse contextvar
+de preferência ao `sys.argv` global — assim invocações programáticas
+(`main(["plan"])` em testes/harnesses) produzem pending fiel ao argv
+recebido, não ao argv do processo pai (HI-002 fix do W2 review).
 
 ### 5. Reentrancy
 
@@ -359,16 +400,30 @@ fi
 
 ### 8. Exit code contract
 
-| Exit | Significado | Quem emite |
-|---|---|---|
-| **0** | Comando completou com sucesso | `engine/cli.py::main()` |
-| **1** | Erro fatal (raise não capturado, response mismatch, schema invalid) | `engine/cli.py::main()` ou subcommand handler |
-| **2** | Pausa aguardando input (intent emitido em `forge-pending.json`) | `engine/cli.py::main()` ao capturar `PausedForInputError` |
-| **130** | User cancelou (Ctrl+C em TTY OU response com `cancelled: true`) | Já existe (Decision 27) + nova path via response.cancelled |
+| Exit | Significado | Sentinel | Quem emite |
+|---|---|---|---|
+| **0** | Comando completou com sucesso | — | `engine/cli.py::main()` |
+| **1** | Erro fatal (raise não capturado, response mismatch, schema invalid) | qualquer exception não-listada | `engine/cli.py::main()` ou subcommand handler |
+| **2** | Engine emitiu pending e está aguardando primeira response | `PausedForInputError` | `engine/cli.py::main()` |
+| **2** | Host enviou response com `paused: true` e o prompt permite pause | `UserPausedError` (CR-003 fix) | `engine/cli.py::main()` |
+| **130** | User cancelou via Ctrl+C em TTY | `KeyboardInterrupt` | Já existia (Decision 27) |
+| **130** | Host enviou response com `cancelled: true` | `UserCancelledError` (CR-001 fix) | `engine/cli.py::main()` |
 
-> O exit 2 é NOVO. Não conflita com convenções POSIX que usariam 2 pra
-> "misuse of shell builtins" — `forge` não é shell builtin. Documentar
-> isso em `docs/schemas/intent-protocol.md` (novo) + `docs/design/06-command-surface.md`.
+Notas operacionais:
+
+- Exit 2 é o canal canônico de "pausa, host respond e re-invoca". Duas
+  rotas distintas chegam nele — engine-side (`PausedForInputError`) e
+  user-action (`UserPausedError`) — mas o exit code é o mesmo porque o
+  caller loop não precisa distinguir: ambos significam "preciso de input
+  pra continuar".
+- Exit 130 também tem duas rotas — TTY Ctrl+C e response `cancelled:true`.
+  Idem motivação: caller loop trata "cancel" uniformemente.
+- `PromptAbortedError` legado NÃO é capturado por `cli.main` — fica disponível
+  pros 10 callsite modules como classe de exceção pra clauses `except`,
+  mas o chokepoint não o levanta no protocolo intent-only.
+- O exit 2 é NOVO no projeto. Não conflita com convenções POSIX que
+  usariam 2 pra "misuse of shell builtins" — `forge` não é shell builtin.
+  Documentado em `docs/schemas/intent-protocol.md` + `docs/design/06-command-surface.md`.
 
 ### 9. Concurrent invocation safety
 
@@ -393,7 +448,7 @@ Cenário: usuário invoca `forge X` duas vezes em sequência rápida (race).
 | **AC-2** | Re-invocação após response escrita retoma do checkpoint exato; arquivos `forge-pending.json` + `forge-response.json` são deletados | Mesmo integration test continua: escreve response, re-invoca, valida que retoma do step seguinte + ambos arquivos sumiram |
 | **AC-3** | `forge init` em TTY puro (sem `CLAUDE_CODE_HOST`, com stdin TTY) entra em `tty_bridge` automaticamente, prompts stdin idênticos ao atual | E2E test marker `e2e` que invoca `bin/forge` via pty (`pexpect` ou `pty` stdlib) |
 | **AC-4** | API `ask()`, `ask_text()`, `ask_multi()`, `confirm()`, `ask_three_paths()` mantêm assinaturas (signatures preservadas) | Unit tests pré-existentes em `tests/ui/test_question*.py` continuam verdes; novo test `test_api_signatures.py` assert no `inspect.signature(...)` de cada função |
-| **AC-5** | Ctrl+C no tty mode → exit 130; token `para` em prompt allow-pause=true → response com `paused: true`, engine exit com flag de pause (não 130, mas mesmo behavior do `PromptAbortedError` atual) | Unit + integration |
+| **AC-5** | Ctrl+C no tty mode → exit 130; token `para` em prompt allow-pause=true → response com `paused: true`, engine exit **2** limpo via `UserPausedError` (CR-003 fix do W2 review). Response com `cancelled: true` → exit **130** via `UserCancelledError` (CR-001 fix). Sem traceback em nenhum dos dois casos. | Unit + integration |
 | **AC-6** | State files deletados após consumo no happy-path | Assertion explícita no integration test |
 | **AC-7** | Race detectada: pending pré-existente com intent-id diferente E recente → engine exit 1 com mensagem clara, NÃO sobrescreve | Unit test em `tests/ui/test_question_intent.py` |
 | **AC-8** | Os 10 callsite modules continuam funcionando (smoke per módulo) | Smoke tests existentes (init, plan, reconfigure, etc.) verdes em ambos modos |

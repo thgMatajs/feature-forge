@@ -11,12 +11,25 @@ Ctrl+C is treated as **pause**, never abort (Decision 27 / discipline §7):
 the subcommand handler is responsible for saving deferred state before the
 exception bubbles back here, where we exit with 130 (standard SIGINT code).
 
-DRIFT-1 W2.T2 adds the **paused-for-input** clause. When a handler calls
-``engine.ui.question.ask*`` and no response is on disk, the chokepoint
-writes ``.claude/state/forge-pending.json`` and raises
-``PausedForInputError`` — we catch it here and exit with code 2, the new
-contract-bearer that says "intent emitted, caller please respond and
-re-invoke" (SPEC §8).
+DRIFT-1 W2.T2 (+ W2 review remediation) wires the exit-code ladder:
+
+- ``PausedForInputError``: engine emitted a fresh pending and is waiting
+  on a first response → exit 2.
+- ``UserPausedError``: host response carried ``"paused": true`` while
+  ``allow_pause=True`` → exit 2 (also a clean pause, distinct semantic
+  origin; CR-003 fix from W2 review).
+- ``UserCancelledError``: host response carried ``"cancelled": true`` →
+  exit 130, parallel to ``KeyboardInterrupt`` (CR-001 fix from W2 review).
+- ``KeyboardInterrupt``: Ctrl+C on a TTY → exit 130 (Decision 27).
+
+The ``_cli_command_context`` contextvar in ``engine.ui.question`` is set
+here BEFORE dispatching to the handler so the pending JSON's ``command``
+/ ``command-args`` reflect the argv ``main`` actually received, not the
+parent process's ``sys.argv`` (HI-002 fix from W2 review).
+
+Refs:
+- docs/superpowers/specs/drift-1-intent-protocol.md §4, §8
+- .planning/drift-1-w2-review/REVIEW.md (CR-001, CR-003, HI-002)
 """
 
 from __future__ import annotations
@@ -25,7 +38,12 @@ import importlib
 import sys
 from typing import Callable
 
-from engine.ui.question import PausedForInputError
+from engine.ui.question import (
+    PausedForInputError,
+    UserCancelledError,
+    UserPausedError,
+    _cli_command_context,
+)
 
 # Lazy imports — each command module is loaded only on first use, keeping
 # cold-start fast for read-only commands like `forge status`.
@@ -159,22 +177,46 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     handler = _resolve(cmd)
+    # HI-002 fix: publish (command, command-args) on the contextvar so
+    # ``engine.ui.question._command_context`` can return the argv this
+    # call to ``main`` received, even when ``sys.argv`` belongs to a
+    # different parent process (pytest, REPL, library wrapper). The
+    # ``reset`` in the ``finally`` undoes the set so concurrent test
+    # cases never leak context across each other.
+    token = _cli_command_context.set((cmd, list(rest)))
     try:
-        result = handler(rest)
-    except PausedForInputError:
-        # DRIFT-1 §8 — chokepoint emitted .claude/state/forge-pending.json.
-        # The caller (Claude Code host or engine.ui.tty_bridge) is expected
-        # to read that file, write a response, and re-invoke us with the
-        # same argv. No traceback, no message on stdout — the host renders
-        # whatever it needs to from the intent payload itself.
-        return 2
-    except KeyboardInterrupt:
-        # Decision 27 / discipline §7 — Ctrl+C = pause.
-        # Each command is responsible for serializing deferred state before
-        # this point. We just report cleanly and exit 130 (POSIX SIGINT).
-        sys.stderr.write("\n— interrompido, estado salvo.\n")
-        return 130
-    return int(result) if isinstance(result, int) else 0
+        try:
+            result = handler(rest)
+        except PausedForInputError:
+            # DRIFT-1 §8 — chokepoint emitted .claude/state/forge-pending.json.
+            # The caller (Claude Code host or engine.ui.tty_bridge) is expected
+            # to read that file, write a response, and re-invoke us with the
+            # same argv. No traceback, no message on stdout — the host renders
+            # whatever it needs to from the intent payload itself.
+            return 2
+        except UserPausedError:
+            # CR-003 fix — host response carried ``paused: true`` while the
+            # prompt allowed pause. Same exit code as ``PausedForInputError``
+            # (2 = clean pause, resumable) but a distinct semantic: the user
+            # explicitly paused via response, rather than the engine emitting
+            # a fresh pending. State already cleared by ``_check_pause_response``.
+            return 2
+        except UserCancelledError:
+            # CR-001 fix — host response carried ``cancelled: true``. Exit 130
+            # parallels Ctrl+C (Decision 27 / SPEC §8). Placed before the
+            # ``KeyboardInterrupt`` clause for readability; the types are
+            # disjoint so ordering between these two does not matter
+            # behaviourally.
+            return 130
+        except KeyboardInterrupt:
+            # Decision 27 / discipline §7 — Ctrl+C = pause.
+            # Each command is responsible for serializing deferred state before
+            # this point. We just report cleanly and exit 130 (POSIX SIGINT).
+            sys.stderr.write("\n— interrompido, estado salvo.\n")
+            return 130
+        return int(result) if isinstance(result, int) else 0
+    finally:
+        _cli_command_context.reset(token)
 
 
 if __name__ == "__main__":  # pragma: no cover

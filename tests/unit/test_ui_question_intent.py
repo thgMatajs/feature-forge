@@ -15,6 +15,7 @@ Refs:
 from __future__ import annotations
 
 import json
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -154,9 +155,11 @@ def test_ask_rejects_response_value_outside_options(tmp_project_root):
 # --- ask: pause semantics via response --------------------------------------
 
 
-def test_ask_response_paused_true_raises_prompt_aborted(tmp_project_root):
+def test_ask_response_paused_true_raises_user_paused(tmp_project_root):
     """Response with ``paused: true`` and ``allow_pause=True`` (default) →
-    PromptAbortedError (preserves legacy semantics).
+    ``UserPausedError`` (CR-003 fix from W2 review — distinct sentinel
+    from legacy ``PromptAbortedError`` so ``cli.main`` can map it to
+    exit 2 cleanly without a traceback).
     """
     with pytest.raises(question.PausedForInputError) as exc:
         question.ask("Pick:", {"a": "Apple"})
@@ -173,7 +176,7 @@ def test_ask_response_paused_true_raises_prompt_aborted(tmp_project_root):
         },
     )
 
-    with pytest.raises(question.PromptAbortedError):
+    with pytest.raises(question.UserPausedError):
         question.ask("Pick:", {"a": "Apple"})
 
 
@@ -496,3 +499,177 @@ def test_pending_intent_id_stable_across_re_emission(tmp_project_root):
     second_id = second.value.intent["intent-id"]
 
     assert first_id == second_id, "same prompt must produce same intent-id"
+
+
+# --- Forensic preservation (CR-002 fix) ------------------------------------
+
+
+def test_invalid_response_preserves_state_files(tmp_project_root):
+    """SPEC §3 — invalid response value MUST preserve both state files.
+
+    CR-002 fix: ``_clear_state`` no longer runs in the invalid-value
+    branches of any entrypoint. The pending stays on disk so the host
+    can diff the response that arrived vs the response that was
+    expected; the response stays for the same forensic reason.
+    """
+    pending_path = tmp_project_root / ".claude" / "state" / "forge-pending.json"
+    response_path = tmp_project_root / ".claude" / "state" / "forge-response.json"
+
+    # Emit pending first so intent-id matches.
+    with pytest.raises(question.PausedForInputError) as exc:
+        question.ask("Pick:", {"a": "Apple"})
+    intent_id = exc.value.intent["intent-id"]
+    assert pending_path.exists(), "pending must exist after first emission"
+
+    # Host writes an invalid response (value not in options).
+    _write_response(
+        tmp_project_root,
+        {
+            "schema-version": 1,
+            "intent-id": intent_id,
+            "kind": "ask",
+            "value": "not-a-real-key",
+            "answered-at": "2026-06-10T19:00:00Z",
+        },
+    )
+
+    # Engine consumes, rejects the value → ValueError, but BOTH files
+    # must remain on disk (forensic preservation per SPEC §3).
+    with pytest.raises(ValueError):
+        question.ask("Pick:", {"a": "Apple"})
+
+    assert pending_path.exists(), (
+        "pending must survive an invalid response (forensic preservation)"
+    )
+    assert response_path.exists(), (
+        "response must survive its own invalidation (forensic preservation)"
+    )
+
+
+# --- HI-001 paths-detail in ask_three_paths intent -------------------------
+
+
+def test_ask_three_paths_intent_carries_motives(tmp_project_root):
+    """HI-001 fix — the intent payload includes ``paths-detail`` with
+    label + motive for each of the 3 paths, so the host can render the
+    canonical 3-caminhos block (discipline §1) without losing context.
+    """
+    with pytest.raises(question.PausedForInputError) as exc:
+        question.ask_three_paths(
+            "cc-gate-threshold-exceeded",
+            paths=[
+                {"label": "Refatorar", "motive": "reduce complexity"},
+                {"label": "Reverter", "motive": "back out the commit"},
+                {"label": "Override-justify", "motive": "document in commit body"},
+            ],
+        )
+    intent = exc.value.intent
+    assert "paths-detail" in intent, "ask_three_paths intent must carry paths-detail"
+    detail = intent["paths-detail"]
+    assert isinstance(detail, list) and len(detail) == 3
+    by_key = {item["key"]: item for item in detail}
+    assert by_key["a"]["label"] == "Refatorar"
+    assert by_key["a"]["motive"] == "reduce complexity"
+    assert by_key["b"]["label"] == "Reverter"
+    assert by_key["b"]["motive"] == "back out the commit"
+    assert by_key["c"]["label"] == "Override-justify"
+    assert by_key["c"]["motive"] == "document in commit body"
+
+    # Also check the serialised pending JSON (wire-level guarantee).
+    on_disk = _read_pending(tmp_project_root)
+    assert on_disk["paths-detail"] == detail
+
+
+# --- HI-002 command context reads main argv, not sys.argv ------------------
+
+
+def test_pending_command_reflects_main_argv_not_sys_argv(
+    monkeypatch, tmp_project_root
+):
+    """HI-002 fix — ``_command_context`` reads the contextvar set by
+    ``cli.main``, so a programmatic call to ``main(["plan"])`` produces
+    a pending JSON with ``command == "plan"`` even when ``sys.argv``
+    belongs to the pytest runner.
+    """
+    import engine.cli as cli_module
+
+    # Pretend the parent process is pytest with completely unrelated argv.
+    monkeypatch.setattr(sys, "argv", ["pytest", "tests/unit/foo.py"])
+
+    def fake_handler(argv):
+        # Calling ``ask`` here will hit the chokepoint and raise
+        # ``PausedForInputError`` — exactly the production path.
+        question.ask("Pick:", {"a": "Apple"})
+
+    monkeypatch.setattr(cli_module, "_resolve", lambda cmd: fake_handler)
+
+    rc = cli_module.main(["plan", "--whatever"])
+    assert rc == 2, "PausedForInputError must map to exit 2"
+
+    payload = _read_pending(tmp_project_root)
+    assert payload["command"] == "plan", (
+        f"command field must mirror main argv, got {payload['command']!r}"
+    )
+    assert payload["command-args"] == ["--whatever"], (
+        f"command-args must mirror main argv tail, got {payload['command-args']!r}"
+    )
+
+
+# --- MD-001 intent-id includes validator_hint -------------------------------
+
+
+def test_ask_text_intent_id_includes_validator_hint(tmp_project_root):
+    """MD-001 fix — two ``ask_text`` calls with the same prompt but
+    different ``validator_hint`` values must produce distinct intent-ids;
+    otherwise a stale response intended for validator A could be
+    consumed by a call expecting validator B.
+    """
+    with pytest.raises(question.PausedForInputError) as first:
+        question.ask_text("Slug:", validator_hint="HA — slug-format-A")
+    first_id = first.value.intent["intent-id"]
+
+    # Clear state between emissions so race detection does not block the
+    # second call. Race detection is itself a working safeguard (proven
+    # by ``test_ask_race_detection_raises_when_pending_recent_other_intent``);
+    # here we are only interested in the intent-id derivation, so we
+    # sweep the disk and re-emit.
+    intent_state.clear_intent_files(tmp_project_root)
+
+    # Re-emit with a different validator_hint. Without the MD-001 fix
+    # this would produce the same intent-id because the hash extra
+    # dict excluded validator-hint.
+    with pytest.raises(question.PausedForInputError) as second:
+        question.ask_text("Slug:", validator_hint="HB — slug-format-B")
+    second_id = second.value.intent["intent-id"]
+
+    assert first_id != second_id, (
+        "ask_text with different validator_hint must produce different intent-ids"
+    )
+
+
+# --- MD-002 cancel beats pause ordering ------------------------------------
+
+
+def test_response_with_both_paused_and_cancelled_prefers_cancel(tmp_project_root):
+    """MD-002 fix — a malformed response carrying both ``paused: true``
+    and ``cancelled: true`` resolves to ``UserCancelledError``; cancel
+    is the stronger semantic (user wants out, not a resumable pause).
+    """
+    with pytest.raises(question.PausedForInputError) as exc:
+        question.ask("Pick:", {"a": "Apple"})
+    intent_id = exc.value.intent["intent-id"]
+
+    _write_response(
+        tmp_project_root,
+        {
+            "schema-version": 1,
+            "intent-id": intent_id,
+            "kind": "ask",
+            "paused": True,
+            "cancelled": True,
+            "answered-at": "2026-06-10T19:00:00Z",
+        },
+    )
+
+    with pytest.raises(question.UserCancelledError):
+        question.ask("Pick:", {"a": "Apple"})

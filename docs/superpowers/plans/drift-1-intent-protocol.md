@@ -157,7 +157,7 @@ Promoção pra `engine.utils.paths.state_dir()` fica como follow-up se
 grep -rn "question\.\(ask\|confirm\|ask_text\|ask_multi\|ask_three_paths\)\|from engine\.ui\.question\|from engine\.ui import question" engine/
 ```
 
-Resultado pré-flight: 125 matches em 10 módulos (`plan.py`, `evolve.py`,
+Resultado pré-flight: 108 matches em 10 módulos (`plan.py`, `evolve.py`,
 `reconfigure.py`, `memory_cli.py`, `graph_cli.py`, `undo.py`,
 `implement.py`, `verify.py`, `init.py`, `doctor.py`). **Caminho
 escolhido:** API surface preservada — nenhum callsite editado.
@@ -308,7 +308,8 @@ task antes de iniciar — a forma de T3 depende do path A/B/C escolhido.
 
 - **Files:** `engine/ui/question.py` (MODIFY), `tests/ui/test_question_intent.py` (NOVO)
 - **Justificativa load-bearing:** `engine/ui/question.py` é chokepoint
-  crítico — 125 callsites dependem da API. Justificativa: refactor
+  crítico — 108 callsites dependem da API (contagem reconciliada por
+  LO-003 do W2 review via canonical grep). Justificativa: refactor
   interno preservando API surface; alinhado ao Mandamento #1 (sem
   silent drift entre intent docstring e impl). Driver é o spec DRIFT-1.
 - **Steps:**
@@ -692,7 +693,7 @@ A forma de T3a/T3b consome essa decisão — sem ela, T3 não inicia.
        - Exit code 2 (paused-for-input) no contract de `forge`
      - `### Changed`:
        - `engine/ui/question.py` — refactor interno; API surface
-         preservada (125 callsites em 10 módulos intocados)
+         preservada (108 callsites em 10 módulos intocados)
        - `bin/forge` — dispatcher com TTY/CLAUDE_CODE_HOST detection
        - `engine/cli.py::main()` — captura `PausedForInputError` → exit 2
 

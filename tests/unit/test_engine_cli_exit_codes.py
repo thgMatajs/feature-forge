@@ -24,7 +24,11 @@ import pytest
 
 import engine.cli as cli_module
 from engine.cli import main
-from engine.ui.question import PausedForInputError
+from engine.ui.question import (
+    PausedForInputError,
+    UserCancelledError,
+    UserPausedError,
+)
 
 
 def _stub_handler(monkeypatch, handler):
@@ -129,3 +133,60 @@ def test_empty_argv_returns_zero_with_help(capsys):
     assert main([]) == 0
     captured = capsys.readouterr()
     assert "forge" in captured.out.lower()
+
+
+# --- exit 130 via UserCancelledError (CR-001 fix from W2 review) -----------
+
+
+def test_cancelled_response_maps_to_exit_130(monkeypatch):
+    """CR-001 fix — a host response with ``cancelled: true`` resolves
+    inside ``question.py`` to ``UserCancelledError``; ``cli.main`` catches
+    that sentinel and returns 130, parallel to ``KeyboardInterrupt``.
+    """
+    def handler(argv):
+        raise UserCancelledError("user cancelled via response")
+
+    _stub_handler(monkeypatch, handler)
+    assert main(["plan"]) == 130
+
+
+def test_cancelled_response_does_not_print_traceback(monkeypatch, capsys):
+    """A user-initiated cancel is clean control flow — no traceback leaks."""
+    def handler(argv):
+        raise UserCancelledError("user cancelled via response")
+
+    _stub_handler(monkeypatch, handler)
+    rc = main(["plan"])
+    captured = capsys.readouterr()
+    assert rc == 130
+    assert "Traceback" not in captured.err
+    assert "Traceback" not in captured.out
+
+
+# --- exit 2 via UserPausedError (CR-003 fix from W2 review) ----------------
+
+
+def test_paused_response_maps_to_exit_2(monkeypatch):
+    """CR-003 fix — a host response with ``paused: true`` (and
+    ``allow_pause=True`` on the prompt) resolves to ``UserPausedError``;
+    ``cli.main`` returns exit 2 cleanly, same code as
+    ``PausedForInputError`` but with a distinct semantic origin.
+    """
+    def handler(argv):
+        raise UserPausedError("user paused via response")
+
+    _stub_handler(monkeypatch, handler)
+    assert main(["plan"]) == 2
+
+
+def test_paused_response_does_not_print_traceback(monkeypatch, capsys):
+    """User-initiated pause is clean control flow — no traceback."""
+    def handler(argv):
+        raise UserPausedError("user paused via response")
+
+    _stub_handler(monkeypatch, handler)
+    rc = main(["plan"])
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "Traceback" not in captured.err
+    assert "Traceback" not in captured.out

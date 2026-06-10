@@ -10,8 +10,11 @@ resolves the input, writes a response JSON, and re-invokes the command.
 Why file-based: zero new runtime dependency (Decision 22), survives the
 non-TTY context where `bash("forge ...")` runs through host tool calls,
 and keeps the API surface of `question.py` (`ask`, `ask_text`,
-`ask_multi`, `confirm`, `ask_three_paths`) bit-identical for the 125
-callsites across 10 engine modules.
+`ask_multi`, `confirm`, `ask_three_paths`) bit-identical for the 108
+callsites across 10 engine modules. (Canonical grep methodology:
+`grep -rEn "question\.(ask|ask_text|ask_multi|confirm|ask_three_paths)" engine/`.
+Earlier docs cited 106 / 125 with different criteria; 108 reconciliated
+by W2 review LO-003.)
 
 Authoritative design contract:
 [`docs/superpowers/specs/drift-1-intent-protocol.md`](../superpowers/specs/drift-1-intent-protocol.md).
@@ -57,8 +60,9 @@ response is on disk. The engine then raises `PausedForInputError` and
 | `options` | dict[str,str] | quando `kind in {ask, ask_multi, confirm, ask_three_paths}` | `{key: human_label}` |
 | `default` | str \| null | optional | Default key (apenas `ask`/`ask_text`) |
 | `allow-pause` | bool | sim | Se `false`, tokens de pause são rejeitados |
-| `validator-hint` | str \| null | optional | Apenas `ask_text` |
+| `validator-hint` | str \| null | optional | Apenas `ask_text`. Entra no hash do `intent-id` pra dois prompts iguais com validators diferentes não colidirem (MD-001 do W2 review) |
 | `min-selected` | int | optional | Apenas `ask_multi` |
+| `paths-detail` | list[dict] | optional | Apenas `ask_three_paths`. 3 entradas `{key, label, motive}` — host usa pra renderizar o bloco 3-caminhos canônico (discipline §1). HI-001 do W2 review |
 | `created-at` | str (ISO-8601 UTC) | sim | Timestamp da pausa |
 | `pid` | int | sim | PID do processo Python que pausou (debug) |
 | `checkpoint-path` | str \| null | optional | Path do checkpoint da subcommand-em-execução |
@@ -163,12 +167,22 @@ response is on disk. The engine then raises `PausedForInputError` and
     "b": "Reverter o commit",
     "c": "Override-justify via commit body"
   },
+  "paths-detail": [
+    {"key": "a", "label": "Refatorar pra reduzir complexidade", "motive": "reduz risco no longo prazo, custo maior agora"},
+    {"key": "b", "label": "Reverter o commit", "motive": "preserva baseline, exige re-planejamento"},
+    {"key": "c", "label": "Override-justify via commit body", "motive": "destrava o gate, mas mantém débito visível"}
+  ],
   "allow-pause": true,
   "created-at": "2026-06-10T19:20:30Z",
   "pid": 84210,
   "checkpoint-path": ".claude/.verify-checkpoint.yaml"
 }
 ```
+
+O host renderiza o bloco 3-caminhos canônico (discipline §1) usando os
+campos `label` + `motive` de `paths-detail`. Sem esse campo, o renderer
+do host ficaria anêmico — só com `options` (label) e sem o "motivo
+provável" exigido pelo template de gate-resolution.
 
 ---
 
@@ -289,12 +303,14 @@ A introdução do exit code **2** é o sinal canônico de "pausa aguardando
 input". Documento completo em
 [`docs/design/06-command-surface.md`](../design/06-command-surface.md).
 
-| Exit | Significado | Quem emite |
-|---|---|---|
-| **0** | Comando completou com sucesso | `engine/cli.py::main()` |
-| **1** | Erro fatal (raise não capturado, response mismatch, schema invalid) | `engine/cli.py::main()` ou subcommand handler |
-| **2** | Pausa aguardando input (intent emitido em `forge-pending.json`) | `engine/cli.py::main()` ao capturar `PausedForInputError` |
-| **130** | User cancelou (Ctrl+C em TTY OU response com `cancelled: true`) | Já existia (Decision 27) + nova path via `response.cancelled` |
+| Exit | Significado | Sentinel | Quem emite |
+|---|---|---|---|
+| **0** | Comando completou com sucesso | — | `engine/cli.py::main()` |
+| **1** | Erro fatal (raise não capturado, response mismatch, schema invalid) | qualquer exception não-listada | `engine/cli.py::main()` ou subcommand handler |
+| **2** | Engine emitiu pending e está aguardando primeira response | `PausedForInputError` | `engine/cli.py::main()` |
+| **2** | Host enviou response com `paused: true` e o prompt permite pause | `UserPausedError` (CR-003 do W2 review) | `engine/cli.py::main()` |
+| **130** | User cancelou via Ctrl+C em TTY | `KeyboardInterrupt` | Decision 27 |
+| **130** | Host enviou response com `cancelled: true` | `UserCancelledError` (CR-001 do W2 review) | `engine/cli.py::main()` |
 
 POSIX nota: exit 2 às vezes é usado por shells pra "misuse of shell
 builtins". `forge` não é shell builtin — o conflito é nominal.
