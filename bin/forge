@@ -24,5 +24,33 @@ export PYTHONPATH="${FORGE_HOME}${PYTHONPATH:+:${PYTHONPATH}}"
 
 PYTHON="${FORGE_PYTHON:-python3}"
 
-# exec so Ctrl+C goes straight to the engine (decision 27: pause vs abort).
-exec "$PYTHON" -m engine.cli "$@"
+# DRIFT-1 dispatch (SPEC §6 sub-Q Sd): route between intent-only mode
+# (engine.cli) and TTY-fallback bridge (engine.ui.tty_bridge) based on
+# host context. Intent-only is the canonical path when Claude Code or
+# any other harness fronts stdin/stdout; the bridge only runs against a
+# real terminal where the legacy interactive prompts must keep working.
+#
+# Detection signals (in priority order, any one trips intent-only mode):
+#   - CLAUDE_CODE_HOST set       — Claude Code env hint. Hardcoded per
+#                                  PLAN W4.T1; verified 2026-06-10. If
+#                                  Claude Code renames the var the TTY
+#                                  checks below still cover us, so this
+#                                  is an early-detection bonus, not the
+#                                  load-bearing signal.
+#   - stdin or stdout not a TTY  — CI, redirect, subprocess. Canonical
+#                                  Unix non-interactive signal.
+#   - FORGE_FORCE_INTENT_MODE=1  — explicit override for tests / debug.
+#
+# Anything else falls through to the bridge (real terminal). The bridge
+# itself execs engine.cli as a subprocess and intercepts exit 2; see
+# engine/ui/tty_bridge.py docstring for the protocol contract.
+#
+# exec so Ctrl+C goes straight to the engine (Decision 27: pause vs abort).
+if [[ -n "${CLAUDE_CODE_HOST:-}" ]] \
+   || [[ ! -t 0 ]] \
+   || [[ ! -t 1 ]] \
+   || [[ -n "${FORGE_FORCE_INTENT_MODE:-}" ]]; then
+  exec "$PYTHON" -m engine.cli "$@"
+else
+  exec "$PYTHON" -m engine.ui.tty_bridge engine.cli "$@"
+fi
