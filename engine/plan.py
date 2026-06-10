@@ -31,6 +31,7 @@ from __future__ import annotations
 import re
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -54,12 +55,13 @@ from engine.ui import question, renderer
 from engine.ui.question import PromptAbortedError
 from engine.utils.paths import (
     ProjectRootNotFoundError,
+    claude_dir,
     ensure_dir,
     feature_dir,
     find_project_root,
     workflow_config_path,
 )
-from engine.utils.yaml_io import read_yaml_or_default
+from engine.utils.yaml_io import read_yaml_or_default, write_yaml
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -275,6 +277,92 @@ def detect_subtype_from_input(text: str) -> str:
         if prefix in _BUGFIX_TICKET_PREFIXES:
             return "bugfix"
     return "product"
+
+
+# ── Checkpoint (DRIFT-1 W2.T3b — intent-resume, outcome C) ───────────────────
+#
+# Per the T3a audit (.planning/drift-1/checkpoint-audit.json,
+# action="add-new", reuse_path="init-pattern"), plan ganha checkpoint pra
+# cobrir os 10 callsites interativos: ask_text de slug, ask em
+# done-feature 4-paths + extension slug elicitation, ask em
+# subtype-confirmation + bugfix-wave-b sub-question, ask de
+# continuar/pausar a cada wave (A-E), ask_text de task-count em wave D,
+# ask_three_paths em readiness-not-ready + subtype-stub. Mirrors
+# ``_InitCheckpoint`` (engine/init.py:100-108) — outcome C, sem import
+# de ``engine.qa.checkpoint`` (Decision 22).
+#
+# Refs:
+#   - docs/superpowers/specs/drift-1-intent-protocol.md §3, §5, §8
+#   - engine/init.py:100-108 (canonical template)
+
+
+@dataclass
+class _PlanCheckpoint:
+    """State serialized before each ``question.ask*`` call in ``plan.run``.
+
+    Carries ``feature_slug`` (quando ja resolvido), ``wave`` (label da
+    wave corrente — "A".."E"), e ``ambiguity_id`` (identificador do
+    sub-fluxo de ambiguidade quando aplicavel: ``"readiness-not-ready"``,
+    ``"subtype-confirmation"``, ``"bugfix-wave-b"``, ``"done-feature"``,
+    ``"subtype-stub-spike"`` etc.). Prompts antes da resolucao do slug
+    recebem ``feature_slug=None``.
+    """
+
+    step: str
+    at: str
+    project_root: str
+    intent_id: str | None = None
+    feature_slug: str | None = None
+    wave: str | None = None
+    ambiguity_id: str | None = None
+
+
+def _plan_checkpoint_path(project_root: Path) -> Path:
+    return claude_dir(project_root) / ".plan-checkpoint.yaml"
+
+
+def _save_plan_checkpoint(cp: _PlanCheckpoint) -> None:
+    """Persist the plan checkpoint atomically (mirrors init's _save_checkpoint)."""
+    path = _plan_checkpoint_path(Path(cp.project_root))
+    ensure_dir(path.parent)
+    write_yaml(
+        path,
+        {
+            "schema-version": 1,
+            "step": cp.step,
+            "at": cp.at,
+            "project-root": cp.project_root,
+            "intent-id": cp.intent_id,
+            "feature-slug": cp.feature_slug,
+            "wave": cp.wave,
+            "ambiguity-id": cp.ambiguity_id,
+        },
+        atomic=True,
+    )
+
+
+def _load_plan_checkpoint(project_root: Path) -> dict[str, Any] | None:
+    """Read the plan checkpoint, returning ``None`` when absent."""
+    path = _plan_checkpoint_path(project_root)
+    if not path.exists():
+        return None
+    data = read_yaml_or_default(path, None)
+    return data if isinstance(data, dict) else None
+
+
+def _clear_plan_checkpoint(project_root: Path) -> None:
+    """Remove the checkpoint — best-effort; idempotent."""
+    path = _plan_checkpoint_path(project_root)
+    if path.exists():
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
+def _utc_now_iso_plan() -> str:
+    """ISO-8601 UTC timestamp matching the format used by ``_InitCheckpoint``."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -1036,7 +1124,7 @@ def _handle_done_feature_branch(
 # ── Slug elicitation ─────────────────────────────────────────────────────────
 
 
-def _elicit_slug(argv_slug: Optional[str]) -> str:
+def _elicit_slug(argv_slug: Optional[str], project_root: Optional[Path] = None) -> str:
     if argv_slug:
         if not _is_valid_slug(argv_slug):
             raise SystemExit(
@@ -1044,6 +1132,36 @@ def _elicit_slug(argv_slug: Optional[str]) -> str:
                 "kebab-case lowercase, 2..50 chars, [a-z0-9-]."
             )
         return argv_slug
+
+    # DRIFT-1 W2.T3b — persist checkpoint com intent-id determinado da
+    # pergunta de slug ANTES de invocar ``question.ask_text``. On exit-2 +
+    # re-invoke, ``question.ask_text`` finds the matching forge-response
+    # and returns the value without re-prompting. Outcome C — per-subcommand
+    # dataclass, no import from ``engine.qa.checkpoint``. ``project_root``
+    # eh Optional pra preservar backward-compat com callers de teste que
+    # invocavam ``_elicit_slug(argv_slug)`` sem o segundo arg; quando None,
+    # o save eh pulado (smoke-call sem side-effect em disco).
+    if project_root is not None:
+        _save_plan_checkpoint(
+            _PlanCheckpoint(
+                step="step-elicit-slug",
+                at=_utc_now_iso_plan(),
+                project_root=str(project_root),
+                intent_id=question._stable_intent_id(
+                    "ask_text",
+                    "Qual o slug da feature? (kebab-case, ex.: lembrete-rega)",
+                    None,
+                    extra={
+                        "default": None,
+                        "min-selected": None,
+                        "validator-hint": (
+                            "kebab-case lowercase, 2..50 chars, deve começar com letra."
+                        ),
+                    },
+                ),
+                feature_slug=None,
+            )
+        )
     return question.ask_text(
         "Qual o slug da feature? (kebab-case, ex.: lembrete-rega)",
         validator=_is_valid_slug,
@@ -1328,10 +1446,23 @@ def run(argv: list[str]) -> int:
 
     argv_slug = argv[0] if argv else None
     try:
-        slug = _elicit_slug(argv_slug)
+        slug = _elicit_slug(argv_slug, project_root)
     except PromptAbortedError:
         sys.stderr.write("\n— interrompido antes do slug, nada salvo.\n")
         return 130
+
+    # DRIFT-1 W2.T3b — agora que temos slug, atualiza checkpoint com
+    # feature_slug; demais prompts deste handler herdam intent-resume via
+    # question.ask*. Outcome C — sem import de engine.qa.checkpoint.
+    _save_plan_checkpoint(
+        _PlanCheckpoint(
+            step="step-post-slug",
+            at=_utc_now_iso_plan(),
+            project_root=str(project_root),
+            intent_id=None,
+            feature_slug=slug,
+        )
+    )
 
     # Gap 9 — Cena 1 extension branch. When the requested slug exists in
     # L1 with state=done, offer the 4-caminhos (Retomar / Nova / Estender /
@@ -1490,6 +1621,10 @@ def run(argv: list[str]) -> int:
             width=72,
         )
     )
+    # DRIFT-1 W2.T3b — clean completion clears the intent-resume checkpoint
+    # (Outcome C). Paused/deferred branches DELIBERATELY preserve it for
+    # forensic resume; only the planned-and-ready path clears.
+    _clear_plan_checkpoint(project_root)
     return 0
 
 
