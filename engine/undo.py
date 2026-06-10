@@ -21,6 +21,7 @@ import json
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -39,12 +40,13 @@ from engine.ui.question import PromptAbortedError
 from engine.utils.paths import (
     ProjectRootNotFoundError,
     claude_dir,
+    ensure_dir,
     feature_dir,
     find_project_root,
     memory_l2_path,
     workflow_config_path,
 )
-from engine.utils.yaml_io import read_yaml_or_default
+from engine.utils.yaml_io import read_yaml_or_default, write_yaml
 
 _HISTORY_FILE_NAME = "workflow-config-history.jsonl"
 _UNDO_SLUG = "_undo"
@@ -52,6 +54,91 @@ _UNDO_SLUG = "_undo"
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# ── Checkpoint (DRIFT-1 W2.T3b — intent-resume, outcome C) ───────────────────
+#
+# Per the T3a audit (.planning/drift-1/checkpoint-audit.json,
+# action="add-new", reuse_path="init-pattern"), undo ganha o segundo
+# maior surface (16 callsites): menu ask, confirms multiplos em
+# init/reconfigure/task-commit/evolve/delete-feature, ask_text em
+# evolve-id/abort-reason. Mirrors ``_InitCheckpoint``
+# (engine/init.py:100-108) — outcome C, sem import de
+# ``engine.qa.checkpoint`` (Decision 22).
+#
+# Multi-prompt flow: undo tem fluxos onde N prompts encadeiam (ex.: init
+# pede 3 confirms; delete-feature pede 2). Capturamos ``confirm_level``
+# pra audit, mas o intent-id de cada confirm individual e calculado
+# dentro do proprio ``question.confirm`` — re-invocacao consome a
+# response correta pelo intent-id, nao pelo step. O step + extras
+# servem pra forensics e pra que o host saiba em qual sub-prompt o
+# fluxo estava.
+#
+# Refs:
+#   - docs/superpowers/specs/drift-1-intent-protocol.md §3, §5, §8
+#   - engine/init.py:100-108 (canonical template)
+
+
+@dataclass
+class _UndoCheckpoint:
+    """State serialized before each ``question.ask*`` call in ``undo.run``.
+
+    Carries ``target_kind`` (menu choice 1..7/c), ``feature_slug`` (when
+    aplicavel), ``confirm_level`` (qual confirm da cadeia foi atingido
+    no fluxo multi-prompt — ex.: ``confirm-1`` na 1ª confirmacao de
+    ``delete-feature``).
+    """
+
+    step: str
+    at: str
+    project_root: str
+    intent_id: str | None = None
+    target_kind: str | None = None
+    feature_slug: str | None = None
+    confirm_level: str | None = None
+
+
+def _undo_checkpoint_path(project_root: Path) -> Path:
+    return claude_dir(project_root) / ".undo-checkpoint.yaml"
+
+
+def _save_undo_checkpoint(cp: _UndoCheckpoint) -> None:
+    """Persist the undo checkpoint atomically (mirrors init's _save_checkpoint)."""
+    path = _undo_checkpoint_path(Path(cp.project_root))
+    ensure_dir(path.parent)
+    write_yaml(
+        path,
+        {
+            "schema-version": 1,
+            "step": cp.step,
+            "at": cp.at,
+            "project-root": cp.project_root,
+            "intent-id": cp.intent_id,
+            "target-kind": cp.target_kind,
+            "feature-slug": cp.feature_slug,
+            "confirm-level": cp.confirm_level,
+        },
+        atomic=True,
+    )
+
+
+def _load_undo_checkpoint(project_root: Path) -> dict[str, Any] | None:
+    """Read the undo checkpoint, returning ``None`` when absent."""
+    path = _undo_checkpoint_path(project_root)
+    if not path.exists():
+        return None
+    data = read_yaml_or_default(path, None)
+    return data if isinstance(data, dict) else None
+
+
+def _clear_undo_checkpoint(project_root: Path) -> None:
+    """Remove the checkpoint — best-effort; idempotent."""
+    path = _undo_checkpoint_path(project_root)
+    if path.exists():
+        try:
+            path.unlink()
+        except OSError:
+            pass
 
 
 # ── Candidate detection ─────────────────────────────────────────────────────
@@ -465,6 +552,31 @@ def run(argv: list[str]) -> int:
         "7": "init — apagar .claude/ inteira (raríssimo)",
         "c": "cancelar",
     }
+
+    # DRIFT-1 W2.T3b — persist checkpoint with the deterministic intent-id
+    # for the menu ask BEFORE invoking ``question.ask``. On exit-2 +
+    # re-invoke, ``question.ask`` finds the matching forge-response.json
+    # and returns the value without re-prompting. Outcome C — per-subcommand
+    # dataclass, no import from ``engine.qa.checkpoint``.
+    _save_undo_checkpoint(
+        _UndoCheckpoint(
+            step="step-menu",
+            at=_utc_now_iso(),
+            project_root=str(project_root),
+            intent_id=question._stable_intent_id(
+                "ask",
+                "O que deseja reverter?",
+                options,
+                extra={
+                    "default": "1",
+                    "min-selected": None,
+                    "validator-hint": None,
+                },
+            ),
+            target_kind=None,
+        )
+    )
+
     try:
         choice = question.ask(
             "O que deseja reverter?",
@@ -478,12 +590,29 @@ def run(argv: list[str]) -> int:
 
     if choice == "c":
         renderer.write("  cancelado.")
+        # DRIFT-1 W2.T3b — clear intent-resume checkpoint on clean completion.
+        _clear_undo_checkpoint(project_root)
         return 0
+
+    # DRIFT-1 W2.T3b — atualiza checkpoint pra refletir o target escolhido
+    # ANTES de invocar o branch. Prompts internos (confirms multi-step,
+    # ask_text de motivo/id) herdam intent-resume via question.ask* —
+    # cada um calcula seu proprio intent-id deterministico.
+    _save_undo_checkpoint(
+        _UndoCheckpoint(
+            step=f"step-target:{choice}",
+            at=_utc_now_iso(),
+            project_root=str(project_root),
+            intent_id=None,
+            target_kind=choice,
+        )
+    )
 
     try:
         if choice == "1":
             target = _resolve_last(project_root)
             if target is None:
+                _clear_undo_checkpoint(project_root)
                 return 0
             renderer.write(renderer.dim(f"  last → {target}"))
             if target == "reconfigure":
@@ -497,45 +626,64 @@ def run(argv: list[str]) -> int:
                 ok = _undo_task_commit(project_root, target.split(":", 1)[1])
             else:
                 ok = False
+            _clear_undo_checkpoint(project_root)
             return 0 if ok else 1
 
         if choice == "2":
-            return 0 if _undo_reconfigure(project_root) else 1
+            rc = 0 if _undo_reconfigure(project_root) else 1
+            _clear_undo_checkpoint(project_root)
+            return rc
 
         if choice == "3":
             slug = _pick_feature(project_root, "Qual feature?")
             if slug is None:
+                _clear_undo_checkpoint(project_root)
                 return 0
-            return 0 if _undo_task_commit(project_root, slug) else 1
+            rc = 0 if _undo_task_commit(project_root, slug) else 1
+            _clear_undo_checkpoint(project_root)
+            return rc
 
         if choice == "4":
             pid = question.ask_text("ID da proposta (ex.: P-001):")
-            return 0 if _undo_evolve(project_root, pid) else 1
+            rc = 0 if _undo_evolve(project_root, pid) else 1
+            _clear_undo_checkpoint(project_root)
+            return rc
 
         if choice == "5":
             slug = _pick_feature(project_root, "Qual feature abortar?")
             if slug is None:
+                _clear_undo_checkpoint(project_root)
                 return 0
             reason = question.ask_text("Motivo do abort:")
             if not question.confirm(
                 f"Confirma marcar {slug} como aborted?", default=False
             ):
+                _clear_undo_checkpoint(project_root)
                 return 0
-            return 0 if _abort_feature(project_root, slug, reason) else 1
+            rc = 0 if _abort_feature(project_root, slug, reason) else 1
+            _clear_undo_checkpoint(project_root)
+            return rc
 
         if choice == "6":
             slug = _pick_feature(project_root, "Qual feature apagar?")
             if slug is None:
+                _clear_undo_checkpoint(project_root)
                 return 0
-            return 0 if _delete_feature_artifacts(project_root, slug) else 1
+            rc = 0 if _delete_feature_artifacts(project_root, slug) else 1
+            _clear_undo_checkpoint(project_root)
+            return rc
 
         if choice == "7":
-            return 0 if _undo_init(project_root) else 1
+            rc = 0 if _undo_init(project_root) else 1
+            _clear_undo_checkpoint(project_root)
+            return rc
 
     except PromptAbortedError:
         renderer.write("  pausado.")
+        _clear_undo_checkpoint(project_root)
         return 130
 
+    _clear_undo_checkpoint(project_root)
     return 0
 
 
