@@ -14,6 +14,8 @@ into a context-pack file).
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -44,13 +46,95 @@ from engine.ui.question import PromptAbortedError
 from engine.ui.tree import render_tree
 from engine.utils.paths import (
     ProjectRootNotFoundError,
+    claude_dir,
+    ensure_dir,
     find_project_root,
     memory_l2_path,
     workflow_config_path,
 )
-from engine.utils.yaml_io import read_yaml_or_default
+from engine.utils.yaml_io import read_yaml_or_default, write_yaml
+from engine.utils.checkpoint_io import (
+    clear_checkpoint as _clear_checkpoint_io,
+    load_yaml_checkpoint as _load_yaml_checkpoint_io,
+    save_yaml_checkpoint as _save_yaml_checkpoint_io,
+)
+from engine.utils.iso import utc_now_iso as _utc_now_iso_shared
 
 _PAGE_SIZE = 10
+
+
+# ── Checkpoint (DRIFT-1 W2.T3b — intent-resume, outcome C) ───────────────────
+#
+# Per the T3a audit (.planning/drift-1/checkpoint-audit.json,
+# action="add-new", reuse_path="init-pattern"), memory_cli ganha um
+# checkpoint pra cobrir os 11 callsites interativos (menu ask + prompts
+# em inspect-L1/inspect-L3, search, forget L2 com 2 confirms, distill
+# L2). Mirrors ``_InitCheckpoint`` (engine/init.py:100-108) — outcome
+# C, sem import de ``engine.qa.checkpoint`` (Decision 22).
+#
+# Refs:
+#   - docs/superpowers/specs/drift-1-intent-protocol.md §3, §5, §8
+#   - engine/init.py:100-108 (canonical template)
+
+
+@dataclass
+class _MemoryCliCheckpoint:
+    """State serialized before each ``question.ask*`` call in ``memory_cli.run``.
+
+    Carrega ``submenu`` (1..7) e ``entry_id`` opcional pra recuperar
+    o ponto exato do fluxo apos exit-2 + re-invoke. Submenus podem ter
+    multiplos prompts em cadeia (distill L2 itera por propostas).
+    """
+
+    step: str
+    at: str
+    project_root: str
+    intent_id: str | None = None
+    submenu: str | None = None
+    entry_id: str | None = None
+
+
+def _memory_cli_checkpoint_path(project_root: Path) -> Path:
+    return claude_dir(project_root) / ".memory-cli-checkpoint.yaml"
+
+
+# Os 4 helpers abaixo são thin shims sobre ``engine.utils.checkpoint_io`` +
+# ``engine.utils.iso`` — consolidação dos 30 duplicates + 10 cópias de
+# ``_utc_now_iso_*`` apontada pelos findings #5 e #21 do master review do
+# PR #11. Os nomes ``_save_memory_cli_checkpoint`` etc. permanecem como API
+# privada do módulo para preservar os contracts dos testes em
+# ``tests/unit/test_engine_memory_cli_resume.py`` (Mandamento #2 — verde).
+
+
+def _save_memory_cli_checkpoint(cp: _MemoryCliCheckpoint) -> None:
+    """Persist the memory_cli checkpoint atomically."""
+    _save_yaml_checkpoint_io(
+        _memory_cli_checkpoint_path(Path(cp.project_root)),
+        {
+            "schema-version": 1,
+            "step": cp.step,
+            "at": cp.at,
+            "project-root": cp.project_root,
+            "intent-id": cp.intent_id,
+            "submenu": cp.submenu,
+            "entry-id": cp.entry_id,
+        },
+    )
+
+
+def _load_memory_cli_checkpoint(project_root: Path) -> dict[str, Any] | None:
+    """Read the memory_cli checkpoint, returning ``None`` when absent."""
+    return _load_yaml_checkpoint_io(_memory_cli_checkpoint_path(project_root))
+
+
+def _clear_memory_cli_checkpoint(project_root: Path) -> None:
+    """Remove the checkpoint — best-effort; silent on OSError (idempotent)."""
+    _clear_checkpoint_io(_memory_cli_checkpoint_path(project_root))
+
+
+def _utc_now_iso_memory_cli() -> str:
+    """ISO-8601 UTC timestamp — thin shim sobre ``engine.utils.iso``."""
+    return _utc_now_iso_shared()
 
 
 def _load_workflow_config(project_root: Path) -> dict[str, Any]:
@@ -360,6 +444,30 @@ def run(argv: list[str]) -> int:
         "c": "cancelar",
     }
 
+    # DRIFT-1 W2.T3b — persist checkpoint with the deterministic intent-id
+    # for the menu ask BEFORE invoking ``question.ask``. On exit-2 +
+    # re-invoke, ``question.ask`` finds the matching forge-response.json
+    # and returns the value without re-prompting. Outcome C — per-subcommand
+    # dataclass, no import from ``engine.qa.checkpoint``.
+    _save_memory_cli_checkpoint(
+        _MemoryCliCheckpoint(
+            step="step-menu",
+            at=_utc_now_iso_memory_cli(),
+            project_root=str(project_root),
+            intent_id=question.stable_intent_id(
+                "ask",
+                "O que olhar?",
+                options,
+                extra={
+                    "default": "1",
+                    "min-selected": None,
+                    "validator-hint": None,
+                },
+            ),
+            submenu=None,
+        )
+    )
+
     try:
         choice = question.ask(
             "O que olhar?", options, default="1", allow_pause=True
@@ -368,7 +476,24 @@ def run(argv: list[str]) -> int:
         return 130
 
     if choice == "c":
+        # DRIFT-1 W2.T3b — clear intent-resume checkpoint on clean completion.
+        _clear_memory_cli_checkpoint(project_root)
         return 0
+
+    # DRIFT-1 W2.T3b — atualiza checkpoint pra refletir o submenu escolhido
+    # ANTES de invocar o handler. Prompts internos (paginacao, search,
+    # confirm em forget L2, distill L2) herdam intent-resume via
+    # question.ask* — cada um calcula seu proprio intent-id deterministico
+    # quando chamado.
+    _save_memory_cli_checkpoint(
+        _MemoryCliCheckpoint(
+            step=f"step-submenu:{choice}",
+            at=_utc_now_iso_memory_cli(),
+            project_root=str(project_root),
+            intent_id=None,
+            submenu=choice,
+        )
+    )
 
     try:
         if choice == "1":
@@ -387,11 +512,15 @@ def run(argv: list[str]) -> int:
             _export_l2(project_root)
     except PromptAbortedError:
         renderer.write("  pausado.")
+        _clear_memory_cli_checkpoint(project_root)
         return 130
     except Exception as exc:
         sys.stderr.write(f"forge memory: operação falhou — {exc}\n")
+        _clear_memory_cli_checkpoint(project_root)
         return 1
 
+    # DRIFT-1 W2.T3b — clear intent-resume checkpoint on clean completion.
+    _clear_memory_cli_checkpoint(project_root)
     return 0
 
 

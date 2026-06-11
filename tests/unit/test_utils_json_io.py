@@ -1,0 +1,252 @@
+"""Unit tests — engine.utils.json_io.
+
+Validates atomic JSON write semantics, read-or-default, and the
+delete-if-exists helper. Models its shape on test_utils_yaml_io.py
+because json_io mirrors the same atomic-write contract.
+
+DRIFT-1 W1.T2 — foundation for the intent protocol state files
+(forge-pending.json + forge-response.json).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+from pathlib import Path
+
+import pytest
+
+from engine.utils import json_io
+
+
+def test_write_json_atomic_roundtrip(tmp_path):
+    p = tmp_path / "out.json"
+    json_io.write_json(p, {"a": 1, "b": [2, 3]})
+    assert p.is_file()
+    assert json.loads(p.read_text(encoding="utf-8")) == {"a": 1, "b": [2, 3]}
+    # No leftover .tmp file.
+    assert not (tmp_path / "out.json.tmp").exists()
+
+
+def test_write_json_creates_parent_dirs(tmp_path):
+    nested = tmp_path / "deep" / "nested" / "file.json"
+    json_io.write_json(nested, {"k": "v"})
+    assert nested.is_file()
+    assert json.loads(nested.read_text(encoding="utf-8")) == {"k": "v"}
+
+
+def test_write_json_preserves_insertion_order(tmp_path):
+    p = tmp_path / "ordered.json"
+    json_io.write_json(p, {"z": 1, "a": 2, "m": 3})
+    text = p.read_text(encoding="utf-8")
+    # Lines should appear in insertion order (sort_keys=False).
+    assert text.index('"z"') < text.index('"a"') < text.index('"m"')
+
+
+def test_write_json_unicode(tmp_path):
+    """Non-ASCII content must round-trip without escaping (UTF-8 native)."""
+    p = tmp_path / "u.json"
+    payload = {"q": "Qual preset usar pra este projeto?", "v": "não"}
+    json_io.write_json(p, payload)
+    assert json.loads(p.read_text(encoding="utf-8")) == payload
+    # Make sure ensure_ascii=False so PT chars survive readable on disk.
+    raw = p.read_text(encoding="utf-8")
+    assert "não" in raw
+
+
+def test_write_json_atomic_writes_no_partial_on_failure(tmp_path, monkeypatch):
+    """If os.replace fails mid-write, no .tmp residue should be left behind."""
+    p = tmp_path / "atomic.json"
+    p.write_text(json.dumps({"original": True}), encoding="utf-8")
+
+    original_replace = json_io.os.replace
+
+    def boom(src, dst):
+        # Simulate a rename failure after the temp file has been written.
+        raise OSError("simulated rename failure")
+
+    monkeypatch.setattr(json_io.os, "replace", boom)
+    with pytest.raises(OSError):
+        json_io.write_json(p, {"new": True})
+
+    # Original survives untouched.
+    assert json.loads(p.read_text(encoding="utf-8")) == {"original": True}
+    # No dangling .tmp.
+    assert not (tmp_path / "atomic.json.tmp").exists()
+
+    monkeypatch.setattr(json_io.os, "replace", original_replace)
+
+
+def test_read_json_happy_path(tmp_path):
+    p = tmp_path / "a.json"
+    p.write_text('{"foo": "bar", "list": [1, 2]}', encoding="utf-8")
+    data = json_io.read_json(p)
+    assert data == {"foo": "bar", "list": [1, 2]}
+
+
+def test_read_json_surfaces_error_with_path(tmp_path):
+    p = tmp_path / "broken.json"
+    p.write_text("{ not valid json", encoding="utf-8")
+    with pytest.raises(json_io.JsonIOError) as exc:
+        json_io.read_json(p)
+    # Error message must include the path for forensic value.
+    assert str(p) in str(exc.value)
+
+
+def test_read_json_missing_file_raises(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        json_io.read_json(tmp_path / "nope.json")
+
+
+def test_read_json_or_default_missing(tmp_path):
+    sentinel = {"defaulted": True}
+    result = json_io.read_json_or_default(tmp_path / "nope.json", sentinel)
+    assert result is sentinel
+
+
+def test_read_json_or_default_present(tmp_path):
+    p = tmp_path / "present.json"
+    p.write_text('{"k": "v"}', encoding="utf-8")
+    sentinel = {"defaulted": True}
+    assert json_io.read_json_or_default(p, sentinel) == {"k": "v"}
+
+
+def test_delete_if_exists_removes(tmp_path):
+    p = tmp_path / "doomed.json"
+    p.write_text("{}", encoding="utf-8")
+    assert json_io.delete_if_exists(p) is True
+    assert not p.exists()
+
+
+def test_delete_if_exists_silent_on_missing(tmp_path):
+    p = tmp_path / "never.json"
+    # Idempotent — no FileNotFoundError, just False.
+    assert json_io.delete_if_exists(p) is False
+
+
+def test_write_json_non_atomic(tmp_path):
+    """atomic=False writes directly without the tempfile dance."""
+    p = tmp_path / "direct.json"
+    json_io.write_json(p, {"k": "v"}, atomic=False)
+    assert json.loads(p.read_text(encoding="utf-8")) == {"k": "v"}
+    assert not (tmp_path / "direct.json.tmp").exists()
+
+
+# ---------------------------------------------------------------------------
+# Hardening — chmod 0o600 + dir fsync (PR #11 review findings #7 + #10).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX permission bits don't apply on Windows",
+)
+def test_write_json_sets_mode_0o600(tmp_path):
+    """Default mode é 0o600 — owner read/write apenas."""
+    p = tmp_path / "secret.json"
+    json_io.write_json(p, {"k": "v"})
+    actual = os.stat(p).st_mode & 0o777
+    assert actual == 0o600, f"expected 0o600 (owner rw only), got {oct(actual)}"
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX permission bits don't apply on Windows",
+)
+def test_write_json_custom_mode(tmp_path):
+    """Caller pode override o modo via parameter."""
+    p = tmp_path / "shared.json"
+    json_io.write_json(p, {"k": "v"}, mode=0o644)
+    actual = os.stat(p).st_mode & 0o777
+    assert actual == 0o644, f"expected 0o644, got {oct(actual)}"
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX permission bits don't apply on Windows",
+)
+def test_write_json_custom_mode_non_atomic(tmp_path):
+    """Mode também aplicado no path não-atômico."""
+    p = tmp_path / "direct.json"
+    json_io.write_json(p, {"k": "v"}, atomic=False, mode=0o640)
+    actual = os.stat(p).st_mode & 0o777
+    assert actual == 0o640, f"expected 0o640, got {oct(actual)}"
+
+
+def test_write_json_dir_fsync_called_on_posix(tmp_path, monkeypatch):
+    """Em POSIX o diretório pai é fsync-ado após o replace."""
+    if sys.platform == "win32":
+        pytest.skip("dir fsync é POSIX-only")
+
+    fsync_calls = []
+    original_fsync = json_io.os.fsync
+
+    def counting_fsync(fd):
+        fsync_calls.append(fd)
+        return original_fsync(fd)
+
+    monkeypatch.setattr(json_io.os, "fsync", counting_fsync)
+    p = tmp_path / "durable.json"
+    json_io.write_json(p, {"k": "v"})
+    # Esperado: 1x fsync do arquivo (dentro do tmp) + 1x fsync do diretório.
+    assert len(fsync_calls) >= 2, (
+        f"expected ≥2 fsync calls (file + parent dir), got {len(fsync_calls)}"
+    )
+
+
+def test_write_json_dir_fsync_skipped_on_windows(tmp_path, monkeypatch):
+    """Em Windows o fsync de diretório é skip; só o fsync do arquivo roda."""
+    monkeypatch.setattr(json_io.sys, "platform", "win32")
+
+    fsync_calls = []
+    original_fsync = json_io.os.fsync
+
+    def counting_fsync(fd):
+        fsync_calls.append(fd)
+        return original_fsync(fd)
+
+    monkeypatch.setattr(json_io.os, "fsync", counting_fsync)
+    p = tmp_path / "win.json"
+    json_io.write_json(p, {"k": "v"})
+    # Apenas o fsync do arquivo deve ter rodado.
+    assert len(fsync_calls) == 1, (
+        f"expected exactly 1 fsync (file only on Windows), got {len(fsync_calls)}"
+    )
+
+
+def test_write_json_chmod_failure_wraps_as_json_io_error(tmp_path, monkeypatch):
+    """``os.chmod`` falhando vira ``JsonIOError`` com path anexado."""
+    p = tmp_path / "denied.json"
+
+    def boom(path, mode):
+        raise PermissionError("simulated chmod denial")
+
+    monkeypatch.setattr(json_io.os, "chmod", boom)
+    with pytest.raises(json_io.JsonIOError) as exc:
+        json_io.write_json(p, {"k": "v"})
+    assert str(p) in str(exc.value)
+    assert "permissions" in str(exc.value).lower()
+
+
+def test_write_json_dir_fsync_swallows_oserror(tmp_path, monkeypatch):
+    """``OSError`` no fsync de diretório é tolerado (filesystems exóticos)."""
+    if sys.platform == "win32":
+        pytest.skip("dir fsync é POSIX-only")
+
+    original_fsync = json_io.os.fsync
+    # Vamos identificar o fd do diretório olhando o nome via os.stat;
+    # mais simples: faz fsync raise apenas na segunda chamada (a do dir).
+    call_count = {"n": 0}
+
+    def selective_fsync(fd):
+        call_count["n"] += 1
+        if call_count["n"] >= 2:
+            raise OSError("simulated procfs/tmpfs dir fsync failure")
+        return original_fsync(fd)
+
+    monkeypatch.setattr(json_io.os, "fsync", selective_fsync)
+    p = tmp_path / "exotic.json"
+    # Não deve raise — dir fsync é best-effort.
+    json_io.write_json(p, {"k": "v"})
+    assert json.loads(p.read_text(encoding="utf-8")) == {"k": "v"}

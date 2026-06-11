@@ -7,7 +7,227 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Added
+### Fixed (PR #11 master-review remediação — 2026-06-11)
+
+Remediação completa dos 28 findings do master-review de PR #11
+(`/tmp/master-review-pr-11-drift1-REVIEW.md`) em 10 commits sobre o
+W6 doc-sync (`e992e01`). Cobertura: 3 Críticos + 7 Altos + 10 Médios +
+5 Baixos + 3 Sugestões — todos endereçados em Wave 1 + Wave 2. Rapid
+lane: 1199 passed / 11 skipped (sobe de 1151 → 1199 com +32 testes
+novos cobrindo race-detection threading, schema-version mismatch,
+EOFError no tty_bridge, dir fsync, chmod 0600, intent-id stability sob
+mesmo prompt em comandos distintos, etc.).
+
+Crítico:
+
+- **#1** (`engine/cli.py main()`) — captura `RaceDetectedError`,
+  `IntentMismatchError` e `JsonIOError` antes do exit 1. Mensagem
+  mentor-calmo de `RaceDetectedError` agora chega ao usuário em vez de
+  vazar como traceback (SPEC §3/§9). Commit `ad49c40`.
+- **#2** (`engine/ui/question.py`) — `_stable_intent_id` agora inclui
+  `command` + `command-args` no payload do hash. Dois `ask()`
+  textualmente idênticos em comandos distintos não colidem mais. Combina
+  com fix #11 (paths-detail) e #18 (confirm signature). Commit `2c49d0f`.
+- **#3** (`bin/forge`) — implementa `FORGE_FORCE_TTY_MODE` (paridade com
+  CHANGELOG/SPEC §7). Drift CHANGELOG↔impl fechado. Commit `cd6d616`.
+
+Alto:
+
+- **#4** (`engine/ui/intent_state.py`) — `read_response` valida
+  `schema-version == 1` antes do intent-id check; nova exceção
+  `SchemaVersionMismatchError` raise quando diverge. Future v2 deixa de
+  consumir v1 silenciosamente. Commit `8eeff89`.
+- **#5** (`engine/utils/checkpoint_io.py` + `engine/utils/iso.py` novos)
+  — helper compartilhado consolida 30 funções (`_save_*_checkpoint`,
+  `_load_*_checkpoint`, `_clear_*_checkpoint` × 10 module handlers) +
+  10 cópias de `_utc_now_iso_<module>`. Shim de 1-linha por módulo
+  preserva API pública dos tests; alvo de remoção registrado em
+  FU-DRIFT-1-CHECKPOINT-CONSOLIDATE. Fecha Mandamento #3. Commit
+  `916a062`.
+- **#6** (`engine/ui/tty_bridge.py`) — `_prompt_user_via_stdin` captura
+  `EOFError` (Ctrl+D, pipe quebrado) e roteia para mesmo path de cancel
+  do `KeyboardInterrupt` (exit 130). Commit `6a00e1e`.
+- **#7** (`engine/utils/json_io.py`) — `write_json` aplica
+  `os.chmod(path, 0o600)` após `os.replace`. Pending/response files
+  deixam de ser world-readable em sistemas POSIX multi-tenant. Commit
+  `7d965c6`.
+- **#8** (`engine/ui/question.py`) — `_stable_intent_id` promovida a
+  `stable_intent_id` (símbolo público) com alias deprecated preservando
+  os 13 callsites de produção sem breakage. Alvo de remoção em
+  FU-DRIFT-1-DEPRECATE-INTENT-ID-ALIAS. Commit `916a062`.
+- **#9** (concurrency coverage) — teste threading (5 workers via
+  `threading.Barrier`) em `tests/integration/test_intent_state_concurrency.py`
+  documenta TOCTOU window declarada no SPEC §9 e valida que pelo menos
+  4 dos 5 saem com erro determinístico. Lock real via `fcntl.flock`
+  registrado em FU-DRIFT-1-LOCK. Commit `626a4f0`.
+- **#10** (`engine/utils/json_io.py`) — dir fsync POSIX após
+  `os.replace` (open `path.parent` com `O_RDONLY` + `os.fsync`, skip em
+  Windows). Atomic rename agora resiste a power-loss real. Commit
+  `7d965c6`.
+
+Médio:
+
+- **#11** (`engine/ui/question.py`) — `paths-detail` entra no `extra`
+  mapping do `_stable_intent_id` (ask_three_paths). Dois prompts com
+  mesmo gate_name + labels mas motives diferentes não trocam mais
+  responses. Commit `2c49d0f`.
+- **#12** (`engine/ui/question.py`) — `_command_context()` normaliza
+  fallback: quando `head` matches `r'.*\.py$'` ou `__main__`, retorna
+  `("unknown", [])` em vez de "cli.py"/"__main__.py" como nome de
+  comando. Commit `2c49d0f`.
+- **#13** (`engine/ui/tty_bridge.py`) — `_build_response_value` para
+  `kind=confirm` faz re-prompt loop (até 3 tentativas) em tokens
+  inválidos antes de propagar erro. Usuário que digita "talvez"
+  recebe orientação clara em vez de exit 1 críptico. Commit `6a00e1e`.
+- **#14** (`engine/ui/tty_bridge.py`) — env var dead `FORGE_INTERNAL_TTY_BRIDGE`
+  removida do subprocess env. Observability channel registrado em
+  FU-DRIFT-1-OBS pra emergir quando log infrastructure aparecer. Commit
+  `6a00e1e`.
+- **#15** (SPEC + plan) — search-replace `CLAUDE_CODE_HOST` →
+  `CLAUDECODE` em `docs/superpowers/specs/drift-1-intent-protocol.md`
+  + `docs/superpowers/plans/drift-1-intent-protocol.md` com nota de
+  rodapé "renomeado em W4-FU após verificação empírica vs Claude Code
+  2.1.153". Commit `d999ced`.
+- **#16** (`docs/schemas/intent-protocol.md`) — nova seção
+  `## Schema evolution policy` explicita (a) bump em breaking; (b)
+  reader rejeita versões desconhecidas; (c) engine + host co-bumpam;
+  (d) sem v0. Commit `d999ced`.
+- **#17** (`engine/ui/intent_state.py`) — `_parse_created_at` /
+  `detect_race` toleram clock skew até 60s. Negative `age_seconds` >
+  60s (clock inválido) trata como stale → sweep; <=60s trata como
+  recém-criado. Commit `8eeff89`.
+- **#18** (SPEC + question.py) — exemplo de `confirm` no SPEC §2.1
+  passa a `allow-pause: true` alinhando com impl real;
+  `tests/unit/test_ui_question_api_signatures.py` ganha regression test
+  travando a signature pra evitar drift futuro. Commits `d999ced` +
+  `2c49d0f`.
+- **#19** (concurrency test) — implementado em commit `626a4f0` (ver
+  finding #9 acima). Cobre o gap declarado no SPEC §9.
+- **#20** (`docs/design/06-command-surface.md`) — seção Exit codes ganha
+  nota explícita distinguindo as 2 rotas pra 130: (a) `KeyboardInterrupt`
+  em TTY mode; (b) host response `cancelled: true` em intent mode.
+  Caller pode tratar identicamente. Commit `d999ced`.
+
+Baixo:
+
+- **#21** — `_utc_now_iso_*` consolidado em `engine.utils.iso.utc_now_iso`
+  (10 cópias → 1 helper canônico). Commit `916a062`. Nota: `engine/verify.py`
+  mantém `_utc_now_iso` local com microseconds (semantically distinto
+  do shared helper que trunca pra seconds) — migração registrada em
+  FU-DRIFT-1-VERIFY-ISO.
+- **#22** (`engine/ui/intent_state.py`) — `RaceDetectedError` ganha
+  bloco 3-caminhos canônico (Mandamento #5 + Discipline §1): (a)
+  aguarda outro processo; (b) `rm .claude/state/forge-pending.json` se
+  sessão anterior travou; (c) `forge undo` se conflito de feature
+  paralela. Combina com fix #1 (mensagem agora chega ao usuário).
+  Commit `8eeff89`.
+- **#23** (`engine/ui/question.py`) — stub `_read_line` que raise
+  `NotImplementedError` removido. Substituído por comentário apontando
+  pra `engine.ui.tty_bridge` como home canônica de stdin reading.
+  Commit `2c49d0f`.
+- **#24** (`tests/integration/test_intent_protocol_e2e.py`) —
+  `test_race_detection_rejects_stale_concurrent` usa stale_id literal
+  determinístico (`"deadbeef-0000-0000-0000-000000000000"`) em vez de
+  `uuid.uuid4()`. Assertion adicional confirma que difere do engine
+  determinístico. Commit `626a4f0`.
+- **#25** (`tests/e2e/test_tty_bridge_e2e.py`) —
+  `pytest.skip(allow_module_level=True)` no topo quando
+  `sys.platform == "win32"`. Evita silently-passing-zero-assertions em
+  Windows CI. Commit `626a4f0`.
+
+Sugestão:
+
+- **#26** (`engine/ui/intent_state.py`) — `detect_race` catch genérico
+  trocado por `(JsonIOError, OSError)` específicos. Programming errors
+  propagam em vez de ficar escondidos. Commit `8eeff89`.
+- **#27** (`engine/ui/exit_codes.py` novo) — consolida constantes
+  `EXIT_OK=0`, `EXIT_ERROR=1`, `EXIT_PAUSED=2`, `EXIT_CANCELLED=130`
+  importadas por `engine/cli.py` e `engine/ui/tty_bridge.py`. Evita
+  drift de duplicação local. Commit `3071fe9`.
+- **#28** (`bin/forge`) — `FORGE_VERSION` dinâmico via
+  `engine.__version__` (custo +20-50ms cold start aceito). Drift do
+  hardcoded "1.0.0" fechado. Commit `cd6d616`.
+
+Follow-up pós-master-review (2026-06-11):
+
+- `engine/init.py`: `_load_checkpoint` agora valida `isinstance(data, dict)` e retorna `None` em YAML corrompido. Master-review threads #3396896063 + #3396903793 (`[Critico]`). Alinha com pattern dos 9 outros checkpoint-loaders. (commit `6dd40af`)
+
+### Changed (PR #11 master-review remediação)
+
+- State files (`.claude/state/forge-pending.json`,
+  `.claude/state/forge-response.json`) escritos com mode `0o600` por
+  default via `engine/utils/json_io.py::write_json`. Hardening de
+  permissões aplicado em sistemas POSIX (Windows ignora silenciosamente).
+- `engine.ui.question.stable_intent_id` agora é símbolo público; alias
+  deprecated `_stable_intent_id = stable_intent_id` preservado pra
+  compat dos 13 production callsites + 4 test modules. Remoção
+  registrada em FU-DRIFT-1-DEPRECATE-INTENT-ID-ALIAS, target v1.3.
+
+
+### Added (Phase A — DRIFT-1 intent protocol close, 2026-06-10)
+
+Fechamento da Phase A em 6 commits W3-W6 sobre a base W2 (range total
+`1b1d289..50203f3`, 21 commits). Engine deixa de ler stdin diretamente;
+intent JSON emitido em `.claude/state/forge-pending.json`, response
+consumida de `.claude/state/forge-response.json`, exit code 2 sinaliza
+pausa pro host (Claude Code OR `tty_bridge` em fallback). AC-1..AC-9
+verificados em integration + e2e pty.
+
+- `engine/ui/tty_bridge.py` (W3.T1) — loop subprocess pra fallback TTY
+  fora de contexto Claude Code. Lê pending, prompta no stdin com
+  helpers per `kind`, escreve response via `intent_state.write_response`
+  e re-invoca o subcomando até exit 0/1/130. Estende
+  `engine/ui/intent_state.py` com `read_pending` + `write_response`.
+- `bin/forge` dispatcher (W4.T1+W4-FU) — detecta TTY via `[[ -t 0 ]]`
+  e contexto Claude Code via env var `CLAUDECODE` (verificado
+  empiricamente vs Claude Code 2.1.153). Roteia entre intent mode
+  (host loop) e tty_bridge fallback; overrides `FORGE_FORCE_INTENT_MODE`
+  / `FORGE_FORCE_TTY_MODE` pra teste. Hooks audit (W4.T2) não exigiu
+  patches — invocações existentes continuam funcionando.
+- 15 integration tests
+  (`tests/integration/test_intent_protocol_e2e.py`,
+  `tests/integration/test_callsites_smoke.py`) + 3 e2e pty tests
+  (`tests/e2e/test_tty_bridge_e2e.py`) cobrindo AC-1..AC-9 (W5.T1+T3+T4
+  + W5.T2). Integration lane: 119 collected. E2E lane: 17 collected.
+- Exit code 2 (paused-for-input) documentado em
+  `docs/design/06-command-surface.md` (seção `## Exit codes` nova) —
+  ladder completa 0/1/2/130 vinculada ao SPEC §4.
+
+### Changed (Phase A — DRIFT-1 close)
+
+- `docs/design/06-command-surface.md` ganha seção `## Exit codes`
+  formalizando o contrato 0/1/2/130. Load-bearing edit justificado por
+  Mandamento #6 (doc-sync): exit code contract mudou (adicionado 2).
+- `.claude/rules/subagent-workflow.md` ganha subseção
+  `## Quando subagent invoca \`forge\`` esclarecendo que exit 2 é
+  contrato (não erro) e responsabilidade do orquestrador, não do
+  subagente sozinho. Load-bearing edit justificado por Mandamento #6
+  — protocolo afeta workflow de dispatch.
+- README + handoff atualizados pra refletir 21 commits de Phase A na
+  branch `feat/drift-1-intent-protocol`. Test count: rapid lane 1151
+  passed / 11 skipped preservada (1162 collected pós-W5);
+  integration 119; e2e 17; total 1298.
+
+### Added (Phase A W2 — DRIFT-1 intent protocol chokepoint refactor, 2026-06-10)
+
+Phase A W2 entrega o refactor do chokepoint (`engine/ui/question.py`) + integração de checkpoint em todos os 10 subcommands. 15 commits acumulados sobre o foundation W1 (commit `1b1d289`). Outcome C "init-pattern" locked em W2.T0: per-subcommand dataclass + 3 helpers + handler wiring; sem promoção a shared module enquanto pattern não se repetir 3+x.
+
+- Três sentinels exportadas de `engine/ui/question.py`: `PausedForInputError` (intent emitido, host deve sair com exit 2), `UserCancelledError` (response com `cancelled: true` mapeia exit 130 + Ctrl+C path) e `UserPausedError` (alias direcional pra futuro tty_bridge). `PromptAbortedError` legado preservado como re-export pra back-compat.
+- 10 per-subcommand checkpoint dataclasses, cada uma com 3 helpers (`_save_*`, `_load_*`, `_clear_*`) + `_*_checkpoint_path` resolver: `_InitCheckpoint`, `_PlanCheckpoint`, `_ImplementCheckpoint`, `_VerifyCheckpoint`, `_ReconfigureCheckpoint`, `_EvolveCheckpoint`, `_UndoCheckpoint`, `_MemoryCliCheckpoint`, `_GraphCliCheckpoint`, `_DoctorCheckpoint`. Cobertura per checkpoint-audit.json: 8 add-new + 2 extend (init e evolve já tinham checkpoints próprios; ganharam campo `intent_id` aditivo).
+- 10 novos arquivos de teste em `tests/unit/test_engine_*_resume.py` cobrindo save → exit 2 → re-invoke → consume → resume. Rapid lane: 1046 → 1114 passed (+68 tests; 11 skipped agregam migrações legadas do stdin).
+- Campo `paths-detail` no payload de `ask_three_paths` intent — host renderiza o bloco 3-caminhos completo (motive de cada caminho preservado na serialização). Fecha REVIEW CR-003.
+- Schema canônico `docs/schemas/intent-protocol.md` atualizado em W2.T1+T2 (paths-detail, hash de validator_hint, contextvar argv).
+- `.planning/drift-1/checkpoint-audit.json` (W2.T3a artifact) — classifica os 10 módulos antes da integração + serve de referência pros commits T3b PART A/B/C.
+
+### Changed (Phase A W2 — chokepoint refactor)
+
+- `engine/ui/question.py` migrado de stdin reader pra intent emitter. As 5 funções públicas (`ask`, `ask_three_paths`, `ask_yes_no`, `ask_text`, `ask_number`) preservam API surface bit-a-bit; internamente emitem intent via `intent_state` + `json_io` e levantam sentinel apropriada em vez de bloquear leitura. Hosts não-Claude-Code chamando essas funções recebem exceção em vez de prompt — comportamento documentado no SPEC §1.
+- `engine/cli.py::main()` ganhou ramos exit 2 (Paused*) + exit 130 (UserCancelledError) antes do `except KeyboardInterrupt`. Ladder de exit codes documentada em SPEC §4. Argv capturado via contextvar pra re-invocação determinística pelo host.
+- `engine/init.py` e `engine/evolve.py` — checkpoints existentes estendidos com campo `intent_id` aditivo (sem quebrar payloads em disco de sessões pré-W2; `intent_id=None` é fallback aceito).
+- Forensic preservation honrado: invalid responses (schema fail / value fora de options) NÃO chamam `_clear_state()` antes do raise — state files permanecem em disco como pista pro host (SPEC §3 + REVIEW CR-002 fix).
+- SPEC `docs/superpowers/specs/drift-1-intent-protocol.md` §2.1, §4, §5 (tabela final 10/10), §8 e AC-5 atualizados inline ao longo dos 15 commits — fonte de verdade do contrato.
+
+### Added (DET-3 gradle-dep signal type, 2026-06-10)
 
 - Signal type `gradle-dep` em `engine/init.py:_eval_detection_signals` — abstrai presença de coordenada Maven em catálogo `gradle/*.versions.toml` (TOML moderno, formato `module = "<group>:<artifact>"` e `group + name` split) OU em `**/build.gradle*` (legado). Card declara `type: gradle-dep` + `coordinate: <group>:<artifact>`; engine resolve onde procurar. Resolve DET-3 do pilot v1.2-dev 2026-06-10 (scanner cego pra libs.versions.toml). Helper privado `_eval_gradle_dep(project_root, coordinate)` ao lado de `_glob_any`, com curto-circuito no primeiro match e try/except silencioso pra TOML mal-formado. Plan: `docs/superpowers/plans/det-3-gradle-dep-signal.md`.
 - Regra de validação CARD-020 em `engine/cards/loader.py` — `detection.signals[*].coordinate` (quando `type=gradle-dep`) deve ser `<group>:<artifact>`, sem versão sufixada, sem espaços. (ID alocado como CARD-020 porque CARD-019 já é usado por `legacy-marker`; SPEC §AC-8 autorizou "CARD-019 ou next free".)

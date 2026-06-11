@@ -39,17 +39,34 @@ from engine.utils.paths import (
     workflow_config_path,
 )
 from engine.utils.yaml_io import read_yaml_or_default, write_yaml
+from engine.utils.checkpoint_io import (
+    clear_checkpoint as _clear_checkpoint_io,
+    load_yaml_checkpoint as _load_yaml_checkpoint_io,
+    save_yaml_checkpoint as _save_yaml_checkpoint_io,
+)
+from engine.utils.iso import utc_now_iso as _utc_now_iso_shared
 
 _CHECKPOINT_FILE = ".evolve-checkpoint.yaml"
 _HISTORY_SLUG = "_evolve"
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    """ISO-8601 UTC timestamp — thin shim sobre ``engine.utils.iso``."""
+    return _utc_now_iso_shared()
 
 
 def _checkpoint_path(project_root: Path) -> Path:
     return claude_dir(project_root) / _CHECKPOINT_FILE
+
+
+# Os 3 helpers abaixo são thin shims sobre ``engine.utils.checkpoint_io`` —
+# consolidação dos 30 duplicates apontada pelo finding #5 do master review
+# do PR #11. ``evolve.py`` tem um shape de checkpoint distinto dos outros
+# 9 handlers (sem ``_<Module>Checkpoint`` dataclass; ``_write_checkpoint``
+# recebe argumentos posicionais e monta o payload localmente). Os nomes
+# ``_write_checkpoint`` / ``_read_checkpoint`` / ``_clear_checkpoint``
+# permanecem como API privada do módulo para preservar os contracts dos
+# testes em ``tests/unit/test_engine_evolve_resume.py``.
 
 
 def _write_checkpoint(
@@ -58,33 +75,37 @@ def _write_checkpoint(
     status: str,
     remaining_ids: list[str],
     note: str = "",
+    intent_id: Optional[str] = None,
 ) -> None:
-    payload: dict[str, Any] = {
-        "schema-version": 1,
-        "status": status,
-        "saved-at": _utc_now_iso(),
-        "remaining-proposal-ids": remaining_ids,
-        "note": note,
-    }
-    ensure_dir(claude_dir(project_root))
-    write_yaml(_checkpoint_path(project_root), payload, atomic=True, backup=False)
+    """Write the evolve checkpoint atomically.
+
+    DRIFT-1 W2.T3b — outcome C "extend": preservamos o payload legacy
+    (status, saved-at, remaining-proposal-ids, note) e adicionamos o
+    campo ``intent-id``. Default ``None`` quando o pause nao vem do
+    chokepoint de prompts (L2 overflow, por ex.); quando vem, o campo
+    correlaciona com ``.claude/state/forge-response.json`` na re-invocacao.
+    """
+    _save_yaml_checkpoint_io(
+        _checkpoint_path(project_root),
+        {
+            "schema-version": 1,
+            "status": status,
+            "saved-at": _utc_now_iso(),
+            "remaining-proposal-ids": remaining_ids,
+            "note": note,
+            "intent-id": intent_id,
+        },
+    )
 
 
 def _read_checkpoint(project_root: Path) -> Optional[dict[str, Any]]:
-    path = _checkpoint_path(project_root)
-    if not path.exists():
-        return None
-    data = read_yaml_or_default(path, None)
-    return data if isinstance(data, dict) else None
+    """Read the evolve checkpoint, returning ``None`` when absent."""
+    return _load_yaml_checkpoint_io(_checkpoint_path(project_root))
 
 
 def _clear_checkpoint(project_root: Path) -> None:
-    path = _checkpoint_path(project_root)
-    if path.exists():
-        try:
-            path.unlink()
-        except OSError:
-            pass
+    """Remove the checkpoint — best-effort; silent on OSError (idempotent)."""
+    _clear_checkpoint_io(_checkpoint_path(project_root))
 
 
 def _load_workflow_config(project_root: Path) -> dict[str, Any]:
@@ -183,15 +204,36 @@ def _diff_preview(p: DistillationProposal) -> None:
     renderer.write("")
 
 
+_ACTION_OPTIONS = {
+    "a": "aplicar",
+    "r": "rejeitar (permanente)",
+    "d": "depois (manter na fila)",
+    "v": "ver detalhe completo",
+}
+
+
+def _action_intent_id(proposal_id: str) -> str:
+    """Pre-compute the deterministic intent-id for the action ask on a proposal.
+
+    DRIFT-1 W2.T3b — outcome C: exposed as helper so the run loop can
+    persist intent-id no checkpoint ANTES de invocar question.ask
+    (mantem o invariante de §3 — pending intent aponta pra state ja
+    em disco). Question text espelha exatamente o usado em
+    ``_action_for`` — qualquer drift entre as duas strings quebra o
+    matching com forge-response.json.
+    """
+    return question.stable_intent_id(
+        "ask",
+        f"O que fazer com {proposal_id}?",
+        _ACTION_OPTIONS,
+        extra={"default": "d", "min-selected": None, "validator-hint": None},
+    )
+
+
 def _action_for(p: DistillationProposal) -> str:
     return question.ask(
         f"O que fazer com {p.id}?",
-        {
-            "a": "aplicar",
-            "r": "rejeitar (permanente)",
-            "d": "depois (manter na fila)",
-            "v": "ver detalhe completo",
-        },
+        _ACTION_OPTIONS,
         default="d",
         allow_pause=True,
     )
@@ -408,6 +450,18 @@ def run(argv: list[str]) -> int:
         index = cursor + 1
         _render_proposal_detail(p, index=index, total=total, full=False)
         _diff_preview(p)
+
+        # DRIFT-1 W2.T3b — persist checkpoint with the deterministic
+        # intent-id for ``_action_for(p)`` BEFORE invoking the chokepoint.
+        # If question.ask raises PausedForInputError, the host can pick
+        # the response that matches this intent-id on re-invocation.
+        _write_checkpoint(
+            project_root,
+            status="awaiting-action-response",
+            remaining_ids=[pp.id for pp in proposals[cursor:]],
+            note=f"awaiting action for {p.id}",
+            intent_id=_action_intent_id(p.id),
+        )
 
         try:
             action = _action_for(p)
