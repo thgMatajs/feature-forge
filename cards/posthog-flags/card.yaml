@@ -1,0 +1,79 @@
+# cards/posthog-flags/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# PostHog Feature Flags — feature flags + multivariate experiments em
+# Android/iOS, via mesmo SDK do PostHog Analytics. Card backend-axis
+# `flags` (DET-6 W4.6).
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         posthog-flags
+  version:      1.0.0
+  description:  "PostHog Feature Flags para feature flags + multivariate experiments em Android/iOS. Compartilha SDK com posthog-analytics. Card backend-axis `flags` — identidade vem do cell (flags, platform) em workflow-config."
+  category:     flags
+  platforms:    [android, ios]
+  maturity:     stable
+  maintainer:   feature-forge-core
+  created-at:   2026-06-10
+  last-updated: 2026-06-10
+  license:      MIT
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
+provides: []
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+# PostHog Flags reusa o SDK do PostHog Analytics — quando os dois cards
+# estão ativos, instanciamento é compartilhado. Sem requires hard no
+# catálogo (cell-anchored).
+requires: []
+
+
+# ── CONFLICTS ─────────────────────────────────────────────────────────────
+# Cardinalidade per (flags, platform) cell enforçada pelo workflow-config.
+conflicts-with: []
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+contributes:
+
+  templates:
+    - target:  tech-spec.md
+      section: "Feature flags (PostHog)"
+      file:    templates/posthog-flags-tech-spec.md
+      merge:   append-section
+
+
+# ── DETECTION ─────────────────────────────────────────────────────────────
+# Mesmo SDK do posthog-analytics — `gradle-dep` aponta para a coord
+# compartilhada com confidence menor (0.4) pra evitar dupla contagem
+# quando os dois cards estiverem ativos. O sinal forte é a chamada da
+# API de flags (`isFeatureEnabled` / `getFeatureFlag`).
+detection:
+  signals:
+    - type:       gradle-dep
+      coordinate: "com.posthog:posthog-android"
+      confidence: 0.4
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "isFeatureEnabled"
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "getFeatureFlag"
+      confidence: 0.3
+
+  threshold: 0.5
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "observability"

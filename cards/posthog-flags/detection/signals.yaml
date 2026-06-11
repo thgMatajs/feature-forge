@@ -1,0 +1,30 @@
+# cards/posthog-flags/detection/signals.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Sinais de detecção do card posthog-flags — espelha o bloco
+# `detection.signals` do card.yaml. Threshold cumulativo 0.5.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+signals:
+  - id:         posthog-flags-gradle-dep
+    type:       gradle-dep
+    coordinate: "com.posthog:posthog-android"
+    confidence: 0.4
+    rationale:  "Coordenada Maven compartilhada com posthog-analytics; confidence reduzida (0.4 vs 0.5) pra evitar dupla contagem quando ambos os cards estão ativos."
+
+  - id:         posthog-flags-isfeatureenabled-api
+    type:       file-content
+    glob:       "**/*.kt"
+    contains:   "isFeatureEnabled"
+    confidence: 0.3
+    rationale:  "API canônica de feature flags do PostHog SDK — evidência específica de uso de flags (não só analytics)."
+
+  - id:         posthog-flags-getfeatureflag-api
+    type:       file-content
+    glob:       "**/*.kt"
+    contains:   "getFeatureFlag"
+    confidence: 0.3
+    rationale:  "Variante multivariate (retorna variant key) — sinaliza uso de experiments além de flags binárias."
+
+threshold: 0.5
