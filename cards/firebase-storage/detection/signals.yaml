@@ -15,11 +15,10 @@ schema-version: 1
 
 signals:
   - id:         firebase-storage-gradle-dep
-    type:       file-content
-    glob:       "**/build.gradle*"
-    contains:   "firebase-storage"
+    type:       gradle-dep
+    coordinate: "com.google.firebase:firebase-storage"
     confidence: 0.5
-    rationale:  "Dependência com.google.firebase:firebase-storage(-ktx) declarada em build.gradle(.kts) é evidência forte de uso do SDK no Android/JVM."
+    rationale:  "Dependência com.google.firebase:firebase-storage declarada em libs.versions.toml ou build.gradle(.kts) é evidência forte de uso do SDK no Android/JVM. Migrado de file-content em DET-3."
 
   - id:         storage-rules-file
     type:       file-exists

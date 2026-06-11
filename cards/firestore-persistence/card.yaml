@@ -104,9 +104,8 @@ detection:
       glob:       "**/google-services.json"
       confidence: 0.2
 
-    - type:       file-content
-      glob:       "**/build.gradle*"
-      contains:   "firebase-firestore"
+    - type:       gradle-dep
+      coordinate: "com.google.firebase:firebase-firestore"
       confidence: 0.5
 
     - type:       file-exists

@@ -1,0 +1,5 @@
+[versions]
+ktor = "2.3.7"
+
+[libraries]
+ktor-core = { group = "io.ktor", name = "ktor-client-core", version.ref = "ktor" }

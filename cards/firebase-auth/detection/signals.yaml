@@ -27,11 +27,10 @@ signals:
     rationale:  "GoogleService-Info.plist é o análogo iOS — também não distingue Auth de outros módulos sozinho."
 
   - id:         android-gradle-firebase-auth
-    type:       file-content
-    glob:       "**/build.gradle*"
-    contains:   "firebase-auth"
+    type:       gradle-dep
+    coordinate: "com.google.firebase:firebase-auth"
     confidence: 0.5
-    rationale:  "Dependência Gradle 'firebase-auth' (ou 'firebase-auth-ktx') é evidência forte de uso ativo do módulo Authentication."
+    rationale:  "Dependência Gradle firebase-auth é evidência forte de uso ativo do módulo Authentication. Migrado de file-content em DET-3 (libs.versions.toml + build.gradle); variante KTX coberta pelo signal android-gradle-firebase-auth-ktx."
 
   - id:         ios-cocoapods-firebase-auth
     type:       file-content
@@ -48,11 +47,10 @@ signals:
     rationale:  "Produto FirebaseAuth declarado em Package.swift (SwiftPM) — alternativa ao CocoaPods."
 
   - id:         android-gradle-firebase-auth-ktx
-    type:       file-content
-    glob:       "**/build.gradle*"
-    contains:   "firebase-auth-ktx"
+    type:       gradle-dep
+    coordinate: "com.google.firebase:firebase-auth-ktx"
     confidence: 0.2
-    rationale:  "Variante KTX explícita. Confidence baixo porque já é coberto parcialmente por 'firebase-auth'; agrega sinal apenas quando ambas as strings aparecem em catálogos de versão."
+    rationale:  "Variante KTX explícita. Confidence baixo porque já é coberto parcialmente por firebase-auth. Migrado de file-content em DET-3 (libs.versions.toml + build.gradle)."
 
 threshold: 0.5
 

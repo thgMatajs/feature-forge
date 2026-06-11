@@ -2322,6 +2322,199 @@ script tenta `ln .git/hooks/pre-commit` que falha com "Not a directory".
 Fix: `bootstrap.sh` detectar worktree via `git rev-parse --git-dir` antes de
 criar symlink — resolve gitdir real. Out-of-scope Phase 0; valid follow-up.
 
+## v1.2-dev pilot 2026-06-10 — findings + phase sequencing
+
+Pilot conduzido em projeto KMP real (inchurch-app-main, Android+iOS+KMP, módulos `androidApp`/`iosApp`/`shared`) em 2026-06-09/10. LLM-cobaia adotou postura "usuário comum descobrindo a ferramenta" sob orientação do orquestrador deste repo. Notas e relatório parcial capturados na sessão (não comitados; viver no histórico de conversa + memory persistente).
+
+**Status do piloto:** parcial. `forge init` capturado até Prompt 2 (Backend, incompleto). `forge reconfigure` capturado integralmente. Inspeção pós-init (Passo 4), seção Voz/persona consolidada, sugestões e verdict final do init não foram preenchidos.
+
+### Achado conceitual primário — DRIFT-1
+
+`engine/ui/question.py:1` docstring declara "Interactive prompts — the local AskUserQuestion fallback" — design conceitual original do forge era engine emitindo intent estruturado pra Claude Code interceptar e surface via `AskUserQuestion`. Implementação atual (`sys.stdin.readline()` em :36) é stdin-only, sem protocolo de intent nem detecção de host. **Drift entre intent e impl.** User confirmou em 2026-06-10 que modo Claude-Code-fronted é canonical daqui pra frente.
+
+Implicação: todos findings de UX/microcopy/persona/banner do piloto se aplicam SÓ ao modo fallback. Sobrevivem ao redesign apenas findings de dados/detecção (abaixo).
+
+### Findings ativos (sobrevivem ao redesign DRIFT-1)
+
+#### B1 — `identity.backend-choice` ↔ `backend.provider` desync (Crítico)
+
+Após `forge reconfigure` editando `backend.provider` (firebase→rest), `identity.backend-choice` permanece com valor antigo (`firebase-stack`). Dois campos descrevem o mesmo conceito com valores divergentes. `engine/reconfigure.py:_handle_backend` (linha ~1108) escreve apenas `backend["provider"]`, nunca toca `identity.backend-choice`. Downstream (`forge plan`, cards ativos) continua gerando spec Firebase apesar do user ter trocado pra REST.
+
+**Acoplamento com DET-6:** alto. Se redesign DET-6 remover `identity.backend-choice`, B1 vira moot.
+
+#### B2 — Seção `firebase:` órfã após swap (Alto)
+
+Ao trocar `backend.provider: firebase → rest`, seção `backend.firebase.{dev-project, services, ...}` permanece no YAML como dado morto. Cleanup ausente. Mesmo arquivo `engine/reconfigure.py:_handle_backend`.
+
+**Acoplamento com DET-6:** alto. Cleanup logic depende de qual modelo prevalece.
+
+#### ✅ resolvido 2026-06-10: DET-3 — Scanner cego pra `libs.versions.toml` (Alto)
+
+Cards `ktor-client` (`cards/ktor-client/detection/signals.yaml`) + `retrofit-client` (`cards/retrofit-client/detection/signals.yaml`) declaram signals apenas em `**/build.gradle*`. Projetos modernos usam Gradle version catalogs (`gradle/libs.versions.toml`) onde as deps são declaradas. Scanner não cobre esse pattern → cards não matcham → todos os backend-candidates do preset `kmp-mobile` mostram `(cards matched: 0/N)` → default vence por ser primeiro da lista, não por evidência.
+
+**Acoplamento com DET-6:** baixo. Detection layer é independente do modelo de bundles vs eixos.
+
+**Resolução shipped 2026-06-10:** Plan `docs/superpowers/plans/det-3-gradle-dep-signal.md`. Novo signal type `gradle-dep` + helper `_eval_gradle_dep` em `engine/init.py` + regra CARD-020 em `engine/cards/loader.py` + migration de 9 signals em 8 cards (crashlytics, firebase-auth ×2, firebase-storage, firestore-persistence, firestore-realtime, koin-annotations, kotlinx-serialization-json, ktor-client/core). Catálogo `gradle/libs.versions.toml` agora coberto. Audit determinístico em `.planning/det-3/migration-audit.json`. Suite: 1125 passed.
+
+#### DET-5 — `retrofit-client` fora do preset kmp-mobile (Alto)
+
+`cards/retrofit-client/` existe como card canônico (com signals corretos), mas `presets/kmp-mobile/preset.yaml` `backend-candidates` (linha ~127-163) não inclui retrofit em nenhum dos 4 bundles (firebase-stack, rest-stack, hybrid-firebase-auth-rest-data, local-only). Projeto Android tradicional com 30+ services em retrofit2 fica sem caminho de detecção positiva.
+
+**Acoplamento com DET-6:** médio. Se bundles morrerem na Phase B, isso vira "adicionar retrofit aos cards listados por padrão"; se bundles sobreviverem como starter templates, é "adicionar retrofit a rest-stack ou criar android-rest-stack".
+
+#### DET-6 — Modelo bundle-first é abstração errada (Crítico de design)
+
+Preset `kmp-mobile` define backend como escolha entre 4 bundles fechados (firebase-stack, rest-stack, hybrid-firebase-auth-rest-data, local-only). Realidade observada: projetos misturam Firebase só pra Crashlytics + Analytics + REST pra dados + JWT pra identity, ou GraphQL + Firebase Auth + Sentry. Bundles não cobrem combinações reais. Modelo correto: backend como **eixos independentes** — Data transport, Identity, Observability, Analytics, Storage blob, Persistence local.
+
+**Surface findings (de Explore agent map):**
+- Cards já carregam `identity.category` (backend, observability, auth, storage, persistence, etc.) + capability-labels com constraints singular — base parcial pra multi-eixo já existe.
+- `backend-candidates` consumido apenas em `engine/init.py:979-990` — baixo blast radius.
+- `identity.backend-choice` consumido apenas em `engine/reconfigure.py:1114` (e é só comentário de enum) — código praticamente morto downstream.
+- Decisions 14 + 15 não bloqueiam multi-eixo; talvez precisem ADR note.
+- Schema doc `docs/schemas/workflow-config.md` está out-of-sync com `engine/init.py` (não documenta `identity.backend-choice`).
+
+### Phase sequencing decidido (2026-06-10)
+
+User selecionou via AskUserQuestion: **Phase 0 → Phase A → Phase B série pura**.
+
+- **Phase 0** — Captura (esta entrada) + DET-3 quick win (scanner glob extension)
+- **Phase A — DRIFT-1** — Refactor `engine/ui/question.py` pra emitir intent estruturado + integração Claude-Code-fronted via AskUserQuestion. Stdin vira fallback genuíno detectado por TTY/env.
+- **Phase B — DET-6** — Redesign multi-axis backend model usando AskUserQuestion como UX layer. Absorve B1, B2, DET-5 naturalmente. SPEC + waves: schema → presets → init flow → reconfigure flow → migration.
+
+### Findings deferred até Phase A (DRIFT-1) ficar pronto
+
+Todos UX/microcopy/persona do piloto fallback CLI:
+- Persona inconsistente init↔reconfigure (banner "Cheguei./Tudo bem./Aqui.")
+- Inputs híbridos (letras `a,c` vs texto `backend` vs pipe `firebase|rest`)
+- Microcopy "ticketing, external-docs" como descrição de opção `backend`
+- Dead option `[outro] escolher outro preset (não disponível no v1)`
+- Prompt de ticketing aparece sem seleção no multi-select
+- Draft pipe interception quebra automação
+- `[0:01]` timestamp confunde com ETA
+- `bin/forge:22` `FORGE_VERSION="1.0.0"` hardcoded (dead variable)
+
+Quando Phase A entregar protocolo Claude-Code-fronted, essas UX issues desvanecem porque persona+microcopy passam a ser responsabilidade da Claude Code, não do Python. Não vale fixar enquanto o engine ainda emite as strings.
+
+### DET-3 follow-ups não-bloqueantes (2026-06-10)
+
+Anotados conforme SPEC §"Considerações futuras" pra rastreio sem bloquear shipping de DET-3.
+
+#### Vapor cleanup — signal type `dependency` (follow-up de DET-3)
+
+`docs/schemas/card.md` declara o signal type `dependency` mas
+`engine/init.py:_eval_detection_signals` nunca implementou — cards com
+`type: dependency` são silenciosamente ignorados. Sucessor canônico
+pra Gradle deps é `gradle-dep` (DET-3, shipped 2026-06-10).
+
+Decisão pendente: (A) implementar `dependency` cobrindo
+npm/pip/swift/pod (multi-ecossistema), (B) remover do schema e marcar
+como vapor histórico, (C) renomear `dependency` → `package-manager-dep`
+pra esclarecer scope. Sem brainstorm aberto ainda.
+
+Não-bloqueante. Anotado pra abrir 3-caminhos quando tiver bandwidth.
+
+#### `signals.yaml` schema-version bump (follow-up de DET-3)
+
+Hoje `cards/*/detection/signals.yaml` não declara schema-version uniforme
+(alguns têm `schema-version: 1`, outros não). DET-3 migrou 9 signals em
+8 cards de `file-content` → `gradle-dep` sem versionamento explícito,
+dependendo do git log pra rastrear "antes/depois". Pra migrations
+futuras (próximos signal types, mudanças de shape), adicionar
+`schema-version: 2` no topo dos cards migrados (e `schema-version: 1`
+default implícito nos não-tocados, ou explícito via reconfigure).
+
+Decisão pendente: timing — bumpar nos 8 cards migrados agora (escopo
+de DET-3) ou esperar próximo signal type e bumpar batched. Default
+atual: esperar, registrar aqui.
+
+Não-bloqueante. Anotado pra próxima rodada de migration cross-card.
+
+### Phase 0b — Code review follow-ups (2026-06-10)
+
+Discovered during DET-3 code review. None bloqueante — merge unlocked.
+Cada um é fix-forward, capturado aqui pra evitar perda de contexto até
+phase futura endereçar.
+
+#### FU-1 — Custom catalog path discovery (Medium)
+
+**Context:** `engine/init.py:_eval_gradle_dep` só procura
+`<root>/gradle/*.versions.toml`. Catálogos declarados em path
+customizado via `settings.gradle.kts versionCatalogs { from(...) }`
+são invisíveis ao scanner. O fallback de `build.gradle*` ainda pega
+deps declaradas inline, mas catálogos custom-path miss o caminho de
+detecção via version-catalog.
+
+**Reference:** `engine/init.py` (região de `_eval_gradle_dep`,
+~linha 658).
+
+**Outcome esperado (3-caminhos):**
+- (a) Estender resolver pra parsear `settings.gradle*` por
+  `versionCatalogs { from(...) }` e seguir o path.
+- (b) Documentar limitação explicitamente, manter scope reduzido a
+  `gradle/*.versions.toml` standard.
+- (c) Deprecar `gradle-dep` em favor de signal v2 com declared
+  catalog paths no card YAML.
+
+#### FU-2 — `signals.yaml` mirror vs source-of-truth (Medium)
+
+**Context:** Arquivos `cards/*/detection/signals.yaml` existem como
+mirror documental de `card.yaml.detection.signals`. O card loader
+(`engine/cards/loader.py:354`) lê SÓ `card.yaml` em runtime —
+`signals.yaml` NUNCA é consumido. A migração da Phase 0b tocou 9
+arquivos `signals.yaml` por paridade, mas o efeito funcional vem
+exclusivamente das edições em `card.yaml`. Manter mirrors é
+disciplina documental; risco real de drift existe.
+
+**Reference:** `cards/*/detection/signals.yaml` (22 arquivos no repo
+atual); `engine/cards/loader.py:354` (único consumer de `card.yaml`).
+
+**Outcome esperado (3-caminhos):**
+- (a) Formalizar `signals.yaml` como source-of-truth, refactor
+  loader pra consumir, deprecar `card.yaml.detection`.
+- (b) Remover mirrors `signals.yaml` inteiramente, apontar readers
+  pra `card.yaml.detection` via tooling/doc.
+- (c) Manter discipline atual de mirror, adicionar CI check
+  enforcing parity entre `card.yaml.detection.signals` e
+  `detection/signals.yaml`.
+
+#### FU-3 — Substring match no fallback build.gradle (Low)
+
+**Context:** `_glob_any("**/build.gradle*", coordinate)` faz
+substring match. Coordenada `"io.ktor:ktor-client-core"` casa
+também `"io.ktor:ktor-client-core-jvm"` (artifact diferente).
+Comportamento pre-migration `file-content` era idêntico — zero
+regression — mas o branding "exact coordinate" do novo signal
+`gradle-dep` fica enganoso.
+
+**Reference:** `engine/init.py` (fallback `_glob_any` após
+`libs.versions.toml` miss, ~linha 686).
+
+**Outcome esperado (3-caminhos):**
+- (a) Renomear pra `gradle-dep-prefix` OU documentar semântica
+  substring em `docs/schemas/card.md`.
+- (b) Tighten pra word-boundary match (regex
+  `(^|[^.\w-])<coord>([^.\w-]|$)`).
+- (c) Deixar as-is, documentar caveat.
+
+#### FU-5 — Bootstrap idempotency em worktree context (Medium)
+
+**Context:** `tests/integration/test_bootstrap.py::test_bootstrap_is_idempotent`
+falha quando rodado de dentro de git worktree
+(`.claude/worktrees/<...>/`). Root cause: `.claude/bootstrap.sh`
+assume `.git` é diretório, mas em worktrees `.git` é ARQUIVO
+contendo `gitdir: <path>`. Afeta: qualquer um rodando pytest
+de worktree; Phase A W1 surfou isso em step de verificação.
+
+**Reference:** `.claude/bootstrap.sh` (idempotency check);
+`tests/integration/test_bootstrap.py::test_bootstrap_is_idempotent`;
+Phase A W1 verification log em
+`.planning/drift-1/w1-verification.md`.
+
+**Outcome esperado:** bootstrap handles ambos `.git` dir AND
+`.git` arquivo (worktree). Provável fix 1-2 linhas usando
+`git rev-parse --git-dir` ou similar. Phase-independente —
+pode ser endereçado a qualquer momento.
+
 ## Reading order for new contributors
 
 **For a fresh session retomando o projeto, use o handoff:**

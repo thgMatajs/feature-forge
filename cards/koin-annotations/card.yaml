@@ -95,9 +95,8 @@ detection:
       contains:   "@ComponentScan"
       confidence: 0.4
 
-    - type:       file-content
-      glob:       "**/build.gradle*"
-      contains:   "koin-annotations"
+    - type:       gradle-dep
+      coordinate: "io.insert-koin:koin-annotations"
       confidence: 0.5
 
     - type:       file-content
