@@ -1869,6 +1869,276 @@ def _build_workflow_config(
     return config
 
 
+# ── DET-6 W7.1 — Brownfield multi-axis backend handler ──────────────────────
+
+
+def _card_platforms(card: CardManifest) -> list[str]:
+    """Lê `identity.platforms` do card.yaml com fallback canônico KMP.
+
+    Open Detail #8 do SPEC: nem todo card.yaml declara `identity.platforms`
+    ainda — W7.1 não força backfill (W2/W4 lidam com schema). Quando ausente,
+    usa o fallback canônico ``["android", "ios", "kmp"]`` (preset kmp-mobile)
+    pra manter o composer com input não-vazio. Cards android-only / ios-only
+    DEVEM declarar explicitamente quando schema for atualizado.
+    """
+    identity = (card.raw.get("identity") or {}) if card.raw else {}
+    declared = identity.get("platforms")
+    if isinstance(declared, list) and declared:
+        return [str(p) for p in declared if isinstance(p, str) and p]
+    # Fallback KMP-mobile — fonte canônica do preset v1.0.
+    return ["android", "ios", "kmp"]
+
+
+def _normalize_cards_for_composer(
+    cards: list[CardManifest],
+) -> list[dict[str, Any]]:
+    """Converte `CardManifest` para a shape de input do composer (W5).
+
+    Composer espera dicts ``{card_id, axis, platforms, detection}`` — ver
+    ``engine/detection/composer.py`` docstring + AC-5. Manifests com `axis`
+    vazio (category não-canônica) são silenciosamente descartados aqui
+    porque o composer já tem o mesmo guard com logging.warning — duplicar
+    o log poluiria stderr. Cards sem nome são também descartados (o
+    composer também guarda).
+    """
+    normalized: list[dict[str, Any]] = []
+    for c in cards:
+        if not isinstance(c, CardManifest):
+            continue
+        if not c.name or not c.category:
+            continue
+        normalized.append(
+            {
+                "card_id": c.name,
+                "axis": c.category,
+                "platforms": _card_platforms(c),
+                "detection": dict(c.detection or {}),
+            }
+        )
+    return normalized
+
+
+def _detect_axis_uniformity(
+    composer_result: dict[str, dict[str, Any]],
+) -> dict[str, bool]:
+    """Por axis: True se mesma card_id em TODAS as platforms ativas (não-None).
+
+    Adaptive UX (SPEC §"Adaptive UX"): axes uniformes geram 1 linha
+    compacta ("axis — card (todas)") em vez de 1 linha per platform.
+    Conflict count como NÃO-uniforme (precisa expansão pra mostrar
+    candidates). Axes com 0 cells ativas → uniform=True (vacuosamente
+    — caller decide se mostra ou esconde).
+    """
+    uniformity: dict[str, bool] = {}
+    for axis, axis_map in composer_result.items():
+        active_card_ids: set[str] = set()
+        has_conflict = False
+        for cell in axis_map.values():
+            if cell is None:
+                continue
+            # Conflict is dataclass with `candidates` tuple, Cell has `card_id`.
+            if hasattr(cell, "candidates"):
+                has_conflict = True
+                break
+            card_id = getattr(cell, "card_id", None)
+            if isinstance(card_id, str):
+                active_card_ids.add(card_id)
+        if has_conflict:
+            uniformity[axis] = False
+        else:
+            uniformity[axis] = len(active_card_ids) <= 1
+    return uniformity
+
+
+def _render_axes_table(
+    composer_result: dict[str, dict[str, Any]],
+    uniformity: dict[str, bool],
+) -> str:
+    """Render textual table — uma linha por axis (uniform) ou per platform.
+
+    Voz: mentor calmo, formato denso pra caber no body do intent. Não
+    é prose decorativa — é input pro auditor humano confirmar/ajustar.
+    Determinístico: axes ordenados alfabeticamente; platforms idem.
+    """
+    if not composer_result:
+        return "  (nenhum card detectado — composer retornou estrutura vazia)"
+
+    lines: list[str] = []
+    for axis in sorted(composer_result.keys()):
+        axis_map = composer_result[axis]
+        if uniformity.get(axis, False):
+            # Compact line: 1 card ou 0 cards no axis inteiro.
+            active = next(
+                (
+                    cell
+                    for cell in axis_map.values()
+                    if cell is not None and hasattr(cell, "card_id")
+                ),
+                None,
+            )
+            if active is None:
+                lines.append(f"  {axis}: (nenhum card detectado)")
+            else:
+                lines.append(f"  {axis}: {active.card_id} (todas plataformas)")
+            continue
+
+        # Expanded: per (axis, platform) row.
+        lines.append(f"  {axis}:")
+        for platform in sorted(axis_map.keys()):
+            cell = axis_map[platform]
+            if cell is None:
+                lines.append(f"    · {platform}: (nenhum)")
+            elif hasattr(cell, "candidates"):
+                # Conflict — expose ALL candidates so the auditor disambiguates.
+                cand_ids = ", ".join(c.card_id for c in cell.candidates)
+                lines.append(
+                    f"    · {platform}: CONFLITO — {cand_ids}"
+                )
+            else:
+                lines.append(f"    · {platform}: {cell.card_id}")
+    return "\n".join(lines)
+
+
+def _collect_confirm_selection(
+    composer_result: dict[str, dict[str, Any]],
+) -> list[str]:
+    """Path A (confirm): cards selecionados = cards ativos no composer_result.
+
+    Conflict cells contribuem TODOS os candidates — Path A confirma
+    "como-is", que inclui o estado pré-resolução. Path B (adjust) é onde
+    o usuário escolhe entre candidatos de uma Conflict. Determinístico:
+    ordenação alfabética + dedup.
+    """
+    picked: set[str] = set()
+    for axis_map in composer_result.values():
+        for cell in axis_map.values():
+            if cell is None:
+                continue
+            if hasattr(cell, "candidates"):
+                for cand in cell.candidates:
+                    picked.add(cand.card_id)
+            else:
+                card_id = getattr(cell, "card_id", None)
+                if isinstance(card_id, str):
+                    picked.add(card_id)
+    return sorted(picked)
+
+
+def _handle_backend_multi_axis_brownfield(
+    *,
+    project_root: Path,
+    active_cards: list[CardManifest],
+) -> dict[str, Any]:
+    """Brownfield multi-axis backend handler — DET-6 W7.1, cobre AC-6.
+
+    Substitui (em projetos com signals matching) o legacy backend picker
+    inline em ``_run_pipeline`` linha ~1264. W7.1 só ADICIONA esta função;
+    o wiring real (decisão de qual handler chamar) entra em W7.4 com a
+    remoção do legacy. Até lá, esta função é chamada apenas pelo
+    integration test ``tests/integration/test_init_brownfield_multi_axis.py``.
+
+    Fluxo:
+      1. Roda ``compose_backend_axes`` (W5) sobre ``active_cards``
+         normalizados pra shape do composer.
+      2. Detecta uniformity per axis (adaptive UX — SPEC §"Adaptive UX").
+      3. Renderiza tabela (axis × platform → card / conflict / null).
+      4. Emit ``ask_three_paths`` (Phase A) com 3 opções:
+         a) confirmar detection como-is
+         b) ajustar células divergentes
+         c) começar do zero (custom-from-scratch — DEFERRED a W7.2)
+      5. Processa resposta:
+         - "a" (confirm) → aplica composer_result direto, retorna result
+           com ``choice="confirm"`` + ``selected_card_names``.
+         - "b" (adjust) → DEFERRED a W7.2 (multi-select per cell). Por
+           enquanto retorna ``choice="adjust"`` + selected vazio pra
+           caller decidir o fallback.
+         - "c" (scratch) → DEFERRED a W7.2 (greenfield-style picker).
+           Retorna ``choice="scratch"`` + selected vazio.
+
+    Args:
+        project_root: raiz do projeto sob análise (composer + signals).
+        active_cards: lista de ``CardManifest`` que o pipeline já tem em mão.
+
+    Returns:
+        Dict com keys:
+          - ``choice``: "confirm" | "adjust" | "scratch"
+          - ``selected_card_names``: list[str] (vazia em adjust/scratch
+            até W7.2 implementar os paths)
+          - ``composer_result``: dict aninhado retornado pelo composer
+            (passa adiante pro caller fazer downstream do label).
+
+    Raises:
+        PausedForInputError: quando não há ``forge-response.json`` casando
+            o intent-id (primeiro call do par). Top-level handler do CLI
+            sai com exit 2; o caller (W7.4) re-invoca após response.
+    """
+    # Lazy import — evita ciclo com engine.detection.composer (que importa
+    # _eval_detection_signals deste módulo).
+    from engine.detection.composer import compose_backend_axes
+
+    normalized = _normalize_cards_for_composer(active_cards)
+    composer_result = compose_backend_axes(project_root, normalized)
+    uniformity = _detect_axis_uniformity(composer_result)
+    table = _render_axes_table(composer_result, uniformity)
+
+    # Three-paths block — labels carregam motive textual pro host renderizar
+    # o bloco canônico de discipline §1.
+    paths = [
+        {
+            "label": "Confirmar detection como-is",
+            "motive": (
+                "Aceita a tabela detectada acima e segue com esses cards "
+                "pro Step 6 (resolve)."
+            ),
+        },
+        {
+            "label": "Ajustar células divergentes",
+            "motive": (
+                "Você escolhe per-cell o card vencedor (útil quando há "
+                "Conflito ou quando a uniformidade não bate com a stack "
+                "real do projeto). [W7.2 implementa o multi-select.]"
+            ),
+        },
+        {
+            "label": "Começar do zero (custom-from-scratch)",
+            "motive": (
+                "Ignora a detection e cai no greenfield-style picker. "
+                "[W7.2 implementa o fluxo greenfield.]"
+            ),
+        },
+    ]
+
+    # Render mentor-calmo body + tabela. ``ask_three_paths`` carrega
+    # ``paths-detail`` no payload, mas a tabela detectada precisa estar
+    # visível ANTES do host renderizar as 3 opções — entra no gate_name
+    # como prefix textual (host concatena com o block de paths).
+    gate_name = "init-brownfield-detection\n\nDetection composta:\n" + table
+
+    choice_key = ui_question.ask_three_paths(gate_name, paths)
+
+    if choice_key == "a":
+        return {
+            "choice": "confirm",
+            "selected_card_names": _collect_confirm_selection(composer_result),
+            "composer_result": composer_result,
+        }
+    if choice_key == "b":
+        # W7.2 implementa o multi-select per cell. W7.1 retorna o sinal
+        # pro caller decidir fallback até lá — não silencia, mas também
+        # não trava o init (deviation tracked no commit body).
+        return {
+            "choice": "adjust",
+            "selected_card_names": [],
+            "composer_result": composer_result,
+        }
+    # choice_key == "c"
+    return {
+        "choice": "scratch",
+        "selected_card_names": [],
+        "composer_result": composer_result,
+    }
+
+
 def _build_backend(backend_choice: str) -> dict[str, Any]:
     """Monta o bloco `backend:` baseado no backend-candidate escolhido (Cena 6.5).
 
