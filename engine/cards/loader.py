@@ -23,6 +23,7 @@ from .._sandbox.env import is_sensitive
 from ..utils.paths import forge_home
 from ..utils.yaml_io import YamlIOError, read_yaml
 from . import CardError, CardConflictError
+from ._signal_shapes import parse_gradle_coordinate
 
 # ── Canonical catalog (hardcoded, FOLLOWUP: parse capability-labels.md) ──────
 
@@ -648,34 +649,45 @@ def validate_card_yaml(manifest_dict: dict[str, Any], source_path: Path) -> list
                     continue
                 conf = sig.get("confidence")
                 if isinstance(conf, (int, float)):
-                    confidence_sum += float(conf)
+                    if conf < 0.0:
+                        violations.append(
+                            "CARD-016: detection.signal.confidence must be "
+                            f"non-negative, got {conf!r}"
+                        )
+                    else:
+                        confidence_sum += float(conf)
+                # CARD-021: o tipo legado `dependency` foi renomeado pra
+                # `gradle-dep` em v1.2-dev (DET-3 / M-2). Antes era
+                # silenciosamente ignorado pelo engine, mascarando cards
+                # mal-declarados. Rejeita explicitamente apontando o nome
+                # canônico atual + o schema doc onde o cleanup está descrito.
+                if sig.get("type", "").lower() == "dependency":
+                    violations.append(
+                        "CARD-021: signal type 'dependency' was renamed to "
+                        "'gradle-dep' in v1.2-dev (see docs/schemas/card.md "
+                        "§Signal types). Migrate the signal or remove it."
+                    )
+                    continue
                 # CARD-020: shape validation pra signal type `gradle-dep`.
                 # `coordinate` deve ser string `<group>:<artifact>` sem versão
                 # sufixada e sem espaços (introduzido em DET-3 / 2026-06-10).
                 # Note: ID alocado como CARD-020 porque CARD-019 já é usado
-                # por `legacy-marker` (Gap 5).
+                # por `legacy-marker` (Gap 5). Shape check delegado pro
+                # helper compartilhado `parse_gradle_coordinate`
+                # (B-3 from PR #11 review — reuse-first, deduplica lógica
+                # com `engine/init._eval_gradle_dep`).
                 if sig.get("type") == "gradle-dep":
                     coord = sig.get("coordinate")
-                    if not isinstance(coord, str) or not coord:
-                        violations.append(
-                            "CARD-020: gradle-dep signal requires `coordinate` (string)"
-                        )
-                    elif coord.count(":") != 1:
-                        violations.append(
-                            f"CARD-020: gradle-dep coordinate must be `<group>:<artifact>` "
-                            f"(got {coord!r})"
-                        )
-                    elif any(c.isspace() for c in coord):
-                        violations.append(
-                            f"CARD-020: gradle-dep coordinate must not contain whitespace "
-                            f"(got {coord!r})"
-                        )
-                    else:
-                        group, _, artifact = coord.partition(":")
-                        if not group or not artifact:
+                    if parse_gradle_coordinate(coord) is None:
+                        if not isinstance(coord, str) or not coord:
                             violations.append(
-                                f"CARD-020: gradle-dep coordinate missing group or "
-                                f"artifact (got {coord!r})"
+                                "CARD-020: gradle-dep signal requires `coordinate` (string)"
+                            )
+                        else:
+                            violations.append(
+                                f"CARD-020: gradle-dep coordinate must be "
+                                f"`<group>:<artifact>` without whitespace "
+                                f"(got {coord!r})"
                             )
             # CARD-016 hard-fail: confidence_sum > 2.0 indica detection over-stacked.
             # Cards reais devem manter sinais ortogonais — somar > 2.0 sinaliza

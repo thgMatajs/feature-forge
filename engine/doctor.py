@@ -272,6 +272,7 @@ def run(argv: list[str]) -> int:
                 _check_cc_gate_tools(project_root),
                 _check_secrets_tools(project_root),
                 _check_qa_coherence(project_root, config),
+                _check_gradle_catalogs(project_root),
             ]
         )
 
@@ -1113,6 +1114,106 @@ def _check_cc_gate_tools(project_root: Path) -> _CategoryReport:
                 )
             )
     return _CategoryReport("cc-gate-tools", checks)
+
+
+# ── Gradle catalog scope (DET-3 M-4) ─────────────────────────────────────────
+
+
+# Diretórios que nunca devem disparar o warning de catálogo fora do path
+# canônico. Mantém a lista pragmática — fixtures de teste, build outputs,
+# caches de package managers e VCS interno. Em projetos KMP grandes, evita
+# ruído de catálogos transientes ou de terceiros (ex.: dependency clones).
+_GRADLE_CATALOG_EXCLUDED_DIRS: frozenset[str] = frozenset(
+    {
+        ".git",
+        ".gradle",
+        ".idea",
+        "build",
+        "node_modules",
+        "tests",  # cobre tests/fixtures/** sem precisar matchar profundidade
+        ".venv",
+        "venv",
+        "__pycache__",
+    }
+)
+
+
+def _check_gradle_catalogs(project_root: Path) -> _CategoryReport:
+    """Warn quando `libs.versions.toml` existe fora de `<project>/gradle/`.
+
+    DET-3 v1 (spec det-3-gradle-dep-signal §Non-Goals) só inspeciona
+    catálogos no path canônico `<project>/gradle/*.versions.toml`. Composite
+    builds (`subprojects/*/gradle/`) ou catálogos em `buildSrc/` ficam fora
+    de escopo deliberadamente — mas o usuário verá `(cards matched: 0/N)`
+    sem indicação do porquê. Esta categoria surfaca esses catálogos como
+    warning não-bloqueante pra ajudar diagnóstico no campo.
+
+    Read-only. Caminhada limitada por `_GRADLE_CATALOG_EXCLUDED_DIRS` pra
+    evitar ruído de fixtures, builds e caches.
+    """
+    checks: list[_Check] = []
+    canonical_dir = (project_root / "gradle").resolve()
+    out_of_scope: list[Path] = []
+
+    # Walk manual em vez de rglob() pra cortar diretórios cedo — em monorepos
+    # grandes, descer em node_modules/.gradle/build é caro e inútil.
+    stack: list[Path] = [project_root]
+    while stack:
+        current = stack.pop()
+        try:
+            entries = list(current.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.is_dir() and not entry.is_symlink():
+                if entry.name in _GRADLE_CATALOG_EXCLUDED_DIRS:
+                    continue
+                if entry.name.startswith("."):
+                    # Pula dot-dirs em geral (`.claude/`, `.pytest_cache/`,
+                    # etc.). Catálogos legítimos nunca vivem em dot-dirs.
+                    continue
+                stack.append(entry)
+            elif entry.is_file() and entry.name == "libs.versions.toml":
+                try:
+                    parent_resolved = entry.parent.resolve()
+                except OSError:
+                    continue
+                if parent_resolved != canonical_dir:
+                    out_of_scope.append(entry)
+
+    if not out_of_scope:
+        checks.append(
+            _Check(
+                "libs.versions.toml scope",
+                _STATUS_OK,
+                "nenhum catálogo fora de gradle/",
+            )
+        )
+        return _CategoryReport("Gradle catalog scope", checks)
+
+    for path in out_of_scope[:5]:
+        try:
+            rel = path.relative_to(project_root)
+        except ValueError:
+            rel = path
+        checks.append(
+            _Check(
+                str(rel),
+                _STATUS_WARN,
+                "fora de gradle/ — DET-3 v1 não inspeciona",
+                "out-of-scope v1; ver docs/superpowers/specs/"
+                "det-3-gradle-dep-signal.md §Non-Goals",
+            )
+        )
+    if len(out_of_scope) > 5:
+        checks.append(
+            _Check(
+                "…",
+                _STATUS_WARN,
+                f"+{len(out_of_scope) - 5} catálogo(s) fora de gradle/ não listado(s)",
+            )
+        )
+    return _CategoryReport("Gradle catalog scope", checks)
 
 
 # ── Rendering ────────────────────────────────────────────────────────────────

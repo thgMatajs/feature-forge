@@ -117,17 +117,22 @@
   {
     "card": "ktor-client",
     "path": "cards/ktor-client/detection/signals.yaml",
-    "action": "preserve",
-    "reason": "contains 'io.ktor:ktor-client' é prefixo de família — match parcial cobre ktor-client-core, ktor-client-cio, ktor-client-android, ktor-client-darwin, etc. Migrar pra coordenada completa exigiria N signals ou perderia coverage. Preservar até decisão explícita sobre wildcard sufixado (SPEC considerações futuras)."
+    "action": "migrate",
+    "signal_id": null,
+    "coordinate": "io.ktor:ktor-client-core",
+    "preserved_confidence": 0.5,
+    "revision": 2,
+    "revisited_at": "2026-06-10",
+    "reason": "Revisita pós-master-review PR #11 (finding A-1): core artifact is canonical family anchor; substring family kept as complementary signal at 0.3 for legacy variants. Primary signal agora é gradle-dep `io.ktor:ktor-client-core` @0.5 — atinge threshold sozinho em projeto TOML-only (atende SPEC §AC-1). Substring `io.ktor:ktor-client-` permanece como file-content secundário @0.3 cobrindo variantes (-cio, -android, -darwin, -okhttp) em setups legacy/hybrid. Histórico: r1 mantinha substring de família como primário (0.5) — bloqueava AC-1 em TOML-only."
   },
   {
     "card": "ktor-client",
     "path": "cards/ktor-client/detection/signals.yaml",
-    "action": "migrate",
-    "signal_id": null,
-    "coordinate": "io.ktor:ktor-client-core",
-    "preserved_confidence": 0.3,
-    "reason": "Signal secundário com artefato canônico ktor-client-core — coordenada completa `io.ktor:ktor-client-core` é inferível. Mantém confidence 0.3."
+    "action": "preserve",
+    "signal_id": "ktor-client-family-substring",
+    "revision": 2,
+    "revisited_at": "2026-06-10",
+    "reason": "Signal file-content `io.ktor:ktor-client-` (com hífen final) preservado como complementar @0.3 — captura variantes de engine (-cio, -android, -darwin, -okhttp) declaradas como string Maven direta fora do TOML. Cobertura ampla de variantes via N gradle-dep adicionais fica como melhoria futura quando wildcard sufixado for decidido (SPEC §considerações futuras)."
   },
   {
     "card": "nav3",

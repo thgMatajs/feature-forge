@@ -3,8 +3,8 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-11 (v1.2-dev — master-review PR #11 (drift-1) remediado integralmente; ready for merge; rebase trouxe DET-3 gradle-dep signal type de `main`)
-**Estado:** v1.2-dev Phase 0 DET-3 ✅ shipped em `main` (signal type `gradle-dep` + helper + CARD-020 + 9 signals migrados em 8 cards). Phase A (DRIFT-1) PR #11 master-review remediado integralmente nesta branch; B1/B2/DET-5/DET-6 acoplados a Phase B. v1.2.0 feito + Gap 9 cumulativo + CC gate v1 (PR #4) + PRD docs/product/ (PR #5) + plan-auditor (PR #6) tudo em `main`. `forge qa` shipado (PR #8). QA-11 sandbox env hardening fechado (impl + final review + closeout post-review remediação + post-ultra-review remediation 16 findings); pré-piloto restrito a QA-13 (paranoid state filter — `aborted`/`archived` corretamente excluídos do cross-feature scope). Ultra-review do PR #9 fechou deep-001 (crítico: PYTHONPATH não herda mais do parent), endureceu pattern regex contra false-positive (AUTHOR/CO_AUTHOR), adicionou defense-in-depth no `build_safe_env` (allow_sensitive opt-in), corrigiu UX do grant flow (EOF + re-prompt 3x), mascarou nomes em log (anti-disclosure), guardiou isinstance de shape em sensitive-env-grants e ampliou catch do alert layer pra RuntimeError. 5 findings deferidos a PRs separados (deep-010 warning channel cross-cutting; deep-011/012 scope.py refinements fora da whitelist; deep-014 verify.py plumbing; deep-021 loader.py warning). Branch `worktree-feat+gate-infra-extract` agora consolida (após merge de origin/main) Phase 0 do roadmap de quality-gates expansion — refactor estrito (no-behavior-change) extrai infra reusável do CC gate em `validators/_gate_infra.py` + `validators/_diff.py` + rename de helpers em `validators/_common.py`. CC validator caiu de ~1127 LOC para ~840 LOC compondo helpers públicos. Phase 0 suite verde (baseline 751 - 1 justificado em T4: removed test do lookup `_TOOL_BIN[lang]` interno que não existe pós-refactor). Wave R1.1 `check_secrets` shipping na mesma branch — primeiro consumer real do helper extraído valida a generalização e fechou Gap GATE-INFRA-1 (parametrização de `gate_threshold_lookup` + `format_three_paths_message`); Gap GATE-INFRA-2 (kw-only `cmd_builder` API) registrado pra próximo consumer.
+**Última atualização:** 2026-06-11 (v1.2-dev — PR #12 follow-ups remediados em cima de PR #11 master-review; merge trouxe DET-3 gradle-dep signal type + PR #11 closeout de `main`)
+**Estado:** v1.2-dev Phase 0 DET-3 ✅ shipped em `main` (signal type `gradle-dep` + helper + CARD-020 + 9 signals migrados em 8 cards). Phase A (DRIFT-1) PR #11 master-review remediado integralmente; PR #12 carrega os 14 follow-ups pós-PR #11 (16 commits: `a7d0947..d1b95c5`) — A-1/A-2/M-2/M-3/M-4/M-5/B-1/B-2/B-3 + S-1 edge-case coverage + M-1 assimetria documentada + S-2/S-3 follow-ups capturados; +41 novos tests; rapid lane ~1054 passing, suite total ~1178 collected. B1/B2/DET-5/DET-6 acoplados a Phase B. v1.2.0 feito + Gap 9 cumulativo + CC gate v1 (PR #4) + PRD docs/product/ (PR #5) + plan-auditor (PR #6) tudo em `main`. `forge qa` shipado (PR #8). QA-11 sandbox env hardening fechado (impl + final review + closeout post-review remediação + post-ultra-review remediation 16 findings); pré-piloto restrito a QA-13 (paranoid state filter — `aborted`/`archived` corretamente excluídos do cross-feature scope). Ultra-review do PR #9 fechou deep-001 (crítico: PYTHONPATH não herda mais do parent), endureceu pattern regex contra false-positive (AUTHOR/CO_AUTHOR), adicionou defense-in-depth no `build_safe_env` (allow_sensitive opt-in), corrigiu UX do grant flow (EOF + re-prompt 3x), mascarou nomes em log (anti-disclosure), guardiou isinstance de shape em sensitive-env-grants e ampliou catch do alert layer pra RuntimeError. 5 findings deferidos a PRs separados (deep-010 warning channel cross-cutting; deep-011/012 scope.py refinements fora da whitelist; deep-014 verify.py plumbing; deep-021 loader.py warning). Branch `worktree-feat+gate-infra-extract` agora consolida (após merge de origin/main) Phase 0 do roadmap de quality-gates expansion — refactor estrito (no-behavior-change) extrai infra reusável do CC gate em `validators/_gate_infra.py` + `validators/_diff.py` + rename de helpers em `validators/_common.py`. CC validator caiu de ~1127 LOC para ~840 LOC compondo helpers públicos. Phase 0 suite verde (baseline 751 - 1 justificado em T4: removed test do lookup `_TOOL_BIN[lang]` interno que não existe pós-refactor). Wave R1.1 `check_secrets` shipping na mesma branch — primeiro consumer real do helper extraído valida a generalização e fechou Gap GATE-INFRA-1 (parametrização de `gate_threshold_lookup` + `format_three_paths_message`); Gap GATE-INFRA-2 (kw-only `cmd_builder` API) registrado pra próximo consumer.
 
 Linha paralela `feat/drift-1-intent-protocol` (worktree `.claude/worktrees/drift-1-w2`): Phase A SHIPPING-READY. 21 commits sobre `1b1d289` cobrindo W1 (foundation — `engine/utils/json_io.py` + `engine/ui/intent_state.py` + schema canônico `docs/schemas/intent-protocol.md`), W2 (chokepoint refactor + 10/10 intent-resume — T0 outcome C locked, T1 question.py emitter+sentinel, T2 cli.py exit 2/130, T1+T2 fix de 10 findings CR/HI/MD/LO, T3a checkpoint-audit.json, T3b PART A/B/C integração nos 10 subcommands), W3 (tty_bridge subprocess loop fallback), W4 (bin/forge dispatcher detectando TTY + env `CLAUDECODE`; hooks audit sem patches), W5 (15 integration + 3 e2e pty tests cobrindo AC-1..AC-9) e W6 (doc-sync — este commit). Rapid lane preservada: 1151 passed / 11 skipped (1162 collected pós-W5). Integration lane: 119. E2E lane: 17. Total coletado: 1298. Engine intent-only protocol + tty_bridge fallback + bin/forge dispatcher migration + 10/10 subcommand intent-resume; aguardando push + abertura de PR. Phase B DRIFT-1 (DET-6) W1 ✅ entregue em outro worktree (`det-6-w1`, também aguardando push). Phase 0b ainda aguarda merge do PR #10.
 
@@ -227,6 +227,33 @@ restantes ficam pra v1.2+ ou v2/Phase 6:
 - **LLM/sub-agent hookup real** — `plan.py`/`implement.py` narram fluxo +
   renderam templates. Integração real com Anthropic API dentro do `forge`
   requer hooks + Claude integration (já documentado em §Out-of-scope abaixo).
+
+**DET-3 master-review PR #11 (2026-06-10) — surfaced, não bloqueia merge:**
+
+- **Assimetria TOML-exact vs build.gradle-substring** (consequência de M-1 do
+  master-review, decisão deliberada Caminho A): signal `gradle-dep` compara
+  `module == coordinate` por igualdade no passo TOML (`gradle/libs.versions.toml`)
+  e usa substring no passo build.gradle (`**/build.gradle*`). Cards com
+  coordenada base (ex.: `com.google.firebase:firebase-storage`) NÃO detectam
+  variantes sufixadas (ex.: `-ktx`) em projetos TOML-only puros. Declare
+  coordenadas explícitas por variante quando relevante. Documentado em
+  `docs/schemas/card.md` §Signal types; FU-MR-1 (P3) em `04-pending.md`
+  captura trigger pro schema-version bump quando demanda de `match: prefix`
+  opcional emergir.
+- **BOM em `libs.versions.toml` silenciosamente ignorado** (consequência
+  observada em S-1.1 do master-review): `tomllib` stdlib rejeita BOM por
+  aderir à TOML 1.0; helper `_load_toml_catalog` engole `TOMLDecodeError`,
+  catálogo com BOM vira invisível ao scanner. Editores Windows às vezes
+  salvam `.toml` com BOM. Sugestão futura: `forge doctor` warn pra catálogo
+  com BOM. Anotado em `04-pending.md` FU-MR-3 (P3). Test de regressão
+  `test_s1_toml_with_utf8_bom_silently_skipped` trava se helper algum dia
+  strippar BOM — forçando revisita consciente.
+- **retrofit-client family-match preservado**: `retrofit-client` continua com
+  `file-content` substring `io.squareup.retrofit2:retrofit-` (captura
+  `-converters-gson`, `-converter-moshi`, `-mock`). TOML-only puro ainda não
+  detecta retrofit-client. Decisão deferida em FU-MR-2 (P3) — aceitar
+  tradeoff vs adicionar wildcard sufixado quando 2+ cards de família-multipla
+  pedirem.
 
 **v1.1 novos (decisões deliberadas, não bugs):**
 

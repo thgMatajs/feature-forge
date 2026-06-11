@@ -242,9 +242,8 @@ detection:
       contains:   "@ComponentScan"
       confidence: 0.4
     
-    - type:       dependency
-      file:       "**/build.gradle*"
-      contains:   "koin-annotations"
+    - type:       gradle-dep
+      coordinate: "io.insert-koin:koin-annotations"
       confidence: 0.5
 
     - type:       gradle-dep
@@ -388,16 +387,26 @@ else:
 |---|---|
 | `file-exists` | `glob: <pattern>` |
 | `file-content` | `glob: <pattern>` + `contains: <string>` or `matches: <regex>` |
-| `gradle-dep` | `coordinate: <group>:<artifact>` (sem versão, sem espaços). Match em `gradle/*.versions.toml` (TOML, formato `module = "<group>:<artifact>"` ou `group + name` split) E em `**/build.gradle*` (substring). Ordem: catálogo primeiro, build.gradle fallback. |
-| `dependency` | `file: <pattern>` + `contains: <string>` (e.g., for gradle/package.json) |
+| `gradle-dep` | `coordinate: <group>:<artifact>` (sem versão, sem espaços). Match em `gradle/*.versions.toml` (TOML, formato `module = "<group>:<artifact>"` ou `group + name` split) E em `**/build.gradle*` (substring). Ordem: catálogo primeiro, build.gradle fallback. **Semântica de match (assimetria intencional):** o passo TOML
+(`gradle/libs.versions.toml`) compara `module == coordinate` por igualdade de
+`group:artifact` (tolerante a `group:artifact:version` em TOML — version-suffix
+match prefix). O passo build.gradle (`**/build.gradle*`) usa substring de
+`coordinate` no conteúdo do arquivo (com filtragem de comentários Groovy/KTS).
+Consequência: cards que declaram coordenada base (ex.:
+`com.google.firebase:firebase-storage`) NÃO detectam variantes sufixadas (ex.:
+`-ktx`) em projeto TOML-only puro. Declare coordenadas explícitas por variante
+quando relevante. Decisão deliberada do master-review PR #11 (Caminho A — aceitar
+tradeoff documentado). Follow-up FU-MR-1 em `docs/design/04-pending.md` captura
+o trigger pro schema-version bump quando demanda de `match: exact|prefix` opcional
+emergir.
 | `directory-exists` | `path: <relative>` |
 | `command-success` | `command: <string>` (rare, use sparingly) |
 
-> **Nota:** o tipo `dependency` lista-se no schema mas **não está implementado**
-> em `engine/init.py:_eval_detection_signals`. Cards declarados com `type: dependency`
-> são silenciosamente ignorados. O sucessor canônico para deps Gradle é
-> `gradle-dep`. Cleanup do vapor `dependency` é tracked em `docs/design/04-pending.md`
-> como follow-up não-bloqueante a DET-3.
+#### Tipos descontinuados
+
+| Type | Status | Sucessor |
+|---|---|---|
+| `dependency` | Removido em v1.2-dev (DET-3 / M-2). Loader rejeita via **CARD-021**. Nunca foi implementado em `engine/init.py:_eval_detection_signals` — cards declarando este tipo eram silenciosamente ignorados antes do cleanup. | Use `gradle-dep` (deps Gradle). Para outras stacks (`npm`, `pod`, `swift-pm`), aguarde tipos dedicados — sem fallback genérico. |
 
 Detection runs in **parallel** across all cards. Timeout per card: 2s.
 Card that exceeds timeout = signal failure, not error.
@@ -524,6 +533,7 @@ CARD-017  no circular dependency in requires graph
 CARD-018  README.md must exist
 CARD-019  legacy-marker, if present, must be bool
 CARD-020  detection.signals[*].coordinate (when type=gradle-dep) must be `<group>:<artifact>`, no version sufixada, no spaces
+CARD-021  detection.signals[*].type must not be `dependency` (renamed to `gradle-dep` in v1.2-dev; legacy type silently ignored before DET-3 / M-2)
 ```
 
 ## Examples
