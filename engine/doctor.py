@@ -60,6 +60,12 @@ from engine.utils.yaml_io import (
     read_yaml_or_default,
     write_yaml,
 )
+from engine.utils.checkpoint_io import (
+    clear_checkpoint as _clear_checkpoint_io,
+    load_yaml_checkpoint as _load_yaml_checkpoint_io,
+    save_yaml_checkpoint as _save_yaml_checkpoint_io,
+)
+from engine.utils.iso import utc_now_iso as _utc_now_iso_shared
 
 from engine import __version__ as FORGE_VERSION
 
@@ -136,12 +142,19 @@ def _doctor_checkpoint_path(project_root: Path) -> Path:
     return claude_dir(project_root) / ".doctor-checkpoint.yaml"
 
 
+# Os 4 helpers abaixo são thin shims sobre ``engine.utils.checkpoint_io`` +
+# ``engine.utils.iso`` — consolidação dos 30 duplicates + 10 cópias de
+# ``_utc_now_iso_*`` apontada pelos findings #5 e #21 do master review do
+# PR #11. Os nomes ``_save_doctor_checkpoint`` / ``_load_doctor_checkpoint``
+# / ``_clear_doctor_checkpoint`` / ``_utc_now_iso_doctor`` permanecem como
+# API privada do módulo para preservar os contracts dos testes em
+# ``tests/unit/test_engine_doctor_resume.py`` (Mandamento #2 — verde).
+
+
 def _save_doctor_checkpoint(cp: _DoctorCheckpoint) -> None:
-    """Persist the doctor checkpoint atomically (mirrors _save_checkpoint in init)."""
-    path = _doctor_checkpoint_path(Path(cp.project_root))
-    ensure_dir(path.parent)
-    write_yaml(
-        path,
+    """Persist the doctor checkpoint atomically."""
+    _save_yaml_checkpoint_io(
+        _doctor_checkpoint_path(Path(cp.project_root)),
         {
             "schema-version": 1,
             "step": cp.step,
@@ -149,32 +162,22 @@ def _save_doctor_checkpoint(cp: _DoctorCheckpoint) -> None:
             "project-root": cp.project_root,
             "intent-id": cp.intent_id,
         },
-        atomic=True,
     )
 
 
 def _load_doctor_checkpoint(project_root: Path) -> dict[str, Any] | None:
     """Read the doctor checkpoint, returning ``None`` when absent."""
-    path = _doctor_checkpoint_path(project_root)
-    if not path.exists():
-        return None
-    data = read_yaml_or_default(path, None)
-    return data if isinstance(data, dict) else None
+    return _load_yaml_checkpoint_io(_doctor_checkpoint_path(project_root))
 
 
 def _clear_doctor_checkpoint(project_root: Path) -> None:
     """Remove the checkpoint — best-effort; silent on OSError (idempotent)."""
-    path = _doctor_checkpoint_path(project_root)
-    if path.exists():
-        try:
-            path.unlink()
-        except OSError:
-            pass
+    _clear_checkpoint_io(_doctor_checkpoint_path(project_root))
 
 
 def _utc_now_iso_doctor() -> str:
-    """ISO-8601 UTC timestamp matching the format used by ``_InitCheckpoint``."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    """ISO-8601 UTC timestamp — thin shim sobre ``engine.utils.iso``."""
+    return _utc_now_iso_shared()
 
 
 def _doctor_scope_intent_id() -> str:
@@ -189,7 +192,7 @@ def _doctor_scope_intent_id() -> str:
         "full": "checa tudo (~8s)",
         "quick": "só o crítico — config + cards + L2 size (~2s)",
     }
-    return question._stable_intent_id(
+    return question.stable_intent_id(
         "ask",
         "Qual scope?",
         options,

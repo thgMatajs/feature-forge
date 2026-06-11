@@ -62,6 +62,12 @@ from engine.utils.paths import (
     workflow_config_path,
 )
 from engine.utils.yaml_io import read_yaml_or_default, write_yaml
+from engine.utils.checkpoint_io import (
+    clear_checkpoint as _clear_checkpoint_io,
+    load_yaml_checkpoint as _load_yaml_checkpoint_io,
+    save_yaml_checkpoint as _save_yaml_checkpoint_io,
+)
+from engine.utils.iso import utc_now_iso as _utc_now_iso_shared
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -321,12 +327,18 @@ def _plan_checkpoint_path(project_root: Path) -> Path:
     return claude_dir(project_root) / ".plan-checkpoint.yaml"
 
 
+# Os 4 helpers abaixo são thin shims sobre ``engine.utils.checkpoint_io`` +
+# ``engine.utils.iso`` — consolidação dos 30 duplicates + 10 cópias de
+# ``_utc_now_iso_*`` apontada pelos findings #5 e #21 do master review do
+# PR #11. Os nomes ``_save_plan_checkpoint`` etc. permanecem como API
+# privada do módulo para preservar os contracts dos testes em
+# ``tests/unit/test_engine_plan_resume.py`` (Mandamento #2 — verde).
+
+
 def _save_plan_checkpoint(cp: _PlanCheckpoint) -> None:
-    """Persist the plan checkpoint atomically (mirrors init's _save_checkpoint)."""
-    path = _plan_checkpoint_path(Path(cp.project_root))
-    ensure_dir(path.parent)
-    write_yaml(
-        path,
+    """Persist the plan checkpoint atomically."""
+    _save_yaml_checkpoint_io(
+        _plan_checkpoint_path(Path(cp.project_root)),
         {
             "schema-version": 1,
             "step": cp.step,
@@ -337,32 +349,22 @@ def _save_plan_checkpoint(cp: _PlanCheckpoint) -> None:
             "wave": cp.wave,
             "ambiguity-id": cp.ambiguity_id,
         },
-        atomic=True,
     )
 
 
 def _load_plan_checkpoint(project_root: Path) -> dict[str, Any] | None:
     """Read the plan checkpoint, returning ``None`` when absent."""
-    path = _plan_checkpoint_path(project_root)
-    if not path.exists():
-        return None
-    data = read_yaml_or_default(path, None)
-    return data if isinstance(data, dict) else None
+    return _load_yaml_checkpoint_io(_plan_checkpoint_path(project_root))
 
 
 def _clear_plan_checkpoint(project_root: Path) -> None:
-    """Remove the checkpoint — best-effort; idempotent."""
-    path = _plan_checkpoint_path(project_root)
-    if path.exists():
-        try:
-            path.unlink()
-        except OSError:
-            pass
+    """Remove the checkpoint — best-effort; silent on OSError (idempotent)."""
+    _clear_checkpoint_io(_plan_checkpoint_path(project_root))
 
 
 def _utc_now_iso_plan() -> str:
-    """ISO-8601 UTC timestamp matching the format used by ``_InitCheckpoint``."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    """ISO-8601 UTC timestamp — thin shim sobre ``engine.utils.iso``."""
+    return _utc_now_iso_shared()
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -1147,7 +1149,7 @@ def _elicit_slug(argv_slug: Optional[str], project_root: Optional[Path] = None) 
                 step="step-elicit-slug",
                 at=_utc_now_iso_plan(),
                 project_root=str(project_root),
-                intent_id=question._stable_intent_id(
+                intent_id=question.stable_intent_id(
                     "ask_text",
                     "Qual o slug da feature? (kebab-case, ex.: lembrete-rega)",
                     None,
@@ -1707,10 +1709,8 @@ def record_external_dep(
 
 
 def _utc_now_iso() -> str:
-    """ISO 8601 UTC with second precision and trailing Z (engine-local copy)."""
-    from datetime import datetime, timezone
-
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    """ISO 8601 UTC with second precision and trailing Z — thin shim sobre ``engine.utils.iso``."""
+    return _utc_now_iso_shared()
 
 
 # Re-export for cli dispatcher + test surface.

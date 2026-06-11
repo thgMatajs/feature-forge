@@ -177,7 +177,7 @@ _cli_command_context: ContextVar[tuple[str, list[str]] | None] = ContextVar(
 # --- Intent-id derivation --------------------------------------------------
 
 
-def _stable_intent_id(
+def stable_intent_id(
     kind: str,
     question_text: str,
     options: Mapping[str, str] | None,
@@ -187,6 +187,14 @@ def _stable_intent_id(
     command_args: Sequence[str] | None = None,
 ) -> str:
     """Deterministic intent-id for o (kind, question, options, call-site) tuple.
+
+    **Public API** (finding #8 do master review do PR #11): originalmente
+    declarada com underscore prefix (``_stable_intent_id``) mas consumida
+    por 13 callsites de produção em 10 módulos. O underscore mascarava o
+    fato de ser API pública de facto. Renomeada para ``stable_intent_id``
+    e adicionada à export surface explícita deste módulo. O alias
+    deprecated ``_stable_intent_id`` permanece exportado para preservar
+    callsites legados — será removido em v1.3.
 
     A stable id lets a re-invocation of the same command + same prompt
     line up with the response on disk without callers having to thread
@@ -230,6 +238,13 @@ def _stable_intent_id(
     )
     digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
     return f"{digest[0:8]}-{digest[8:12]}-{digest[12:16]}-{digest[16:20]}-{digest[20:32]}"
+
+
+# Backward-compat alias (deprecated) — preserva os 13 callsites legados
+# em ``engine/{plan,implement,verify,reconfigure,evolve,undo,memory_cli,
+# graph_cli,init,doctor}.py`` + 4 testes em ``tests/unit/``. Remover em
+# v1.3 quando todos os callers forem migrados para ``stable_intent_id``.
+_stable_intent_id = stable_intent_id
 
 
 # --- Project root + state-file plumbing ------------------------------------
@@ -305,7 +320,7 @@ def _build_pending(
 ) -> dict[str, Any]:
     """Assemble the canonical pending payload (matches docs/schemas/intent-protocol.md).
 
-    The ``extra`` mapping fed into ``_stable_intent_id`` includes
+    The ``extra`` mapping fed into ``stable_intent_id`` includes
     ``validator-hint`` (MD-001 fix from W2 review): two ``ask_text``
     calls with the same prompt but different validators MUST produce
     distinct intent-ids, otherwise a stale response intended for
@@ -330,7 +345,7 @@ def _build_pending(
         extra_for_hash["paths-detail"] = [dict(item) for item in paths_detail]
     intent: dict[str, Any] = {
         "schema-version": _SCHEMA_VERSION,
-        "intent-id": _stable_intent_id(
+        "intent-id": stable_intent_id(
             kind,
             question_text,
             options,

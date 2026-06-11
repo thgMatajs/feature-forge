@@ -53,6 +53,12 @@ from engine.utils.paths import (
     workflow_config_path,
 )
 from engine.utils.yaml_io import read_yaml_or_default, write_yaml
+from engine.utils.checkpoint_io import (
+    clear_checkpoint as _clear_checkpoint_io,
+    load_yaml_checkpoint as _load_yaml_checkpoint_io,
+    save_yaml_checkpoint as _save_yaml_checkpoint_io,
+)
+from engine.utils.iso import utc_now_iso as _utc_now_iso_shared
 
 _PAGE_SIZE = 10
 
@@ -92,12 +98,18 @@ def _memory_cli_checkpoint_path(project_root: Path) -> Path:
     return claude_dir(project_root) / ".memory-cli-checkpoint.yaml"
 
 
+# Os 4 helpers abaixo são thin shims sobre ``engine.utils.checkpoint_io`` +
+# ``engine.utils.iso`` — consolidação dos 30 duplicates + 10 cópias de
+# ``_utc_now_iso_*`` apontada pelos findings #5 e #21 do master review do
+# PR #11. Os nomes ``_save_memory_cli_checkpoint`` etc. permanecem como API
+# privada do módulo para preservar os contracts dos testes em
+# ``tests/unit/test_engine_memory_cli_resume.py`` (Mandamento #2 — verde).
+
+
 def _save_memory_cli_checkpoint(cp: _MemoryCliCheckpoint) -> None:
-    """Persist the memory_cli checkpoint atomically (mirrors init's _save_checkpoint)."""
-    path = _memory_cli_checkpoint_path(Path(cp.project_root))
-    ensure_dir(path.parent)
-    write_yaml(
-        path,
+    """Persist the memory_cli checkpoint atomically."""
+    _save_yaml_checkpoint_io(
+        _memory_cli_checkpoint_path(Path(cp.project_root)),
         {
             "schema-version": 1,
             "step": cp.step,
@@ -107,32 +119,22 @@ def _save_memory_cli_checkpoint(cp: _MemoryCliCheckpoint) -> None:
             "submenu": cp.submenu,
             "entry-id": cp.entry_id,
         },
-        atomic=True,
     )
 
 
 def _load_memory_cli_checkpoint(project_root: Path) -> dict[str, Any] | None:
     """Read the memory_cli checkpoint, returning ``None`` when absent."""
-    path = _memory_cli_checkpoint_path(project_root)
-    if not path.exists():
-        return None
-    data = read_yaml_or_default(path, None)
-    return data if isinstance(data, dict) else None
+    return _load_yaml_checkpoint_io(_memory_cli_checkpoint_path(project_root))
 
 
 def _clear_memory_cli_checkpoint(project_root: Path) -> None:
-    """Remove the checkpoint — best-effort; idempotent."""
-    path = _memory_cli_checkpoint_path(project_root)
-    if path.exists():
-        try:
-            path.unlink()
-        except OSError:
-            pass
+    """Remove the checkpoint — best-effort; silent on OSError (idempotent)."""
+    _clear_checkpoint_io(_memory_cli_checkpoint_path(project_root))
 
 
 def _utc_now_iso_memory_cli() -> str:
-    """ISO-8601 UTC timestamp matching the format used by ``_InitCheckpoint``."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    """ISO-8601 UTC timestamp — thin shim sobre ``engine.utils.iso``."""
+    return _utc_now_iso_shared()
 
 
 def _load_workflow_config(project_root: Path) -> dict[str, Any]:
@@ -452,7 +454,7 @@ def run(argv: list[str]) -> int:
             step="step-menu",
             at=_utc_now_iso_memory_cli(),
             project_root=str(project_root),
-            intent_id=question._stable_intent_id(
+            intent_id=question.stable_intent_id(
                 "ask",
                 "O que olhar?",
                 options,

@@ -47,13 +47,20 @@ from engine.utils.paths import (
     workflow_config_path,
 )
 from engine.utils.yaml_io import read_yaml_or_default, write_yaml
+from engine.utils.checkpoint_io import (
+    clear_checkpoint as _clear_checkpoint_io,
+    load_yaml_checkpoint as _load_yaml_checkpoint_io,
+    save_yaml_checkpoint as _save_yaml_checkpoint_io,
+)
+from engine.utils.iso import utc_now_iso as _utc_now_iso_shared
 
 _HISTORY_FILE_NAME = "workflow-config-history.jsonl"
 _UNDO_SLUG = "_undo"
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    """ISO-8601 UTC timestamp — thin shim sobre ``engine.utils.iso``."""
+    return _utc_now_iso_shared()
 
 
 # ── Checkpoint (DRIFT-1 W2.T3b — intent-resume, outcome C) ───────────────────
@@ -102,12 +109,17 @@ def _undo_checkpoint_path(project_root: Path) -> Path:
     return claude_dir(project_root) / ".undo-checkpoint.yaml"
 
 
+# Os 3 helpers abaixo são thin shims sobre ``engine.utils.checkpoint_io`` —
+# consolidação dos 30 duplicates apontados pelo finding #5 do master review
+# do PR #11. Os nomes ``_save_undo_checkpoint`` etc. permanecem como API
+# privada do módulo para preservar os contracts dos testes em
+# ``tests/unit/test_engine_undo_resume.py`` (Mandamento #2 — verde).
+
+
 def _save_undo_checkpoint(cp: _UndoCheckpoint) -> None:
-    """Persist the undo checkpoint atomically (mirrors init's _save_checkpoint)."""
-    path = _undo_checkpoint_path(Path(cp.project_root))
-    ensure_dir(path.parent)
-    write_yaml(
-        path,
+    """Persist the undo checkpoint atomically."""
+    _save_yaml_checkpoint_io(
+        _undo_checkpoint_path(Path(cp.project_root)),
         {
             "schema-version": 1,
             "step": cp.step,
@@ -118,27 +130,17 @@ def _save_undo_checkpoint(cp: _UndoCheckpoint) -> None:
             "feature-slug": cp.feature_slug,
             "confirm-level": cp.confirm_level,
         },
-        atomic=True,
     )
 
 
 def _load_undo_checkpoint(project_root: Path) -> dict[str, Any] | None:
     """Read the undo checkpoint, returning ``None`` when absent."""
-    path = _undo_checkpoint_path(project_root)
-    if not path.exists():
-        return None
-    data = read_yaml_or_default(path, None)
-    return data if isinstance(data, dict) else None
+    return _load_yaml_checkpoint_io(_undo_checkpoint_path(project_root))
 
 
 def _clear_undo_checkpoint(project_root: Path) -> None:
-    """Remove the checkpoint — best-effort; idempotent."""
-    path = _undo_checkpoint_path(project_root)
-    if path.exists():
-        try:
-            path.unlink()
-        except OSError:
-            pass
+    """Remove the checkpoint — best-effort; silent on OSError (idempotent)."""
+    _clear_checkpoint_io(_undo_checkpoint_path(project_root))
 
 
 # ── Candidate detection ─────────────────────────────────────────────────────
@@ -563,7 +565,7 @@ def run(argv: list[str]) -> int:
             step="step-menu",
             at=_utc_now_iso(),
             project_root=str(project_root),
-            intent_id=question._stable_intent_id(
+            intent_id=question.stable_intent_id(
                 "ask",
                 "O que deseja reverter?",
                 options,

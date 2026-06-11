@@ -65,6 +65,12 @@ from engine.utils.paths import (
 from engine.utils.sha256 import file_sha256
 from engine.utils.paths import ensure_dir as _ensure_dir
 from engine.utils.yaml_io import backup_file, read_yaml, read_yaml_or_default, write_yaml
+from engine.utils.checkpoint_io import (
+    clear_checkpoint as _clear_checkpoint_io,
+    load_yaml_checkpoint as _load_yaml_checkpoint_io,
+    save_yaml_checkpoint as _save_yaml_checkpoint_io,
+)
+from engine.utils.iso import utc_now_iso as _utc_now_iso_shared
 
 _DRAFT_NAME = ".reconfigure-draft.yaml"
 _HISTORY_NAME = "workflow-config-history.jsonl"
@@ -121,12 +127,18 @@ def _reconfigure_checkpoint_path(project_root: Path) -> Path:
     return claude_dir(project_root) / ".reconfigure-checkpoint.yaml"
 
 
+# Os 4 helpers abaixo são thin shims sobre ``engine.utils.checkpoint_io`` +
+# ``engine.utils.iso`` — consolidação dos 30 duplicates + 10 cópias de
+# ``_utc_now_iso_*`` apontada pelos findings #5 e #21 do master review do
+# PR #11. Os nomes ``_save_reconfigure_checkpoint`` etc. permanecem como API
+# privada do módulo para preservar os contracts dos testes em
+# ``tests/unit/test_engine_reconfigure_resume.py`` (Mandamento #2 — verde).
+
+
 def _save_reconfigure_checkpoint(cp: _ReconfigureCheckpoint) -> None:
-    """Persist the reconfigure checkpoint atomically (mirrors init's _save_checkpoint)."""
-    path = _reconfigure_checkpoint_path(Path(cp.project_root))
-    _ensure_dir(path.parent)
-    write_yaml(
-        path,
+    """Persist the reconfigure checkpoint atomically."""
+    _save_yaml_checkpoint_io(
+        _reconfigure_checkpoint_path(Path(cp.project_root)),
         {
             "schema-version": 1,
             "step": cp.step,
@@ -136,32 +148,22 @@ def _save_reconfigure_checkpoint(cp: _ReconfigureCheckpoint) -> None:
             "menu-path": list(cp.menu_path),
             "card-name": cp.card_name,
         },
-        atomic=True,
     )
 
 
 def _load_reconfigure_checkpoint(project_root: Path) -> dict[str, Any] | None:
     """Read the reconfigure checkpoint, returning ``None`` when absent."""
-    path = _reconfigure_checkpoint_path(project_root)
-    if not path.exists():
-        return None
-    data = read_yaml_or_default(path, None)
-    return data if isinstance(data, dict) else None
+    return _load_yaml_checkpoint_io(_reconfigure_checkpoint_path(project_root))
 
 
 def _clear_reconfigure_checkpoint(project_root: Path) -> None:
-    """Remove the checkpoint — best-effort; idempotent."""
-    path = _reconfigure_checkpoint_path(project_root)
-    if path.exists():
-        try:
-            path.unlink()
-        except OSError:
-            pass
+    """Remove the checkpoint — best-effort; silent on OSError (idempotent)."""
+    _clear_checkpoint_io(_reconfigure_checkpoint_path(project_root))
 
 
 def _utc_now_iso_reconfigure() -> str:
-    """ISO-8601 UTC timestamp matching the format used by ``_InitCheckpoint``."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    """ISO-8601 UTC timestamp — thin shim sobre ``engine.utils.iso``."""
+    return _utc_now_iso_shared()
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────
@@ -207,7 +209,7 @@ def run(argv: list[str]) -> int:
                 step="step-draft-confirm",
                 at=_utc_now_iso_reconfigure(),
                 project_root=str(project_root),
-                intent_id=question._stable_intent_id(
+                intent_id=question.stable_intent_id(
                     "confirm",
                     "Detectei um draft de reconfigure não aplicado. Retomar?",
                     {"s": "sim", "n": "não"},
@@ -343,7 +345,7 @@ def run(argv: list[str]) -> int:
             step="step-apply-confirm",
             at=_utc_now_iso_reconfigure(),
             project_root=str(project_root),
-            intent_id=question._stable_intent_id(
+            intent_id=question.stable_intent_id(
                 "confirm",
                 "Aplicar essas mudanças?",
                 {"s": "sim", "n": "não"},
