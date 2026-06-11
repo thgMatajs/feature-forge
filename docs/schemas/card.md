@@ -242,9 +242,8 @@ detection:
       contains:   "@ComponentScan"
       confidence: 0.4
     
-    - type:       dependency
-      file:       "**/build.gradle*"
-      contains:   "koin-annotations"
+    - type:       gradle-dep
+      coordinate: "io.insert-koin:koin-annotations"
       confidence: 0.5
 
     - type:       gradle-dep
@@ -388,9 +387,7 @@ else:
 |---|---|
 | `file-exists` | `glob: <pattern>` |
 | `file-content` | `glob: <pattern>` + `contains: <string>` or `matches: <regex>` |
-| `gradle-dep` | `coordinate: <group>:<artifact>` (sem versão, sem espaços). Match em `gradle/*.versions.toml` (TOML, formato `module = "<group>:<artifact>"` ou `group + name` split) E em `**/build.gradle*` (substring). Ordem: catálogo primeiro, build.gradle fallback. |
-
-**Semântica de match (assimetria intencional — `gradle-dep`):** o passo TOML
+| `gradle-dep` | `coordinate: <group>:<artifact>` (sem versão, sem espaços). Match em `gradle/*.versions.toml` (TOML, formato `module = "<group>:<artifact>"` ou `group + name` split) E em `**/build.gradle*` (substring). Ordem: catálogo primeiro, build.gradle fallback. **Semântica de match (assimetria intencional):** o passo TOML
 (`gradle/libs.versions.toml`) compara `module == coordinate` por igualdade de
 `group:artifact` (tolerante a `group:artifact:version` em TOML — version-suffix
 match prefix). O passo build.gradle (`**/build.gradle*`) usa substring de

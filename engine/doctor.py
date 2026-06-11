@@ -1025,10 +1025,10 @@ def _check_gradle_catalogs(project_root: Path) -> _CategoryReport:
         current = stack.pop()
         try:
             entries = list(current.iterdir())
-        except (OSError, PermissionError):
+        except OSError:
             continue
         for entry in entries:
-            if entry.is_dir():
+            if entry.is_dir() and not entry.is_symlink():
                 if entry.name in _GRADLE_CATALOG_EXCLUDED_DIRS:
                     continue
                 if entry.name.startswith("."):

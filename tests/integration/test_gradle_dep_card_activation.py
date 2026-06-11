@@ -103,7 +103,7 @@ def test_ac4_ktor_client_no_double_counting_in_hybrid_fixture() -> None:
     Critical: o signal gradle-dep deve casar a coordenada uma única vez,
     mesmo quando aparece em ambas as fontes. Soma teórica das confidences
     do card ktor-client > 1.0; verificamos que o score real respeita
-    score ≤ 1.0 (sanity CARD-016) — confirma que gradle-dep curto-circuita
+    score ≤ 1.0 (sanity CARD-016; fixture-specific ceiling, CARD-016 hard ceiling is 2.0) — confirma que gradle-dep curto-circuita
     quando já casou.
     """
     score, threshold, matched = _activate("ktor-client", "gradle-dep-hybrid")

@@ -693,63 +693,62 @@ def _scan_build_gradle_for_coordinate(project_root: Path, coordinate: str) -> bo
     `/* ... */`) antes de testar substring — evita falso positivo de
     coordenadas mencionadas em comentários do tipo `// io.ktor:foo
     retirado 2024` (M-5). Mantém o cap de arquivos visitados de
-    `_glob_any` (800) e o skip-dirs canônico.
+    `_glob_any` (800) e o skip-dirs canônico. Walk manual em vez de
+    rglob() para evitar descer em node_modules/.gradle/build.
     """
-    iterator = project_root.rglob("build.gradle*")
+    stack: list[Path] = [project_root]
     count = 0
-    for path in iterator:
-        if any(part in _SKIP_DIRS for part in path.parts):
-            continue
-        if count > 800:
-            break
-        count += 1
-        if not path.is_file():
-            continue
+    while stack:
+        current = stack.pop()
         try:
-            with path.open("r", encoding="utf-8", errors="ignore") as fh:
-                in_block_comment = False
-                for line in fh:
-                    stripped = line.lstrip()
-                    # Bloco /* ... */ pode abrir/fechar na mesma linha.
-                    # Processa caractere-a-caractere apenas o suficiente
-                    # para extrair o segmento "código vivo" da linha.
-                    code_segments: list[str] = []
-                    i = 0
-                    src = line
-                    while i < len(src):
-                        if in_block_comment:
-                            close = src.find("*/", i)
-                            if close == -1:
-                                break
-                            i = close + 2
-                            in_block_comment = False
-                            continue
-                        # Line comment `//` — descarta resto da linha.
-                        if src.startswith("//", i):
-                            break
-                        # Abertura de bloco `/*`.
-                        if src.startswith("/*", i):
-                            in_block_comment = True
-                            i += 2
-                            continue
-                        # Acumula caractere de código vivo.
-                        j = i
-                        while j < len(src):
-                            if src.startswith("//", j) or src.startswith("/*", j):
-                                break
-                            j += 1
-                        code_segments.append(src[i:j])
-                        i = j
-                    # Edge: linha começando exclusivamente em comentário
-                    # após whitespace já foi descartada via `//` acima;
-                    # o teste abaixo cobre o restante.
-                    if stripped.startswith("//"):
-                        continue
-                    code_line = "".join(code_segments)
-                    if coordinate in code_line:
-                        return True
+            entries = list(current.iterdir())
         except OSError:
             continue
+        for entry in entries:
+            if entry.is_dir() and not entry.is_symlink():
+                if entry.name in _SKIP_DIRS or entry.name.startswith("."):
+                    continue
+                stack.append(entry)
+            elif entry.is_file() and entry.name.startswith("build.gradle"):
+                if count > 800:
+                    return False
+                count += 1
+                try:
+                    with entry.open("r", encoding="utf-8", errors="ignore") as fh:
+                        in_block_comment = False
+                        for line in fh:
+                            stripped = line.lstrip()
+                            code_segments: list[str] = []
+                            i = 0
+                            src = line
+                            while i < len(src):
+                                if in_block_comment:
+                                    close = src.find("*/", i)
+                                    if close == -1:
+                                        break
+                                    i = close + 2
+                                    in_block_comment = False
+                                    continue
+                                if src.startswith("//", i):
+                                    break
+                                if src.startswith("/*", i):
+                                    in_block_comment = True
+                                    i += 2
+                                    continue
+                                j = i
+                                while j < len(src):
+                                    if src.startswith("//", j) or src.startswith("/*", j):
+                                        break
+                                    j += 1
+                                code_segments.append(src[i:j])
+                                i = j
+                            if stripped.startswith("//"):
+                                continue
+                            code_line = "".join(code_segments)
+                            if coordinate in code_line:
+                                return True
+                except OSError:
+                    continue
     return False
 
 

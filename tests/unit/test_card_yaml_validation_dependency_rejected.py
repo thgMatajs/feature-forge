@@ -14,22 +14,6 @@ from pathlib import Path
 from engine.cards.loader import validate_card_yaml
 
 
-def _card_with_signal(signal: dict) -> dict:
-    """Minimal valid card manifest carrying a single arbitrary detection signal."""
-    return {
-        "schema-version": 1,
-        "identity": {
-            "name": "test-card",
-            "version": "1.0.0",
-            "category": "backend",
-        },
-        "detection": {
-            "signals": [signal],
-            "threshold": 0.5,
-        },
-    }
-
-
 def _card_021_violations(signals: list[dict]) -> list[str]:
     """Run validator and filter only CARD-021 violations."""
     manifest = {

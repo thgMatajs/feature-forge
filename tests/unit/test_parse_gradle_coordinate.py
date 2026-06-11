@@ -53,3 +53,13 @@ def test_rejects_non_string_or_empty() -> None:
     assert parse_gradle_coordinate("") is None
     assert parse_gradle_coordinate(123) is None
     assert parse_gradle_coordinate(["io.ktor", "ktor-client-core"]) is None
+
+
+def test_rejects_multiple_consecutive_colons() -> None:
+    """`io.ktor::ktor-client-core` tem 2 `:` seguidos — não é shape canônica."""
+    assert parse_gradle_coordinate("io.ktor::ktor-client-core") is None
+
+
+def test_rejects_empty_group() -> None:
+    """Lado esquerdo vazio quebra contrato `<group>:<artifact>`."""
+    assert parse_gradle_coordinate(":ktor-client-core") is None
