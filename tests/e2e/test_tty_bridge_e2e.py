@@ -46,7 +46,13 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.e2e
+pytestmark = [
+    pytest.mark.e2e,
+    pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="pty.fork() unavailable on Windows; tty_bridge tested via mock-based unit tests",
+    ),
+]
 
 
 # Project root resolves from this file: tests/e2e/test_X.py → repo root.

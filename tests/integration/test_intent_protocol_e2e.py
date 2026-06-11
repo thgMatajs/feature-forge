@@ -295,7 +295,24 @@ def test_race_detection_rejects_stale_concurrent(tmp_path):
     project_root = _scaffold_project(tmp_path)
 
     # Stage a recent pending with a clearly-different intent-id.
-    stale_id = str(uuid.uuid4())
+    # Determinístico (não uuid4): elimina chance teórica de colisão com o
+    # intent-id que a engine vai derivar pra esta question, e mantém o
+    # teste idempotente. Aceita rename _stable_intent_id → stable_intent_id
+    # (Wave 2.1) sem quebrar.
+    stale_id = "deadbeef-0000-0000-0000-000000000000"
+    try:
+        from engine.ui.question import stable_intent_id  # type: ignore[attr-defined]
+    except ImportError:  # pragma: no cover — pre-rename fallback
+        from engine.ui.question import _stable_intent_id as stable_intent_id
+    # Sanity: the engine-derived intent-id for any plausible question
+    # cannot match our literal stale_id (the canonical engine output is a
+    # hex digest, never an all-zeros suffix UUID-shaped string).
+    assert stale_id != stable_intent_id(
+        "ask",
+        "probe",
+        {"a": "alpha"},
+        {},
+    ), "stale_id literal collided with engine-derived id — change the literal"
     recent = datetime.now(timezone.utc) - timedelta(seconds=10)
     pre_existing = {
         "schema-version": 1,
