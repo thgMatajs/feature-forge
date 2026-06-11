@@ -1,0 +1,5 @@
+[versions]
+firebase-storage = "20.3.0"
+
+[libraries]
+firebase-storage-ktx = { module = "com.google.firebase:firebase-storage-ktx", version.ref = "firebase-storage" }

@@ -227,3 +227,148 @@ def test_m5_build_gradle_block_comment_ignored() -> None:
         _detection("io.ktor:ktor-client-core"),
     )
     assert score == 0.0
+
+
+# ── S-1 edge cases (PR #11 master review §S-1) ────────────────────────────────
+# Cinco edge cases que documentam limites observáveis do helper. Cada test
+# vira spec executável — se o comportamento mudar, o test trava e força
+# revisita explícita da decisão (intencional vs regressão).
+
+
+def test_s1_toml_with_utf8_bom_silently_skipped() -> None:
+    """S-1.1: `libs.versions.toml` com BOM UTF-8 é silenciosamente ignorado.
+
+    Documenta: tomllib (stdlib ≥3.11) rejeita BOM por aderir à TOML 1.0
+    (que proíbe BOM em UTF-8). O helper engole o `TOMLDecodeError` no
+    `try/except`, então um catálogo com BOM se torna invisível — não
+    crasha mas tampouco ativa cards.
+
+    Por que importa: editores Windows às vezes salvam com BOM por default.
+    Usuário que migrar `libs.versions.toml` via copy/paste pode acabar
+    com BOM sem saber. Score 0 + (cards matched: 0/N) sem aviso.
+
+    Anotado pra próxima sessão: considerar warning em `forge doctor` quando
+    `libs.versions.toml` começa com BOM. Comportamento atual é o trade-off
+    aceito (silent skip alinhado a `_glob_any`).
+    """
+    from engine.init import _load_toml_catalog
+
+    _load_toml_catalog.cache_clear()
+
+    score, _ = _eval_detection_signals(
+        FIXTURES / "gradle-dep-toml-bom",
+        _detection("io.ktor:ktor-client-core"),
+    )
+    # Comportamento ATUAL: BOM rejeitado por tomllib, helper trata como
+    # malformed → score 0. Se um dia o helper passar a strippar BOM
+    # antes do parse, este test trava e força decisão explícita.
+    assert score == 0.0
+
+
+def test_s1_mixed_comment_and_real_dep_detected_once() -> None:
+    """S-1.2: dep real + comentário com a mesma coordenada → 1 match, sem soma.
+
+    Regressão de M-5 ampliada: o filtro de comentário não deve descartar a
+    dep real só porque ela aparece também num comentário; e também não
+    deve contar dobrado. Score == confidence única do signal.
+    """
+    from engine.init import _load_toml_catalog
+
+    _load_toml_catalog.cache_clear()
+
+    score, matched = _eval_detection_signals(
+        FIXTURES / "gradle-dep-mixed-comment",
+        _detection("io.ktor:ktor-client-core"),
+    )
+    assert score == 0.5
+    # `matched` lista o signal uma única vez (mesma confidence aplicada
+    # uma vez, sem dobrar entre o comentário e a dep real).
+    matches_for_coord = [m for m in matched if "io.ktor:ktor-client-core" in m]
+    assert len(matches_for_coord) == 1, (
+        f"esperava 1 entrada em matched, observou {len(matches_for_coord)}: {matches_for_coord}"
+    )
+
+
+def test_s1_toml_block_table_form_matches() -> None:
+    """S-1.3: `[libraries.name]` (block-table) casa igual a inline-table.
+
+    TOML 1.0 permite as duas formas como equivalentes semânticos:
+        # inline (usado em quase todos os projetos):
+        ktor-client-core = { module = "io.ktor:ktor-client-core", ... }
+
+        # block-table (válido mas raro):
+        [libraries.ktor-client-core]
+        module = "io.ktor:ktor-client-core"
+        version.ref = "ktor"
+
+    `tomllib.load` normaliza ambos para o mesmo dict, então o helper
+    casa transparentemente. Test garante que essa equivalência sobrevive
+    a refatorações futuras (ex.: alguém trocar `libraries.values()` por
+    parsing manual).
+    """
+    from engine.init import _load_toml_catalog
+
+    _load_toml_catalog.cache_clear()
+
+    score, matched = _eval_detection_signals(
+        FIXTURES / "gradle-dep-toml-block-table",
+        _detection("io.ktor:ktor-client-core"),
+    )
+    assert score == 0.5
+    assert any("io.ktor:ktor-client-core" in m for m in matched)
+
+
+def test_s1_ktx_variant_does_not_match_base_coordinate_exact() -> None:
+    """S-1.4: variante `-ktx` em TOML NÃO casa coordinate base (assimetria M-1).
+
+    Documenta a decisão de match exato em TOML (`firebase-storage-ktx`
+    não casa `firebase-storage`). Comportamento canônico do helper —
+    `_module_matches_coordinate` compara `mod_parts[1] == coord_parts[1]`
+    estritamente.
+
+    Em build.gradle legado, o passo 2 usa substring, então
+    `implementation("...firebase-storage-ktx:...")` casaria coordinate
+    `com.google.firebase:firebase-storage` (substring match). Essa
+    assimetria é tradeoff conhecido (M-1 do review do PR #11).
+
+    Se algum dia o helper adotar prefix-aware em TOML (ex.:
+    `mod_parts[1].startswith(coord_parts[1] + "-")`), este test trava
+    e força revisita explícita da decisão.
+    """
+    from engine.init import _eval_gradle_dep, _load_toml_catalog
+
+    _load_toml_catalog.cache_clear()
+
+    # Coordinate base (sem -ktx) — único candidato no catálogo é o `-ktx`.
+    result = _eval_gradle_dep(
+        FIXTURES / "gradle-dep-toml-ktx-variant",
+        "com.google.firebase:firebase-storage",
+    )
+    assert result is False, (
+        "match exato em TOML virou prefix-aware — revisitar M-1 antes de mergear"
+    )
+
+
+def test_s1_custom_catalog_path_ignored_per_spec_nongoals() -> None:
+    """S-1.5: catálogo fora de `gradle/*.versions.toml` é ignorado (SPEC §Non-Goals).
+
+    SPEC det-3 §Non-Goals declara: "Resolução de catálogo TOML como graph
+    completo — não fazemos parse semântico". Combinado com o glob
+    canônico `gradle_dir.glob("*.versions.toml")`, qualquer catálogo em
+    `dependencies/dependencies.toml`, `buildSrc/...`, `subprojects/.../`
+    fica fora do scope v1.
+
+    Comportamento atual: score 0 (silent). Limitação documentada em
+    M-4 do review PR #11 (`forge doctor` poderia avisar; defer aceito).
+    """
+    from engine.init import _eval_gradle_dep, _load_toml_catalog
+
+    _load_toml_catalog.cache_clear()
+
+    result = _eval_gradle_dep(
+        FIXTURES / "gradle-dep-custom-catalog",
+        "io.ktor:ktor-client-core",
+    )
+    assert result is False, (
+        "helper passou a varrer catálogos fora de gradle/ — revisitar SPEC §Non-Goals"
+    )
