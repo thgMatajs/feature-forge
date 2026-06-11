@@ -264,3 +264,134 @@ def test_intent_mismatch_error_is_runtime_error_subclass():
 
 def test_race_detected_error_is_runtime_error_subclass():
     assert issubclass(intent_state.RaceDetectedError, RuntimeError)
+
+
+# --- schema-version validation (PR #11 finding #4) -------------------------
+
+
+def test_read_response_raises_on_schema_version_mismatch(tmp_project_root):
+    """Response with a foreign schema-version surfaces a typed error, not
+    a silent miscompat. File is preserved for inspection."""
+    intent_id = "88888888-8888-4888-8888-888888888888"
+    response_path = tmp_project_root / ".claude" / "state" / "forge-response.json"
+    response_path.parent.mkdir(parents=True)
+    payload = _response_payload(intent_id=intent_id)
+    payload["schema-version"] = 99
+    response_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(intent_state.SchemaVersionMismatchError) as exc:
+        intent_state.read_response(tmp_project_root, intent_id=intent_id)
+    message = str(exc.value)
+    assert "99" in message
+    assert "1" in message  # current _SCHEMA_VERSION rendered for the user
+    # Forensic preservation — the file does not disappear on raise.
+    assert response_path.exists()
+
+
+def test_read_response_passes_with_current_schema_version(tmp_project_root):
+    """Happy path: schema-version=1 + matching intent-id round-trips cleanly."""
+    intent_id = "99999999-9999-4999-8999-999999999999"
+    response_path = tmp_project_root / ".claude" / "state" / "forge-response.json"
+    response_path.parent.mkdir(parents=True)
+    response_path.write_text(
+        json.dumps(_response_payload(intent_id=intent_id)),
+        encoding="utf-8",
+    )
+
+    result = intent_state.read_response(tmp_project_root, intent_id=intent_id)
+    assert result is not None
+    assert result["schema-version"] == 1
+
+
+# --- clock-skew handling (PR #11 finding #17) ------------------------------
+
+
+def test_parse_created_at_tolerates_small_future_skew(tmp_project_root):
+    """`created-at` slightly in the future (NTP jitter) → still treated as
+    a recent pending; race must surface instead of being swept."""
+    future_iso = (datetime.now(timezone.utc) + timedelta(seconds=30)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    existing_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    intent_state.write_pending(
+        _pending_payload(intent_id=existing_id, created_at=future_iso),
+        tmp_project_root,
+    )
+
+    with pytest.raises(intent_state.RaceDetectedError):
+        intent_state.detect_race(tmp_project_root, new_intent_id="brand-new")
+    # Pending preservado — small skew is tolerated, not swept.
+    assert (
+        tmp_project_root / ".claude" / "state" / "forge-pending.json"
+    ).exists()
+
+
+def test_parse_created_at_treats_large_future_skew_as_stale(tmp_project_root):
+    """`created-at` far in the future → clock is clearly invalid; sweep so the
+    lane does not stay parked indefinitely."""
+    far_future_iso = (datetime.now(timezone.utc) + timedelta(minutes=10)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    intent_state.write_pending(
+        _pending_payload(
+            intent_id="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            created_at=far_future_iso,
+        ),
+        tmp_project_root,
+    )
+    pending_path = tmp_project_root / ".claude" / "state" / "forge-pending.json"
+    assert pending_path.exists()
+
+    assert (
+        intent_state.detect_race(tmp_project_root, new_intent_id="next")
+        is None
+    )
+    assert not pending_path.exists(), "large future skew must be swept"
+
+
+# --- RaceDetectedError 3-caminhos message (PR #11 finding #22) -------------
+
+
+def test_race_detected_error_message_includes_three_paths(tmp_project_root):
+    """Mensagem do gate carrega o bloco canônico de 3 caminhos do projeto."""
+    recent_iso = (datetime.now(timezone.utc) - timedelta(minutes=1)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    intent_state.write_pending(
+        _pending_payload(
+            intent_id="cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            created_at=recent_iso,
+        ),
+        tmp_project_root,
+    )
+
+    with pytest.raises(intent_state.RaceDetectedError) as exc:
+        intent_state.detect_race(tmp_project_root, new_intent_id="rival")
+    message = str(exc.value)
+    assert "Três caminhos" in message
+    assert "rm" in message and "forge-pending.json" in message
+    assert "forge undo" in message
+
+
+# --- specific exception catch in detect_race (PR #11 finding #26) ----------
+
+
+def test_detect_race_propagates_non_io_exceptions(
+    tmp_project_root, monkeypatch
+):
+    """Programming errors (ValueError, TypeError, ...) escape detect_race
+    instead of being silently swallowed and turned into a sweep."""
+    state_dir = tmp_project_root / ".claude" / "state"
+    state_dir.mkdir(parents=True)
+    pending_path = state_dir / "forge-pending.json"
+    pending_path.write_text("{}", encoding="utf-8")
+
+    def _explode(_path):
+        raise ValueError("synthetic programming error")
+
+    monkeypatch.setattr(intent_state.json_io, "read_json", _explode)
+
+    with pytest.raises(ValueError, match="synthetic programming error"):
+        intent_state.detect_race(tmp_project_root, new_intent_id="x")
+    # Pending preservado — não foi feito sweep silencioso pelo broad except.
+    assert pending_path.exists()

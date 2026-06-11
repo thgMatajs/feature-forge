@@ -51,6 +51,16 @@ from engine.utils.paths import claude_dir
 # Pending older than this is considered orphaned and gets swept.
 _STALE_THRESHOLD_SECONDS = 10 * 60  # 10 minutes
 
+# Wire-format version of the pending/response payloads on disk. Bumped only on
+# breaking changes to the schema (see `docs/schemas/intent-protocol.md`).
+_SCHEMA_VERSION = 1
+
+# Tolerance for clock skew when `created-at` lands in the future. NTP jitter
+# in CI / VMs commonly drifts a few seconds; anything beyond a minute almost
+# certainly means a clock that cannot be trusted, so we treat the pending as
+# stale and sweep instead of holding the lane open indefinitely.
+_FUTURE_SKEW_TOLERANCE_SECONDS = 60
+
 
 class IntentMismatchError(RuntimeError):
     """Raised when a response file's intent-id does not match the caller's.
@@ -67,6 +77,17 @@ class RaceDetectedError(RuntimeError):
     ``.claude/state/forge-pending.json`` by hand. Top-level handler maps
     this to exit code 1 with the mentor-calmo phrasing carried in
     ``args[0]``.
+    """
+
+
+class SchemaVersionMismatchError(RuntimeError):
+    """Raised when a pending/response file declares a ``schema-version`` the
+    engine does not understand.
+
+    Forensic by design (file is preserved). The message is mentor-calmo and
+    tells the user which version landed on disk vs. which one this engine
+    speaks, then suggests updating feature-forge so the two sides line up.
+    Top-level handler maps this to exit code 1.
     """
 
 
@@ -166,6 +187,7 @@ def read_response(project_root: Path, intent_id: str) -> dict[str, Any] | None:
         return None
 
     response = json_io.read_json(path)
+    _check_schema_version(response, path=path, kind="response")
     written_id = response.get("intent-id")
     if written_id != intent_id:
         raise IntentMismatchError(
@@ -174,6 +196,32 @@ def read_response(project_root: Path, intent_id: str) -> dict[str, Any] | None:
             f"File preserved at {path} for inspection."
         )
     return response
+
+
+# --- schema-version guard --------------------------------------------------
+
+
+def _check_schema_version(payload: dict[str, Any], *, path: Path, kind: str) -> None:
+    """Raise ``SchemaVersionMismatchError`` if the payload speaks a different
+    wire version than this engine.
+
+    Why a strict check (vs. "lenient on read"): the protocol carries user input
+    across process boundaries — a silent miscompat between v1 and v2 would
+    consume the wrong field shape and surface as a confusing downstream
+    failure. Refusing to read with a clear message is the kinder path.
+
+    ``kind`` is "pending" or "response"; it only shapes the error wording.
+    """
+    written = payload.get("schema-version")
+    if written == _SCHEMA_VERSION:
+        return
+    raise SchemaVersionMismatchError(
+        f"{kind} file em {path} declara schema-version={written!r}, "
+        f"mas esta versão do forge fala schema-version={_SCHEMA_VERSION}. "
+        "Atualize feature-forge no host (ou no engine, se foi o host quem "
+        "ficou pra trás) e tente de novo. "
+        "O arquivo foi preservado pra inspeção."
+    )
 
 
 # --- clear_intent_files ----------------------------------------------------
@@ -232,8 +280,10 @@ def detect_race(project_root: Path, new_intent_id: str) -> None:
 
     try:
         existing = json_io.read_json(pending_path)
-    except Exception:
-        # Malformed pending — treat as stale and sweep.
+    except (json_io.JsonIOError, OSError):
+        # Malformed pending OR filesystem hiccup — treat as stale and sweep.
+        # Other exceptions (e.g. ValueError, TypeError) propagate: those are
+        # programming errors the caller should see, not "race" noise.
         json_io.delete_if_exists(pending_path)
         return None
 
@@ -250,14 +300,37 @@ def detect_race(project_root: Path, new_intent_id: str) -> None:
         return None
 
     age_seconds = (now - created).total_seconds()
-    if age_seconds > _STALE_THRESHOLD_SECONDS:
+    if age_seconds < 0:
+        # `created-at` lives in the future relative to `now`. Two sub-cases:
+        #   - small skew (NTP jitter in CI / containers): tolerate and treat
+        #     as recent → continue to the race-detection branch below.
+        #   - large skew: one of the clocks is clearly bad; sweep so the lane
+        #     does not stay parked forever waiting on a phantom session.
+        if -age_seconds > _FUTURE_SKEW_TOLERANCE_SECONDS:
+            json_io.delete_if_exists(pending_path)
+            return None
+        # Fall through with the existing pending treated as recent.
+    elif age_seconds > _STALE_THRESHOLD_SECONDS:
         json_io.delete_if_exists(pending_path)
         return None
 
     pid = existing.get("pid", "?")
     raise RaceDetectedError(
         "outra invocação do forge ainda está aguardando resposta "
-        f"(PID {pid}, intent-id '{existing_id}'). "
-        f"Aguarde a conclusão ou remova {pending_path} manualmente "
-        "se a sessão anterior abortou sem limpeza."
+        f"(PID {pid}, intent-id '{existing_id}').\n"
+        "\n"
+        "Três caminhos pra resolver:\n"
+        "\n"
+        "  1) Aguardar o outro processo terminar\n"
+        "     A invocação anterior ainda está viva e vai limpar o state\n"
+        "     ao receber a resposta do usuário.\n"
+        "\n"
+        f"  2) Se a sessão anterior travou: rm {pending_path}\n"
+        "     Remove o pending órfão e deixa esta invocação seguir.\n"
+        "\n"
+        "  3) Se for feature paralela conflitante: forge undo\n"
+        "     Encerra a outra invocação de forma controlada antes de\n"
+        "     começar a nova.\n"
+        "\n"
+        "Sem auto-fix aqui — escolha humana."
     )
