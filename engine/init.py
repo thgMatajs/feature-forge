@@ -2139,6 +2139,332 @@ def _handle_backend_multi_axis_brownfield(
     }
 
 
+# ── W7.2 greenfield bundle picker ───────────────────────────────────────────
+
+# 8 axes canônicos do SPEC det-6-multi-axis-backend.md §"Eixos canônicos".
+# Ordem reflete o roteiro de prompt (data primeiro porque é o que mais
+# difere entre stacks). Stable iteration order é importante: vira a ordem
+# dos prompts per-axis e a ordem do ask_multi em opt override.
+_BACKEND_AXES: tuple[str, ...] = (
+    "data",
+    "auth",
+    "observability",
+    "analytics",
+    "storage",
+    "persistence",
+    "notifications",
+    "flags",
+)
+
+# Sentinela do picker — não corresponde a YAML, dispara o caminho per-axis.
+_BUNDLE_SENTINEL_CUSTOM = "custom-from-scratch"
+
+
+def _load_bundle_files(bundles_dir: Path) -> dict[str, dict[str, Any]]:
+    """Carrega os bundle YAMLs em `bundles_dir/<name>.yaml`.
+
+    Retorna ``{bundle_name: parsed_yaml_dict}``. Bundles inválidos (yaml
+    parse error, schema-version != 1, name ausente) são silenciosamente
+    pulados — ``validate_presets.py`` (W6.3) já é o gate canônico de
+    schema; o handler aqui só carrega o que dá. Caller decide o que fazer
+    se um bundle esperado faltar.
+    """
+    loaded: dict[str, dict[str, Any]] = {}
+    if not bundles_dir.is_dir():
+        return loaded
+    for path in sorted(bundles_dir.glob("*.yaml")):
+        try:
+            data = read_yaml_or_default(path, default=None)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        name = data.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        loaded[name] = data
+    return loaded
+
+
+def _bundle_cards_for_axis(bundle: dict[str, Any], axis: str) -> list[str]:
+    """Extrai os cards não-null de um (bundle, axis) cell.
+
+    Shape canônico (W6.1 / validate_presets W6.3):
+
+      defaults:
+        <axis>:
+          all-platforms: <card-name | null>
+          # ou
+          android: <card-name | null>
+          ios:     <card-name | null>
+          kmp:     <card-name | null>
+
+    Retorna lista de strings (ordenada, dedup'd) com os cards declarados.
+    Vazia se cell inteira é null ou se axis ausente.
+    """
+    defaults = bundle.get("defaults") or {}
+    cell = defaults.get(axis) or {}
+    if not isinstance(cell, dict):
+        return []
+    cards: set[str] = set()
+    for value in cell.values():
+        if isinstance(value, str) and value:
+            cards.add(value)
+    return sorted(cards)
+
+
+def _bundle_to_selected_cards(bundle: dict[str, Any]) -> list[str]:
+    """União dos cards declarados em todos os axes do bundle (ordenada)."""
+    picked: set[str] = set()
+    for axis in _BACKEND_AXES:
+        picked.update(_bundle_cards_for_axis(bundle, axis))
+    return sorted(picked)
+
+
+def _render_axis_state(bundle: dict[str, Any], axis: str) -> str:
+    """Formata o estado atual da cell `(bundle, axis)` pra label do ask_multi.
+
+    Casos cobertos:
+      · all-platforms: <card> → "<card>"
+      · all-platforms: null → "(nenhum)"
+      · per-platform shape → "android:<a> · kmp:<k>" (skip nulls)
+    """
+    defaults = bundle.get("defaults") or {}
+    cell = defaults.get(axis) or {}
+    if not isinstance(cell, dict) or not cell:
+        return "(nenhum)"
+    if "all-platforms" in cell:
+        value = cell["all-platforms"]
+        return str(value) if value else "(nenhum)"
+    parts: list[str] = []
+    for platform in sorted(cell.keys()):
+        value = cell[platform]
+        if value:
+            parts.append(f"{platform}:{value}")
+    return " · ".join(parts) if parts else "(nenhum)"
+
+
+def _per_axis_options(
+    available_cards: list[CardManifest],
+    axis: str,
+) -> dict[str, str]:
+    """Monta options dict pro ask() per-axis prompt.
+
+    Keys são card names (mesma convenção dos bundles); labels carregam a
+    descrição curta. Inclui sempre key ``"skip"`` no fim — opt-out
+    explícito, mantém cell None nesse axis.
+
+    Filtra ``available_cards`` por ``category == axis``: card só aparece
+    como opção do axis "data" se o YAML do card declarar ``identity.category:
+    data``. Cards sem category compatível são silenciosamente excluídos.
+
+    Quando ``available_cards`` está vazio (teste ou greenfield puro sem
+    catalog carregado), retorna apenas a opção ``"skip"`` — o user só
+    consegue optar por "deixar vazio".
+    """
+    options: dict[str, str] = {}
+    for card in available_cards:
+        if not isinstance(card, CardManifest):
+            continue
+        if card.category != axis:
+            continue
+        if not card.name:
+            continue
+        label = card.description or card.name
+        options[card.name] = label
+    options["skip"] = "(nenhum — deixar este eixo vazio)"
+    return options
+
+
+def _run_per_axis_prompts(
+    available_cards: list[CardManifest],
+    axes_to_prompt: tuple[str, ...] | list[str],
+) -> list[str]:
+    """Itera ``axes_to_prompt`` perguntando o card por axis.
+
+    Retorna a lista (ordenada, dedup'd) de cards selecionados. Cada axis
+    emite um ``ask`` independente (1 intent por axis). Response "skip"
+    deixa o axis vazio. Compartilhável com W7.3 reconfigure no futuro
+    — mantém o escopo privado em init.py por enquanto (W7.2 não promove).
+    """
+    picked: set[str] = set()
+    for axis in axes_to_prompt:
+        options = _per_axis_options(available_cards, axis)
+        chosen = ui_question.ask(
+            f"Qual card para o eixo '{axis}'?",
+            options,
+            default="skip",
+        )
+        if chosen and chosen != "skip":
+            picked.add(chosen)
+    return sorted(picked)
+
+
+def _apply_axis_overrides(
+    bundle: dict[str, Any],
+    overridden_axes: list[str],
+    overridden_cards: list[str],
+    available_cards: list[CardManifest],
+) -> list[str]:
+    """Compõe o set final: bundle defaults nos axes preservados + overrides.
+
+    Lógica:
+      · Pra cada axis NÃO em ``overridden_axes`` → mantém cards do bundle.
+      · Pra cada axis EM ``overridden_axes`` → descarta os cards default
+        do bundle nesse axis, aplica os cards de ``overridden_cards`` cuja
+        category == axis (filtrado via ``available_cards``).
+
+    Retorna lista ordenada e dedup'd. Quando ``available_cards`` está
+    vazia (teste sem catalog), o filtro por category falha gracefully e
+    o axis overridden fica vazio (sem nenhum card — consistente com
+    response "skip").
+    """
+    overridden_set = set(overridden_axes)
+    picked: set[str] = set()
+    # 1) Eixos preservados → bundle defaults.
+    for axis in _BACKEND_AXES:
+        if axis in overridden_set:
+            continue
+        picked.update(_bundle_cards_for_axis(bundle, axis))
+    # 2) Eixos overridden → cards do override casados ao axis via catalog.
+    card_axis: dict[str, str] = {}
+    for card in available_cards:
+        if isinstance(card, CardManifest) and card.name and card.category:
+            card_axis[card.name] = card.category
+    for card_name in overridden_cards:
+        axis = card_axis.get(card_name)
+        if axis is None or axis in overridden_set:
+            # Se sem catalog (axis=None), confia que o caller só passou
+            # cards de axes overridden — adiciona direto.
+            picked.add(card_name)
+    return sorted(picked)
+
+
+def _handle_backend_multi_axis_greenfield(
+    *,
+    project_root: Path,
+    available_cards: list[CardManifest],
+) -> dict[str, Any]:
+    """Greenfield multi-axis backend handler — DET-6 W7.2, cobre AC-7.
+
+    Roda quando o composer não emitiu signals (zero detection — caso
+    típico de projeto novo). Substitui (em projetos sem signals) o legacy
+    backend picker linha ~1264 do ``_run_pipeline``. W7.2 só ADICIONA esta
+    função; wiring real entra em W7.4 com a remoção do legacy.
+
+    Fluxo (SPEC §"Greenfield init com bundle picker"):
+
+      1. Carrega os bundle YAMLs em ``$FORGE_HOME/presets/kmp-mobile/bundles/``.
+      2. Emit ``ask()`` com 4 opções: 3 bundles + sentinela
+         ``custom-from-scratch``.
+      3. Se sentinela → roda per-axis prompts pros 8 axes canônicos.
+         Retorna ``choice="scratch"``.
+      4. Se bundle → ``confirm()`` "quer customizar algum axis?".
+         · Não → aplica bundle.defaults direto. Retorna
+           ``choice="bundle"`` + ``bundle_name``.
+         · Sim → ``ask_multi()`` "quais axes?", depois per-axis prompts
+           só pros selecionados. Retorna ``choice="bundle-overridden"``
+           + ``bundle_name``.
+
+    Args:
+        project_root: raiz do projeto sob init (usado pelo intent state).
+            Atualmente o handler resolve ``bundles_dir`` via ``forge_home()``
+            (catálogo canônico, não per-project), mas o parâmetro fica na
+            assinatura por simetria com o W7.1 brownfield e pra suportar
+            W7.4 (que vai passar pra downstream do label).
+        available_cards: catálogo carregado (mesma shape do W7.1). Usado
+            pra mapear card→axis no per-axis prompt e no apply_overrides.
+            Vazia em testes minimais — handler degrada gracefully (per-
+            axis prompts mostram só "skip").
+
+    Returns:
+        Dict com keys:
+          · ``choice``: "bundle" | "bundle-overridden" | "scratch"
+          · ``bundle_name``: nome do bundle escolhido (None em "scratch")
+          · ``selected_card_names``: list[str] (ordenada, dedup'd)
+
+    Raises:
+        PausedForInputError: na primeira chamada de cada intent emitido
+            sem response ainda no disco. Top-level handler do CLI sai com
+            exit 2; caller (W7.4) re-invoca após response.
+    """
+    bundles_dir = forge_home() / "presets" / PRESET_NAME / "bundles"
+    bundles = _load_bundle_files(bundles_dir)
+
+    # Opções fixas da SPEC §"Starter bundles". Não dependem da existência
+    # física do YAML — se o YAML faltar, falhamos depois (no apply) com
+    # mensagem clara; o picker apresenta as 4 opções canônicas.
+    picker_options: dict[str, str] = {
+        "firebase-full": "Firebase em todos os eixos (serverless-ready)",
+        "rest-with-firebase-telemetry": (
+            "REST API para dados + Firebase para identity, telemetria, push"
+        ),
+        "local-only": "Offline-first, sem backend remoto",
+        _BUNDLE_SENTINEL_CUSTOM: (
+            "Começar do zero — escolher cada eixo manualmente"
+        ),
+    }
+
+    choice_key = ui_question.ask(
+        "Qual stack inicial pra este projeto?",
+        picker_options,
+        default="firebase-full",
+    )
+
+    # Caminho A — sentinela: pula bundle, prompta cada axis.
+    if choice_key == _BUNDLE_SENTINEL_CUSTOM:
+        selected = _run_per_axis_prompts(available_cards, _BACKEND_AXES)
+        return {
+            "choice": "scratch",
+            "bundle_name": None,
+            "selected_card_names": selected,
+        }
+
+    # Caminho B/C — bundle escolhido. Resolve o YAML.
+    bundle = bundles.get(choice_key)
+    if bundle is None:
+        # Bundle YAML missing — degrada pra "scratch" com selected vazio.
+        # Auditor humano vê o choice no commit body e ajusta manualmente.
+        return {
+            "choice": "scratch",
+            "bundle_name": None,
+            "selected_card_names": [],
+        }
+
+    wants_override = ui_question.confirm(
+        f"Quer customizar algum eixo do bundle '{choice_key}'?",
+        default=False,
+    )
+
+    # Caminho B — bundle como-is.
+    if not wants_override:
+        return {
+            "choice": "bundle",
+            "bundle_name": choice_key,
+            "selected_card_names": _bundle_to_selected_cards(bundle),
+        }
+
+    # Caminho C — bundle com override seletivo.
+    axis_options: dict[str, str] = {
+        axis: f"{axis} (atual: {_render_axis_state(bundle, axis)})"
+        for axis in _BACKEND_AXES
+    }
+    overridden_axes = ui_question.ask_multi(
+        "Quais eixos quer ajustar?",
+        axis_options,
+        min_selected=1,
+    )
+    overridden_cards = _run_per_axis_prompts(available_cards, overridden_axes)
+    selected = _apply_axis_overrides(
+        bundle, overridden_axes, overridden_cards, available_cards
+    )
+    return {
+        "choice": "bundle-overridden",
+        "bundle_name": choice_key,
+        "selected_card_names": selected,
+    }
+
+
 def _build_backend(backend_choice: str) -> dict[str, Any]:
     """Monta o bloco `backend:` baseado no backend-candidate escolhido (Cena 6.5).
 
