@@ -159,6 +159,14 @@ Campos canônicos:
 
 **`confirm`:**
 
+`confirm` permite pause por default (`allow_pause=True` é o default da
+assinatura `confirm(question, allow_pause=True)` em
+`engine/ui/question.py` — alinha com `ask`/`ask_text`/`ask_three_paths`).
+Regression test em W1.2 trava esse default. Callsites que precisam
+forçar `allow_pause=False` (raro — apenas quando "pausa" não faz sentido
+semanticamente, ex.: confirm pré-destrutivo crítico) passam o kwarg
+explicitamente.
+
 ```json
 {
   "schema-version": 1,
@@ -169,7 +177,7 @@ Campos canônicos:
   "question": "Tem certeza que quer abortar a feature 'feature-x' inteira?",
   "options": {"s": "sim", "n": "não"},
   "default": "n",
-  "allow-pause": false,
+  "allow-pause": true,
   "created-at": "...",
   "pid": 84210,
   "checkpoint-path": null
@@ -405,9 +413,15 @@ set -euo pipefail
 # (resolução de FORGE_HOME mantida idêntica — linhas 13-23 atuais)
 PYTHON="${FORGE_PYTHON:-python3}"
 
-# Detecção primary: env var CLAUDE_CODE_HOST setada pelo host.
+# Detecção primary: env var CLAUDECODE setada pelo host.[^claudecode-rename]
 # Detecção alternative: ausência de TTY no stdin/stdout.
-if [[ -n "${CLAUDE_CODE_HOST:-}" ]] || [[ ! -t 0 ]] || [[ ! -t 1 ]]; then
+if [[ -n "${CLAUDECODE:-}" ]] || [[ ! -t 0 ]] || [[ ! -t 1 ]]; then
+
+# [^claudecode-rename]: Renomeado em W4-FU (verificação empírica vs Claude
+# Code 2.1.153 mostrou que `CLAUDECODE` é o nome real exportado pelo host).
+# Histórico: SPEC inicial usou `CLAUDE_CODE_HOST` como placeholder até
+# confirmação via doc oficial; W4 confirmou empiricamente o nome real e
+# `bin/forge` foi atualizado em commit b149678.
   exec "$PYTHON" -m engine.cli "$@"          # modo intent-only
 else
   exec "$PYTHON" -m engine.ui.tty_bridge engine.cli "$@"  # modo fallback TTY
@@ -416,10 +430,10 @@ fi
 
 **Detection precedence (recomendada):**
 
-1. **Primary:** `CLAUDE_CODE_HOST` env var setada (Claude Code documenta
-   essa variável; se mudar, atualizar aqui). PLAN W4 confirma o nome
-   exato lendo doc oficial do Claude Code antes de hardcodear; fallback
-   genérico abaixo.
+1. **Primary:** `CLAUDECODE` env var setada (Claude Code exporta essa
+   variável — confirmado empiricamente vs Claude Code 2.1.153 em W4-FU,
+   commit b149678; se mudar, atualizar aqui). PLAN W4 hardcoda
+   `CLAUDECODE` após verificação empírica; fallback genérico abaixo.
 2. **Alternative:** `[[ ! -t 0 ]] || [[ ! -t 1 ]]` (stdin ou stdout
    não-TTY) — captura host genérico, CI, pipes, redirects.
 3. **Override manual (escape hatch):** env var `FORGE_FORCE_INTENT_MODE=1`
@@ -472,9 +486,9 @@ Cenário: usuário invoca `forge X` duas vezes em sequência rápida (race).
 
 | ID | Critério | Como testar |
 |---|---|---|
-| **AC-1** | `forge init` via bash em Claude Code (sem TTY, sem `CLAUDE_CODE_HOST` ou com — ambos) emite intent JSON ao primeiro prompt, exit 2 | Integration test em `tests/integration/test_intent_protocol_e2e.py` que invoca subprocess com stdin fechado, valida exit code 2 + presença de `.claude/state/forge-pending.json` com schema válido |
+| **AC-1** | `forge init` via bash em Claude Code (sem TTY, sem `CLAUDECODE` ou com — ambos) emite intent JSON ao primeiro prompt, exit 2 | Integration test em `tests/integration/test_intent_protocol_e2e.py` que invoca subprocess com stdin fechado, valida exit code 2 + presença de `.claude/state/forge-pending.json` com schema válido |
 | **AC-2** | Re-invocação após response escrita retoma do checkpoint exato; arquivos `forge-pending.json` + `forge-response.json` são deletados | Mesmo integration test continua: escreve response, re-invoca, valida que retoma do step seguinte + ambos arquivos sumiram |
-| **AC-3** | `forge init` em TTY puro (sem `CLAUDE_CODE_HOST`, com stdin TTY) entra em `tty_bridge` automaticamente, prompts stdin idênticos ao atual | E2E test marker `e2e` que invoca `bin/forge` via pty (`pexpect` ou `pty` stdlib) |
+| **AC-3** | `forge init` em TTY puro (sem `CLAUDECODE`, com stdin TTY) entra em `tty_bridge` automaticamente, prompts stdin idênticos ao atual | E2E test marker `e2e` que invoca `bin/forge` via pty (`pexpect` ou `pty` stdlib) |
 | **AC-4** | API `ask()`, `ask_text()`, `ask_multi()`, `confirm()`, `ask_three_paths()` mantêm assinaturas (signatures preservadas) | Unit tests pré-existentes em `tests/ui/test_question*.py` continuam verdes; novo test `test_api_signatures.py` assert no `inspect.signature(...)` de cada função |
 | **AC-5** | Ctrl+C no tty mode → exit 130; token `para` em prompt allow-pause=true → response com `paused: true`, engine exit **2** limpo via `UserPausedError` (CR-003 fix do W2 review). Response com `cancelled: true` → exit **130** via `UserCancelledError` (CR-001 fix). Sem traceback em nenhum dos dois casos. | Unit + integration |
 | **AC-6** | State files deletados após consumo no happy-path | Assertion explícita no integration test |
@@ -484,9 +498,10 @@ Cenário: usuário invoca `forge X` duas vezes em sequência rápida (race).
 
 ## Open questions (pra investigar no PLAN)
 
-1. **Nome exato da env var `CLAUDE_CODE_HOST`.** Confirmar via doc oficial
-   (`https://code.claude.com/docs/...` ou via `Context7 MCP`) antes de
-   hardcodear. Fallback `[[ ! -t 0 ]]` cobre caso esse nome esteja errado.
+1. **Nome exato da env var.** ~~`CLAUDE_CODE_HOST`~~ resolvido em W4-FU:
+   verificação empírica vs Claude Code 2.1.153 confirmou que o host exporta
+   `CLAUDECODE` (commit b149678). Fallback `[[ ! -t 0 ]]` permanece pro
+   caso de versões futuras renomearem.
 2. **`ask_multi` no protocolo.** O design contract inclui `ask_multi`
    (`engine/ui/question.py:84`) — não estava explícito no brainstorm.
    Adicionado aqui por completude; PLAN confirma se mantém ou se vira
@@ -510,7 +525,7 @@ Cenário: usuário invoca `forge X` duas vezes em sequência rápida (race).
   precisar saber sobre exit code 2. Audit + ajuste fica em PLAN W4 doc-sync
   / W5 verification.
 - **Detection mais sofisticada de host** (sentinel file, MCP handshake)
-  fica como gap-fix futuro se `CLAUDE_CODE_HOST` env var virar instável.
+  fica como gap-fix futuro se `CLAUDECODE` env var virar instável.
 - **Lock file via `fcntl.flock`** pra race entre invocações concurrent
   (deferido — adicionar se padrão aparecer em produção).
 - **`forge raw` / `forge memory` / `forge graph` em modos read-only que

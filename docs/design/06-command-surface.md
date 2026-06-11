@@ -190,6 +190,14 @@ exit code 2 + state files (`.claude/state/forge-pending.json` /
 receba exit 2 NÃO deve responder sozinho — ver
 `.claude/rules/subagent-workflow.md §Quando subagent invoca \`forge\``.
 
+**Exit 130 — duas rotas convergentes:**
+- (a) `KeyboardInterrupt` (Ctrl+C / SIGINT) em modo TTY.
+- (b) Host response `cancelled: true` (`UserCancelledError`) em modo intent.
+
+Callers tratam identicamente — usuário desistiu. Distinção fica em
+`engine/cli.py` na captura (Decision 27 cobre a rota TTY; CR-001 do W2
+review cobre a rota intent).
+
 Schema dos state files: `docs/schemas/intent-protocol.md`.
 Spec canônico: `docs/superpowers/specs/drift-1-intent-protocol.md` §4.
 

@@ -317,6 +317,17 @@ builtins". `forge` não é shell builtin — o conflito é nominal.
 
 ---
 
+## Schema evolution policy
+
+- Versão atual: `schema-version = 1`.
+- Bump ocorre apenas em mudanças **breaking** (campo renomeado/removido, tipo alterado, semântica alterada). Mudanças additive backward-compat NÃO bumpam.
+- Leitor (`engine.ui.intent_state.read_response` / `read_pending`) rejeita versões desconhecidas com `SchemaVersionMismatchError` — falha cedo, mensagem clara.
+- Engine e Host devem co-bumpar: bumpar v1 → v2 sem update simultâneo do host quebra o protocolo em ambiente real.
+- Versão `0` é inválida — schema-version começa em 1.
+- Bump policy fica documentada também em `CHANGELOG.md` na linha de versão correspondente (ex.: `### Changed (load-bearing)`).
+
+---
+
 ## Links
 
 - Spec canônico: [`docs/superpowers/specs/drift-1-intent-protocol.md`](../superpowers/specs/drift-1-intent-protocol.md)

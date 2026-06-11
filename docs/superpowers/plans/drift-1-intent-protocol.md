@@ -17,7 +17,7 @@ sequenciais, sem regressão dos 1125 tests baseline (pós-Phase 0b).
 ```
 ┌────────────────────────────────────────────────────────────────┐
 │ bin/forge (Bash dispatcher)                                    │
-│   if CLAUDE_CODE_HOST || !tty:                                 │
+│   if CLAUDECODE || !tty:                                       │
 │       exec python -m engine.cli "$@"          ── intent mode   │
 │   else:                                                        │
 │       exec python -m engine.ui.tty_bridge engine.cli "$@"      │
@@ -560,12 +560,17 @@ A forma de T3a/T3b consome essa decisão — sem ela, T3 não inicia.
 - **Steps:**
   1. Confirmar (via doc oficial Claude Code lookup — Context7 MCP ou
      `ctx7 docs claude-code "host env var"`) o nome canônico da env
-     var. Se confirmado `CLAUDE_CODE_HOST`, hardcoda; se inseguro,
-     fica só com TTY detection.
+     var.[^claudecode-rename] Resolvido em W4-FU: nome real é
+     `CLAUDECODE` (verificação empírica vs Claude Code 2.1.153,
+     commit b149678).
+
+     [^claudecode-rename]: Renomeado em W4-FU (verificação empírica vs
+     Claude Code 2.1.153 mostrou que `CLAUDECODE` é o nome real exportado
+     pelo host). SPEC inicial usava `CLAUDE_CODE_HOST` como placeholder.
   2. Patch:
      ```bash
      # Substituir linha 28 (exec atual):
-     if [[ -n "${CLAUDE_CODE_HOST:-}" ]] || [[ ! -t 0 ]] || [[ ! -t 1 ]] || [[ -n "${FORGE_FORCE_INTENT_MODE:-}" ]]; then
+     if [[ -n "${CLAUDECODE:-}" ]] || [[ ! -t 0 ]] || [[ ! -t 1 ]] || [[ -n "${FORGE_FORCE_INTENT_MODE:-}" ]]; then
        exec "$PYTHON" -m engine.cli "$@"
      elif [[ -n "${FORGE_FORCE_TTY_MODE:-}" ]]; then
        exec "$PYTHON" -m engine.ui.tty_bridge engine.cli "$@"
@@ -694,7 +699,7 @@ A forma de T3a/T3b consome essa decisão — sem ela, T3 não inicia.
      - `### Changed`:
        - `engine/ui/question.py` — refactor interno; API surface
          preservada (108 callsites em 10 módulos intocados)
-       - `bin/forge` — dispatcher com TTY/CLAUDE_CODE_HOST detection
+       - `bin/forge` — dispatcher com TTY/CLAUDECODE detection
        - `engine/cli.py::main()` — captura `PausedForInputError` → exit 2
 
 #### Task W6.T2 — `docs/design/08-session-handoff.md`
