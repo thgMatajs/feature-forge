@@ -11,12 +11,11 @@
 # user pode override per-(axis, platform) cell antes de finalizar o init.
 #
 # Persistence é platform-divergente: Room no Android, null no iOS (consome
-# via KMP shared), null no KMP por enquanto. A spec aponta `sqldelight` em
-# kmp, mas o card `sqldelight` ainda não existe no projeto; está marcado
-# como null aqui e fica pendente até o card ser introduzido em wave futura
-# (ver §Conhecidos limites). Observabilidade aponta para `crashlytics`
-# (nome real do card v1.2-dev); rename para `firebase-crashlytics` é
-# trabalho pendente de W4 não realizado nesta branch.
+# via KMP shared), SQLDelight no KMP (cell `(persistence, kmp)`). O card
+# `sqldelight` foi introduzido em W6 fechando o gap deixado em W6.1.
+# Observabilidade aponta para `crashlytics` (nome real do card v1.2-dev);
+# rename para `firebase-crashlytics` é trabalho pendente de W4 não
+# realizado nesta branch.
 
 schema-version: 1
 name:           firebase-full
@@ -28,6 +27,6 @@ defaults:
   observability: { all-platforms: crashlytics }
   analytics:     { all-platforms: firebase-analytics }
   storage:       { all-platforms: firebase-storage }
-  persistence:   { android: room-database, ios: null, kmp: null }
+  persistence:   { android: room-database, ios: null, kmp: sqldelight }
   notifications: { all-platforms: fcm }
   flags:         { all-platforms: firebase-remote-config }

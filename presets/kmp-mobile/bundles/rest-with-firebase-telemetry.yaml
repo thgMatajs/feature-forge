@@ -11,8 +11,9 @@
 # KMP em curso onde `retrofit-client` ainda dominia Android e `ktor-client`
 # já vive no shared KMP.
 #
-# Persistence é platform-divergente igual ao firebase-full (Room/Android,
-# null no iOS, kmp null enquanto `sqldelight` card não existe).
+# Persistence é platform-divergente igual ao firebase-full: Room/Android,
+# null no iOS (consume via shared), SQLDelight no KMP (card introduzido
+# em W6 fechando o gap deixado em W6.1).
 # Observability usa `crashlytics` (nome real do card; ver firebase-full.yaml
 # pra contexto da nota sobre rename pendente).
 
@@ -26,6 +27,6 @@ defaults:
   observability: { all-platforms: crashlytics }
   analytics:     { all-platforms: firebase-analytics }
   storage:       { all-platforms: null }
-  persistence:   { android: room-database, ios: null, kmp: null }
+  persistence:   { android: room-database, ios: null, kmp: sqldelight }
   notifications: { all-platforms: fcm }
   flags:         { all-platforms: firebase-remote-config }
