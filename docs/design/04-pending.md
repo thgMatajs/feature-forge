@@ -2429,6 +2429,51 @@ atual: esperar, registrar aqui.
 
 Não-bloqueante. Anotado pra próxima rodada de migration cross-card.
 
+### Follow-ups pós-master-review PR #11 (2026-06-10)
+
+Master-review do PR #11 (`feat/gradle-dep-signal`) endereçou 9 findings de code-fix em Wave 1+2 (A-1, A-2, M-2, M-3, M-4, M-5, B-1, B-2, B-3). Restam 3 follow-ups de natureza estratégica/observabilidade que não bloqueiam merge e ficam aqui pra rastreio. Severities P3 — abrir quando padrão recorrer ou demanda concreta surgir.
+
+#### FU-MR-1 (P3) — Schema-version bump trigger para signal types
+
+**Context:** `cards/*/detection/signals.yaml` (e o bloco equivalente em `card.yaml.detection.signals`) hoje não carrega `schema-version` uniforme por signal type. DET-3 introduziu `gradle-dep` migrando 9 signals em 8 cards de `file-content` sem bumpar versionamento. Pra próximas migrations cross-card (próximo signal type novo, mudança de shape de existente), faltará trigger explícito de quando bumpar.
+
+**Trigger proposto:** bumpar `signals.yaml` schema-version no próximo signal type novo (ex.: `pod-dep`, `npm-dep`, `swift-dep`). Default atual: esperar. Sem urgência v1.2-dev — anotado aqui pra evitar dívida silenciosa crescer fora do radar.
+
+**Reference:** S-2 do master-review do PR #11; `docs/superpowers/specs/det-3-gradle-dep-signal.md` §"Considerações futuras".
+
+**Outcome esperado (3-caminhos quando endereçar):**
+- (a) Bumpar agora batched nos 8 cards migrados pra schema-version 2.
+- (b) Bumpar no próximo signal type novo (trigger proposto acima).
+- (c) Esperar até 2+ signal types acumulados pra evitar churn em single-bump.
+
+#### FU-MR-2 (P3) — retrofit-client family-match decision
+
+**Context:** O SPEC de DET-3 abre citando `retrofit-client` como exemplo do gap (scanner cego pra libs.versions.toml). O audit conservou `retrofit-client` com `file-content` substring `io.squareup.retrofit2:retrofit-` porque a coordenada captura toda a família (`-converters-gson`, `-converter-moshi`, `-mock`, etc.) por design. Migrar pra `gradle-dep` exato exigiria declarar cada variante separadamente OU introduzir wildcard. Resultado: `retrofit-client` continua com problema original do SPEC — projeto TOML-only puro ainda não detecta retrofit-client.
+
+**Decisão pendente:** aceitar como tradeoff family-match preservado (retrofit-client é card pré-DET-3, comportamento idêntico) OU adicionar wildcard sufixado no signal schema (ex.: `coordinate: io.squareup.retrofit2:retrofit-*`).
+
+**Reference:** S-3 do master-review do PR #11; audit em `.planning/det-3/migration-audit.json` entrada `retrofit-client`.
+
+**Outcome esperado (3-caminhos quando endereçar):**
+- (a) Aceitar tradeoff: documentar limitação em `retrofit-client/README.md` e `docs/schemas/card.md`; deixar como está.
+- (b) Adicionar wildcard `coordinate: io.squareup.retrofit2:retrofit-*` ao signal schema; aplica a 2º card de família-multipla que surgir.
+- (c) Declarar coordenadas explícitas por variante (`-converter-gson`, `-converter-moshi`, etc.) — explosão de signals mas exato.
+
+Trigger: abrir quando 2+ cards de família-multipla pedirem o mesmo pattern.
+
+#### FU-MR-3 (P3) — BOM em libs.versions.toml silenciosamente ignorado
+
+**Context:** Surfaced por S-1.1 do master-review durante coverage de edge cases. `tomllib` (Py stdlib 3.11+) rejeita BOM UTF-8 (`\xEF\xBB\xBF`) por aderir estritamente à TOML 1.0 spec. Helper `_load_toml_catalog` engole `TOMLDecodeError` silenciosamente — resultado: catálogo com BOM vira invisível ao scanner, card não auto-ativa, usuário não tem indicação do porquê. Editores Windows às vezes salvam `.toml` com BOM por default (Notepad pre-Win10, alguns IDEs).
+
+**Sugestão:** `forge doctor` deveria warn quando lê um catálogo cujo conteúdo começa com BOM. Não-bloqueante; ajuda diagnóstico no campo. Test de regressão `test_s1_toml_with_utf8_bom_silently_skipped` (em `tests/unit/test_eval_gradle_dep.py`, commit `e6305df`) trava se algum dia o helper strippar BOM — forçando revisita consciente.
+
+**Reference:** S-1.1 do master-review do PR #11; `engine/init.py:_load_toml_catalog`; `tomllib` spec adherence.
+
+**Outcome esperado (3-caminhos quando endereçar):**
+- (a) Adicionar warn em `forge doctor` quando catálogo começa com BOM; documentar como diagnose-only.
+- (b) Strippar BOM no helper antes de passar pro tomllib (afrouxa aderência à spec); test de regressão acima trava — exige revisita consciente.
+- (c) Deixar como está; comportamento atual é spec-correct (TOML 1.0 não tem BOM).
+
 ### Phase 0b — Code review follow-ups (2026-06-10)
 
 Discovered during DET-3 code review. None bloqueante — merge unlocked.

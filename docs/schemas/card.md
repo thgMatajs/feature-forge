@@ -389,6 +389,20 @@ else:
 | `file-exists` | `glob: <pattern>` |
 | `file-content` | `glob: <pattern>` + `contains: <string>` or `matches: <regex>` |
 | `gradle-dep` | `coordinate: <group>:<artifact>` (sem versão, sem espaços). Match em `gradle/*.versions.toml` (TOML, formato `module = "<group>:<artifact>"` ou `group + name` split) E em `**/build.gradle*` (substring). Ordem: catálogo primeiro, build.gradle fallback. |
+
+**Semântica de match (assimetria intencional — `gradle-dep`):** o passo TOML
+(`gradle/libs.versions.toml`) compara `module == coordinate` por igualdade de
+`group:artifact` (tolerante a `group:artifact:version` em TOML — version-suffix
+match prefix). O passo build.gradle (`**/build.gradle*`) usa substring de
+`coordinate` no conteúdo do arquivo (com filtragem de comentários Groovy/KTS).
+Consequência: cards que declaram coordenada base (ex.:
+`com.google.firebase:firebase-storage`) NÃO detectam variantes sufixadas (ex.:
+`-ktx`) em projeto TOML-only puro. Declare coordenadas explícitas por variante
+quando relevante. Decisão deliberada do master-review PR #11 (Caminho A — aceitar
+tradeoff documentado). Follow-up FU-MR-1 em `docs/design/04-pending.md` captura
+o trigger pro schema-version bump quando demanda de `match: exact|prefix` opcional
+emergir.
+
 | `directory-exists` | `path: <relative>` |
 | `command-success` | `command: <string>` (rare, use sparingly) |
 

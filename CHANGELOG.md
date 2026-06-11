@@ -32,6 +32,28 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 - Tighten CARD-020 whitespace validation to reject tab/newline in gradle-dep coordinate (M-001 from DET-3 code review; commit 475f695).
 
+### Fixed (PR #11 master-review remediação — DET-3, 2026-06-10)
+
+Wave 1+2 cobrindo 9 findings do master-review do PR #11 sobre o signal type `gradle-dep` (DET-3 / Phase 0). Severities variam de Alto (2) a Baixo (4); todos endereçados em 7 commits atômicos antes do merge.
+
+- **A-1 [alto] — ktor-client primary signal migrado** — `cards/ktor-client/{card.yaml,detection/signals.yaml}`: signal primário (confidence 0.5) migrou de `file-content` substring família (`io.ktor:ktor-client`) para `gradle-dep` exato `io.ktor:ktor-client-core`. SPEC §AC-1 ("fixture TOML-only → ktor-client retorna auto-activate") agora é exercido na realidade do card, não apenas pelo helper isolado. Commit `7847e5a`.
+- **A-2 [alto] — integration test cobre cards reais** — `tests/integration/test_gradle_dep_card_activation.py` (novo): carrega `cards/ktor-client/card.yaml` real e roda detection contra as 5 fixtures (`gradle-dep-{toml-only,toml-split,legacy,hybrid,negative}`), assertando score vs threshold. Sem este teste, A-1 cria falsa segurança permanente. Commit `a7d0947`.
+- **M-2 [médio] — CARD-021 rejeita `type: dependency`** — `engine/cards/loader.py` ganha CARD-021 que rejeita o tipo descontinuado no load time, em vez de silenciosamente ignorá-lo. Tabela canônica de Signal types em `docs/schemas/card.md` purga `dependency` da listagem ativa e move para sub-seção "Tipos descontinuados" com referência ao sucessor (`gradle-dep`). Commit `3e4cc65`.
+- **M-3 [médio] — branch defensivo morto removido** — `engine/init.py`: removido `if tomllib is not None:` que contradizia o invariante `requires-python >=3.11` (tomllib é stdlib desde 3.11). Captura FU-4 (cosmética post-review). Commits `2e13e3a` + `680a59b`.
+- **M-4 [médio] — `forge doctor` warn pra catálogo fora de `gradle/`** — `engine/doctor.py` ganha check que avisa quando `**/libs.versions.toml` existe fora de `<root>/gradle/` (composite builds, `buildSrc/`). Scope preservado conforme SPEC §Non-Goals; warning ajuda diagnóstico sem expandir scanner. Commit `b2749dc`.
+- **M-5 [médio] — comments filtrados em build.gradle** — `engine/init.py`: substring match no fallback build.gradle agora strippa comments Groovy/KTS (`//` line-comments + `/* */` block-comments) antes do match. Falso-positivo `// io.ktor:ktor-client-core retirado em 2024` não retorna mais True. Commit `680a59b`.
+- **B-1 [baixo] — `_load_toml_catalog` cached** — `engine/init.py`: helper de parse decorado com `@functools.lru_cache(maxsize=None)` evita re-parse do mesmo `libs.versions.toml` quando N signals do mesmo card consultam. Cache key por `project_root` resolvido. Commit `680a59b`.
+- **B-2 [baixo] — TOML `module` com version-suffix** — `engine/init.py`: match tolera `module = "group:artifact:version"` no TOML batendo coordinate `group:artifact` (formato inválido mas observado no wild). Match exato preservado para shape canônico; prefix-aware só para o caso version-suffix. Commit `680a59b`.
+- **B-3 [baixo] — helper `parse_gradle_coordinate` extraído** — `engine/cards/_signal_shapes.py` (novo): `parse_gradle_coordinate(coord) -> tuple[group, artifact] | None` consolidado e reusado por CARD-020 (loader) + `_eval_gradle_dep` (init). Elimina drift de validação cross-módulo e prepara reuso pra futuros `pod-dep` / `npm-dep` / `swift-dep`. Commit `4a6a42d`.
+
+### Added (PR #11 master-review — DET-3 edge case coverage, 2026-06-10)
+
+- **S-1 cobertura de testes** — `tests/unit/test_eval_gradle_dep.py` ganha 5 edge cases: (1) BOM UTF-8 no `libs.versions.toml` silenciosamente pulado (tomllib stdlib rejeita BOM por aderir à TOML 1.0; helper engole `TOMLDecodeError` → catálogo invisível — comportamento documentado, surfaced como FU-MR-3); (2) block-table form (`[libraries.ktor-client-core]`) com chaves `module`/`group+name` split; (3) build.gradle com coordenada misturada em comentários + linha real (cobre M-5 fix); (4) variant `-ktx` em TOML-only com coordenada base — confirma assimetria documentada (FU-MR-1 trade-off); (5) catálogo customizado em path não-canônico (`dependencies.toml` fora de `gradle/`) — exercita SPEC §Non-Goals. Commit `e6305df`.
+
+### Changed (PR #11 master-review — DET-3 assimetria documentada, 2026-06-10)
+
+- **M-1 [médio] — Assimetria TOML-exact vs build.gradle-substring documentada** — Decisão deliberada do master-review (Caminho A): o signal `gradle-dep` faz match EXATO `group:artifact` no passo TOML (`libs.versions.toml`) e SUBSTRING no passo build.gradle (`**/build.gradle*`). Consequência observável: cards declarando coordenada base (ex.: `com.google.firebase:firebase-storage`) NÃO detectam variantes sufixadas (ex.: `-ktx`) em projetos TOML-only puros — variante seria invisível por igualdade exata. Cards devem declarar coordenadas explícitas pra cada variante quando relevante. Documentado em `docs/schemas/card.md` §Signal types nova nota de assimetria; follow-up FU-MR-1 captura trigger pro schema-version bump quando demanda do oposto (`match: prefix` opcional) emergir. Commit `(este doc-sync)`.
+
 ### Fixed (QA-11 ultra-review remediação — PR #9, 2026-06-09)
 
 Remediação de 16 findings do ultra-review (deep.json) sobre QA-11 sandbox env hardening + QA-13. Severities variam de critical (1) a suggestion (7); todas aplicadas exceto onde indicado.

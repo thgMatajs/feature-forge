@@ -75,7 +75,7 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 | Preset | kmp-mobile (8 stack cards + 4 backend-candidates) |
 | Validators Python | 20 + 3 helpers (`_gate_infra`, `_diff`, `_common`) — inclui `check_cyclomatic_complexity` (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon), `check_secrets` (gitleaks + trufflehog), `check_no_behavior_change` (refactor), `validate_extension_feature` (extends-feature cross-cutting) |
 | Hooks | 9 + 1 reuse incremental (`post-edit-detect-duplications.sh`) |
-| Tests | ~1125 (unit + integration + e2e · ~20 skipped · baseline histórico em CHANGELOG.md) |
+| Tests | ~1178 collected / ~1054 rapid lane (unit + integration + e2e · ~20 skipped · baseline histórico em CHANGELOG.md) |
 | LOC total | ~52.500 |
 | Engine LOC | ~22.000 (Python) |
 | Files total | ~400 |
