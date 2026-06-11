@@ -38,6 +38,7 @@ import importlib
 import sys
 from typing import Callable
 
+from engine.ui.exit_codes import EXIT_CANCELLED, EXIT_PAUSED
 from engine.ui.question import (
     PausedForInputError,
     UserCancelledError,
@@ -202,27 +203,27 @@ def main(argv: list[str] | None = None) -> int:
             # to read that file, write a response, and re-invoke us with the
             # same argv. No traceback, no message on stdout — the host renders
             # whatever it needs to from the intent payload itself.
-            return 2
+            return EXIT_PAUSED
         except UserPausedError:
             # CR-003 fix — host response carried ``paused: true`` while the
             # prompt allowed pause. Same exit code as ``PausedForInputError``
             # (2 = clean pause, resumable) but a distinct semantic: the user
             # explicitly paused via response, rather than the engine emitting
             # a fresh pending. State already cleared by ``_check_pause_response``.
-            return 2
+            return EXIT_PAUSED
         except UserCancelledError:
             # CR-001 fix — host response carried ``cancelled: true``. Exit 130
             # parallels Ctrl+C (Decision 27 / SPEC §8). Placed before the
             # ``KeyboardInterrupt`` clause for readability; the types are
             # disjoint so ordering between these two does not matter
             # behaviourally.
-            return 130
+            return EXIT_CANCELLED
         except KeyboardInterrupt:
             # Decision 27 / discipline §7 — Ctrl+C = pause.
             # Each command is responsible for serializing deferred state before
             # this point. We just report cleanly and exit 130 (POSIX SIGINT).
             sys.stderr.write("\n— interrompido, estado salvo.\n")
-            return 130
+            return EXIT_CANCELLED
         except (
             intent_state.RaceDetectedError,
             intent_state.IntentMismatchError,

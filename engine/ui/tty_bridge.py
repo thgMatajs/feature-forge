@@ -66,16 +66,15 @@ from typing import Any, Sequence
 
 from engine.persona import mentor_calmo
 from engine.ui import intent_state, renderer
+from engine.ui.exit_codes import EXIT_CANCELLED, EXIT_PAUSED
 from engine.ui.question import _PAUSE_TOKENS
 from engine.utils.paths import try_find_project_root
 
 
-# Exit code for "paused awaiting input" — duplicated locally from SPEC §8
-# to keep the bridge importable even if engine.cli is not. (cli.main
-# already owns the canonical mapping; here we only need to recognise
-# the value coming back from the subprocess.)
-_EXIT_PAUSED_FOR_INPUT = 2
-_EXIT_USER_CANCELLED = 130
+# Constantes canônicas em ``engine.ui.exit_codes`` (#27 do master-review do
+# PR #11). O bridge usa ``EXIT_PAUSED`` pra reconhecer o exit code 2 que o
+# subprocess emite quando o engine pausa aguardando input; ``EXIT_CANCELLED``
+# pra propagar o ciclo cancel-via-Ctrl+C/EOF/tokens inválidos.
 
 # Limit for re-prompt loop on invalid tokens. Three tries is enough for
 # real typos without trapping the user in an infinite loop when stdin is
@@ -329,7 +328,7 @@ def main(command_module: str, argv: Sequence[str]) -> int:
         )
         rc = result.returncode
 
-        if rc != _EXIT_PAUSED_FOR_INPUT:
+        if rc != EXIT_PAUSED:
             return rc
 
         # exit 2 — distinguish "engine needs input" from
@@ -339,27 +338,27 @@ def main(command_module: str, argv: Sequence[str]) -> int:
             # CR-003: engine cleared state on UserPausedError; nothing
             # left to prompt. Propagate exit 2 verbatim so bin/forge
             # surfaces it to the OS as "paused, re-invoke to resume".
-            return _EXIT_PAUSED_FOR_INPUT
+            return EXIT_PAUSED
 
         try:
             response = _prompt_user_via_stdin(intent)
         except KeyboardInterrupt:
             # Decision 27 — Ctrl+C is abort-with-state-cleared.
             intent_state.clear_intent_files(project_root)
-            return _EXIT_USER_CANCELLED
+            return EXIT_CANCELLED
         except EOFError:
             # Ctrl+D / stdin fechado — same cancel route as Ctrl+C.
             # Engine surface: clean message on stderr, no traceback.
             print("forge: entrada cancelada (EOF).", file=sys.stderr)
             intent_state.clear_intent_files(project_root)
-            return _EXIT_USER_CANCELLED
+            return EXIT_CANCELLED
         except _TooManyInvalidAttempts:
             print(
                 "forge: entradas inválidas — cancelando.",
                 file=sys.stderr,
             )
             intent_state.clear_intent_files(project_root)
-            return _EXIT_USER_CANCELLED
+            return EXIT_CANCELLED
 
         intent_state.write_response(project_root, response)
 
