@@ -35,10 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-try:
-    import tomllib  # Python 3.11+ stdlib
-except ImportError:  # pragma: no cover — defesa pra ambientes <3.11
-    tomllib = None  # type: ignore[assignment]
+import tomllib  # stdlib ≥3.11 (requires-python enforced)
 
 if TYPE_CHECKING:
     # N5: type-annotate `_check_orphan_signals(catalog)` sem ativar import

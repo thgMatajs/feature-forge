@@ -2496,6 +2496,33 @@ regression — mas o branding "exact coordinate" do novo signal
   `(^|[^.\w-])<coord>([^.\w-]|$)`).
 - (c) Deixar as-is, documentar caveat.
 
+#### FU-4 — Cosmética post-review: naming + migration audit (Low)
+
+**Context:** Dois itens S-001 e S-002 da code review de 2026-06-10
+capturados aqui como deferidos:
+
+- **S-001 — naming `_eval_gradle_dep`:** função retorna `bool` (semântica
+  de predicate), mas segue convenção de nomenclatura de `_eval_*` que
+  retornam tuple `(score, matched)`. Renomear pra `_has_gradle_dep` ou
+  `_gradle_dep_matches` alinharia semântica, mas é breaking pra qualquer
+  caller interno que já usa o nome. Deferido: rename cosmético.
+- **S-002 — migration-audit.json sem `previous_signal`:** entradas
+  `action: migrate` em `.planning/det-3/migration-audit.json` registram
+  `coordinate` (after) mas não `previous_contains` (before). Rastreabilidade
+  retroativa perdida pra re-auditoria automática. Deferido: melhoria de
+  formato pra próxima migration mass.
+
+**Reference:** `engine/init.py` (`_eval_gradle_dep` ~linha 639);
+`.planning/det-3/migration-audit.json` (entradas `action: migrate`).
+
+**Outcome esperado:**
+- (a) Rename `_eval_gradle_dep` → `_has_gradle_dep` + update todos os
+  callers (grep `_eval_gradle_dep` em engine/) + update tests que mockam.
+- (b) Deixar nome as-is, adicionar docstring explícita que "retorna bool
+  indicando presença, não score tuple".
+- (c) Para S-002: se outra migração mass ocorrer, adicionar campo
+  `previous_signal: {type, value}` ao audit schema.
+
 #### FU-5 — Bootstrap idempotency em worktree context (Medium)
 
 **Context:** `tests/integration/test_bootstrap.py::test_bootstrap_is_idempotent`
