@@ -47,6 +47,14 @@ import yaml
 from engine.detection.composer import Cell, Conflict, compose_backend_axes
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+# Sanity guard (LOW-003): se o test for movido pra outro nível de profundidade
+# (ex.: `tests/integration/det-6/...`), `parents[2]` aponta pro diretório errado
+# e o `FileNotFoundError` no YAML load levanta stacktrace pouco informativo.
+# Falha alto com mensagem útil em vez disso.
+assert (REPO_ROOT / "cards").is_dir(), (
+    f"REPO_ROOT resolution broken: {REPO_ROOT} has no cards/ dir. "
+    f"Did the test file move?"
+)
 CARDS_DIR = REPO_ROOT / "cards"
 
 
