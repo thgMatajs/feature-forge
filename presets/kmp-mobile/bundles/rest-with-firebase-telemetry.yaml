@@ -1,0 +1,31 @@
+# presets/kmp-mobile/bundles/rest-with-firebase-telemetry.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# Read by:        forge init (bundle picker — W7)
+# Validated by:   validators/validate_presets.py
+# Spec:           docs/superpowers/specs/det-6-multi-axis-backend.md §Starter
+#                 bundles (linhas 138-152)
+# ──────────────────────────────────────────────────────────────────────────
+# Bundle "rest-with-firebase-telemetry" — REST API para dados +
+# Firebase para identity, telemetria, push. Captura o caso real de migração
+# KMP em curso onde `retrofit-client` ainda dominia Android e `ktor-client`
+# já vive no shared KMP.
+#
+# Persistence é platform-divergente igual ao firebase-full (Room/Android,
+# null no iOS, kmp null enquanto `sqldelight` card não existe).
+# Observability usa `crashlytics` (nome real do card; ver firebase-full.yaml
+# pra contexto da nota sobre rename pendente).
+
+schema-version: 1
+name:           rest-with-firebase-telemetry
+description:    "REST API for data + Firebase for identity, telemetry, push."
+
+defaults:
+  data:          { android: retrofit-client, kmp: ktor-client, ios: null }
+  auth:          { all-platforms: firebase-auth }
+  observability: { all-platforms: crashlytics }
+  analytics:     { all-platforms: firebase-analytics }
+  storage:       { all-platforms: null }
+  persistence:   { android: room-database, ios: null, kmp: null }
+  notifications: { all-platforms: fcm }
+  flags:         { all-platforms: firebase-remote-config }
