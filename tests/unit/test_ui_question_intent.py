@@ -647,6 +647,126 @@ def test_ask_text_intent_id_includes_validator_hint(tmp_project_root):
     )
 
 
+# --- Master review #2 — intent-id includes call-site -----------------------
+
+
+def test_stable_intent_id_differs_between_commands(tmp_project_root):
+    """Master review #2 (PR #11) — sem o call-site no hash, dois
+    ``ask("Continue?")`` em subcomandos distintos (ex.: ``forge init``
+    vs ``forge evolve``) produziam o mesmo intent-id, deixando o segundo
+    consumir indevidamente a response do primeiro. Agora o intent-id
+    incorpora ``command`` + ``command_args``.
+    """
+    id_init = question._stable_intent_id(
+        "ask",
+        "Continue?",
+        {"y": "yes", "n": "no"},
+        command="init",
+        command_args=[],
+    )
+    id_evolve = question._stable_intent_id(
+        "ask",
+        "Continue?",
+        {"y": "yes", "n": "no"},
+        command="evolve",
+        command_args=[],
+    )
+    assert id_init != id_evolve, (
+        "intent-id must differ across distinct commands (master review #2)"
+    )
+
+
+def test_stable_intent_id_differs_when_command_args_differ(tmp_project_root):
+    """Master review #2 — mesmo prompt + mesmo comando, mas argv
+    diferentes (ex.: dois ``forge plan <slug>`` com slugs distintos)
+    devem produzir intent-ids distintos.
+    """
+    id_a = question._stable_intent_id(
+        "ask_text",
+        "Confirma o slug?",
+        None,
+        command="plan",
+        command_args=["lembrete-rega"],
+    )
+    id_b = question._stable_intent_id(
+        "ask_text",
+        "Confirma o slug?",
+        None,
+        command="plan",
+        command_args=["controle-luz"],
+    )
+    assert id_a != id_b, (
+        "intent-id must differ when command-args differ (master review #2)"
+    )
+
+
+def test_paths_detail_changes_intent_id_for_three_paths(
+    monkeypatch, tmp_project_root
+):
+    """Master review #11 (PR #11) — sem ``paths-detail`` no hash, dois
+    ``ask_three_paths`` com mesmo gate-name + mesmos labels mas
+    motives distintos colidiam no mesmo intent-id e podiam trocar
+    responses entre si. Agora ``paths-detail`` entra no payload.
+    """
+    common_labels = [
+        {"label": "Refatorar", "motive": "motive-A1"},
+        {"label": "Reverter", "motive": "motive-B1"},
+        {"label": "Override-justify", "motive": "motive-C1"},
+    ]
+    with pytest.raises(question.PausedForInputError) as first:
+        question.ask_three_paths("cc-gate", paths=common_labels)
+    first_id = first.value.intent["intent-id"]
+
+    # Sweep state so race detection does not block the second call.
+    intent_state.clear_intent_files(tmp_project_root)
+
+    altered = [
+        {"label": "Refatorar", "motive": "motive-A2"},
+        {"label": "Reverter", "motive": "motive-B2"},
+        {"label": "Override-justify", "motive": "motive-C2"},
+    ]
+    with pytest.raises(question.PausedForInputError) as second:
+        question.ask_three_paths("cc-gate", paths=altered)
+    second_id = second.value.intent["intent-id"]
+
+    assert first_id != second_id, (
+        "ask_three_paths with same labels but different motives must "
+        "produce distinct intent-ids (master review #11)"
+    )
+
+
+# --- Master review #12 — _command_context() normalises junk fallback --------
+
+
+def test_command_context_normalizes_dunder_main(monkeypatch):
+    """Master review #12 — ``argv == ["__main__"]`` deve resolver a
+    ``("unknown", [])`` em vez de poluir o pending JSON com
+    ``"command": "__main__"``.
+    """
+    # Garante que a contextvar não responde (faria short-circuit).
+    monkeypatch.setattr(
+        question, "_cli_command_context", question._cli_command_context
+    )
+    token = question._cli_command_context.set(None)
+    try:
+        monkeypatch.setattr(sys, "argv", ["__main__"])
+        assert question._command_context() == ("unknown", [])
+    finally:
+        question._cli_command_context.reset(token)
+
+
+def test_command_context_normalizes_py_filename(monkeypatch):
+    """Master review #12 — ``argv == ["cli.py"]`` deve resolver a
+    ``("unknown", [])`` em vez de gravar ``"command": "cli.py"``.
+    """
+    token = question._cli_command_context.set(None)
+    try:
+        monkeypatch.setattr(sys, "argv", ["cli.py"])
+        assert question._command_context() == ("unknown", [])
+    finally:
+        question._cli_command_context.reset(token)
+
+
 # --- MD-002 cancel beats pause ordering ------------------------------------
 
 

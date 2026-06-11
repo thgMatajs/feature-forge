@@ -31,7 +31,7 @@ _EXPECTED_SIGNATURES = {
     "ask_multi": "(question: 'str', options: 'Mapping[str, str]', *, min_selected: 'int' = 0) -> 'list[str]'",
     "ask_text": "(question: 'str', *, default: 'str | None' = None, validator: 'Callable[[str], bool] | None' = None, validator_hint: 'str | None' = None) -> 'str'",
     "ask_three_paths": "(gate_name: 'str', paths: 'Sequence[Mapping[str, str]]') -> 'str'",
-    "confirm": "(question: 'str', *, default: 'bool' = False) -> 'bool'",
+    "confirm": "(question: 'str', *, default: 'bool' = False, allow_pause: 'bool' = True) -> 'bool'",
 }
 
 
@@ -65,6 +65,27 @@ def test_question_module_exports_new_sentinel():
     """``PausedForInputError`` is the new sentinel for the intent protocol."""
     assert hasattr(question, "PausedForInputError")
     assert issubclass(question.PausedForInputError, Exception)
+
+
+def test_confirm_default_signature_keeps_pause_allowed():
+    """Regression for master-review finding #18 (PR #11).
+
+    A SPEC §2.1 trazia um exemplo com ``allow-pause: false`` para
+    ``confirm``, criando drift com a implementação que sempre permitia
+    pause. A decisão do orchestrator foi fixar a IMPL como canônica:
+    ``confirm`` aceita ``allow_pause`` como kwarg e seu default é
+    ``True`` (igual aos demais entrypoints). Esse teste trava o default
+    para evitar regressão silenciosa em direção a ``False``.
+    """
+    sig = inspect.signature(question.confirm)
+    assert "allow_pause" in sig.parameters, (
+        "confirm() must expose allow_pause as an explicit kwarg "
+        "(master review #18 of PR #11)"
+    )
+    assert sig.parameters["allow_pause"].default is True, (
+        "confirm(allow_pause=...) default must remain True; "
+        "see master review #18 of PR #11 for the decision rationale"
+    )
 
 
 def test_pause_tokens_preserved():

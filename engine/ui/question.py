@@ -171,26 +171,7 @@ _cli_command_context: ContextVar[tuple[str, list[str]] | None] = ContextVar(
 )
 
 
-# --- _read_line — superseded by engine.ui.tty_bridge (W3) ------------------
-#
-# The pre-DRIFT-1 implementation of ``_read_line`` read from ``sys.stdin``
-# directly. That logic moves to ``engine/ui/tty_bridge.py`` in W3 so the
-# engine itself never touches the wire. Keeping the helper name as a
-# stub-with-explanation prevents accidental reintroduction of stdin
-# reading inside ``question.py``.
-
-
-def _read_line(prompt: str, *, stream: Any = None) -> str:  # pragma: no cover
-    """Removed in DRIFT-1 W2. stdin handling lives in
-    ``engine.ui.tty_bridge`` (W3). Calling this on the engine side is a
-    programming error — the engine emits intent and exits 2; only the
-    tty_bridge loop talks to stdin.
-    """
-    raise NotImplementedError(
-        "engine.ui.question no longer reads stdin. "
-        "Input flows through .claude/state/forge-{pending,response}.json — "
-        "see engine.ui.tty_bridge for the TTY fallback loop (W3)."
-    )
+# stdin reading lives in engine.ui.tty_bridge; this module never reads stdin.
 
 
 # --- Intent-id derivation --------------------------------------------------
@@ -201,8 +182,11 @@ def _stable_intent_id(
     question_text: str,
     options: Mapping[str, str] | None,
     extra: Mapping[str, Any] | None = None,
+    *,
+    command: str | None = None,
+    command_args: Sequence[str] | None = None,
 ) -> str:
-    """Deterministic intent-id for the (kind, question, options) tuple.
+    """Deterministic intent-id for o (kind, question, options, call-site) tuple.
 
     A stable id lets a re-invocation of the same command + same prompt
     line up with the response on disk without callers having to thread
@@ -210,17 +194,36 @@ def _stable_intent_id(
     invariant in the module docstring). The id is *not* a security
     token — it is a wire correlation key.
 
+    O call-site (``command`` + ``command_args``) entra no payload do
+    hash para resolver o finding #2 do master review do PR #11:
+    sem isso, ``ask("Continue?")`` repetido em dois subcomandos
+    distintos produzia o MESMO intent-id, fazendo uma response do
+    primeiro ser indevidamente consumida pelo segundo. Quando os
+    parâmetros vêm como ``None``, recorre-se a ``_command_context()``
+    (mesma resolução contextvar → ``sys.argv`` usada por
+    ``_build_pending``) para manter os 13 callsites legados em sync
+    com o intent-id calculado pelo chokepoint, sem precisar mudar
+    nenhum dos callsites no escopo desta wave.
+
     The shape is a UUID-formatted SHA-256 prefix: 8-4-4-4-12 hex chars,
     32 hex digits total. UUID format is what the spec § 2.1 example
     declares; using a hash instead of ``uuid.uuid4()`` makes the id
     reproducible across process restarts.
     """
+    if command is None or command_args is None:
+        ctx_cmd, ctx_args = _command_context()
+        if command is None:
+            command = ctx_cmd
+        if command_args is None:
+            command_args = ctx_args
     payload = json.dumps(
         {
             "kind": kind,
             "question": question_text,
             "options": dict(options) if options is not None else None,
             "extra": dict(extra) if extra is not None else None,
+            "command": command,
+            "command-args": list(command_args),
         },
         sort_keys=True,
         ensure_ascii=False,
@@ -281,6 +284,11 @@ def _command_context() -> tuple[str, list[str]]:
     head = Path(argv[0]).name
     if len(argv) >= 2:
         return (argv[1], list(argv[2:]))
+    # MD-fix #12: normaliza fallback quando só argv[0] está disponível —
+    # ``"cli.py"`` ou ``"__main__"`` não são nomes de comando válidos
+    # e só poluem o JSON. Mapeia para a sentinela ``"unknown"``.
+    if head == "__main__" or head.endswith(".py"):
+        return ("unknown", [])
     return (head or "unknown", [])
 
 
@@ -307,17 +315,28 @@ def _build_pending(
     for wire correlation.
     """
     command, command_args = _command_context()
+    extra_for_hash: dict[str, Any] = {
+        "default": default,
+        "min-selected": min_selected,
+        "validator-hint": validator_hint,
+    }
+    # MD-fix #11: paths-detail entra no hash apenas quando presente,
+    # para preservar parity bit-a-bit com os 13 callsites legados
+    # (engine/{plan,implement,verify,...}.py) que pré-calculam o
+    # intent-id sem essa chave. O rename + uniformização desses
+    # callsites é Wave 2 (#8); até lá, omitir a chave por completo
+    # quando paths-detail é ``None`` mantém o resume intacto.
+    if paths_detail is not None:
+        extra_for_hash["paths-detail"] = [dict(item) for item in paths_detail]
     intent: dict[str, Any] = {
         "schema-version": _SCHEMA_VERSION,
         "intent-id": _stable_intent_id(
             kind,
             question_text,
             options,
-            extra={
-                "default": default,
-                "min-selected": min_selected,
-                "validator-hint": validator_hint,
-            },
+            extra=extra_for_hash,
+            command=command,
+            command_args=command_args,
         ),
         "command": command,
         "command-args": command_args,
@@ -619,12 +638,19 @@ def ask_three_paths(
 # --- confirm ---------------------------------------------------------------
 
 
-def confirm(question: str, *, default: bool = False) -> bool:
+def confirm(question: str, *, default: bool = False, allow_pause: bool = True) -> bool:
     """Yes/no prompt. Returns True for sim, False for não.
 
     The response may carry either a boolean ``value`` (canonical) or a
     legacy ``"s"`` / ``"n"`` string — both are accepted because the
     spec § 2.2 explicitly types ``value`` as ``str | list[str] | bool``.
+
+    ``allow_pause`` segue o canônico do módulo (default ``True``,
+    mesma semântica de ``ask``). O master review #18 do PR #11
+    apontou drift entre SPEC §2.1 (exemplo com ``allow-pause: false``)
+    e a implementação anterior que hard-codava ``True``. A decisão
+    foi declarar a IMPL como canônica e fixar o default via
+    regression test em ``test_ui_question_api_signatures.py``.
     """
     default_key = "s" if default else "n"
     options = {"s": "sim", "n": "não"}
@@ -634,14 +660,14 @@ def confirm(question: str, *, default: bool = False) -> bool:
         question_text=question,
         options=options,
         default=default_key,
-        allow_pause=True,
+        allow_pause=allow_pause,
     )
 
     response = _consume_response_or_none(intent["intent-id"])
     if response is None:
         _emit_pending_and_raise(intent)
 
-    _check_pause_response(response, allow_pause=True)
+    _check_pause_response(response, allow_pause=allow_pause)
 
     value = response.get("value")
     if isinstance(value, bool):
