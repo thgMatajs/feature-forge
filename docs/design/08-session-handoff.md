@@ -22,6 +22,13 @@ FU-DRIFT-1-LOCK (P3, fcntl.flock real), FU-DRIFT-1-DEPRECATE-INTENT-ID-ALIAS
 pós-DRIFT-2), FU-DRIFT-1-OBS (P3, log infrastructure), FU-DRIFT-1-VERIFY-ISO
 (P3, microseconds vs seconds). PR #11 ready for merge.
 
+**Follow-up 2026-06-11 (commit `6dd40af`):** `engine/init.py::_load_checkpoint`
+ganhou guarda `isinstance(data, dict)` retornando `None` em YAML corrompido
+(threads master-review #3396896063 + #3396903793, `[Critico]`). Alinha com
+o pattern dos 9 outros checkpoint-loaders já refatorados via
+`engine/utils/checkpoint_io.py`. Sem mudança de behavior pra cases válidos;
+elimina crash silencioso em payload mal-formado.
+
 Linha paralela `worktree-forge-qa` (PR #8) consolidou pós-rebase contra
 `main`: CONF-001..008 entregues, Gap QA-12 fechado (pause/resume via
 checkpoint.json), 4 fixes pós-review CONF-004 aplicados (H-1, M-2, M-4,

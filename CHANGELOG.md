@@ -148,6 +148,10 @@ Sugestão:
   `engine.__version__` (custo +20-50ms cold start aceito). Drift do
   hardcoded "1.0.0" fechado. Commit `cd6d616`.
 
+Follow-up pós-master-review (2026-06-11):
+
+- `engine/init.py`: `_load_checkpoint` agora valida `isinstance(data, dict)` e retorna `None` em YAML corrompido. Master-review threads #3396896063 + #3396903793 (`[Critico]`). Alinha com pattern dos 9 outros checkpoint-loaders. (commit `6dd40af`)
+
 ### Changed (PR #11 master-review remediação)
 
 - State files (`.claude/state/forge-pending.json`,
