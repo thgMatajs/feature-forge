@@ -153,3 +153,77 @@ def test_card020_coordinate_rejects_missing_colon(tmp_path: Path) -> None:
     ])
     violations = validate_card_yaml(bad, tmp_path)
     assert any("CARD-020" in v for v in violations), violations
+
+
+# ── B-1 / B-2 / M-5 (review findings from PR #11 master review) ──────────────
+
+
+def test_b1_toml_catalog_cached_per_project_root(tmp_path: Path) -> None:
+    """B-1: `_load_toml_catalog` parseia o catálogo uma vez por project_root.
+
+    Chamadas repetidas de `_eval_gradle_dep` com o mesmo project_root devem
+    bater no cache `lru_cache` em vez de re-parsear `gradle/*.versions.toml`.
+    """
+    from unittest.mock import patch
+
+    from engine.init import _eval_gradle_dep, _load_toml_catalog
+
+    # Cache pode estar quente por testes anteriores — limpa para isolar.
+    _load_toml_catalog.cache_clear()
+
+    (tmp_path / "gradle").mkdir()
+    (tmp_path / "gradle" / "libs.versions.toml").write_text(
+        '[libraries]\nktor = { module = "io.ktor:ktor-client-core" }\n',
+        encoding="utf-8",
+    )
+
+    with patch("engine.init.tomllib.load", wraps=__import__("tomllib").load) as spy:
+        first = _eval_gradle_dep(tmp_path, "io.ktor:ktor-client-core")
+        second = _eval_gradle_dep(tmp_path, "io.ktor:ktor-client-core")
+        third = _eval_gradle_dep(tmp_path, "io.ktor:ktor-client-core")
+
+    assert first is True and second is True and third is True
+    assert spy.call_count == 1, (
+        f"esperava 1 parse cached, observou {spy.call_count} — cache não pegou"
+    )
+
+
+def test_b2_toml_module_with_version_suffix_matches() -> None:
+    """B-2: `module = "g:a:version"` casa coordinate `g:a` (prefix-tolerant).
+
+    Formato inválido pelo padrão canônico mas observado no wild em
+    libs.versions.toml. Helper deve comparar apenas os 2 primeiros
+    segments split por `:`.
+    """
+    from engine.init import _load_toml_catalog
+
+    _load_toml_catalog.cache_clear()
+
+    score, matched = _eval_detection_signals(
+        FIXTURES / "gradle-dep-toml-version-suffix",
+        _detection("io.ktor:ktor-client-core"),
+    )
+    assert score == 0.5
+    assert any("io.ktor:ktor-client-core" in m for m in matched)
+
+
+def test_m5_build_gradle_coordinate_in_comment_ignored() -> None:
+    """M-5: coordenada em comentário `//` não conta como match.
+
+    Fixture tem `// io.ktor:ktor-client-core retired ...` no app/build.gradle.kts
+    mas zero declaração real da dep. Helper deve retornar score 0.
+    """
+    score, _ = _eval_detection_signals(
+        FIXTURES / "gradle-dep-comment-only",
+        _detection("io.ktor:ktor-client-core"),
+    )
+    assert score == 0.0
+
+
+def test_m5_build_gradle_block_comment_ignored() -> None:
+    """M-5: coordenada em bloco `/* ... */` não conta como match."""
+    score, _ = _eval_detection_signals(
+        FIXTURES / "gradle-dep-comment-only-block",
+        _detection("io.ktor:ktor-client-core"),
+    )
+    assert score == 0.0

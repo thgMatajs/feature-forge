@@ -26,6 +26,7 @@ auto-resume. Exit code 130 is returned to the dispatcher.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import shutil
@@ -633,6 +634,116 @@ def _glob_any(project_root: Path, glob: str, needle: str | None) -> bool:
     return False
 
 
+@functools.lru_cache(maxsize=8)
+def _load_toml_catalog(project_root: Path) -> tuple[dict, ...]:
+    """Carrega e parseia `gradle/*.versions.toml` uma vez por project_root.
+
+    Cache module-level pequeno (maxsize=8) — cada `forge init` típico
+    inspeciona um único project_root, então 8 cobre runs em fila +
+    fixtures de teste sem reter memória. Cache invalida implicitamente
+    entre sessões CLI (cada run é processo novo).
+
+    Retorna tuple de dicts (top-level TOML root) — tuple porque o cache
+    decorator exige imutabilidade do retorno. TOML mal-formado / OSError
+    são ignorados silenciosamente, alinhado a `_glob_any`.
+    """
+    gradle_dir = project_root / "gradle"
+    if not gradle_dir.is_dir():
+        return ()
+    catalogs: list[dict] = []
+    for toml_path in gradle_dir.glob("*.versions.toml"):
+        try:
+            with toml_path.open("rb") as fh:
+                catalogs.append(tomllib.load(fh))
+        except (OSError, tomllib.TOMLDecodeError):
+            continue
+    return tuple(catalogs)
+
+
+def _module_matches_coordinate(module: str, coordinate: str) -> bool:
+    """`entry["module"]` casa `coordinate` ignorando version sufixada.
+
+    TOML canônico declara `module = "group:artifact"`, mas no wild
+    aparece `module = "group:artifact:version"` (B-2). Compara apenas
+    os 2 primeiros segments split por `:`; preserva comportamento
+    canônico `module == coordinate` para a forma de 2 segments.
+    """
+    if module == coordinate:
+        return True
+    mod_parts = module.split(":")
+    coord_parts = coordinate.split(":")
+    if len(mod_parts) < 2 or len(coord_parts) != 2:
+        return False
+    return mod_parts[0] == coord_parts[0] and mod_parts[1] == coord_parts[1]
+
+
+def _scan_build_gradle_for_coordinate(project_root: Path, coordinate: str) -> bool:
+    """Substring search em `**/build.gradle*` ignorando comentários.
+
+    Filtra linhas de comentário Groovy/KTS (`//` line-comment e blocos
+    `/* ... */`) antes de testar substring — evita falso positivo de
+    coordenadas mencionadas em comentários do tipo `// io.ktor:foo
+    retirado 2024` (M-5). Mantém o cap de arquivos visitados de
+    `_glob_any` (800) e o skip-dirs canônico.
+    """
+    iterator = project_root.rglob("build.gradle*")
+    count = 0
+    for path in iterator:
+        if any(part in _SKIP_DIRS for part in path.parts):
+            continue
+        if count > 800:
+            break
+        count += 1
+        if not path.is_file():
+            continue
+        try:
+            with path.open("r", encoding="utf-8", errors="ignore") as fh:
+                in_block_comment = False
+                for line in fh:
+                    stripped = line.lstrip()
+                    # Bloco /* ... */ pode abrir/fechar na mesma linha.
+                    # Processa caractere-a-caractere apenas o suficiente
+                    # para extrair o segmento "código vivo" da linha.
+                    code_segments: list[str] = []
+                    i = 0
+                    src = line
+                    while i < len(src):
+                        if in_block_comment:
+                            close = src.find("*/", i)
+                            if close == -1:
+                                break
+                            i = close + 2
+                            in_block_comment = False
+                            continue
+                        # Line comment `//` — descarta resto da linha.
+                        if src.startswith("//", i):
+                            break
+                        # Abertura de bloco `/*`.
+                        if src.startswith("/*", i):
+                            in_block_comment = True
+                            i += 2
+                            continue
+                        # Acumula caractere de código vivo.
+                        j = i
+                        while j < len(src):
+                            if src.startswith("//", j) or src.startswith("/*", j):
+                                break
+                            j += 1
+                        code_segments.append(src[i:j])
+                        i = j
+                    # Edge: linha começando exclusivamente em comentário
+                    # após whitespace já foi descartada via `//` acima;
+                    # o teste abaixo cobre o restante.
+                    if stripped.startswith("//"):
+                        continue
+                    code_line = "".join(code_segments)
+                    if coordinate in code_line:
+                        return True
+        except OSError:
+            continue
+    return False
+
+
 def _eval_gradle_dep(project_root: Path, coordinate: str | None) -> bool:
     """True se a coordenada Maven existe em qualquer formato Gradle.
 
@@ -650,37 +761,30 @@ def _eval_gradle_dep(project_root: Path, coordinate: str | None) -> bool:
     if not group or not artifact:
         return False
 
-    # 1) Catálogo TOML (path canônico gradle/*.versions.toml)
-    if tomllib is not None:
-        gradle_dir = project_root / "gradle"
-        if gradle_dir.is_dir():
-            for toml_path in gradle_dir.glob("*.versions.toml"):
-                try:
-                    with toml_path.open("rb") as fh:
-                        data = tomllib.load(fh)
-                except (OSError, tomllib.TOMLDecodeError):
-                    continue
-                libraries = data.get("libraries") or {}
-                if not isinstance(libraries, dict):
-                    continue
-                for entry in libraries.values():
-                    if not isinstance(entry, dict):
-                        continue
-                    module = entry.get("module")
-                    if isinstance(module, str) and module == coordinate:
-                        return True
-                    grp = entry.get("group")
-                    nm = entry.get("name")
-                    if (
-                        isinstance(grp, str)
-                        and isinstance(nm, str)
-                        and grp == group
-                        and nm == artifact
-                    ):
-                        return True
+    # 1) Catálogo TOML (path canônico gradle/*.versions.toml) — cached por
+    # project_root (B-1) e match prefix-tolerant em `module` (B-2).
+    for data in _load_toml_catalog(project_root):
+        libraries = data.get("libraries") or {}
+        if not isinstance(libraries, dict):
+            continue
+        for entry in libraries.values():
+            if not isinstance(entry, dict):
+                continue
+            module = entry.get("module")
+            if isinstance(module, str) and _module_matches_coordinate(module, coordinate):
+                return True
+            grp = entry.get("group")
+            nm = entry.get("name")
+            if (
+                isinstance(grp, str)
+                and isinstance(nm, str)
+                and grp == group
+                and nm == artifact
+            ):
+                return True
 
-    # 2) build.gradle(.kts) legado — reusa _glob_any (substring match)
-    if _glob_any(project_root, "**/build.gradle*", coordinate):
+    # 2) build.gradle(.kts) legado — substring com filtro de comentários (M-5).
+    if _scan_build_gradle_for_coordinate(project_root, coordinate):
         return True
 
     return False

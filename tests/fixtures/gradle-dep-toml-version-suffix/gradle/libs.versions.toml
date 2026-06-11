@@ -1,0 +1,8 @@
+[versions]
+ktor = "2.3.7"
+
+[libraries]
+# Formato inválido pelo padrão canônico mas observado no wild: module
+# inclui version sufixada. _eval_gradle_dep deve casar o prefixo
+# group:artifact (B-2).
+ktor-client-core = { module = "io.ktor:ktor-client-core:2.3.7" }
