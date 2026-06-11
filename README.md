@@ -2,7 +2,7 @@
 
 A standalone CLI skill that orchestrates end-to-end planning + implementation of mobile features across Android, iOS, KMP, and Web. Backend-agnostic (Firebase, REST, GraphQL, local-only).
 
-> **State:** v1.2-dev · 2026-06-11 · 1199 tests rapid lane + 119 integration + 17 e2e (1346 total collected, Phase A DRIFT-1 PR #11 master-review remediado integralmente) · 20 validators · 13 comandos · ~400 arquivos · ~52.5K LOC
+> **State:** v1.2-dev · 2026-06-11 · 1199 tests rapid lane + 119 integration + 17 e2e (1346 total collected, Phase A DRIFT-1 PR #11 master-review remediado integralmente; DET-3 gradle-dep signal type mergido de `main`) · 20 validators · 13 comandos · ~400 arquivos · ~52.5K LOC
 
 ## What it is
 
@@ -124,7 +124,7 @@ Requer Python 3.11+ + PyYAML (única dep externa).
   presets/kmp-mobile/                   canonical preset v1
   validators/                           20 validators + helpers (inclui check_cyclomatic_complexity + check_secrets + validate_extension_feature)
   hooks/                                9 hooks + reuse incremental script
-  tests/                                ~1113 collected tests (unit + integration + e2e) + 20 skipped
+  tests/                                ~1125 collected tests (unit + integration + e2e) + 20 skipped
 
 [per project install via `forge init`]
 {project}/.claude/

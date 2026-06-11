@@ -35,6 +35,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+try:
+    import tomllib  # Python 3.11+ stdlib
+except ImportError:  # pragma: no cover — defesa pra ambientes <3.11
+    tomllib = None  # type: ignore[assignment]
+
 if TYPE_CHECKING:
     # N5: type-annotate `_check_orphan_signals(catalog)` sem ativar import
     # eager (validators é layer-superior na arquitetura — engine consome
@@ -211,6 +216,10 @@ def _eval_detection_signals(
                 ok = True
         elif kind == "file-exists":
             ok = _glob_any(project_root, str(sig.get("glob") or ""), None)
+        elif kind == "gradle-dep":
+            coordinate = sig.get("coordinate")
+            if isinstance(coordinate, str) and coordinate:
+                ok = _eval_gradle_dep(project_root, coordinate)
         elif kind == "file-content":
             ok = _glob_any(
                 project_root,
@@ -219,7 +228,13 @@ def _eval_detection_signals(
             )
         if ok:
             score += conf
-            label = sig.get("contains") or sig.get("path") or sig.get("glob") or kind
+            label = (
+                sig.get("coordinate")
+                or sig.get("contains")
+                or sig.get("path")
+                or sig.get("glob")
+                or kind
+            )
             matched.append(f"{kind}: {label}")
     return round(score, 3), matched
 
@@ -648,6 +663,59 @@ def _glob_any(project_root: Path, glob: str, needle: str | None) -> bool:
                         return True
         except OSError:
             continue
+    return False
+
+
+def _eval_gradle_dep(project_root: Path, coordinate: str | None) -> bool:
+    """True se a coordenada Maven existe em qualquer formato Gradle.
+
+    Ordem: 1) catálogo gradle/*.versions.toml, 2) build.gradle(.kts) legado.
+    Curto-circuita no primeiro match. Defensivo contra TOML mal-formado
+    (try/except silencioso, alinhado a `_glob_any`).
+
+    Format aceito do `coordinate`: `<groupId>:<artifactId>` sem version,
+    sem espaços. Shape validation acontece em `engine/cards/loader.py`
+    (regra CARD-020); aqui aceitamos None/vazio defensivamente.
+    """
+    if not coordinate or not isinstance(coordinate, str) or ":" not in coordinate:
+        return False
+    group, _, artifact = coordinate.partition(":")
+    if not group or not artifact:
+        return False
+
+    # 1) Catálogo TOML (path canônico gradle/*.versions.toml)
+    if tomllib is not None:
+        gradle_dir = project_root / "gradle"
+        if gradle_dir.is_dir():
+            for toml_path in gradle_dir.glob("*.versions.toml"):
+                try:
+                    with toml_path.open("rb") as fh:
+                        data = tomllib.load(fh)
+                except (OSError, tomllib.TOMLDecodeError):
+                    continue
+                libraries = data.get("libraries") or {}
+                if not isinstance(libraries, dict):
+                    continue
+                for entry in libraries.values():
+                    if not isinstance(entry, dict):
+                        continue
+                    module = entry.get("module")
+                    if isinstance(module, str) and module == coordinate:
+                        return True
+                    grp = entry.get("group")
+                    nm = entry.get("name")
+                    if (
+                        isinstance(grp, str)
+                        and isinstance(nm, str)
+                        and grp == group
+                        and nm == artifact
+                    ):
+                        return True
+
+    # 2) build.gradle(.kts) legado — reusa _glob_any (substring match)
+    if _glob_any(project_root, "**/build.gradle*", coordinate):
+        return True
+
     return False
 
 

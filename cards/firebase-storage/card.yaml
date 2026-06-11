@@ -88,9 +88,8 @@ contributes:
 # ── DETECTION ─────────────────────────────────────────────────────────────
 detection:
   signals:
-    - type:       file-content
-      glob:       "**/build.gradle*"
-      contains:   "firebase-storage"
+    - type:       gradle-dep
+      coordinate: "com.google.firebase:firebase-storage"
       confidence: 0.5
 
     - type:       file-exists

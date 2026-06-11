@@ -6,11 +6,10 @@ threshold: 0.5
 
 signals:
   - id:         gradle-dependency
-    type:       file-content
-    glob:       "**/build.gradle*"
-    contains:   "firebase-crashlytics"
+    type:       gradle-dep
+    coordinate: "com.google.firebase:firebase-crashlytics"
     confidence: 0.5
-    note:       "Dependência runtime do SDK Android — sinal mais forte."
+    note:       "Dependência runtime do SDK Android — sinal mais forte. Migrado de file-content em DET-3 (libs.versions.toml + build.gradle)."
 
   - id:         gradle-plugin
     type:       file-content

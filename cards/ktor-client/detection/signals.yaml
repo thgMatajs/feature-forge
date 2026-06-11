@@ -23,10 +23,10 @@ signals:
     contains:   "io.ktor:ktor-client"
     confidence: 0.5
 
-  - type:       file-content
-    glob:       "**/build.gradle*"
-    contains:   "ktor-client-core"
+  - type:       gradle-dep
+    coordinate: "io.ktor:ktor-client-core"
     confidence: 0.3
+    rationale:  "Coordenada canônica do artefato base. Migrado de file-content em DET-3 (libs.versions.toml + build.gradle); prefixo io.ktor:ktor-client mantido como file-content pra cobrir variantes (-cio, -android, -darwin)."
 
   - type:       file-content
     glob:       "**/*.kt"

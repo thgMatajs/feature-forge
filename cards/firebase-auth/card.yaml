@@ -105,9 +105,8 @@ detection:
       glob:       "**/GoogleService-Info.plist"
       confidence: 0.20
 
-    - type:       file-content
-      glob:       "**/build.gradle*"
-      contains:   "firebase-auth"
+    - type:       gradle-dep
+      coordinate: "com.google.firebase:firebase-auth"
       confidence: 0.35
 
     - type:       file-content
@@ -120,9 +119,8 @@ detection:
       contains:   "FirebaseAuth"
       confidence: 0.30
 
-    - type:       file-content
-      glob:       "**/build.gradle*"
-      contains:   "firebase-auth-ktx"
+    - type:       gradle-dep
+      coordinate: "com.google.firebase:firebase-auth-ktx"
       confidence: 0.15
 
   threshold: 0.50
