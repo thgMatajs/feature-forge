@@ -164,7 +164,7 @@ O service detecta build flavor `debug` e aponta para emulator via
 | Outro card | Interação |
 |---|---|
 | `firebase-firestore` | Storage paths espelham hierarquia de coleções Firestore (`bonsais/{bonsaiId}` em ambos). Cleanup em cascata fica no repository, não em Cloud Function (default deste projeto). |
-| `crashlytics` | `StorageError.Misconfigured` e `StorageError.Unknown` chamam `crashlytics.recordException(FirebaseStorageAnalyticsException(...))` — paridade com pattern de `FirebaseAuthAnalyticsException`. |
+| `firebase-crashlytics` | `StorageError.Misconfigured` e `StorageError.Unknown` chamam `crashlytics.recordException(FirebaseStorageAnalyticsException(...))` — paridade com pattern de `FirebaseAuthAnalyticsException`. |
 | `koin-annotations` | `{Feature}StorageService`/`{Feature}StorageRepositoryImpl` são `@Single`; UseCases são `@Factory`. |
 | `kmp-shared` | `ImageCompressor` é `expect/actual` shim em `shared/core/platform/`. |
 

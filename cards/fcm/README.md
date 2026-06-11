@@ -37,7 +37,7 @@
 |---|---|
 | `firebase-auth` | Token FCM associado ao `user_id` pós-login (topic subscriptions). |
 | `firebase-analytics` | Eventos `notification_received` / `notification_opened` capturados automaticamente quando ambos ativos. |
-| `crashlytics` | Falhas no handler ganham `recordException` no exception class compartilhada da feature. |
+| `firebase-crashlytics` | Falhas no handler ganham `recordException` no exception class compartilhada da feature. |
 
 ## Limites declarados
 

@@ -9,8 +9,8 @@
 # Bundle "local-only" — app offline-first sem qualquer backend remoto. Só
 # persistence local. Todos os outros eixos ficam `null` (opt-out
 # explícito). Persistence segue o mesmo shape platform-divergente dos
-# outros bundles (Room no Android, null no iOS, kmp null até o card
-# `sqldelight` ser introduzido em wave futura).
+# outros bundles (Room no Android, null no iOS, SQLDelight no KMP — card
+# `sqldelight` introduzido em W6 fechando o gap deixado em W6.1).
 
 schema-version: 1
 name:           local-only
@@ -22,6 +22,6 @@ defaults:
   observability: { all-platforms: null }
   analytics:     { all-platforms: null }
   storage:       { all-platforms: null }
-  persistence:   { android: room-database, ios: null, kmp: null }
+  persistence:   { android: room-database, ios: null, kmp: sqldelight }
   notifications: { all-platforms: null }
   flags:         { all-platforms: null }

@@ -39,7 +39,7 @@ future iteration.
 ```yaml
 validations:
   - id: crashlytics-shared-exception
-    command: "python .claude/cards/crashlytics/validators/check-crashlytics-shared-exception.py {feature}"
+    command: "python .claude/cards/firebase-crashlytics/validators/check-crashlytics-shared-exception.py {feature}"
     severity: error
     description: "Every *_error event must bind to Firebase{Feature}AnalyticsException."
     runs-on:

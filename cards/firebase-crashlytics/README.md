@@ -1,4 +1,4 @@
-# crashlytics
+# firebase-crashlytics
 
 Card canônico para **Firebase Crashlytics** como provedor de crash reporting
 + non-fatal exceptions em projetos KMP (Kotlin Multiplatform) com targets
@@ -155,7 +155,7 @@ dependência declarada). iOS-only ainda pede confirmação manual.
 
 | Key | Valor |
 |---|---|
-| `conventions.observability.crash-reporting` | `crashlytics` |
+| `conventions.observability.crash-reporting` | `firebase-crashlytics` |
 | `conventions.observability.crashlytics-exception-pattern` | `Firebase{Feature}AnalyticsException(errorCode, causeType)` |
 
 ## Anti-patterns que este card bloqueia

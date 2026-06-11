@@ -12,7 +12,7 @@
 # Não existe mais preset "kmp-mobile-firebase" como entidade. A combinação
 # Firebase é uma das opções de backend que o usuário pode ativar em cima
 # deste preset (cards firebase-auth, firestore-persistence, firestore-realtime,
-# firestore-security-rules, firebase-storage, crashlytics). Igualmente válido
+# firestore-security-rules, firebase-storage, firebase-crashlytics). Igualmente válido
 # ativar stack REST (ktor-client, rest-api-contract, room-database,
 # datastore-prefs, auth-jwt-bearer) ou mix híbrido.
 # ──────────────────────────────────────────────────────────────────────────

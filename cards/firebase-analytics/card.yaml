@@ -34,7 +34,7 @@ provides: []
 
 # ── DEPENDENCIES ──────────────────────────────────────────────────────────
 # Firebase Analytics roda standalone — não declara dependência hard no
-# catálogo. Co-presença com outros cards Firebase (firebase-auth, crashlytics,
+# catálogo. Co-presença com outros cards Firebase (firebase-auth, firebase-crashlytics,
 # fcm) é resolvida pelo workflow-config, não por requires/conflicts.
 requires: []
 

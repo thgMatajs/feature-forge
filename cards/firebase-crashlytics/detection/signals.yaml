@@ -1,4 +1,4 @@
-# cards/crashlytics/detection/signals.yaml
+# cards/firebase-crashlytics/detection/signals.yaml
 # Espelha o bloco `detection:` do card.yaml. Mantido aqui para que tools
 # de inspeção/auditoria possam ler o arquivo dedicado sem reabrir o card.
 

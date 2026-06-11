@@ -82,7 +82,7 @@ Todo `try/catch` na camada de data converte para o tipo de domínio:
 | Outros | `DomainError.Unknown` + `Crashlytics.recordException` |
 
 ViewModel/UseCase consomem APENAS o tipo domain. Integration com
-Crashlytics: ver card `crashlytics` quando ativo (paridade Android/iOS
+Crashlytics: ver card `firebase-crashlytics` quando ativo (paridade Android/iOS
 via shared class).
 
 #### 6. Índices

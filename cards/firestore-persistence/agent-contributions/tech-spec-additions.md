@@ -77,7 +77,7 @@ Repository converte códigos Firestore em tipos de erro de domínio:
 | Outros | `DomainError.Unknown` + `Crashlytics.recordException` |
 
 Erros não previstos → log + Crashlytics (paridade Android/iOS via shared
-class — ver card `crashlytics` quando ativo).
+class — ver card `firebase-crashlytics` quando ativo).
 
 ### 6. Threading
 

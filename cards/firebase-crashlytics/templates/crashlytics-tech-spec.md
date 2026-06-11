@@ -1,4 +1,4 @@
-<!-- Card: crashlytics — fragment append-section em tech-spec.md -->
+<!-- Card: firebase-crashlytics — fragment append-section em tech-spec.md -->
 <!-- Target section: "Observability — Crashlytics" -->
 
 ## Observability — Crashlytics

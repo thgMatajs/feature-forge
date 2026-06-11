@@ -2,7 +2,7 @@
 """
 check-crashlytics-shared-exception.py
 
-Card: crashlytics
+Card: firebase-crashlytics
 Runs-on: pre-commit, verify-task
 Severity: error
 
@@ -51,7 +51,7 @@ import sys
 
 
 VALIDATOR_NAME = "check-crashlytics-shared-exception"
-CARD = "crashlytics"
+CARD = "firebase-crashlytics"
 SEVERITY = "error"
 
 

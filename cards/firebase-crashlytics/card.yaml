@@ -1,4 +1,4 @@
-# cards/crashlytics/card.yaml
+# cards/firebase-crashlytics/card.yaml
 # ──────────────────────────────────────────────────────────────────────────
 # Schema version: 1
 # Card: Firebase Crashlytics — crash reporting + non-fatal exceptions.
@@ -13,7 +13,7 @@ schema-version: 1
 
 # ── IDENTITY ──────────────────────────────────────────────────────────────
 identity:
-  name:         crashlytics
+  name:         firebase-crashlytics
   version:      1.0.0
   description:  "Firebase Crashlytics para reporte de crashes + non-fatal exceptions. Padrão de exception class compartilhada por feature (ex.: FirebaseAuthAnalyticsException) com errorCode + causeType para paridade Android↔iOS."
   category:     observability
@@ -84,7 +84,7 @@ contributes:
 
   # Config defaults — convenções canônicas de crash reporting
   config-defaults:
-    conventions.observability.crash-reporting: "crashlytics"
+    conventions.observability.crash-reporting: "firebase-crashlytics"
     conventions.observability.crashlytics-exception-pattern: "Firebase{Feature}AnalyticsException(errorCode, causeType)"
 
 

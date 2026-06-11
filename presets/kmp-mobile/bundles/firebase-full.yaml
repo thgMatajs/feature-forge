@@ -13,9 +13,8 @@
 # Persistence é platform-divergente: Room no Android, null no iOS (consome
 # via KMP shared), SQLDelight no KMP (cell `(persistence, kmp)`). O card
 # `sqldelight` foi introduzido em W6 fechando o gap deixado em W6.1.
-# Observabilidade aponta para `crashlytics` (nome real do card v1.2-dev);
-# rename para `firebase-crashlytics` é trabalho pendente de W4 não
-# realizado nesta branch.
+# Observabilidade aponta para `firebase-crashlytics`, alinhado com a
+# convenção firebase-* dos outros cards Firebase do catálogo.
 
 schema-version: 1
 name:           firebase-full
@@ -24,7 +23,7 @@ description:    "Firebase across all backend axes; ready for serverless apps."
 defaults:
   data:          { all-platforms: firestore-persistence }
   auth:          { all-platforms: firebase-auth }
-  observability: { all-platforms: crashlytics }
+  observability: { all-platforms: firebase-crashlytics }
   analytics:     { all-platforms: firebase-analytics }
   storage:       { all-platforms: firebase-storage }
   persistence:   { android: room-database, ios: null, kmp: sqldelight }

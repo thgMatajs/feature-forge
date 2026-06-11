@@ -7,8 +7,8 @@
 # segue <feature>_<verb>_<outcome>.
 #
 # Crashlytics binding (recordException) é condicional: só vira ativo quando
-# o card `crashlytics` também está ativo. Quando inativo, o tracker apenas
-# loga o analytics event sem chamar recordException.
+# o card `firebase-crashlytics` também está ativo. Quando inativo, o tracker
+# apenas loga o analytics event sem chamar recordException.
 
 firebase_auth_events:
 
@@ -53,7 +53,7 @@ firebase_auth_events:
           const_ref: "AuthAnalytics.Params.DURATION_MS"
           required: false
       crashlytics:
-        when_card_active: "crashlytics"
+        when_card_active: "firebase-crashlytics"
         exception_class:  "FirebaseAuthAnalyticsException"
         bind_params:      ["error_code"]
         cause_type:       "REGISTER"
@@ -90,7 +90,7 @@ firebase_auth_events:
           const_ref: "AuthAnalytics.Params.ERROR_CODE"
           required: true
       crashlytics:
-        when_card_active: "crashlytics"
+        when_card_active: "firebase-crashlytics"
         exception_class:  "FirebaseAuthAnalyticsException"
         bind_params:      ["error_code"]
         cause_type:       "LOGIN"

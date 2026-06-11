@@ -44,7 +44,7 @@ usuário. Abaixo de 0.3, o card não é ativado.
 
 | Combina com | Efeito |
 |---|---|
-| `crashlytics` | Eventos `*_error` podem chamar `Firebase.crashlytics.recordException` lado a lado com `Analytics.logEvent`. |
+| `firebase-crashlytics` | Eventos `*_error` podem chamar `Firebase.crashlytics.recordException` lado a lado com `Analytics.logEvent`. |
 | `firebase-auth` | User properties (`user_id`, `auth_method`) populadas após login bem-sucedido. |
 | `firebase-remote-config` | Audiences definidas em Analytics são exportáveis pro Remote Config. |
 

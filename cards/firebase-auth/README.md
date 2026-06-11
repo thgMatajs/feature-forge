@@ -86,7 +86,7 @@ para garantir paridade Android↔iOS — Android via import direto, iOS via SKIE
 
 | Agente | Extension-point | Conteúdo |
 |---|---|---|
-| `contract-planner-agent` | `rule:error-event-binding` | Toda regra `*_error` em `analytics-spec.yaml` referente a auth deve ter bloco `crashlytics.exception_class: FirebaseAuthAnalyticsException` quando o card `crashlytics` está ativo. |
+| `contract-planner-agent` | `rule:error-event-binding` | Toda regra `*_error` em `analytics-spec.yaml` referente a auth deve ter bloco `crashlytics.exception_class: FirebaseAuthAnalyticsException` quando o card `firebase-crashlytics` está ativo. |
 | `tech-spec-agent` | `section:Data layer` | Detalha `AuthService`/`AuthRepository`, mapping `FirebaseAuthException` → domain, DI por plataforma e ambiente dev/prod. |
 | `task-contract-writer` | `after:Allowed Files` | Adiciona globs `**/feature/auth/**/data/service/*Service.kt`, `**/feature/auth/**/data/analytics/*Exception.kt` em tasks de auth. |
 
@@ -102,7 +102,7 @@ para garantir paridade Android↔iOS — Android via import direto, iOS via SKIE
 
 | Combina com | Efeito |
 |---|---|
-| `crashlytics` | Eventos `*_error` ganham bloco `crashlytics.exception_class` referenciando `FirebaseAuthAnalyticsException`. |
+| `firebase-crashlytics` | Eventos `*_error` ganham bloco `crashlytics.exception_class` referenciando `FirebaseAuthAnalyticsException`. |
 | `kmp-shared` | `AuthService` mora em `commonMain`, `expect/actual` para shim do Firebase Auth SDK (GitLive). |
 | `koin-annotations` | `@Single AuthService`, `@Factory` para UseCases (`SignInWithEmailUseCase`, `RegisterUseCase`, etc.). |
 | `skie-bridge` | `Flow<UserSession>` no shared vira `AsyncSequence` no Swift via SKIE — sem wrappers manuais. |
@@ -141,7 +141,7 @@ Arquivos de config são **gitignored** e gerados pelo console Firebase:
   validators. Implementação concreta é responsabilidade dos agentes
   downstream (`tech-spec-agent`, `task-contract-writer`,
   `sprint-executor`).
-- Crashlytics binding é **opcional** — se o card `crashlytics` não está
+- Crashlytics binding é **opcional** — se o card `firebase-crashlytics` não está
   ativo, eventos `*_error` apenas logam analytics; `recordException` não é
   chamado.
 
@@ -155,7 +155,7 @@ do projeto MeoBonsai:
 | "Nunca hardcode test IDs em código de feature" | Validator `check-auth-test-ids-canonical.py` bloqueia hardcode no pre-commit + verify-task. |
 | "Contrato canônico em `shared:core/observability/`" | `config-defaults` registra `conventions.observability.auth-contracts-location`. |
 | "Naming `<feature>_<verb>_<outcome>`" | Fragment `firebase-auth-analytics.yaml` valida o formato em todos os eventos auth. |
-| "Erros `*_error` chamam `recordException(FirebaseAuthAnalyticsException)`" | Prompt do contract-planner aplica regra apenas quando o card `crashlytics` está ativo. |
+| "Erros `*_error` chamam `recordException(FirebaseAuthAnalyticsException)`" | Prompt do contract-planner aplica regra apenas quando o card `firebase-crashlytics` está ativo. |
 | "Paridade Android↔iOS via classe compartilhada" | Allowed-files do task-writer inclui o path da exception no `shared/`, garantindo edição única. |
 
 ## Exemplo — fluxo Criar Conta (Register)

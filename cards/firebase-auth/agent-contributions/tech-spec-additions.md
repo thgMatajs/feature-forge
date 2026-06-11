@@ -59,7 +59,7 @@ não cruza a fronteira `data → domain`.
 
 ### 4. Crashlytics binding via FirebaseAuthAnalyticsException
 
-Quando o card `crashlytics` está ativo:
+Quando o card `firebase-crashlytics` está ativo:
 
 - Toda emissão de evento `*_error` (definida em `analytics-spec.yaml`)
   deve, no mesmo bloco, chamar
@@ -68,7 +68,7 @@ Quando o card `crashlytics` está ativo:
   `shared/feature/auth/.../data/analytics/FirebaseAuthAnalyticsException.kt`
   e é compartilhada entre Android e iOS (paridade obrigatória — o teste de
   contrato em shared garante).
-- Quando o card `crashlytics` está inativo, omita a chamada
+- Quando o card `firebase-crashlytics` está inativo, omita a chamada
   `recordException` — apenas log de analytics.
 
 ### 5. Dispatcher injection

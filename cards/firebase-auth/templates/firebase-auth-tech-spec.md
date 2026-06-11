@@ -94,7 +94,7 @@ nunca hardcoded — para permitir teste com `UnconfinedTestDispatcher`.
 - **Analytics events:** consumir de
   `shared:core/observability/AuthAnalytics.kt` (`AuthAnalytics.Events.LOGIN_ATTEMPT`,
   `AuthAnalytics.Params.ERROR_CODE`). Naming: `<feature>_<verb>_<outcome>`.
-- **Crashlytics:** quando o card `crashlytics` está ativo, eventos
+- **Crashlytics:** quando o card `firebase-crashlytics` está ativo, eventos
   `*_error` chamam `Firebase.crashlytics.recordException(
   FirebaseAuthAnalyticsException(errorCode, causeType))`. A classe vive em
   `shared/feature/auth/.../data/analytics/FirebaseAuthAnalyticsException.kt`

@@ -37,7 +37,7 @@ provides:
 # ── DEPENDENCIES ──────────────────────────────────────────────────────────
 # Nenhum requires obrigatório no catálogo v1 — Firebase Auth funciona em
 # Android, iOS e Web independentemente da escolha de UI/DI. Crashlytics
-# integration é opcional: quando o card `crashlytics` está ativo, o
+# integration é opcional: quando o card `firebase-crashlytics` está ativo, o
 # fragmento de analytics ganha o bloco recordException; quando não, eventos
 # *_error apenas logam.
 requires: []

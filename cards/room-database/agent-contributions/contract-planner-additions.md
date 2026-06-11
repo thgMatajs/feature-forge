@@ -62,7 +62,7 @@ responsável por:
 - Se `firestore-realtime` está ativo, queries `Flow` do DAO podem ser
   combinadas com `Flow` do snapshot listener via `combine` no
   Repository. Declarar a estratégia em `sync-strategy.invalidation`.
-- Se `crashlytics` está ativo, falhas de DAO (`SQLiteException`, schema
+- Se `firebase-crashlytics` está ativo, falhas de DAO (`SQLiteException`, schema
   corrompido) viram non-fatal exception com `errorCode` + `causeType`
   conforme `observability.md`.
 

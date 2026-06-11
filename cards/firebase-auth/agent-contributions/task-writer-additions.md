@@ -94,7 +94,7 @@ validations:
 4. `TASK-AUTH-004-mapper` — `AuthMapper` com cobertura de todos os codes
 5. `TASK-AUTH-005-repository` — `AuthRepository` interface + `AuthRepositoryImpl`
 6. `TASK-AUTH-006-usecases` — `SignInWithEmailUseCase`, `RegisterUseCase`, etc.
-7. `TASK-AUTH-007-analytics-exception` — `FirebaseAuthAnalyticsException` para Crashlytics (quando o card `crashlytics` está ativo)
+7. `TASK-AUTH-007-analytics-exception` — `FirebaseAuthAnalyticsException` para Crashlytics (quando o card `firebase-crashlytics` está ativo)
 8. `TASK-AUTH-008-ios-factory` — `createAuthService()` em `di/AuthFactory.kt`
 9. `TASK-AUTH-009-viewmodel` — `LoginViewModel` / `RegisterViewModel` consumindo UseCases
 10. `TASK-AUTH-010-screens-android` + `TASK-AUTH-011-screens-ios` — UI nativa
