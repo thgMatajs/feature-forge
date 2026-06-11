@@ -7,6 +7,159 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed (PR #11 master-review remediação — 2026-06-11)
+
+Remediação completa dos 28 findings do master-review de PR #11
+(`/tmp/master-review-pr-11-drift1-REVIEW.md`) em 10 commits sobre o
+W6 doc-sync (`e992e01`). Cobertura: 3 Críticos + 7 Altos + 10 Médios +
+5 Baixos + 3 Sugestões — todos endereçados em Wave 1 + Wave 2. Rapid
+lane: 1199 passed / 11 skipped (sobe de 1151 → 1199 com +32 testes
+novos cobrindo race-detection threading, schema-version mismatch,
+EOFError no tty_bridge, dir fsync, chmod 0600, intent-id stability sob
+mesmo prompt em comandos distintos, etc.).
+
+Crítico:
+
+- **#1** (`engine/cli.py main()`) — captura `RaceDetectedError`,
+  `IntentMismatchError` e `JsonIOError` antes do exit 1. Mensagem
+  mentor-calmo de `RaceDetectedError` agora chega ao usuário em vez de
+  vazar como traceback (SPEC §3/§9). Commit `ad49c40`.
+- **#2** (`engine/ui/question.py`) — `_stable_intent_id` agora inclui
+  `command` + `command-args` no payload do hash. Dois `ask()`
+  textualmente idênticos em comandos distintos não colidem mais. Combina
+  com fix #11 (paths-detail) e #18 (confirm signature). Commit `2c49d0f`.
+- **#3** (`bin/forge`) — implementa `FORGE_FORCE_TTY_MODE` (paridade com
+  CHANGELOG/SPEC §7). Drift CHANGELOG↔impl fechado. Commit `cd6d616`.
+
+Alto:
+
+- **#4** (`engine/ui/intent_state.py`) — `read_response` valida
+  `schema-version == 1` antes do intent-id check; nova exceção
+  `SchemaVersionMismatchError` raise quando diverge. Future v2 deixa de
+  consumir v1 silenciosamente. Commit `8eeff89`.
+- **#5** (`engine/utils/checkpoint_io.py` + `engine/utils/iso.py` novos)
+  — helper compartilhado consolida 30 funções (`_save_*_checkpoint`,
+  `_load_*_checkpoint`, `_clear_*_checkpoint` × 10 module handlers) +
+  10 cópias de `_utc_now_iso_<module>`. Shim de 1-linha por módulo
+  preserva API pública dos tests; alvo de remoção registrado em
+  FU-DRIFT-1-CHECKPOINT-CONSOLIDATE. Fecha Mandamento #3. Commit
+  `916a062`.
+- **#6** (`engine/ui/tty_bridge.py`) — `_prompt_user_via_stdin` captura
+  `EOFError` (Ctrl+D, pipe quebrado) e roteia para mesmo path de cancel
+  do `KeyboardInterrupt` (exit 130). Commit `6a00e1e`.
+- **#7** (`engine/utils/json_io.py`) — `write_json` aplica
+  `os.chmod(path, 0o600)` após `os.replace`. Pending/response files
+  deixam de ser world-readable em sistemas POSIX multi-tenant. Commit
+  `7d965c6`.
+- **#8** (`engine/ui/question.py`) — `_stable_intent_id` promovida a
+  `stable_intent_id` (símbolo público) com alias deprecated preservando
+  os 13 callsites de produção sem breakage. Alvo de remoção em
+  FU-DRIFT-1-DEPRECATE-INTENT-ID-ALIAS. Commit `916a062`.
+- **#9** (concurrency coverage) — teste threading (5 workers via
+  `threading.Barrier`) em `tests/integration/test_intent_state_concurrency.py`
+  documenta TOCTOU window declarada no SPEC §9 e valida que pelo menos
+  4 dos 5 saem com erro determinístico. Lock real via `fcntl.flock`
+  registrado em FU-DRIFT-1-LOCK. Commit `626a4f0`.
+- **#10** (`engine/utils/json_io.py`) — dir fsync POSIX após
+  `os.replace` (open `path.parent` com `O_RDONLY` + `os.fsync`, skip em
+  Windows). Atomic rename agora resiste a power-loss real. Commit
+  `7d965c6`.
+
+Médio:
+
+- **#11** (`engine/ui/question.py`) — `paths-detail` entra no `extra`
+  mapping do `_stable_intent_id` (ask_three_paths). Dois prompts com
+  mesmo gate_name + labels mas motives diferentes não trocam mais
+  responses. Commit `2c49d0f`.
+- **#12** (`engine/ui/question.py`) — `_command_context()` normaliza
+  fallback: quando `head` matches `r'.*\.py$'` ou `__main__`, retorna
+  `("unknown", [])` em vez de "cli.py"/"__main__.py" como nome de
+  comando. Commit `2c49d0f`.
+- **#13** (`engine/ui/tty_bridge.py`) — `_build_response_value` para
+  `kind=confirm` faz re-prompt loop (até 3 tentativas) em tokens
+  inválidos antes de propagar erro. Usuário que digita "talvez"
+  recebe orientação clara em vez de exit 1 críptico. Commit `6a00e1e`.
+- **#14** (`engine/ui/tty_bridge.py`) — env var dead `FORGE_INTERNAL_TTY_BRIDGE`
+  removida do subprocess env. Observability channel registrado em
+  FU-DRIFT-1-OBS pra emergir quando log infrastructure aparecer. Commit
+  `6a00e1e`.
+- **#15** (SPEC + plan) — search-replace `CLAUDE_CODE_HOST` →
+  `CLAUDECODE` em `docs/superpowers/specs/drift-1-intent-protocol.md`
+  + `docs/superpowers/plans/drift-1-intent-protocol.md` com nota de
+  rodapé "renomeado em W4-FU após verificação empírica vs Claude Code
+  2.1.153". Commit `d999ced`.
+- **#16** (`docs/schemas/intent-protocol.md`) — nova seção
+  `## Schema evolution policy` explicita (a) bump em breaking; (b)
+  reader rejeita versões desconhecidas; (c) engine + host co-bumpam;
+  (d) sem v0. Commit `d999ced`.
+- **#17** (`engine/ui/intent_state.py`) — `_parse_created_at` /
+  `detect_race` toleram clock skew até 60s. Negative `age_seconds` >
+  60s (clock inválido) trata como stale → sweep; <=60s trata como
+  recém-criado. Commit `8eeff89`.
+- **#18** (SPEC + question.py) — exemplo de `confirm` no SPEC §2.1
+  passa a `allow-pause: true` alinhando com impl real;
+  `tests/unit/test_ui_question_api_signatures.py` ganha regression test
+  travando a signature pra evitar drift futuro. Commits `d999ced` +
+  `2c49d0f`.
+- **#19** (concurrency test) — implementado em commit `626a4f0` (ver
+  finding #9 acima). Cobre o gap declarado no SPEC §9.
+- **#20** (`docs/design/06-command-surface.md`) — seção Exit codes ganha
+  nota explícita distinguindo as 2 rotas pra 130: (a) `KeyboardInterrupt`
+  em TTY mode; (b) host response `cancelled: true` em intent mode.
+  Caller pode tratar identicamente. Commit `d999ced`.
+
+Baixo:
+
+- **#21** — `_utc_now_iso_*` consolidado em `engine.utils.iso.utc_now_iso`
+  (10 cópias → 1 helper canônico). Commit `916a062`. Nota: `engine/verify.py`
+  mantém `_utc_now_iso` local com microseconds (semantically distinto
+  do shared helper que trunca pra seconds) — migração registrada em
+  FU-DRIFT-1-VERIFY-ISO.
+- **#22** (`engine/ui/intent_state.py`) — `RaceDetectedError` ganha
+  bloco 3-caminhos canônico (Mandamento #5 + Discipline §1): (a)
+  aguarda outro processo; (b) `rm .claude/state/forge-pending.json` se
+  sessão anterior travou; (c) `forge undo` se conflito de feature
+  paralela. Combina com fix #1 (mensagem agora chega ao usuário).
+  Commit `8eeff89`.
+- **#23** (`engine/ui/question.py`) — stub `_read_line` que raise
+  `NotImplementedError` removido. Substituído por comentário apontando
+  pra `engine.ui.tty_bridge` como home canônica de stdin reading.
+  Commit `2c49d0f`.
+- **#24** (`tests/integration/test_intent_protocol_e2e.py`) —
+  `test_race_detection_rejects_stale_concurrent` usa stale_id literal
+  determinístico (`"deadbeef-0000-0000-0000-000000000000"`) em vez de
+  `uuid.uuid4()`. Assertion adicional confirma que difere do engine
+  determinístico. Commit `626a4f0`.
+- **#25** (`tests/e2e/test_tty_bridge_e2e.py`) —
+  `pytest.skip(allow_module_level=True)` no topo quando
+  `sys.platform == "win32"`. Evita silently-passing-zero-assertions em
+  Windows CI. Commit `626a4f0`.
+
+Sugestão:
+
+- **#26** (`engine/ui/intent_state.py`) — `detect_race` catch genérico
+  trocado por `(JsonIOError, OSError)` específicos. Programming errors
+  propagam em vez de ficar escondidos. Commit `8eeff89`.
+- **#27** (`engine/ui/exit_codes.py` novo) — consolida constantes
+  `EXIT_OK=0`, `EXIT_ERROR=1`, `EXIT_PAUSED=2`, `EXIT_CANCELLED=130`
+  importadas por `engine/cli.py` e `engine/ui/tty_bridge.py`. Evita
+  drift de duplicação local. Commit `3071fe9`.
+- **#28** (`bin/forge`) — `FORGE_VERSION` dinâmico via
+  `engine.__version__` (custo +20-50ms cold start aceito). Drift do
+  hardcoded "1.0.0" fechado. Commit `cd6d616`.
+
+### Changed (PR #11 master-review remediação)
+
+- State files (`.claude/state/forge-pending.json`,
+  `.claude/state/forge-response.json`) escritos com mode `0o600` por
+  default via `engine/utils/json_io.py::write_json`. Hardening de
+  permissões aplicado em sistemas POSIX (Windows ignora silenciosamente).
+- `engine.ui.question.stable_intent_id` agora é símbolo público; alias
+  deprecated `_stable_intent_id = stable_intent_id` preservado pra
+  compat dos 13 production callsites + 4 test modules. Remoção
+  registrada em FU-DRIFT-1-DEPRECATE-INTENT-ID-ALIAS, target v1.3.
+
+
 ### Added (Phase A — DRIFT-1 intent protocol close, 2026-06-10)
 
 Fechamento da Phase A em 6 commits W3-W6 sobre a base W2 (range total

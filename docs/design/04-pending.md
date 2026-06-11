@@ -60,6 +60,48 @@ justificarem. Cada um tem critério explícito.
   no hook protocol (já gap separado em `.claude/rules/doc-sync.md`
   §Per-tool-use Mandamento 0 block).
 
+
+### Follow-ups pós-master-review PR #11 (2026-06-11)
+
+Findings #1..#28 endereçados em Wave 1+2 (10 commits sobre `e992e01`,
+range `ad49c40..626a4f0`). Cinco follow-ups deliberadamente deferidos
+ficam aqui — todos têm critério explícito pra reentrar.
+
+- **FU-DRIFT-1-LOCK** (P3) — lock file real via `fcntl.flock` para race
+  detection hard. SPEC §9 já mapeia o gap como DEFERIDO. Próximo passo:
+  implementar `.claude/state/.forge-pending.lock`. Disparar quando race
+  genuíno surgir em produção (concurrency test atual em
+  `tests/integration/test_intent_state_concurrency.py` documenta a
+  TOCTOU window mas não bloqueia merge — o protocolo é single-writer
+  por design hoje).
+- **FU-DRIFT-1-DEPRECATE-INTENT-ID-ALIAS** (P2) — remover alias
+  deprecated `_stable_intent_id = stable_intent_id` em
+  `engine/ui/question.py` na v1.3. Hoje preserva 4 test files
+  referenciando o nome antigo (`test_ui_question_intent.py` e
+  similares). Critério: bump pra v1.3 + migration dos 4 testes em uma
+  task dedicada.
+- **FU-DRIFT-1-CHECKPOINT-CONSOLIDATE** (P3) — shim de 1-linha por
+  módulo nos 10 command handlers (init, plan, implement, verify,
+  reconfigure, evolve, undo, memory_cli, graph_cli, doctor) ainda
+  existe para preservar API pública dos tests. Wave 1 fix #5 já moveu
+  o helper canônico pra `engine/utils/checkpoint_io.py`. Próxima major
+  version pode deletar os wrappers e atualizar os tests pra importar
+  direto do shared module. Critério: rodada de cleanup pós-DRIFT-2 OU
+  v1.3.
+- **FU-DRIFT-1-OBS** (P3) — observability channel pra `tty_bridge`.
+  Module docstring atual referencia "engine can log 'we are driving
+  this from a TTY fallback'" — não cumprido. Fix #14 removeu a env var
+  dead (`FORGE_INTERNAL_TTY_BRIDGE`); reentrada quando
+  `engine.utils.log` emergir como módulo de logging estruturado (hoje
+  o projeto não tem log infrastructure formal).
+- **FU-DRIFT-1-VERIFY-ISO** (P3) — `engine/verify.py::_utc_now_iso()`
+  usa `.isoformat()` com microseconds, semantically distinto do shared
+  helper `engine.utils.iso.utc_now_iso` que trunca pra seconds. Fix #21
+  consolidou os 10 outros usos mas verify.py ficou de fora — migração
+  mudaria shape de checkpoint files do `forge verify`. Diferir até bump
+  de schema-version do verify checkpoint (não há schema-version formal
+  hoje, então o bump abre o caminho).
+
 ### Gaps abertos pós plan-auditor v1
 
 Deferidos no spec `docs/superpowers/specs/2026-06-04-plan-auditor-design.md`
