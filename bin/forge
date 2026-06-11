@@ -19,10 +19,15 @@ done
 FORGE_HOME="$(cd -P "$(dirname "$SCRIPT_SOURCE")/.." && pwd)"
 
 export FORGE_HOME
-export FORGE_VERSION="1.0.0"
 export PYTHONPATH="${FORGE_HOME}${PYTHONPATH:+:${PYTHONPATH}}"
 
 PYTHON="${FORGE_PYTHON:-python3}"
+
+# FORGE_VERSION é lido dinamicamente de engine.__version__ (fonte única
+# de verdade). Fallback "unknown" mantém o dispatcher operável caso o
+# engine não esteja importável (ex.: PYTHONPATH quebrado em smoke).
+FORGE_VERSION="$("$PYTHON" -c 'from engine import __version__; print(__version__)' 2>/dev/null || echo unknown)"
+export FORGE_VERSION
 
 # DRIFT-1 dispatch (SPEC §6 sub-Q Sd): route between intent-only mode
 # (engine.cli) and TTY-fallback bridge (engine.ui.tty_bridge) based on
@@ -45,8 +50,18 @@ PYTHON="${FORGE_PYTHON:-python3}"
 # itself execs engine.cli as a subprocess and intercepts exit 2; see
 # engine/ui/tty_bridge.py docstring for the protocol contract.
 #
+# Precedência:
+#   1. FORGE_FORCE_TTY_MODE=1   — override explícito pra bridge (vence
+#                                  até detecção automática de Claude Code
+#                                  ou non-TTY; útil pra debug do bridge
+#                                  rodando dentro de harness).
+#   2. Sinais de intent-mode    — CLAUDECODE / non-TTY / FORGE_FORCE_INTENT_MODE.
+#   3. Fallback default          — bridge (terminal real interativo).
+#
 # exec so Ctrl+C goes straight to the engine (Decision 27: pause vs abort).
-if [[ -n "${CLAUDECODE:-}" ]] \
+if [[ -n "${FORGE_FORCE_TTY_MODE:-}" ]]; then
+  exec "$PYTHON" -m engine.ui.tty_bridge engine.cli "$@"
+elif [[ -n "${CLAUDECODE:-}" ]] \
    || [[ ! -t 0 ]] \
    || [[ ! -t 1 ]] \
    || [[ -n "${FORGE_FORCE_INTENT_MODE:-}" ]]; then
