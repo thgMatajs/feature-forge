@@ -1,0 +1,35 @@
+# cards/firebase-analytics/detection/signals.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Sinais de detecção do card firebase-analytics — espelha o bloco
+# `detection.signals` do card.yaml (fonte canônica). Threshold cumulativo
+# 0.5 — auto-ativa quando confidence somada ≥ 0.5.
+#
+# Nota W5: `gradle-dep` declara a coordenada Maven canônica; será
+# consumido pelo composer em W5. Hoje o evaluator runtime depende dos
+# sinais `file-content` + `file-exists` que cobrem o threshold por
+# conta própria em projetos canonicamente configurados.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+signals:
+  - id:         firebase-analytics-gradle-dep
+    type:       gradle-dep
+    coordinate: "com.google.firebase:firebase-analytics"
+    confidence: 0.5
+    rationale:  "Coordenada Maven canônica do Firebase Analytics — sinal mais forte de uso ativo do SDK."
+
+  - id:         firebase-analytics-google-services-config
+    type:       file-exists
+    glob:       "**/google-services.json"
+    confidence: 0.3
+    rationale:  "Config Firebase Android — gerada pelo console. Não distingue Analytics de outros módulos, só indica integração Firebase."
+
+  - id:         firebase-analytics-kotlin-import
+    type:       file-content
+    glob:       "**/*.kt"
+    contains:   "com.google.firebase.analytics"
+    confidence: 0.3
+    rationale:  "Import direto do SDK Analytics no código Kotlin — evidência forte de uso ativo."
+
+threshold: 0.5
