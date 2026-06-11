@@ -11,10 +11,10 @@ with anything other than 2.
 
 What the bridge does (and only this):
 
-1. Run ``python -m <command_module> <argv...>`` as a subprocess with
-   ``FORGE_INTERNAL_TTY_BRIDGE=1`` in the environment so the engine can
-   log "we are driving this from a TTY fallback" without changing
-   behaviour.
+1. Run ``python -m <command_module> <argv...>`` as a subprocess. An
+   observability marker on the env is a stub deferido pra observability
+   quando log channel emergir; ver ``docs/design/04-pending.md``
+   FU-DRIFT-1-OBS. Behaviour does not change either way.
 2. If the subprocess exits with anything other than 2, propagate that
    return code verbatim (0 = success, 1 = fatal error, 130 = cancelled).
 3. If it exits with 2, read ``.claude/state/forge-pending.json``. When
@@ -58,7 +58,6 @@ Refs:
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -77,6 +76,11 @@ from engine.utils.paths import try_find_project_root
 # the value coming back from the subprocess.)
 _EXIT_PAUSED_FOR_INPUT = 2
 _EXIT_USER_CANCELLED = 130
+
+# Limit for re-prompt loop on invalid tokens. Three tries is enough for
+# real typos without trapping the user in an infinite loop when stdin is
+# misbehaving (e.g. piped garbage). After this we cancel with exit 130.
+_MAX_INVALID_ATTEMPTS = 3
 
 
 def _project_root() -> Path:
@@ -215,15 +219,86 @@ def _build_response(intent: dict[str, Any], raw: str) -> dict[str, Any]:
     return base
 
 
+def _valid_tokens_for(intent: dict[str, Any]) -> list[str]:
+    """Compute the user-facing list of valid tokens for re-prompt messaging.
+
+    Used purely for the "Não entendi — digite [opções válidas]" hint when
+    validation fails. Free-text kinds (``ask_text``, ``ask_multi``) return
+    ``[]`` because they never fail validation here — the chokepoint owns
+    those semantics.
+    """
+    kind = intent.get("kind", "ask")
+    options = intent.get("options") or {}
+    if kind == "confirm":
+        return ["s", "sim", "n", "não"]
+    if kind in {"ask", "ask_three_paths"}:
+        return list(options.keys())
+    return []
+
+
+def _is_valid_token(intent: dict[str, Any], raw: str) -> bool:
+    """Return True when ``raw`` is acceptable for this intent's ``kind``.
+
+    Pause tokens are always valid (Decision 27 — pause is a first-class
+    response, distinct from a value). For closed-set kinds (``confirm``,
+    ``ask``, ``ask_three_paths``) we additionally require the token to
+    match a known option key or label. Free-text kinds (``ask_text``,
+    ``ask_multi``) never fail here — validation downstream in the engine
+    chokepoint is the source of truth for those.
+    """
+    if _is_pause_token(raw):
+        return True
+    kind = intent.get("kind", "ask")
+    normalised = raw.strip()
+    if not normalised:
+        # Empty line: only valid when a default exists and the engine
+        # will fall back to it. We let the engine raise so the user sees
+        # the canonical error rather than swallowing it here.
+        return intent.get("default") is not None
+    if kind == "confirm":
+        return _normalise_confirm_value(normalised) is not None
+    if kind in {"ask", "ask_three_paths"}:
+        options = intent.get("options") or {}
+        if normalised in options:
+            return True
+        # Allow exact-label match too — UX courtesy when the user types
+        # the visible label instead of the key.
+        return normalised in {str(label) for label in options.values()}
+    # ask_text / ask_multi → always accept; engine validates downstream.
+    return True
+
+
 def _prompt_user_via_stdin(intent: dict[str, Any]) -> dict[str, Any]:
     """Render the prompt, read one line of stdin, build the response dict.
 
-    ``KeyboardInterrupt`` is allowed to propagate so ``main`` can map it
-    to exit 130 (Decision 27).
+    Re-prompts up to ``_MAX_INVALID_ATTEMPTS`` times when the token does
+    not match the kind's accepted set (#13 from PR #11 review). After
+    the limit, raises ``_TooManyInvalidAttempts`` so ``main`` can map it
+    to exit 130 with a clean cancel message.
+
+    ``EOFError`` (Ctrl+D / stdin closed) and ``KeyboardInterrupt``
+    (Ctrl+C) propagate so ``main`` maps them both to exit 130 via the
+    same cancel route (Decision 27).
     """
     _render_prompt(intent)
-    raw = input("> ")
-    return _build_response(intent, raw)
+    for attempt in range(1, _MAX_INVALID_ATTEMPTS + 1):
+        raw = input("> ")
+        if _is_valid_token(intent, raw):
+            return _build_response(intent, raw)
+        valid = _valid_tokens_for(intent)
+        hint = ", ".join(valid) if valid else "uma resposta válida"
+        renderer.write(
+            f"Não entendi — digite [{hint}]. (tentativa {attempt}/{_MAX_INVALID_ATTEMPTS})"
+        )
+    raise _TooManyInvalidAttempts()
+
+
+class _TooManyInvalidAttempts(Exception):
+    """Raised when the user exhausts ``_MAX_INVALID_ATTEMPTS`` invalid tokens.
+
+    Internal sentinel — only ``main`` catches it, mapping to exit 130 +
+    the canonical "cancelando" message on stderr.
+    """
 
 
 # --- Public entry point ----------------------------------------------------
@@ -246,13 +321,11 @@ def main(command_module: str, argv: Sequence[str]) -> int:
     Returns: the exit code to pass to the OS.
     """
     project_root = _project_root()
-    base_env = {**os.environ, "FORGE_INTERNAL_TTY_BRIDGE": "1"}
     cmd_prefix = [sys.executable, "-m", command_module]
 
     while True:
         result = subprocess.run(
             [*cmd_prefix, *argv],
-            env=base_env,
         )
         rc = result.returncode
 
@@ -272,6 +345,19 @@ def main(command_module: str, argv: Sequence[str]) -> int:
             response = _prompt_user_via_stdin(intent)
         except KeyboardInterrupt:
             # Decision 27 — Ctrl+C is abort-with-state-cleared.
+            intent_state.clear_intent_files(project_root)
+            return _EXIT_USER_CANCELLED
+        except EOFError:
+            # Ctrl+D / stdin fechado — same cancel route as Ctrl+C.
+            # Engine surface: clean message on stderr, no traceback.
+            print("forge: entrada cancelada (EOF).", file=sys.stderr)
+            intent_state.clear_intent_files(project_root)
+            return _EXIT_USER_CANCELLED
+        except _TooManyInvalidAttempts:
+            print(
+                "forge: entradas inválidas — cancelando.",
+                file=sys.stderr,
+            )
             intent_state.clear_intent_files(project_root)
             return _EXIT_USER_CANCELLED
 

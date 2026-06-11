@@ -433,23 +433,32 @@ def test_ask_text_returns_typed_string_verbatim(
 # --- Subprocess env wiring --------------------------------------------------
 
 
-def test_subprocess_invocation_sets_internal_env_marker(
+def test_no_internal_tty_bridge_env_var_set(
     monkeypatch, tmp_project_root, no_color
 ):
-    """``FORGE_INTERNAL_TTY_BRIDGE=1`` is set on the spawned subprocess.
+    """``FORGE_INTERNAL_TTY_BRIDGE`` is NOT injected into the subprocess env.
 
-    SPEC §6 — engine may use this for logging / debug. Behaviour stays
-    identical regardless, but the contract is observable from the env.
+    Originally the bridge set ``FORGE_INTERNAL_TTY_BRIDGE=1`` as a stub
+    for observability, but the engine never consumed it (PR #11 review
+    #14). Until a real log channel emerges (see 04-pending
+    FU-DRIFT-1-OBS), we keep the env pristine to avoid signalling a
+    contract that does not exist.
     """
     fake_run = _make_subprocess_run([0])
     monkeypatch.setattr(tty_bridge.subprocess, "run", fake_run)
     monkeypatch.chdir(tmp_project_root)
+    # Ensure no ambient value would mask the assertion.
+    monkeypatch.delenv("FORGE_INTERNAL_TTY_BRIDGE", raising=False)
 
     tty_bridge.main("engine.cli", ["init"])
 
     call = fake_run.calls[0]  # type: ignore[attr-defined]
-    env = call["kwargs"].get("env") or {}
-    assert env.get("FORGE_INTERNAL_TTY_BRIDGE") == "1"
+    # The bridge no longer passes ``env=`` at all (subprocess inherits
+    # the parent's env unchanged). Either way, the marker must not
+    # appear when set explicitly nor be silently added.
+    env = call["kwargs"].get("env")
+    if env is not None:
+        assert "FORGE_INTERNAL_TTY_BRIDGE" not in env
 
 
 def test_subprocess_invocation_passes_argv_verbatim(
@@ -503,3 +512,214 @@ def test_intent_state_write_response_atomically_writes_canonical_path(tmp_projec
     # No .tmp leftover (atomic write contract).
     leftovers = [p for p in target.parent.iterdir() if p.suffix == ".tmp"]
     assert leftovers == []
+
+
+# --- EOFError handling (#6 from PR #11 review) -----------------------------
+
+
+def test_eof_during_prompt_exits_130_with_clean_message(
+    monkeypatch, tmp_project_root, no_color, capsys
+):
+    """Ctrl+D / stdin fechado durante input() → exit 130 + mensagem limpa em stderr.
+
+    Mesma rota de cancel que Ctrl+C — sem traceback vazando pra cima.
+    """
+    pending = _pending_payload()
+    intent_state.write_pending(pending, tmp_project_root)
+
+    fake_run = _make_subprocess_run([2])
+    monkeypatch.setattr(tty_bridge.subprocess, "run", fake_run)
+    monkeypatch.chdir(tmp_project_root)
+
+    def raise_eof(prompt=""):  # noqa: ANN001
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", raise_eof)
+
+    rc = tty_bridge.main("engine.cli", ["init"])
+
+    assert rc == 130
+    captured = capsys.readouterr()
+    assert "entrada cancelada (EOF)" in captured.err
+    # No Python traceback signature leaked.
+    assert "Traceback" not in captured.err
+    # State cleared on cancel.
+    state_dir = tmp_project_root / ".claude" / "state"
+    assert not (state_dir / "forge-pending.json").exists()
+    assert not (state_dir / "forge-response.json").exists()
+
+
+# --- Re-prompt loop on invalid tokens (#13 from PR #11 review) -------------
+
+
+def test_confirm_invalid_token_reprompts_up_to_3_times(
+    monkeypatch, tmp_project_root, no_color, capsys
+):
+    """confirm: 2 inputs inválidos seguidos de 1 válido → response normal."""
+    pending = _pending_payload(
+        intent_id="11111111-1111-4111-8111-111111111111",
+        kind="confirm",
+        question="Tem certeza?",
+        options={"s": "sim", "n": "não"},
+        default="n",
+        allow_pause=False,
+    )
+    intent_state.write_pending(pending, tmp_project_root)
+
+    fake_run = _make_subprocess_run([2, 0])
+    monkeypatch.setattr(tty_bridge.subprocess, "run", fake_run)
+    monkeypatch.chdir(tmp_project_root)
+
+    inputs = iter(["talvez", "quem-sabe", "s"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(inputs))
+
+    rc = tty_bridge.main("engine.cli", ["undo"])
+
+    assert rc == 0
+    response_path = tmp_project_root / ".claude" / "state" / "forge-response.json"
+    response = json.loads(response_path.read_text(encoding="utf-8"))
+    assert response["value"] is True
+    rendered = capsys.readouterr().out
+    assert "Não entendi" in rendered
+    assert "tentativa 1/3" in rendered
+    assert "tentativa 2/3" in rendered
+
+
+def test_confirm_3_invalid_tokens_exits_130(
+    monkeypatch, tmp_project_root, no_color, capsys
+):
+    """confirm: 3 inputs todos inválidos → exit 130 + mensagem 'cancelando'."""
+    pending = _pending_payload(
+        intent_id="22222222-2222-4222-8222-222222222222",
+        kind="confirm",
+        question="Tem certeza?",
+        options={"s": "sim", "n": "não"},
+        default="n",
+        allow_pause=False,
+    )
+    intent_state.write_pending(pending, tmp_project_root)
+
+    fake_run = _make_subprocess_run([2])
+    monkeypatch.setattr(tty_bridge.subprocess, "run", fake_run)
+    monkeypatch.chdir(tmp_project_root)
+
+    inputs = iter(["talvez", "lixo", "?"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(inputs))
+
+    rc = tty_bridge.main("engine.cli", ["undo"])
+
+    assert rc == 130
+    captured = capsys.readouterr()
+    assert "cancelando" in captured.err
+    assert "Traceback" not in captured.err
+    # No response file should have been written.
+    response_path = tmp_project_root / ".claude" / "state" / "forge-response.json"
+    assert not response_path.exists()
+
+
+def test_ask_invalid_token_reprompts(
+    monkeypatch, tmp_project_root, no_color, capsys
+):
+    """ask: 2 inputs inválidos seguidos de 1 válido (option key) → response normal."""
+    pending = _pending_payload(
+        intent_id="33333333-3333-4333-8333-333333333333",
+        kind="ask",
+        question="Qual preset?",
+        options={"kmp-mobile": "KMP", "android-only": "Android"},
+    )
+    intent_state.write_pending(pending, tmp_project_root)
+
+    fake_run = _make_subprocess_run([2, 0])
+    monkeypatch.setattr(tty_bridge.subprocess, "run", fake_run)
+    monkeypatch.chdir(tmp_project_root)
+
+    inputs = iter(["windows-phone", "blackberry", "kmp-mobile"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(inputs))
+
+    rc = tty_bridge.main("engine.cli", ["init"])
+
+    assert rc == 0
+    response_path = tmp_project_root / ".claude" / "state" / "forge-response.json"
+    response = json.loads(response_path.read_text(encoding="utf-8"))
+    assert response["value"] == "kmp-mobile"
+    rendered = capsys.readouterr().out
+    assert "Não entendi" in rendered
+    assert "tentativa 1/3" in rendered
+
+
+def test_ask_three_paths_invalid_token_reprompts(
+    monkeypatch, tmp_project_root, no_color
+):
+    """ask_three_paths: index inválido → re-prompt; depois index válido → OK."""
+    paths_detail = [
+        {"key": "a", "label": "Refatorar", "motive": "reduz risco"},
+        {"key": "b", "label": "Reverter", "motive": "preserva baseline"},
+        {"key": "c", "label": "Override", "motive": "destrava"},
+    ]
+    pending = _pending_payload(
+        intent_id="44444444-4444-4444-8444-444444444444",
+        kind="ask_three_paths",
+        question="Qual caminho?",
+        options={"a": "Refatorar", "b": "Reverter", "c": "Override"},
+        paths_detail=paths_detail,
+    )
+    intent_state.write_pending(pending, tmp_project_root)
+
+    fake_run = _make_subprocess_run([2, 0])
+    monkeypatch.setattr(tty_bridge.subprocess, "run", fake_run)
+    monkeypatch.chdir(tmp_project_root)
+
+    inputs = iter(["d", "z", "b"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(inputs))
+
+    rc = tty_bridge.main("engine.cli", ["verify"])
+
+    assert rc == 0
+    response_path = tmp_project_root / ".claude" / "state" / "forge-response.json"
+    response = json.loads(response_path.read_text(encoding="utf-8"))
+    assert response["value"] == "b"
+
+
+def test_pause_token_bypasses_validation(
+    monkeypatch, tmp_project_root, no_color
+):
+    """Pause token é sempre válido — não conta como tentativa inválida.
+
+    Decision 27: pause é resposta de primeira-classe, não um value
+    rejeitado.
+    """
+    pending = _pending_payload(
+        intent_id="55555555-5555-4555-8555-555555555555",
+        kind="confirm",
+        question="Tem certeza?",
+        options={"s": "sim", "n": "não"},
+        default="n",
+    )
+    intent_state.write_pending(pending, tmp_project_root)
+
+    state_dir = tmp_project_root / ".claude" / "state"
+    pending_path = state_dir / "forge-pending.json"
+    response_path = state_dir / "forge-response.json"
+    captured: dict[str, Any] = {}
+
+    call_count = {"n": 0}
+
+    def fake_run(cmd, **kwargs):  # noqa: ANN001
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return _FakeCompletedProcess(2)
+        if response_path.exists():
+            captured.update(json.loads(response_path.read_text(encoding="utf-8")))
+        for p in (pending_path, response_path):
+            if p.exists():
+                p.unlink()
+        return _FakeCompletedProcess(2)
+
+    monkeypatch.setattr(tty_bridge.subprocess, "run", fake_run)
+    monkeypatch.chdir(tmp_project_root)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "pausa")
+
+    rc = tty_bridge.main("engine.cli", ["undo"])
+
+    assert rc == 2
+    assert captured.get("paused") is True
