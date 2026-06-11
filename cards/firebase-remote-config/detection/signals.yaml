@@ -1,0 +1,29 @@
+# cards/firebase-remote-config/detection/signals.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Sinais de detecção do card firebase-remote-config — espelha o bloco
+# `detection.signals` do card.yaml. Threshold cumulativo 0.5.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+signals:
+  - id:         firebase-remote-config-gradle-dep
+    type:       gradle-dep
+    coordinate: "com.google.firebase:firebase-config"
+    confidence: 0.5
+    rationale:  "Coordenada Maven canônica do Firebase Remote Config SDK."
+
+  - id:         firebase-remote-config-google-services-config
+    type:       file-exists
+    glob:       "**/google-services.json"
+    confidence: 0.3
+    rationale:  "Config Firebase Android — não distingue Remote Config de outros módulos sozinho."
+
+  - id:         firebase-remote-config-kotlin-import
+    type:       file-content
+    glob:       "**/*.kt"
+    contains:   "com.google.firebase.remoteconfig"
+    confidence: 0.3
+    rationale:  "Import direto do SDK Remote Config no código Kotlin — evidência forte de uso ativo."
+
+threshold: 0.5
