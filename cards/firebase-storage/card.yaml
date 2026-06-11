@@ -14,11 +14,11 @@ identity:
   name:         firebase-storage
   version:      1.0.0
   description:  "Firebase Cloud Storage para uploads/downloads de imagens e mídias. Inclui security rules para storage e progress reporting via Flow."
-  category:     backend
+  category:     storage
   maturity:     stable
   maintainer:   feature-forge-core
   created-at:   2026-05-29
-  last-updated: 2026-05-29
+  last-updated: 2026-06-10
   license:      MIT
 
 

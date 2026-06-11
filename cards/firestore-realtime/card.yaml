@@ -14,11 +14,11 @@ identity:
   name:         firestore-realtime
   version:      1.0.0
   description:  "Cloud Firestore realtime listeners (snapshotListener, snapshots Flow). Camada de streaming reativo sobre `firestore-persistence`."
-  category:     backend
+  category:     data
   maturity:     stable
   maintainer:   feature-forge-core
   created-at:   2026-05-29
-  last-updated: 2026-05-29
+  last-updated: 2026-06-10
   license:      MIT
 
 

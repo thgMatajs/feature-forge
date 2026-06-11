@@ -15,11 +15,11 @@ identity:
   name:         retrofit-client
   version:      1.0.0
   description:  "Retrofit2 HTTP client para Android / Android-side de KMP. Provider clássico de http-client quando Ktor multiplatform não é a escolha."
-  category:     network
+  category:     data
   maturity:     stable
   maintainer:   feature-forge-core
   created-at:   2026-06-02
-  last-updated: 2026-06-02
+  last-updated: 2026-06-10
   license:      MIT
 
 

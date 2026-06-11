@@ -22,11 +22,11 @@ identity:
   name:         rest-api-contract
   version:      1.0.0
   description:  "Convenções REST canônicas: endpoints como const em ApiEndpoints.kt, DTOs `{Entity}Request/Response`, error envelope padronizado, mapping HTTP status → domain errors, pagination cursor-based."
-  category:     backend
+  category:     data
   maturity:     stable
   maintainer:   feature-forge-core
   created-at:   2026-05-29
-  last-updated: 2026-05-29
+  last-updated: 2026-06-10
   license:      MIT
 
 

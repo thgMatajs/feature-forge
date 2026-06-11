@@ -27,24 +27,37 @@ from ._signal_shapes import parse_gradle_coordinate
 
 # ── Canonical catalog (hardcoded, FOLLOWUP: parse capability-labels.md) ──────
 
+# Canonical category set (since Phase B / DET-6).
+# Stack/tooling (9): language, kmp, ui, navigation, dependency-injection,
+#                    testing, build, design-system, ticketing.
+# Backend axes (8):  data, auth, observability, analytics, storage,
+#                    persistence, notifications, flags.
+# `di` é alias histórico de `dependency-injection` (não usado, mantido sem
+# custo até depreciação formal). Categorias `backend` e `network` foram
+# split nos 8 axes em Phase B (ver docs/schemas/card.md §Backend axes e
+# .planning/det-6/category-migration-audit.json).
 _KNOWN_CATEGORIES: frozenset[str] = frozenset(
     {
+        # ── stack/tooling ────────────────────────────────────────────
         "language",
         "kmp",
         "ui",
         "di",
         "dependency-injection",
         "navigation",
-        "network",
-        "backend",
-        "persistence",
-        "observability",
-        "auth",
-        "storage",
         "testing",
         "build",
         "design-system",
         "ticketing",
+        # ── backend axes (DET-6) ─────────────────────────────────────
+        "data",
+        "auth",
+        "observability",
+        "analytics",
+        "storage",
+        "persistence",
+        "notifications",
+        "flags",
     }
 )
 

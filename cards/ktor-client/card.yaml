@@ -17,11 +17,11 @@ identity:
   name:         ktor-client
   version:      1.0.0
   description:  "Ktor Client como HTTP client cross-platform (KMP). Configuração canônica com ContentNegotiation/Json, Logging, Auth plugin, retry policy. Dispatcher injection no construtor."
-  category:     kmp
+  category:     data
   maturity:     stable
   maintainer:   feature-forge-core
   created-at:   2026-05-29
-  last-updated: 2026-05-29
+  last-updated: 2026-06-10
   license:      MIT
 
 

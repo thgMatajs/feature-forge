@@ -16,11 +16,11 @@ identity:
   name:         auth-jwt-bearer
   version:      1.0.0
   description:  "Autenticação via JWT Bearer Token em REST APIs. Flow login → access-token + refresh-token, Ktor Auth plugin com loadTokens/refreshTokens, retry em 401, storage seguro do refresh-token (encrypted DataStore ou Android Keystore). Paridade Android↔iOS no shared."
-  category:     backend
+  category:     auth
   maturity:     stable
   maintainer:   feature-forge-core
   created-at:   2026-05-29
-  last-updated: 2026-05-29
+  last-updated: 2026-06-10
   license:      MIT
 
 

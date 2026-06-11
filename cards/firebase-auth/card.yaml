@@ -15,11 +15,11 @@ identity:
   name:         firebase-auth
   version:      1.0.0
   description:  "Firebase Authentication (Email/Password + provedores OAuth) para Android/iOS/Web. Inclui observability (test IDs + analytics events) e Crashlytics integration via FirebaseAuthAnalyticsException."
-  category:     backend
+  category:     auth
   maturity:     stable
   maintainer:   feature-forge-core
   created-at:   2026-05-29
-  last-updated: 2026-05-29
+  last-updated: 2026-06-10
   license:      MIT
 
 
