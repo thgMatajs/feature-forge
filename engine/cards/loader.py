@@ -649,6 +649,18 @@ def validate_card_yaml(manifest_dict: dict[str, Any], source_path: Path) -> list
                 conf = sig.get("confidence")
                 if isinstance(conf, (int, float)):
                     confidence_sum += float(conf)
+                # CARD-021: o tipo legado `dependency` foi renomeado pra
+                # `gradle-dep` em v1.2-dev (DET-3 / M-2). Antes era
+                # silenciosamente ignorado pelo engine, mascarando cards
+                # mal-declarados. Rejeita explicitamente apontando o nome
+                # canônico atual + o schema doc onde o cleanup está descrito.
+                if sig.get("type") == "dependency":
+                    violations.append(
+                        "CARD-021: signal type 'dependency' was renamed to "
+                        "'gradle-dep' in v1.2-dev (see docs/schemas/card.md "
+                        "§Signal types). Migrate the signal or remove it."
+                    )
+                    continue
                 # CARD-020: shape validation pra signal type `gradle-dep`.
                 # `coordinate` deve ser string `<group>:<artifact>` sem versão
                 # sufixada e sem espaços (introduzido em DET-3 / 2026-06-10).

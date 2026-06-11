@@ -389,15 +389,14 @@ else:
 | `file-exists` | `glob: <pattern>` |
 | `file-content` | `glob: <pattern>` + `contains: <string>` or `matches: <regex>` |
 | `gradle-dep` | `coordinate: <group>:<artifact>` (sem versão, sem espaços). Match em `gradle/*.versions.toml` (TOML, formato `module = "<group>:<artifact>"` ou `group + name` split) E em `**/build.gradle*` (substring). Ordem: catálogo primeiro, build.gradle fallback. |
-| `dependency` | `file: <pattern>` + `contains: <string>` (e.g., for gradle/package.json) |
 | `directory-exists` | `path: <relative>` |
 | `command-success` | `command: <string>` (rare, use sparingly) |
 
-> **Nota:** o tipo `dependency` lista-se no schema mas **não está implementado**
-> em `engine/init.py:_eval_detection_signals`. Cards declarados com `type: dependency`
-> são silenciosamente ignorados. O sucessor canônico para deps Gradle é
-> `gradle-dep`. Cleanup do vapor `dependency` é tracked em `docs/design/04-pending.md`
-> como follow-up não-bloqueante a DET-3.
+#### Tipos descontinuados
+
+| Type | Status | Sucessor |
+|---|---|---|
+| `dependency` | Removido em v1.2-dev (DET-3 / M-2). Loader rejeita via **CARD-021**. Nunca foi implementado em `engine/init.py:_eval_detection_signals` — cards declarando este tipo eram silenciosamente ignorados antes do cleanup. | Use `gradle-dep` (deps Gradle). Para outras stacks (`npm`, `pod`, `swift-pm`), aguarde tipos dedicados — sem fallback genérico. |
 
 Detection runs in **parallel** across all cards. Timeout per card: 2s.
 Card that exceeds timeout = signal failure, not error.
@@ -524,6 +523,7 @@ CARD-017  no circular dependency in requires graph
 CARD-018  README.md must exist
 CARD-019  legacy-marker, if present, must be bool
 CARD-020  detection.signals[*].coordinate (when type=gradle-dep) must be `<group>:<artifact>`, no version sufixada, no spaces
+CARD-021  detection.signals[*].type must not be `dependency` (renamed to `gradle-dep` in v1.2-dev; legacy type silently ignored before DET-3 / M-2)
 ```
 
 ## Examples
