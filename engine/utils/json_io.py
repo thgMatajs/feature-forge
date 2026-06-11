@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +64,7 @@ def write_json(
     *,
     atomic: bool = True,
     indent: int = 2,
+    mode: int = 0o600,
 ) -> None:
     """Write ``data`` to ``path`` as JSON.
 
@@ -70,10 +72,21 @@ def write_json(
       onto the target. The replace is the atomic boundary.
     - ``indent=2`` (default) makes the file human-readable on disk; the
       intent protocol files are inspected by humans during debugging.
+    - ``mode=0o600`` (default) restringe o arquivo a owner-read/write
+      apenas. Os arquivos do intent protocol carregam input do usuário
+      (potenciais paths e segredos) — o default conservador protege em
+      ambientes multi-usuário. Em Windows ``os.chmod`` só ajusta o bit
+      read-only; aceitamos o no-op silencioso (não é regressão).
 
     JSON style: ``ensure_ascii=False`` so Portuguese characters survive
     readable (no ``\\uXXXX`` escapes), ``sort_keys=False`` so the engine
     can preserve the canonical key order from the spec.
+
+    Durabilidade: após ``os.replace`` o diretório pai é fsync-ado em
+    POSIX para garantir que a entrada do novo inode chegue ao disco.
+    Em filesystems exóticos (procfs, tmpfs de container) onde dir fsync
+    não é suportado, engolimos o ``OSError`` em silêncio — o ``os.fsync``
+    do próprio arquivo já feito acima cobre o caso comum.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -87,6 +100,7 @@ def write_json(
     if not atomic:
         with path.open("w", encoding="utf-8") as fh:
             fh.write(serialized)
+        _apply_mode(path, mode)
         return
 
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -96,6 +110,10 @@ def write_json(
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp, path)
+        # Após o replace bem-sucedido: restringe permissões e fsync
+        # do diretório pai para durar o rename atômico em POSIX.
+        _apply_mode(path, mode)
+        _fsync_parent_dir(path)
     finally:
         # Defensive: if rename failed, leave no dangling .tmp.
         if tmp.exists():
@@ -103,6 +121,45 @@ def write_json(
                 tmp.unlink()
             except OSError:
                 pass
+
+
+def _apply_mode(path: Path, mode: int) -> None:
+    """Aplica ``mode`` em ``path``. Erros são re-empacotados como ``JsonIOError``.
+
+    Em Windows ``os.chmod`` tem semântica limitada (só read-only bit),
+    mas não levanta — o no-op silencioso é aceitável e documentado em
+    ``write_json``.
+    """
+    try:
+        os.chmod(path, mode)
+    except OSError as exc:
+        raise JsonIOError(
+            f"could not restrict permissions on {path}: {exc}"
+        ) from exc
+
+
+def _fsync_parent_dir(path: Path) -> None:
+    """Fsync no diretório pai para garantir durabilidade do rename atômico.
+
+    POSIX-only: em Windows não há fd de diretório utilizável. Em
+    filesystems exóticos onde o fsync de diretório não é suportado,
+    engolimos ``OSError`` silenciosamente — o fsync do arquivo em si já
+    foi feito antes do replace.
+    """
+    if sys.platform == "win32":
+        return
+    try:
+        dir_fd = os.open(str(path.parent), os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(dir_fd)
+    except OSError:
+        # Filesystems sem suporte a dir fsync (procfs, alguns tmpfs):
+        # tratamos como best-effort.
+        pass
+    finally:
+        os.close(dir_fd)
 
 
 def delete_if_exists(path: Path) -> bool:

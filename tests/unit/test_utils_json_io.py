@@ -11,6 +11,8 @@ DRIFT-1 W1.T2 — foundation for the intent protocol state files
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -129,3 +131,122 @@ def test_write_json_non_atomic(tmp_path):
     json_io.write_json(p, {"k": "v"}, atomic=False)
     assert json.loads(p.read_text(encoding="utf-8")) == {"k": "v"}
     assert not (tmp_path / "direct.json.tmp").exists()
+
+
+# ---------------------------------------------------------------------------
+# Hardening — chmod 0o600 + dir fsync (PR #11 review findings #7 + #10).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX permission bits don't apply on Windows",
+)
+def test_write_json_sets_mode_0o600(tmp_path):
+    """Default mode é 0o600 — owner read/write apenas."""
+    p = tmp_path / "secret.json"
+    json_io.write_json(p, {"k": "v"})
+    actual = os.stat(p).st_mode & 0o777
+    assert actual == 0o600, f"expected 0o600 (owner rw only), got {oct(actual)}"
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX permission bits don't apply on Windows",
+)
+def test_write_json_custom_mode(tmp_path):
+    """Caller pode override o modo via parameter."""
+    p = tmp_path / "shared.json"
+    json_io.write_json(p, {"k": "v"}, mode=0o644)
+    actual = os.stat(p).st_mode & 0o777
+    assert actual == 0o644, f"expected 0o644, got {oct(actual)}"
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX permission bits don't apply on Windows",
+)
+def test_write_json_custom_mode_non_atomic(tmp_path):
+    """Mode também aplicado no path não-atômico."""
+    p = tmp_path / "direct.json"
+    json_io.write_json(p, {"k": "v"}, atomic=False, mode=0o640)
+    actual = os.stat(p).st_mode & 0o777
+    assert actual == 0o640, f"expected 0o640, got {oct(actual)}"
+
+
+def test_write_json_dir_fsync_called_on_posix(tmp_path, monkeypatch):
+    """Em POSIX o diretório pai é fsync-ado após o replace."""
+    if sys.platform == "win32":
+        pytest.skip("dir fsync é POSIX-only")
+
+    fsync_calls = []
+    original_fsync = json_io.os.fsync
+
+    def counting_fsync(fd):
+        fsync_calls.append(fd)
+        return original_fsync(fd)
+
+    monkeypatch.setattr(json_io.os, "fsync", counting_fsync)
+    p = tmp_path / "durable.json"
+    json_io.write_json(p, {"k": "v"})
+    # Esperado: 1x fsync do arquivo (dentro do tmp) + 1x fsync do diretório.
+    assert len(fsync_calls) >= 2, (
+        f"expected ≥2 fsync calls (file + parent dir), got {len(fsync_calls)}"
+    )
+
+
+def test_write_json_dir_fsync_skipped_on_windows(tmp_path, monkeypatch):
+    """Em Windows o fsync de diretório é skip; só o fsync do arquivo roda."""
+    monkeypatch.setattr(json_io.sys, "platform", "win32")
+
+    fsync_calls = []
+    original_fsync = json_io.os.fsync
+
+    def counting_fsync(fd):
+        fsync_calls.append(fd)
+        return original_fsync(fd)
+
+    monkeypatch.setattr(json_io.os, "fsync", counting_fsync)
+    p = tmp_path / "win.json"
+    json_io.write_json(p, {"k": "v"})
+    # Apenas o fsync do arquivo deve ter rodado.
+    assert len(fsync_calls) == 1, (
+        f"expected exactly 1 fsync (file only on Windows), got {len(fsync_calls)}"
+    )
+
+
+def test_write_json_chmod_failure_wraps_as_json_io_error(tmp_path, monkeypatch):
+    """``os.chmod`` falhando vira ``JsonIOError`` com path anexado."""
+    p = tmp_path / "denied.json"
+
+    def boom(path, mode):
+        raise PermissionError("simulated chmod denial")
+
+    monkeypatch.setattr(json_io.os, "chmod", boom)
+    with pytest.raises(json_io.JsonIOError) as exc:
+        json_io.write_json(p, {"k": "v"})
+    assert str(p) in str(exc.value)
+    assert "permissions" in str(exc.value).lower()
+
+
+def test_write_json_dir_fsync_swallows_oserror(tmp_path, monkeypatch):
+    """``OSError`` no fsync de diretório é tolerado (filesystems exóticos)."""
+    if sys.platform == "win32":
+        pytest.skip("dir fsync é POSIX-only")
+
+    original_fsync = json_io.os.fsync
+    # Vamos identificar o fd do diretório olhando o nome via os.stat;
+    # mais simples: faz fsync raise apenas na segunda chamada (a do dir).
+    call_count = {"n": 0}
+
+    def selective_fsync(fd):
+        call_count["n"] += 1
+        if call_count["n"] >= 2:
+            raise OSError("simulated procfs/tmpfs dir fsync failure")
+        return original_fsync(fd)
+
+    monkeypatch.setattr(json_io.os, "fsync", selective_fsync)
+    p = tmp_path / "exotic.json"
+    # Não deve raise — dir fsync é best-effort.
+    json_io.write_json(p, {"k": "v"})
+    assert json.loads(p.read_text(encoding="utf-8")) == {"k": "v"}
