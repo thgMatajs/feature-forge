@@ -10,6 +10,26 @@ collects its own parameters via interactive prompts inside its handler.
 Ctrl+C is treated as **pause**, never abort (Decision 27 / discipline §7):
 the subcommand handler is responsible for saving deferred state before the
 exception bubbles back here, where we exit with 130 (standard SIGINT code).
+
+DRIFT-1 W2.T2 (+ W2 review remediation) wires the exit-code ladder:
+
+- ``PausedForInputError``: engine emitted a fresh pending and is waiting
+  on a first response → exit 2.
+- ``UserPausedError``: host response carried ``"paused": true`` while
+  ``allow_pause=True`` → exit 2 (also a clean pause, distinct semantic
+  origin; CR-003 fix from W2 review).
+- ``UserCancelledError``: host response carried ``"cancelled": true`` →
+  exit 130, parallel to ``KeyboardInterrupt`` (CR-001 fix from W2 review).
+- ``KeyboardInterrupt``: Ctrl+C on a TTY → exit 130 (Decision 27).
+
+The ``_cli_command_context`` contextvar in ``engine.ui.question`` is set
+here BEFORE dispatching to the handler so the pending JSON's ``command``
+/ ``command-args`` reflect the argv ``main`` actually received, not the
+parent process's ``sys.argv`` (HI-002 fix from W2 review).
+
+Refs:
+- docs/superpowers/specs/drift-1-intent-protocol.md §4, §8
+- .planning/drift-1-w2-review/REVIEW.md (CR-001, CR-003, HI-002)
 """
 
 from __future__ import annotations
@@ -17,6 +37,14 @@ from __future__ import annotations
 import importlib
 import sys
 from typing import Callable
+
+from engine.ui.exit_codes import EXIT_CANCELLED, EXIT_PAUSED
+from engine.ui.question import (
+    PausedForInputError,
+    UserCancelledError,
+    UserPausedError,
+    _cli_command_context,
+)
 
 # Lazy imports — each command module is loaded only on first use, keeping
 # cold-start fast for read-only commands like `forge status`.
@@ -150,15 +178,72 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     handler = _resolve(cmd)
+    # Lazy imports — keeps cli.main decoupled from foundation modules
+    # until a control-flow path actually needs them, and matches the
+    # lazy-import pattern already used by `_resolve` for command modules.
+    # PR #11 review finding #1: surface `RaceDetectedError`,
+    # `IntentMismatchError` (de `engine.ui.intent_state`) e `JsonIOError`
+    # (de `engine.utils.json_io`) como exit 1 com mensagem mentor-calmo,
+    # em vez de deixar o traceback Python cru vazar.
+    from engine.ui import intent_state
+    from engine.utils import json_io
+    # HI-002 fix: publish (command, command-args) on the contextvar so
+    # ``engine.ui.question._command_context`` can return the argv this
+    # call to ``main`` received, even when ``sys.argv`` belongs to a
+    # different parent process (pytest, REPL, library wrapper). The
+    # ``reset`` in the ``finally`` undoes the set so concurrent test
+    # cases never leak context across each other.
+    token = _cli_command_context.set((cmd, list(rest)))
     try:
-        result = handler(rest)
-    except KeyboardInterrupt:
-        # Decision 27 / discipline §7 — Ctrl+C = pause.
-        # Each command is responsible for serializing deferred state before
-        # this point. We just report cleanly and exit 130 (POSIX SIGINT).
-        sys.stderr.write("\n— interrompido, estado salvo.\n")
-        return 130
-    return int(result) if isinstance(result, int) else 0
+        try:
+            result = handler(rest)
+        except PausedForInputError:
+            # DRIFT-1 §8 — chokepoint emitted .claude/state/forge-pending.json.
+            # The caller (Claude Code host or engine.ui.tty_bridge) is expected
+            # to read that file, write a response, and re-invoke us with the
+            # same argv. No traceback, no message on stdout — the host renders
+            # whatever it needs to from the intent payload itself.
+            return EXIT_PAUSED
+        except UserPausedError:
+            # CR-003 fix — host response carried ``paused: true`` while the
+            # prompt allowed pause. Same exit code as ``PausedForInputError``
+            # (2 = clean pause, resumable) but a distinct semantic: the user
+            # explicitly paused via response, rather than the engine emitting
+            # a fresh pending. State already cleared by ``_check_pause_response``.
+            return EXIT_PAUSED
+        except UserCancelledError:
+            # CR-001 fix — host response carried ``cancelled: true``. Exit 130
+            # parallels Ctrl+C (Decision 27 / SPEC §8). Placed before the
+            # ``KeyboardInterrupt`` clause for readability; the types are
+            # disjoint so ordering between these two does not matter
+            # behaviourally.
+            return EXIT_CANCELLED
+        except KeyboardInterrupt:
+            # Decision 27 / discipline §7 — Ctrl+C = pause.
+            # Each command is responsible for serializing deferred state before
+            # this point. We just report cleanly and exit 130 (POSIX SIGINT).
+            sys.stderr.write("\n— interrompido, estado salvo.\n")
+            return EXIT_CANCELLED
+        except (
+            intent_state.RaceDetectedError,
+            intent_state.IntentMismatchError,
+        ) as exc:
+            # PR #11 review #1 — DRIFT-1 intent-protocol sentinels carregam
+            # mensagem mentor-calmo em ``exc.args[0]``. Sem este catch a
+            # mensagem nunca chega ao usuário; em vez disso vaza traceback
+            # cru, contrariando SPEC §3/§8 ("emite mensagem clara e exita 1").
+            sys.stderr.write(f"{exc}\n")
+            return 1
+        except json_io.JsonIOError as exc:
+            # PR #11 review #1 — falha ao decodificar state files
+            # (.claude/state/forge-pending.json ou forge-response.json) é
+            # erro de I/O, não bug interno do engine. Reportar limpo e
+            # sair 1 em vez de traceback.
+            sys.stderr.write(f"forge: erro de I/O lendo state file: {exc}\n")
+            return 1
+        return int(result) if isinstance(result, int) else 0
+    finally:
+        _cli_command_context.reset(token)
 
 
 if __name__ == "__main__":  # pragma: no cover

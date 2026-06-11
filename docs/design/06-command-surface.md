@@ -168,3 +168,38 @@ agent prompt que mencione `forge {algo-novo}` ou `forge X --flag`:
 
 Mentor calmo é firme aqui: o que protege a UX do forge é a estabilidade da
 superfície. 13 verbos, zero flags, zero exceções.
+
+---
+
+## Exit codes
+
+Contrato canônico do dispatcher (`bin/forge` → `engine/cli.py::main()`).
+Adicionado em v1.2-dev (Phase A DRIFT-1, 2026-06-10) com a introdução do
+exit code **2** pra sinalizar pausa aguardando input.
+
+| Code | Significado | Origem |
+|---|---|---|
+| 0 | comando completou com sucesso | handler retornou normalmente |
+| 1 | erro / validator fail / input inválido | exceptions não-listadas, response mismatch, schema invalid |
+| 2 | paused for input (needs response) | `PausedForInputError` (engine emitiu pending) + `UserPausedError` (response com `paused: true`) |
+| 130 | user cancelou | `KeyboardInterrupt` (TTY) + `UserCancelledError` (response com `cancelled: true`) |
+
+O host (Claude Code OR `engine.ui.tty_bridge` em fallback) loop-reads
+exit code 2 + state files (`.claude/state/forge-pending.json` /
+`forge-response.json`) pra continuação. Subagent invocando `forge` que
+receba exit 2 NÃO deve responder sozinho — ver
+`.claude/rules/subagent-workflow.md §Quando subagent invoca \`forge\``.
+
+**Exit 130 — duas rotas convergentes:**
+- (a) `KeyboardInterrupt` (Ctrl+C / SIGINT) em modo TTY.
+- (b) Host response `cancelled: true` (`UserCancelledError`) em modo intent.
+
+Callers tratam identicamente — usuário desistiu. Distinção fica em
+`engine/cli.py` na captura (Decision 27 cobre a rota TTY; CR-001 do W2
+review cobre a rota intent).
+
+Schema dos state files: `docs/schemas/intent-protocol.md`.
+Spec canônico: `docs/superpowers/specs/drift-1-intent-protocol.md` §4.
+
+POSIX nota: exit 2 às vezes é usado por shells pra "misuse of shell
+builtins"; `forge` não é shell builtin, então o conflito é nominal.

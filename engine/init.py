@@ -85,6 +85,11 @@ from engine.utils.paths import (
 )
 from engine.utils.sha256 import file_sha256
 from engine.utils.yaml_io import read_yaml_or_default, write_yaml
+from engine.utils.checkpoint_io import (
+    clear_checkpoint as _clear_checkpoint_io,
+    save_yaml_checkpoint as _save_yaml_checkpoint_io,
+)
+from engine.utils.iso import utc_now_iso as _utc_now_iso_shared
 
 PRESET_NAME = "kmp-mobile"
 LATENT_CAPS = ["android-platform", "ios-platform", "swift-language"]
@@ -103,7 +108,18 @@ class InitError(RuntimeError):
 
 @dataclass
 class _InitCheckpoint:
-    """State serialized on Ctrl+C, so a follow-up `forge init` can offer resume."""
+    """State serialized on Ctrl+C, so a follow-up `forge init` can offer resume.
+
+    DRIFT-1 W2.T3b — extend: campo ``intent_id`` adicionado pra correlacao
+    com ``.claude/state/forge-response.json`` no protocolo intent. Default
+    ``None`` preserva o contract dos call sites legacy (Ctrl+C pause sem
+    prompt ativo). Quando o pause vem do chokepoint (PausedForInputError),
+    o handler grava intent_id ANTES do ask — re-invocacao usa esse campo
+    pra confirmar que a response no disco corresponde ao prompt esperado.
+
+    Outcome C: dataclass per-subcommand mantido — sem import de
+    ``engine.qa.checkpoint`` (Decision 22).
+    """
 
     step: str
     at: str
@@ -111,17 +127,32 @@ class _InitCheckpoint:
     preset: str | None = None
     selected_card_names: list[str] = field(default_factory=list)
     backend_choice: str | None = None
+    intent_id: str | None = None
 
 
 def _checkpoint_path(project_root: Path) -> Path:
     return claude_dir(project_root) / ".init-checkpoint.yaml"
 
 
+# Os 4 helpers abaixo são thin shims sobre ``engine.utils.checkpoint_io`` +
+# ``engine.utils.iso`` — consolidação dos 30 duplicates + 10 cópias de
+# ``_utc_now_iso_*`` apontada pelos findings #5 e #21 do master review do
+# PR #11. ``init.py`` é o template canônico (citado em
+# ``docs/superpowers/specs/drift-1-intent-protocol.md §3``) — preservamos
+# os nomes não-sufixados ``_save_checkpoint`` / ``_load_checkpoint`` /
+# ``_clear_checkpoint`` / ``_utc_now_iso`` que os testes em
+# ``tests/unit/test_engine_init_resume.py`` consomem.
+#
+# Diferença sutil preservada vs. os 9 outros handlers: ``_load_checkpoint``
+# em init **não** filtra ``dict`` defensivamente — ele retorna o que
+# ``read_yaml_or_default`` retornar (potencialmente lista, string, etc.).
+# Para preservar bit-a-bit esse comportamento histórico, mantemos a
+# implementação local em vez de delegar para ``load_yaml_checkpoint``.
+
+
 def _save_checkpoint(cp: _InitCheckpoint) -> None:
-    path = _checkpoint_path(Path(cp.project_root))
-    ensure_dir(path.parent)
-    write_yaml(
-        path,
+    _save_yaml_checkpoint_io(
+        _checkpoint_path(Path(cp.project_root)),
         {
             "schema-version": 1,
             "step": cp.step,
@@ -130,8 +161,8 @@ def _save_checkpoint(cp: _InitCheckpoint) -> None:
             "preset": cp.preset,
             "selected-card-names": cp.selected_card_names,
             "backend-choice": cp.backend_choice,
+            "intent-id": cp.intent_id,
         },
-        atomic=True,
     )
 
 
@@ -139,23 +170,22 @@ def _load_checkpoint(project_root: Path) -> dict[str, Any] | None:
     path = _checkpoint_path(project_root)
     if not path.exists():
         return None
-    return read_yaml_or_default(path, None)
+    data = read_yaml_or_default(path, None)
+    if not isinstance(data, dict):
+        return None
+    return data
 
 
 def _clear_checkpoint(project_root: Path) -> None:
-    path = _checkpoint_path(project_root)
-    if path.exists():
-        try:
-            path.unlink()
-        except OSError:
-            pass
+    _clear_checkpoint_io(_checkpoint_path(project_root))
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    """ISO-8601 UTC timestamp — thin shim sobre ``engine.utils.iso``."""
+    return _utc_now_iso_shared()
 
 
 def _is_git_repo(root: Path) -> bool:
@@ -917,13 +947,42 @@ def _run_pipeline(project_root: Path) -> int:
         # Decision 27 — sempre 3 caminhos em gate violation legítimo. Resume
         # completo entra plenamente em Phase 5+; por enquanto resume = restart
         # mantendo o checkpoint pra audit, discard apaga, abort sai sem tocar.
+        #
+        # DRIFT-1 W2.T3b — persist intent-id da pergunta de resume ANTES de
+        # invocar ``ui_question.ask``. Mantemos o resto do payload do
+        # checkpoint anterior intacto (preset, selected_card_names,
+        # backend_choice) — so atualizamos o campo intent_id. Re-invocacao
+        # apos exit 2 consome o response correspondente sem re-perguntar.
+        _resume_options = {
+            "resume": "começar do zero mantendo o checkpoint como audit",
+            "discard": "apagar o checkpoint e começar limpo",
+            "abort": "sair sem mexer em nada",
+        }
+        _save_checkpoint(
+            _InitCheckpoint(
+                step=str(existing_checkpoint.get("step") or "step-1-greeting"),
+                at=_utc_now_iso(),
+                project_root=str(project_root),
+                preset=existing_checkpoint.get("preset"),
+                selected_card_names=list(
+                    existing_checkpoint.get("selected-card-names") or []
+                ),
+                backend_choice=existing_checkpoint.get("backend-choice"),
+                intent_id=ui_question.stable_intent_id(
+                    "ask",
+                    "Resume de init pendente?",
+                    _resume_options,
+                    extra={
+                        "default": "discard",
+                        "min-selected": None,
+                        "validator-hint": None,
+                    },
+                ),
+            )
+        )
         resume_choice = ui_question.ask(
             "Resume de init pendente?",
-            {
-                "resume": "começar do zero mantendo o checkpoint como audit",
-                "discard": "apagar o checkpoint e começar limpo",
-                "abort": "sair sem mexer em nada",
-            },
+            _resume_options,
             default="discard",
         )
         if resume_choice == "discard":

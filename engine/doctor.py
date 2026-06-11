@@ -32,7 +32,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from engine.cards.snapshotter import compute_directory_sha256
 from engine.memory.l1 import list_active_features, list_archived_features
@@ -43,6 +43,7 @@ from engine.utils.paths import (
     ProjectRootNotFoundError,
     cards_dir,
     claude_dir,
+    ensure_dir,
     find_project_root,
     forge_home,
     graph_db_path,
@@ -52,7 +53,19 @@ from engine.utils.paths import (
     memory_l2_path,
     workflow_config_path,
 )
-from engine.utils.yaml_io import YamlIOError, bak_age_days, read_yaml, write_yaml
+from engine.utils.yaml_io import (
+    YamlIOError,
+    bak_age_days,
+    read_yaml,
+    read_yaml_or_default,
+    write_yaml,
+)
+from engine.utils.checkpoint_io import (
+    clear_checkpoint as _clear_checkpoint_io,
+    load_yaml_checkpoint as _load_yaml_checkpoint_io,
+    save_yaml_checkpoint as _save_yaml_checkpoint_io,
+)
+from engine.utils.iso import utc_now_iso as _utc_now_iso_shared
 
 from engine import __version__ as FORGE_VERSION
 
@@ -90,6 +103,107 @@ class _CategoryReport:
         return _STATUS_OK
 
 
+# ── Checkpoint (DRIFT-1 W2.T3b — intent-resume, outcome C) ───────────────────
+#
+# Per the T3a audit (.planning/drift-1/checkpoint-audit.json,
+# action="add-new", reuse_path="init-pattern"), doctor needs a minimal
+# checkpoint so the host can pause at the ``scope`` ask and re-invoke
+# cleanly. Mirrors ``_InitCheckpoint`` at ``engine/init.py:100-108`` —
+# per-subcommand dataclass, no import from ``engine.qa.checkpoint``
+# (Decision 22 + outcome C lock-in).
+#
+# Doctor has a single interactive prompt today (``scope`` full/quick),
+# but intent-resume is the protocol universal: persisting handler state
+# before any ``question.ask*`` call lets the host write a matching
+# response and re-invoke without re-asking. ``intent_id`` keys the
+# correlation with ``forge-response.json``.
+#
+# Refs:
+#   - docs/superpowers/specs/drift-1-intent-protocol.md §3, §5, §8
+#   - engine/init.py:100-108 (canonical template)
+
+
+@dataclass
+class _DoctorCheckpoint:
+    """State serialized before each ``question.ask*`` call in ``doctor.run``.
+
+    Re-invocation after exit-2 reads this back, picks up where the prompt
+    left off, and either consumes the matching ``forge-response.json``
+    (when present) or re-emits pending and exits 2 again.
+    """
+
+    step: str
+    at: str
+    project_root: str
+    intent_id: str | None = None
+
+
+def _doctor_checkpoint_path(project_root: Path) -> Path:
+    return claude_dir(project_root) / ".doctor-checkpoint.yaml"
+
+
+# Os 4 helpers abaixo são thin shims sobre ``engine.utils.checkpoint_io`` +
+# ``engine.utils.iso`` — consolidação dos 30 duplicates + 10 cópias de
+# ``_utc_now_iso_*`` apontada pelos findings #5 e #21 do master review do
+# PR #11. Os nomes ``_save_doctor_checkpoint`` / ``_load_doctor_checkpoint``
+# / ``_clear_doctor_checkpoint`` / ``_utc_now_iso_doctor`` permanecem como
+# API privada do módulo para preservar os contracts dos testes em
+# ``tests/unit/test_engine_doctor_resume.py`` (Mandamento #2 — verde).
+
+
+def _save_doctor_checkpoint(cp: _DoctorCheckpoint) -> None:
+    """Persist the doctor checkpoint atomically."""
+    _save_yaml_checkpoint_io(
+        _doctor_checkpoint_path(Path(cp.project_root)),
+        {
+            "schema-version": 1,
+            "step": cp.step,
+            "at": cp.at,
+            "project-root": cp.project_root,
+            "intent-id": cp.intent_id,
+        },
+    )
+
+
+def _load_doctor_checkpoint(project_root: Path) -> dict[str, Any] | None:
+    """Read the doctor checkpoint, returning ``None`` when absent."""
+    return _load_yaml_checkpoint_io(_doctor_checkpoint_path(project_root))
+
+
+def _clear_doctor_checkpoint(project_root: Path) -> None:
+    """Remove the checkpoint — best-effort; silent on OSError (idempotent)."""
+    _clear_checkpoint_io(_doctor_checkpoint_path(project_root))
+
+
+def _utc_now_iso_doctor() -> str:
+    """ISO-8601 UTC timestamp — thin shim sobre ``engine.utils.iso``."""
+    return _utc_now_iso_shared()
+
+
+def _doctor_scope_intent_id() -> str:
+    """Deterministic intent-id for the canonical scope ask.
+
+    Pre-computed so the handler can record it on the checkpoint BEFORE
+    calling ``question.ask`` — preserves the invariant in
+    ``docs/superpowers/specs/drift-1-intent-protocol.md §3`` that the
+    pending intent points at state already on disk.
+    """
+    options = {
+        "full": "checa tudo (~8s)",
+        "quick": "só o crítico — config + cards + L2 size (~2s)",
+    }
+    return question.stable_intent_id(
+        "ask",
+        "Qual scope?",
+        options,
+        extra={
+            "default": "full",
+            "min-selected": None,
+            "validator-hint": None,
+        },
+    )
+
+
 # ── Public API ───────────────────────────────────────────────────────────────
 
 
@@ -106,6 +220,22 @@ def run(argv: list[str]) -> int:
     renderer.write(renderer.bold("forge doctor — health check"))
     renderer.write(renderer.dim("Read-only. Nada vai ser modificado."))
     renderer.write("")
+
+    # DRIFT-1 W2.T3b — intent-resume: persist checkpoint with the deterministic
+    # intent-id for the scope ask BEFORE invoking ``question.ask``. If the
+    # engine pauses (no response on disk), the chokepoint raises
+    # ``PausedForInputError`` and ``cli.main`` exits 2; on re-invocation
+    # ``question.ask`` finds the matching ``forge-response.json`` and returns
+    # the value without re-prompting. Outcome C — per-subcommand dataclass,
+    # no import from ``engine.qa.checkpoint``.
+    _save_doctor_checkpoint(
+        _DoctorCheckpoint(
+            step="step-scope-ask",
+            at=_utc_now_iso_doctor(),
+            project_root=str(project_root),
+            intent_id=_doctor_scope_intent_id(),
+        )
+    )
 
     try:
         scope = question.ask(
@@ -160,6 +290,13 @@ def run(argv: list[str]) -> int:
         exit_code=code,
         overall_status=overall_status,
     )
+
+    # DRIFT-1 W2.T3b — clear the intent-resume checkpoint on clean completion.
+    # Invalid response branches (ValueError raised by ``question.ask``) leave
+    # the checkpoint in place per SPEC §3 forensic preservation; only the
+    # happy path apaga, espelhando o contract de ``_clear_state`` em
+    # ``engine.ui.question``.
+    _clear_doctor_checkpoint(project_root)
 
     return code
 

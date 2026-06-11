@@ -1,0 +1,82 @@
+[
+  {
+    "module": "engine/plan.py",
+    "interactive_callsites": 10,
+    "checkpoint_status": "missing",
+    "action": "add-new",
+    "reuse_path": "init-pattern",
+    "reason": "10 callsites reais (ask/ask_text/ask_three_paths em readiness + duplicação + escopo). Sem checkpoint dataclass nem helpers. T3b vai criar _PlanCheckpoint analoga a _InitCheckpoint (engine/init.py:100-108) per W2.T0 outcome C, com campos especificos do fluxo plan (feature-id, phase corrente, escolhas readiness)."
+  },
+  {
+    "module": "engine/implement.py",
+    "interactive_callsites": 7,
+    "checkpoint_status": "missing",
+    "action": "add-new",
+    "reuse_path": "init-pattern",
+    "reason": "7 callsites reais (ask_three_paths em out-of-scope-edit + ask_text/confirm em apply-or-revert). Sem checkpoint dataclass. T3b vai criar _ImplementCheckpoint analoga a _InitCheckpoint (engine/init.py:100-108) per outcome C, capturando feature-id + fase de implementacao + commits pendentes."
+  },
+  {
+    "module": "engine/verify.py",
+    "interactive_callsites": 2,
+    "checkpoint_status": "missing",
+    "action": "add-new",
+    "reuse_path": "init-pattern",
+    "reason": "2 callsites reais (question.ask em selecao de feature ativa quando ha mais de uma). Sem checkpoint. Embora superficie interativa seja pequena, intent-resume e protocolo universal — T3b cria _VerifyCheckpoint enxuto analogo a _InitCheckpoint (engine/init.py:100-108) per outcome C."
+  },
+  {
+    "module": "engine/reconfigure.py",
+    "interactive_callsites": 40,
+    "checkpoint_status": "missing",
+    "action": "add-new",
+    "reuse_path": "init-pattern",
+    "reason": "40 callsites reais — maior superficie interativa entre os 10 modulos (cards add/remove/upgrade, schedules, presets, workflow-config). Sem checkpoint. T3b vai criar _ReconfigureCheckpoint analoga a _InitCheckpoint (engine/init.py:100-108) per outcome C, capturando submenu atual + escolhas parciais."
+  },
+  {
+    "module": "engine/evolve.py",
+    "interactive_callsites": 3,
+    "checkpoint_status": "already-has",
+    "action": "extend",
+    "reuse_path": "init-pattern",
+    "reason": "3 callsites reais (ask em proposal-action menu + ask_text em motivo/id). Ja tem checkpoint completo (_write_checkpoint:55 / _read_checkpoint:73 / _clear_checkpoint:81 + _CHECKPOINT_FILE:43) com mesma forma que _InitCheckpoint (engine/init.py:100-108) — payload dict via write_yaml atomico. Porem o checkpoint atual e chaveado por L2-overflow + remaining-proposal-ids, NAO por intent_id. T3b vai estender o payload existente com campos de intent-resume (sem criar dataclass nova — extende o dict)."
+  },
+  {
+    "module": "engine/undo.py",
+    "interactive_callsites": 16,
+    "checkpoint_status": "missing",
+    "action": "add-new",
+    "reuse_path": "init-pattern",
+    "reason": "16 callsites reais — segunda maior superficie (confirm em multiplos passos destrutivos 1ª/2ª/3ª, ask em proposal/abort flows, ask_text em razoes). Sem checkpoint. T3b cria _UndoCheckpoint analoga a _InitCheckpoint (engine/init.py:100-108) per outcome C, capturando target atual + nivel de confirmacao alcancado."
+  },
+  {
+    "module": "engine/memory_cli.py",
+    "interactive_callsites": 11,
+    "checkpoint_status": "missing",
+    "action": "add-new",
+    "reuse_path": "init-pattern",
+    "reason": "11 callsites reais (ask/ask_text em search/inspect/delete, confirm em delete destrutivo 1ª/2ª). Sem checkpoint. T3b cria _MemoryCliCheckpoint analoga a _InitCheckpoint (engine/init.py:100-108) per outcome C, capturando subcomando atual + L2 entry-id pendente."
+  },
+  {
+    "module": "engine/graph_cli.py",
+    "interactive_callsites": 7,
+    "checkpoint_status": "missing",
+    "action": "add-new",
+    "reuse_path": "init-pattern",
+    "reason": "7 callsites reais (ask_text em nomes/paths para inspect-and-classify + ask em selecao de modo). Sem checkpoint. T3b cria _GraphCliCheckpoint analoga a _InitCheckpoint (engine/init.py:100-108) per outcome C, capturando subcomando + estado parcial de classificacao."
+  },
+  {
+    "module": "engine/doctor.py",
+    "interactive_callsites": 1,
+    "checkpoint_status": "missing",
+    "action": "add-new",
+    "reuse_path": "init-pattern",
+    "reason": "1 callsite real (question.ask em scope full/quick antes do report read-only). Sem checkpoint. Superficie minima — depois da escolha o fluxo e puro relatorio sem mais prompts. T3b cria _DoctorCheckpoint minimalista analoga a _InitCheckpoint (engine/init.py:100-108) per outcome C, capturando apenas o scope-id pendente (intent-resume e protocolo universal, nao opcional)."
+  },
+  {
+    "module": "engine/init.py",
+    "interactive_callsites": 7,
+    "checkpoint_status": "already-has",
+    "action": "extend",
+    "reuse_path": "init-pattern",
+    "reason": "7 callsites reais (ask em preset/backend/qa-flow + ask_multi em cards + confirm em qa-enable). Ja tem _InitCheckpoint:100-108 — o template canonico de outcome C. Porem o dataclass atual carrega step/at/project_root/preset/selected_card_names/backend_choice mas NAO carrega intent_id keying pra resume de PausedForInputError mid-step. T3b avalia se basta estender _InitCheckpoint com campo intent_id ou se ja e suficiente — escolha conservadora de marcar extend em vez de skip pra T3b confirmar compatibilidade."
+  }
+]

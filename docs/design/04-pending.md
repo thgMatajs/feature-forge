@@ -13,6 +13,95 @@ checklist for next sessions.
   `.claude/rules/plan-auditor.md` + integração — ver CHANGELOG
   `[Unreleased]`. Spec: `docs/superpowers/specs/2026-06-04-plan-auditor-design.md`.
 
+### DRIFT-1 — Intent Protocol (Engine intent-only + tty_bridge)
+
+- **Branch:** `feat/drift-1-intent-protocol`
+- **SPEC:** `docs/superpowers/specs/drift-1-intent-protocol.md`
+- **PLAN:** `docs/superpowers/plans/drift-1-intent-protocol.md`
+- **Resumo:** engine deixa de ler stdin diretamente; emite intent via
+  state files (`.claude/state/forge-pending.json` /
+  `forge-response.json`); `engine/ui/tty_bridge.py` faz fallback TTY
+  subprocess loop; `bin/forge` dispatcher detecta contexto via TTY +
+  env `CLAUDECODE`. Exit code 2 = paused-for-input; exit 130 =
+  UserCancelledError / KeyboardInterrupt; exit 0/1 preservados.
+  AC-1..AC-9 verificados em 15 integration + 3 e2e pty tests.
+- **21 commits** (range `1b1d289..50203f3`) cobrindo W1 (foundation),
+  W2 (chokepoint refactor + 10/10 intent-resume), W3 (tty_bridge),
+  W4 (bin/forge dispatcher + hooks audit), W5 (integration + e2e
+  tests), W6 (este doc-sync).
+
+### Findings pós DRIFT-1 (a revisitar)
+
+Follow-ups capturados durante Phase A pra reentrar quando dados
+justificarem. Cada um tem critério explícito.
+
+- **Race detection via `fcntl.flock`** — `engine/ui/intent_state.py`
+  hoje detecta race via timestamp `created-at` (> 10 min = stale,
+  varre; ≤ 10 min = erro mentor calmo apontando PID). Lock real via
+  `fcntl.flock` foi considerado e deferido. Critério pra reentrar:
+  race aparecer em produção (orquestrador OR usuário tropeçando em
+  pending recente de outra sessão).
+- **`_XxxCheckpoint` promotion pra `engine.utils.checkpoint`** —
+  W2-FU-4 já documentado em `## Phase A W2 — Code review follow-ups`
+  abaixo. Outcome C lockou per-subcommand dataclass (10 ocorrências);
+  promoção a shared só se 3+ subcommands materializarem shape
+  idêntico em waves futuras (DRIFT-2+ ou v1.3).
+- **`engine.utils.paths.state_dir()` promotion** — `intent_state.py`
+  define `_state_dir(project_root)` privado (`.claude/state/`).
+  Promote-to-shared quando ≥2 consumidores aparecerem. Hoje é único.
+- **`PromptAbortedError` dead-code cleanup em 10 callsite modules** —
+  W2-FU-3 já documentado. Cleanup cross-cutting (10 subcommands)
+  agendado pra sessão dedicada pós-W6 OU callsite-migration task
+  futura. Remover agora arrisca quebrar hosts não-Claude-Code que
+  dependiam do legacy raise.
+- **W4-FU env var name `CLAUDECODE`** — confirmado empiricamente vs
+  Claude Code 2.1.153 em W4-FU (commit `b149678`). Revisitar se
+  Claude Code renomear OU expor distinção main-vs-subagent oficial
+  no hook protocol (já gap separado em `.claude/rules/doc-sync.md`
+  §Per-tool-use Mandamento 0 block).
+
+
+### Follow-ups pós-master-review PR #11 (2026-06-11)
+
+Findings #1..#28 endereçados em Wave 1+2 (10 commits sobre `e992e01`,
+range `ad49c40..626a4f0`). Cinco follow-ups deliberadamente deferidos
+ficam aqui — todos têm critério explícito pra reentrar.
+
+- **FU-DRIFT-1-LOCK** (P3) — lock file real via `fcntl.flock` para race
+  detection hard. SPEC §9 já mapeia o gap como DEFERIDO. Próximo passo:
+  implementar `.claude/state/.forge-pending.lock`. Disparar quando race
+  genuíno surgir em produção (concurrency test atual em
+  `tests/integration/test_intent_state_concurrency.py` documenta a
+  TOCTOU window mas não bloqueia merge — o protocolo é single-writer
+  por design hoje).
+- **FU-DRIFT-1-DEPRECATE-INTENT-ID-ALIAS** (P2) — remover alias
+  deprecated `_stable_intent_id = stable_intent_id` em
+  `engine/ui/question.py` na v1.3. Hoje preserva 4 test files
+  referenciando o nome antigo (`test_ui_question_intent.py` e
+  similares). Critério: bump pra v1.3 + migration dos 4 testes em uma
+  task dedicada.
+- **FU-DRIFT-1-CHECKPOINT-CONSOLIDATE** (P3) — shim de 1-linha por
+  módulo nos 10 command handlers (init, plan, implement, verify,
+  reconfigure, evolve, undo, memory_cli, graph_cli, doctor) ainda
+  existe para preservar API pública dos tests. Wave 1 fix #5 já moveu
+  o helper canônico pra `engine/utils/checkpoint_io.py`. Próxima major
+  version pode deletar os wrappers e atualizar os tests pra importar
+  direto do shared module. Critério: rodada de cleanup pós-DRIFT-2 OU
+  v1.3.
+- **FU-DRIFT-1-OBS** (P3) — observability channel pra `tty_bridge`.
+  Module docstring atual referencia "engine can log 'we are driving
+  this from a TTY fallback'" — não cumprido. Fix #14 removeu a env var
+  dead (`FORGE_INTERNAL_TTY_BRIDGE`); reentrada quando
+  `engine.utils.log` emergir como módulo de logging estruturado (hoje
+  o projeto não tem log infrastructure formal).
+- **FU-DRIFT-1-VERIFY-ISO** (P3) — `engine/verify.py::_utc_now_iso()`
+  usa `.isoformat()` com microseconds, semantically distinto do shared
+  helper `engine.utils.iso.utc_now_iso` que trunca pra seconds. Fix #21
+  consolidou os 10 outros usos mas verify.py ficou de fora — migração
+  mudaria shape de checkpoint files do `forge verify`. Diferir até bump
+  de schema-version do verify checkpoint (não há schema-version formal
+  hoje, então o bump abre o caminho).
+
 ### Gaps abertos pós plan-auditor v1
 
 Deferidos no spec `docs/superpowers/specs/2026-06-04-plan-auditor-design.md`
@@ -2321,6 +2410,83 @@ script tenta `ln .git/hooks/pre-commit` que falha com "Not a directory".
 
 Fix: `bootstrap.sh` detectar worktree via `git rev-parse --git-dir` antes de
 criar symlink — resolve gitdir real. Out-of-scope Phase 0; valid follow-up.
+
+## Phase A W2 — Code review follow-ups (DRIFT-1 intent protocol, 2026-06-10) (resolved by Phase A — see "Fechado em [Unreleased]")
+
+Itens identificados durante o fix-loop dos 10 findings do REVIEW de W2.T1+T2
+(`.planning/drift-1-w2-review/REVIEW.md`) + integração T3b nos 10 subcommands.
+Cada um é decisão consciente de não-fazer-em-W2, com critério explícito pra
+reentrar. Referência cruzada: SPEC §5 (tabela final 10/10) +
+`.planning/drift-1/checkpoint-audit.json`.
+
+### W2-FU-1 — Docstring count drift em `test_ui_question_api_signatures.py`
+
+**Categoria:** test-docs
+**Severidade:** baixa (cosmético — não afeta behavior nem coverage)
+**Status:** deferred (próxima task que tocar o arquivo)
+
+`tests/unit/test_ui_question_api_signatures.py` cita "125 callsites" na docstring,
+herdada de pre-W2 grep. O número atual após o refactor é 108 callsites (mensurado
+em rapid lane pós-W2). O REVIEW fixer não atualizou porque o arquivo ficou fora
+do FILE BUDGET do dispatch — touch fora do escopo do fix-loop.
+
+**Por que defer:** atualizar exige re-medir e justificar metodologia (grep
+pattern, scope dirs, exclusões); fora do escopo de doc-sync. Próxima task que
+tocar o arquivo reconcilia o número ou substitui por "verificado contra
+codebase atual em <data>".
+
+### W2-FU-2 — TDD shape sem commit RED separado em commits 90d1463 / 9980f41
+
+**Categoria:** process-learning
+**Severidade:** baixa (process drift, não bug)
+**Status:** acknowledged (não retrofit; aplicar regra prospectivamente)
+
+REVIEW finding MD-003 apontou que os dois commits maiores do W2 (90d1463
+question.py refactor, 9980f41 cli.py exit handler) carregaram test + impl no
+mesmo commit em vez de RED commit separado. TDD shape do projeto pede commit
+de teste falhando ANTES da implementação (rule `testing.md` §Para feature).
+
+**Por que defer (não retrofit):** rewriting história pós-merge no W2 não vale o
+ruído; aprendizado é prospectivo. Em refactors >300 LOC futuros (W3+? W5
+integration?), executor deve fazer commit RED separado obrigatoriamente — o
+context-pack do dispatch precisa exigir explicitamente. Anotado aqui pra
+reentrar em retrospective do branch quando W6 fechar.
+
+### W2-FU-3 — `PromptAbortedError` preservada como legacy export inerte
+
+**Categoria:** dead-code-scaffolding
+**Severidade:** baixa (cleanup, não afeta runtime)
+**Status:** deferred (callsite-migration de W3+ ou sessão de cleanup pós-W6)
+
+Os 10 callsite modules integrados em T3b mantêm `except PromptAbortedError:`
+scaffolding herdado do pre-W2. No path intent-only atual, a sentinel é
+preservada como re-export de `engine/ui/question.py` mas nunca raised internally
+— os except blocks são dead code que silencia uma exceção que não chega a
+ocorrer.
+
+**Por que defer:** cleanup cross-cutting toca os 10 subcommands; faz sentido
+fechar junto com callsite-migration task (W3+) ou em sessão dedicada de cleanup
+pós-W6 quando todas as migrações estabilizarem. Remover agora arrisca quebrar
+hosts não-Claude-Code que dependiam do legacy raise.
+
+### W2-FU-4 — Outcome C revisitable se 3º+ subcommand emergir com pattern similar
+
+**Categoria:** decision-direcional
+**Severidade:** baixa (revisita programada, não débito ativo)
+**Status:** deferred (gatilho de dados — 3+ ocorrências)
+
+W2.T0 lockou outcome C (per-subcommand `_<Module>Checkpoint` dataclass + 3
+helpers + path resolver) em vez de promover pra `engine/utils/checkpoint.py`
+shared module. Decisão consciente: pattern apareceu em 10 subcommands MAS com
+shape suficientemente variável (campos diferentes por handler) pra que abstração
+prematura custasse mais que copy. Decision 22 (no runtime deps inter-skills)
+não força mudança, mas regra de reuse (Mandamento #3) pede revisita se padrão
+muito similar emergir 3+x nas próximas waves.
+
+**Critério pra reentrar:** se W3-W6 (ou DRIFT-2+) adicionarem 3+ subcommands
+com mesma shape de campos (intent_id + 2-3 campos contextuais + breadcrumb),
+abrir brainstorming pra promote-to-shared. Senão, manter pattern atual e
+revisitar em retrospective de v1.3+.
 
 ## v1.2-dev pilot 2026-06-10 — findings + phase sequencing
 

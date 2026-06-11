@@ -113,3 +113,27 @@ algo trivial mas acaba mexendo em algo load-bearing.
 Se a fricção começar a empatar produtividade, anote em
 `docs/design/04-pending.md` como gap pra revisitar Mandamento 0 em
 versão futura. Mas não burle por conta própria.
+
+## Quando subagent invoca `forge`
+
+Phase A DRIFT-1 (v1.2-dev, 2026-06-10) introduziu exit code 2
+(paused-for-input) no contract de `forge`. Se subagent invoca `forge`
+e recebe exit 2:
+
+- É **contrato, não erro**. Engine emitiu pending JSON em
+  `.claude/state/forge-pending.json` e aguarda response em
+  `.claude/state/forge-response.json`.
+- Subagent SOZINHO **NÃO** deve ler pending + escrever response. Esse
+  loop é responsabilidade do orquestrador (Claude Code host nativo OR
+  `engine.ui.tty_bridge` em fallback TTY). Subagent fechar o loop
+  unilateralmente viola disciplina de escopo e pode pular gates que
+  o host real aplicaria (e.g., 3-caminhos canônico em `ask_three_paths`).
+- Subagent reporta exit 2 + path do pending no output report. O
+  orquestrador (humano OR Claude Code top-level) decide o handling.
+
+Exit 130 (UserCancelledError / KeyboardInterrupt) é terminal: subagent
+trata como abort do usuário e reporta normalmente.
+
+Schema dos state files: `docs/schemas/intent-protocol.md`. Contrato
+canônico de exit codes: `docs/design/06-command-surface.md §Exit codes`.
+Spec: `docs/superpowers/specs/drift-1-intent-protocol.md` §4 + §6.
