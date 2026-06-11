@@ -23,6 +23,7 @@ from .._sandbox.env import is_sensitive
 from ..utils.paths import forge_home
 from ..utils.yaml_io import YamlIOError, read_yaml
 from . import CardError, CardConflictError
+from ._signal_shapes import parse_gradle_coordinate
 
 # ── Canonical catalog (hardcoded, FOLLOWUP: parse capability-labels.md) ──────
 
@@ -665,29 +666,22 @@ def validate_card_yaml(manifest_dict: dict[str, Any], source_path: Path) -> list
                 # `coordinate` deve ser string `<group>:<artifact>` sem versão
                 # sufixada e sem espaços (introduzido em DET-3 / 2026-06-10).
                 # Note: ID alocado como CARD-020 porque CARD-019 já é usado
-                # por `legacy-marker` (Gap 5).
+                # por `legacy-marker` (Gap 5). Shape check delegado pro
+                # helper compartilhado `parse_gradle_coordinate`
+                # (B-3 from PR #11 review — reuse-first, deduplica lógica
+                # com `engine/init._eval_gradle_dep`).
                 if sig.get("type") == "gradle-dep":
                     coord = sig.get("coordinate")
-                    if not isinstance(coord, str) or not coord:
-                        violations.append(
-                            "CARD-020: gradle-dep signal requires `coordinate` (string)"
-                        )
-                    elif coord.count(":") != 1:
-                        violations.append(
-                            f"CARD-020: gradle-dep coordinate must be `<group>:<artifact>` "
-                            f"(got {coord!r})"
-                        )
-                    elif any(c.isspace() for c in coord):
-                        violations.append(
-                            f"CARD-020: gradle-dep coordinate must not contain whitespace "
-                            f"(got {coord!r})"
-                        )
-                    else:
-                        group, _, artifact = coord.partition(":")
-                        if not group or not artifact:
+                    if parse_gradle_coordinate(coord) is None:
+                        if not isinstance(coord, str) or not coord:
                             violations.append(
-                                f"CARD-020: gradle-dep coordinate missing group or "
-                                f"artifact (got {coord!r})"
+                                "CARD-020: gradle-dep signal requires `coordinate` (string)"
+                            )
+                        else:
+                            violations.append(
+                                f"CARD-020: gradle-dep coordinate must be "
+                                f"`<group>:<artifact>` without whitespace "
+                                f"(got {coord!r})"
                             )
             # CARD-016 hard-fail: confidence_sum > 2.0 indica detection over-stacked.
             # Cards reais devem manter sinais ortogonais — somar > 2.0 sinaliza

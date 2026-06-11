@@ -51,6 +51,7 @@ from engine.cards.grant import (
     evaluate_sensitive_grants,
 )
 from engine.cards.loader import load_all_cards, CardManifest
+from engine.cards._signal_shapes import parse_gradle_coordinate
 from engine.cards.merger import merge_contributions
 from engine.cards.resolver import resolve
 from engine.cards.snapshotter import snapshot_card
@@ -667,14 +668,22 @@ def _module_matches_coordinate(module: str, coordinate: str) -> bool:
     aparece `module = "group:artifact:version"` (B-2). Compara apenas
     os 2 primeiros segments split por `:`; preserva comportamento
     canônico `module == coordinate` para a forma de 2 segments.
+
+    Usa `parse_gradle_coordinate` no lado `coordinate` (shape canônica
+    `<group>:<artifact>` validado pelo loader CARD-020). Quando o
+    helper retorna `None`, cai pra fallback string-exato — não introduz
+    comportamento novo, só dedupe (B-3 from PR #11 review).
     """
     if module == coordinate:
         return True
-    mod_parts = module.split(":")
-    coord_parts = coordinate.split(":")
-    if len(mod_parts) < 2 or len(coord_parts) != 2:
+    coord_parsed = parse_gradle_coordinate(coordinate)
+    if coord_parsed is None:
         return False
-    return mod_parts[0] == coord_parts[0] and mod_parts[1] == coord_parts[1]
+    mod_parts = module.split(":")
+    if len(mod_parts) < 2:
+        return False
+    coord_group, coord_artifact = coord_parsed
+    return mod_parts[0] == coord_group and mod_parts[1] == coord_artifact
 
 
 def _scan_build_gradle_for_coordinate(project_root: Path, coordinate: str) -> bool:
@@ -753,13 +762,14 @@ def _eval_gradle_dep(project_root: Path, coordinate: str | None) -> bool:
 
     Format aceito do `coordinate`: `<groupId>:<artifactId>` sem version,
     sem espaços. Shape validation acontece em `engine/cards/loader.py`
-    (regra CARD-020); aqui aceitamos None/vazio defensivamente.
+    (regra CARD-020); aqui usamos o helper compartilhado
+    `parse_gradle_coordinate` e retornamos `False` silenciosamente em
+    qualquer shape inválida (B-3 from PR #11 review).
     """
-    if not coordinate or not isinstance(coordinate, str) or ":" not in coordinate:
+    parsed = parse_gradle_coordinate(coordinate)
+    if parsed is None:
         return False
-    group, _, artifact = coordinate.partition(":")
-    if not group or not artifact:
-        return False
+    group, artifact = parsed
 
     # 1) Catálogo TOML (path canônico gradle/*.versions.toml) — cached por
     # project_root (B-1) e match prefix-tolerant em `module` (B-2).
