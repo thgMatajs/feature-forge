@@ -162,12 +162,13 @@ def _save_checkpoint(cp: _InitCheckpoint) -> None:
 
 
 def _load_checkpoint(project_root: Path) -> dict[str, Any] | None:
-    # Preserva o contract original (sem isinstance-check defensivo) que os
-    # testes em ``tests/unit/test_engine_init_resume.py`` herdaram.
     path = _checkpoint_path(project_root)
     if not path.exists():
         return None
-    return read_yaml_or_default(path, None)
+    data = read_yaml_or_default(path, None)
+    if not isinstance(data, dict):
+        return None
+    return data
 
 
 def _clear_checkpoint(project_root: Path) -> None:
