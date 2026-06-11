@@ -177,6 +177,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     handler = _resolve(cmd)
+    # Lazy imports — keeps cli.main decoupled from foundation modules
+    # until a control-flow path actually needs them, and matches the
+    # lazy-import pattern already used by `_resolve` for command modules.
+    # PR #11 review finding #1: surface `RaceDetectedError`,
+    # `IntentMismatchError` (de `engine.ui.intent_state`) e `JsonIOError`
+    # (de `engine.utils.json_io`) como exit 1 com mensagem mentor-calmo,
+    # em vez de deixar o traceback Python cru vazar.
+    from engine.ui import intent_state
+    from engine.utils import json_io
     # HI-002 fix: publish (command, command-args) on the contextvar so
     # ``engine.ui.question._command_context`` can return the argv this
     # call to ``main`` received, even when ``sys.argv`` belongs to a
@@ -214,6 +223,23 @@ def main(argv: list[str] | None = None) -> int:
             # this point. We just report cleanly and exit 130 (POSIX SIGINT).
             sys.stderr.write("\n— interrompido, estado salvo.\n")
             return 130
+        except (
+            intent_state.RaceDetectedError,
+            intent_state.IntentMismatchError,
+        ) as exc:
+            # PR #11 review #1 — DRIFT-1 intent-protocol sentinels carregam
+            # mensagem mentor-calmo em ``exc.args[0]``. Sem este catch a
+            # mensagem nunca chega ao usuário; em vez disso vaza traceback
+            # cru, contrariando SPEC §3/§8 ("emite mensagem clara e exita 1").
+            sys.stderr.write(f"{exc}\n")
+            return 1
+        except json_io.JsonIOError as exc:
+            # PR #11 review #1 — falha ao decodificar state files
+            # (.claude/state/forge-pending.json ou forge-response.json) é
+            # erro de I/O, não bug interno do engine. Reportar limpo e
+            # sair 1 em vez de traceback.
+            sys.stderr.write(f"forge: erro de I/O lendo state file: {exc}\n")
+            return 1
         return int(result) if isinstance(result, int) else 0
     finally:
         _cli_command_context.reset(token)

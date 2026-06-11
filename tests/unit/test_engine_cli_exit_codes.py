@@ -24,11 +24,13 @@ import pytest
 
 import engine.cli as cli_module
 from engine.cli import main
+from engine.ui.intent_state import IntentMismatchError, RaceDetectedError
 from engine.ui.question import (
     PausedForInputError,
     UserCancelledError,
     UserPausedError,
 )
+from engine.utils.json_io import JsonIOError
 
 
 def _stub_handler(monkeypatch, handler):
@@ -188,5 +190,71 @@ def test_paused_response_does_not_print_traceback(monkeypatch, capsys):
     rc = main(["plan"])
     captured = capsys.readouterr()
     assert rc == 2
+    assert "Traceback" not in captured.err
+    assert "Traceback" not in captured.out
+
+
+# --- exit 1 via intent-state + json_io errors (PR #11 review #1) -----------
+#
+# DRIFT-1 SPEC §3/§8 promete "emite mensagem clara e exita 1" para falhas
+# de protocolo. Antes do fix do review, esses 3 erros vazavam traceback
+# Python cru no stderr antes do exit 1. cli.main agora os captura e
+# emite só a mensagem mentor-calmo carregada em ``exc.args[0]``.
+
+
+def test_main_exits_1_with_clean_message_on_race_detected(monkeypatch, capsys):
+    """Handler raising RaceDetectedError → exit 1, mensagem visível, sem traceback."""
+    message = (
+        "outra invocação do forge ainda está aguardando resposta "
+        "(PID 4242, intent-id 'abc123'). Aguarde a conclusão ou remova "
+        ".claude/state/forge-pending.json manualmente se a sessão "
+        "anterior abortou sem limpeza."
+    )
+
+    def handler(argv):
+        raise RaceDetectedError(message)
+
+    _stub_handler(monkeypatch, handler)
+    rc = main(["plan"])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert message in captured.err
+    assert "Traceback" not in captured.err
+    assert "Traceback" not in captured.out
+
+
+def test_main_exits_1_on_intent_mismatch(monkeypatch, capsys):
+    """Handler raising IntentMismatchError → exit 1, mensagem visível, sem traceback."""
+    message = (
+        "response intent-id mismatch — expected 'expected-id', got "
+        "'other-id'. File preserved at .claude/state/forge-response.json "
+        "for inspection."
+    )
+
+    def handler(argv):
+        raise IntentMismatchError(message)
+
+    _stub_handler(monkeypatch, handler)
+    rc = main(["plan"])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert message in captured.err
+    assert "Traceback" not in captured.err
+    assert "Traceback" not in captured.out
+
+
+def test_main_exits_1_on_json_io_error(monkeypatch, capsys):
+    """Handler raising JsonIOError → exit 1, prefixed mensagem, sem traceback."""
+    inner = "failed to parse JSON at /tmp/forge-pending.json: Expecting value: line 1 column 1 (char 0)"
+
+    def handler(argv):
+        raise JsonIOError(inner)
+
+    _stub_handler(monkeypatch, handler)
+    rc = main(["plan"])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "erro de I/O lendo state file" in captured.err
+    assert inner in captured.err
     assert "Traceback" not in captured.err
     assert "Traceback" not in captured.out
