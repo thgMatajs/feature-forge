@@ -399,7 +399,6 @@ quando relevante. Decisão deliberada do master-review PR #11 (Caminho A — ace
 tradeoff documentado). Follow-up FU-MR-1 em `docs/design/04-pending.md` captura
 o trigger pro schema-version bump quando demanda de `match: exact|prefix` opcional
 emergir.
-
 | `directory-exists` | `path: <relative>` |
 | `command-success` | `command: <string>` (rare, use sparingly) |
 

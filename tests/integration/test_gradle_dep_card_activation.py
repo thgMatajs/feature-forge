@@ -137,6 +137,9 @@ def test_ac5_ktor_client_does_not_activate_in_negative_fixture() -> None:
         f"ktor-client should NOT activate in negative fixture: "
         f"got score={score:.3f}, threshold={threshold:.3f}, matched={matched}"
     )
+    assert not matched, (
+        f"no signals should match in negative fixture, got matched={matched}"
+    )
 
 
 # ── AC-6 ────────────────────────────────────────────────────────────────────
