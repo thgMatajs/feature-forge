@@ -61,6 +61,26 @@ _KNOWN_CATEGORIES: frozenset[str] = frozenset(
     }
 )
 
+# Backend axes (subset de _KNOWN_CATEGORIES) — cards nesses axes podem ter
+# `provides: []` porque sua identidade vem do cell (axis, platform) no
+# workflow-config, não de label singular no catálogo. Phase B (DET-6) W3
+# removeu as labels singulares (`auth-provider`, `http-client`,
+# `crash-reporting`) — CARD-006 relax preserva a validade dos cards cuja
+# única singular label vivia nessas famílias (`ktor-client`, `retrofit-client`).
+# Ver docs/schemas/capability-labels.md §Migração v1.2 (DET-6).
+_BACKEND_AXIS_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "data",
+        "auth",
+        "observability",
+        "analytics",
+        "storage",
+        "persistence",
+        "notifications",
+        "flags",
+    }
+)
+
 _KNOWN_MATURITIES: frozenset[str] = frozenset(
     {"experimental", "beta", "stable", "deprecated"}
 )
@@ -585,10 +605,20 @@ def validate_card_yaml(manifest_dict: dict[str, Any], source_path: Path) -> list
             f"got {maturity!r}"
         )
 
+    # CARD-006: provides must be a list. Non-empty rule applies to stack/tooling
+    # cards; backend-axis cards (DET-6) may have `provides: []` because their
+    # identity is anchored by the (axis, platform) cell in workflow-config, not
+    # by a singular capability label in the catalog. Ver
+    # docs/schemas/capability-labels.md §Migração v1.2 (DET-6).
     provides = manifest_dict.get("provides")
-    if not isinstance(provides, list) or len(provides) == 0:
-        violations.append("CARD-006: provides must be a non-empty list")
+    if not isinstance(provides, list):
+        violations.append("CARD-006: provides must be a list")
     else:
+        if len(provides) == 0 and category not in _BACKEND_AXIS_CATEGORIES:
+            violations.append(
+                "CARD-006: provides must be non-empty for stack/tooling cards "
+                f"(category {category!r} is not a backend axis)"
+            )
         for label in provides:
             if not isinstance(label, str):
                 violations.append(f"CARD-006: provides entry must be string, got {label!r}")

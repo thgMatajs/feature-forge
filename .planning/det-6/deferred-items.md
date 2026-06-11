@@ -28,3 +28,41 @@ ou na W8 (doc-sync + cleanup) de DET-6 se o user concordar.
 
 **Origem:** SCOPE BOUNDARY rule — auto-fix só pra issues directly
 causados pelas mudanças do task atual.
+
+---
+
+## Integration fixtures usando `category: network` (W2 spillover)
+
+**Files (descobertos em W3 full-suite run):**
+- `tests/integration/test_e2e_local_card_pilot.py::test_pilot_local_card_added_appears_in_cascade`
+- `tests/integration/test_e2e_local_card_pilot.py::test_pilot_local_cards_manifest_written`
+- `tests/integration/test_claude_rules_system.py::test_bootstrap_is_idempotent` (failure cascade do mesmo issue)
+
+**Failure mode:**
+```
+engine.cards.CardError: ... CARD-004: identity.category must be one of
+['analytics', 'auth', 'build', 'data', ...], got 'network'
+```
+
+**Root cause:** fixtures montam card stub com `"category": "network"`
+(`tests/integration/test_e2e_local_card_pilot.py:80`). W2 removeu
+`network` do set `_KNOWN_CATEGORIES` no loader (`backend`/`network` foram
+split nos 8 axes via category-migration-audit). Loader corretamente
+rejeita; fixture quem precisa atualizar pra `category: data` (ou
+similar).
+
+**Por que NÃO foi fixado em W3:** SCOPE BOUNDARY rule — failures não são
+causadas pelas mudanças de W3 (label refactor), são W2 spillover.
+W3 só toca cards específicos (5 cards listados) + loader CARD-006 +
+catalog markdown + 1 test file (`test_cards_resolver.py`). Fixture
+update em `tests/integration/*` é tarefa W2 follow-up ou W8 cleanup.
+
+**Fix sugerido:** mudar `"category": "network"` → `"category": "data"`
+no fixture (`test_e2e_local_card_pilot.py:80`). Pequeno; trivial. Pode
+entrar em W8 (doc-sync) ou follow-up dedicado.
+
+**Status:** deferido — não bloqueia W3. Endereçar em follow-up.
+
+**Verificação rapid-lane preservada:** `pytest -m "not integration and
+not e2e"` continua 100% verde em W3 (1029 passed). Failures vivem só
+no integration lane (3 falhas, todas pré-existentes desde W2).

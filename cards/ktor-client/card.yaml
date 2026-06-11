@@ -1,12 +1,14 @@
 # cards/ktor-client/card.yaml
 # ──────────────────────────────────────────────────────────────────────────
 # Schema version: 1
-# Ktor Client como HTTP client cross-platform (KMP). Provê `http-client`
-# (singular). Ancora configuração canônica do HttpClient (ContentNegotiation
-# + Json injetado, Logging, HttpTimeout, Auth com refresh-token, retry),
-# dispatcher injection no construtor, engines por plataforma (OkHttp /
-# Darwin / Js), error mapping de status HTTP para domain errors, proibição
-# de Retrofit/manual-parsing no commonMain.
+# Ktor Client como HTTP client cross-platform (KMP). Provê HTTP transport
+# para o axis `data` (cell-cardinality enforçada per (data, platform) pelo
+# schema do workflow-config — DET-6). Ancora configuração canônica do
+# HttpClient (ContentNegotiation + Json injetado, Logging, HttpTimeout,
+# Auth com refresh-token, retry), dispatcher injection no construtor,
+# engines por plataforma (OkHttp / Darwin / Js), error mapping de status
+# HTTP para domain errors, proibição de Retrofit/manual-parsing no
+# commonMain.
 # ──────────────────────────────────────────────────────────────────────────
 
 schema-version: 1
@@ -26,8 +28,13 @@ identity:
 
 
 # ── CAPABILITIES ──────────────────────────────────────────────────────────
-provides:
-  - http-client
+# Singular legada da família network foi removida em W3 (DET-6) —
+# cardinalidade per (data, platform) cell é enforçada pelo schema do
+# workflow-config; ver capability-labels.md §Migração v1.2 (DET-6). Cards
+# de backend axis podem ter `provides: []` — sua identidade vem do cell
+# (axis, platform) no workflow-config, não de label singular (CARD-006
+# relax pra backend axes em engine/cards/loader.py).
+provides: []
 
 
 # ── DEPENDENCIES ──────────────────────────────────────────────────────────
@@ -40,12 +47,11 @@ requires:
 
 
 # ── CONFLICTS ─────────────────────────────────────────────────────────────
-# `http-client` é label singular (capability-labels.md §Network) — apenas um
-# provedor por projeto. Cards alternativos hipotéticos que provejam
-# `http-client` (ex.: futuro `okhttp-direct`, `cio-only-rest`) entrariam em
-# conflito automático ao declarar a mesma label.
-conflicts-with:
-  - http-client
+# Sem `conflicts-with` por label singular — schema enforça 1 card per
+# (data, platform) cell no workflow-config. Cards alternativos
+# (okhttp-direct, cio-only-rest, retrofit-client) coabitam o catalog sem
+# precisar declarar conflito por label aqui.
+conflicts-with: []
 
 
 # ── CONTRIBUTIONS ─────────────────────────────────────────────────────────

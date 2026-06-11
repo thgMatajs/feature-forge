@@ -25,8 +25,11 @@ identity:
 
 
 # ── CAPABILITIES ──────────────────────────────────────────────────────────
+# Singular legada da família observability foi removida em W3 (DET-6) —
+# cardinalidade per (observability, platform) cell é enforçada pelo schema
+# do workflow-config; ver capability-labels.md §Migração v1.2 (DET-6).
+# Auxiliar `crashlytics` preservada como identificador específico do provider.
 provides:
-  - crash-reporting
   - crashlytics
 
 
@@ -35,10 +38,11 @@ requires: []
 
 
 # ── CONFLICTS ─────────────────────────────────────────────────────────────
-# Qualquer outro provider de crash-reporting (Sentry, Bugsnag, Datadog RUM
-# crash module, etc.) ocupa a mesma capability label e conflita.
-conflicts-with:
-  - crash-reporting
+# Sem `conflicts-with` por label singular — schema enforça 1 card per
+# (observability, platform) cell no workflow-config. Cards alternativos
+# (Sentry, Bugsnag, Datadog RUM crash module) coabitam o catalog sem
+# precisar declarar conflito por label aqui.
+conflicts-with: []
 
 
 # ── CONTRIBUTIONS ─────────────────────────────────────────────────────────

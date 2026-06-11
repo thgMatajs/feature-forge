@@ -24,11 +24,12 @@ identity:
 
 
 # ── CAPABILITIES ──────────────────────────────────────────────────────────
-# auth-provider: singular — apenas 1 provedor de identidade por projeto.
 # auth-token-bearer: auxiliar — Firebase Auth usa Bearer token (JWT/OAuth).
 # auth-firebase-managed: auxiliar — sessão gerenciada pelo SDK Firebase.
+# Singular legada da família auth foi removida em W3 (DET-6) — cardinalidade
+# per (auth, platform) cell é enforçada pelo schema do workflow-config; ver
+# capability-labels.md §Migração v1.2 (DET-6).
 provides:
-  - auth-provider
   - auth-token-bearer
   - auth-firebase-managed
 
@@ -43,12 +44,11 @@ requires: []
 
 
 # ── CONFLICTS ─────────────────────────────────────────────────────────────
-# Qualquer outro provedor de auth conflita pela label singular `auth-provider`
-# — apenas um pode prover identidade num projeto. Cards futuros (auth0,
-# supabase-auth, clerk-auth, auth-jwt-bearer) provêem `auth-provider` e caem
-# automaticamente neste conflito.
-conflicts-with:
-  - auth-provider
+# Sem `conflicts-with` por label singular — schema enforça 1 card per
+# (auth, platform) cell no workflow-config. Cards futuros (auth0,
+# supabase-auth, clerk-auth, auth-jwt-bearer) coabitam o catalog sem
+# precisar declarar conflito por label aqui.
+conflicts-with: []
 
 
 # ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
