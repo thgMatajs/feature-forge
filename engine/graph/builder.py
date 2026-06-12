@@ -381,7 +381,13 @@ def _reset_domain_tables(conn: sqlite3.Connection) -> None:
                     )
                 conn.execute(f"DELETE FROM {table}")  # noqa: S608 — allowlist-validated
     finally:
-        conn.execute("PRAGMA foreign_keys = ON")
+        # H-04: PRAGMA restore is best-effort. If the connection is closing
+        # (or the DELETE above already raised), we still try to flip FK back
+        # on; failure here must NOT mask the original exception.
+        try:
+            conn.execute("PRAGMA foreign_keys = ON")
+        except sqlite3.Error:
+            pass
 
 
 def _ingest_file(
