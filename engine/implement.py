@@ -359,7 +359,6 @@ def _pick_next_task(
 def _print_blocked_refusal(
     task: TaskContract,
     alt_task: TaskContract | None,
-    project_root: Path,
 ) -> None:
     """Render the canonical 3-caminhos block for a task blocked on external deps.
 
@@ -369,7 +368,6 @@ def _print_blocked_refusal(
       C) Pause the feature entirely (deferred)
     """
     blocking = _task_blocking_deps(task)
-    del project_root  # not currently needed for the render
 
     renderer.write("")
     renderer.write(
@@ -1277,7 +1275,7 @@ def run(argv: list[str]) -> int:
                 },
             )
 
-        _print_blocked_refusal(task, alternative, project_root)
+        _print_blocked_refusal(task, alternative)
         # A3 fix: do NOT unconditionally release here. This branch fires
         # BEFORE we acquire the phase lock for `task.task_id` (the
         # `with phase_lock_held(...)` below). An unconditional release would
