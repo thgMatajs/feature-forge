@@ -77,7 +77,7 @@ def _write_local_card_covering_mock(project: Path) -> None:
             "name": "retrofit-mock-local",
             "version": "0.1.0",
             "description": "Local card cobrindo retrofit-mock (E2E pilot)",
-            "category": "network",
+            "category": "data",  # was 'network' pré-DET-6 W2 migration
             "maturity": "experimental",
         },
         "provides": ["kotlin-multiplatform"],  # label canon válida (placeholder)

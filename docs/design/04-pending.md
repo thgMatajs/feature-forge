@@ -78,6 +78,19 @@ foram resolvidos como segue:
 
 ### Follow-ups DET-6 v1.3+
 
+- **bootstrap.sh assume `.git/hooks/` é dir (worktree edge case)** —
+  Descoberto 2026-06-12 durante test cleanup pós-`_SKIP_DIRS` fix.
+  Sintoma: `tests/integration/test_claude_rules_system.py::test_bootstrap_is_idempotent`
+  falha quando rodada de dentro de `.claude/worktrees/<branch>/` com
+  `ln: .git/hooks/pre-commit: Not a directory`. Root cause: em git
+  worktree, `.git` é um arquivo pointer com shape
+  `gitdir: <real-gitdir>/worktrees/<branch>`, não um diretório.
+  `bootstrap.sh` (linhas ~17-19) assume `.git/hooks/` é diretório
+  direto. Workaround: rodar bootstrap apenas da main worktree (use
+  case normal — bootstrap é setup inicial). Fix futuro (v1.3+):
+  detectar se `.git` é file, resolver gitdir pointer e ajustar paths
+  target. Refactor não-trivial. Não-bloqueador: afeta apenas test
+  rodado de worktree; desenvolvimento normal não toca esse path.
 - **Sub-axes formal** — `data` poderia ter sub-axes
   `transport/contract/realtime/rules`. v1.2 mantém flat; revisitar
   quando padrão emergir em projetos reais.
