@@ -7,6 +7,23 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed (REVIEW.md remediation — Bloco 1: security quick wins, 2026-06-12)
+
+- **H-01** — SQL allowlist em `_reset_domain_tables` previne wipe de tabela
+  fora do conjunto canônico (`engine/graph/builder.py`).
+- **H-02** — Cap de 10MB em `read_yaml` evita YAML bomb / anchor explosion
+  (`engine/utils/yaml_io.py`).
+- **H-04** — PRAGMA `foreign_keys = ON` em `finally` tolera erro de SQLite
+  sem mascarar a exception original (`engine/graph/builder.py`).
+- **H-06** — Path-traversal guard em `forge undo` delete-feature recusa
+  rmtree fora do project_root (`engine/undo.py`).
+- **H-07** — RNG de `mentor_calmo` isolado por call quando seed unset;
+  contrato determinístico de tests preservado (`engine/persona/mentor_calmo.py`).
+- **H-10 (parcial)** — Validação `project_root.is_dir()` antes do
+  subprocess de validators retorna `degraded` em vez de crashar
+  (`engine/verify.py`). Batch git-diff optimization fica deferred — ver
+  `docs/design/04-pending.md`.
+
 ### Added (Phase B — DET-6 multi-axis backend, 2026-06-11)
 
 - **Schema canônico multi-axis** — `docs/schemas/backend-axes.md` define
