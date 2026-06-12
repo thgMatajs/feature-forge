@@ -204,17 +204,26 @@ def _check_backend(project_root: Path, data: dict[str, Any]) -> list[str]:
                 )
                 continue
 
-            # RULE-021 — cell.card existe em cards/.
+            # RULE-021 — cell.card existe em cards/ (canonical OR local overlay).
+            # Espelha `engine/reconfigure._card_exists`: snapshot canonical
+            # primeiro, depois `.claude/cards/local/<name>/card.yaml`. Local
+            # cards são fonte legítima (orphan workflow Step 7.5 + Gap 5).
             card_id = cell.get("card")
             if not isinstance(card_id, str) or not card_id:
                 out.append(
                     f"backend.{axis}.{platform_key}.card obrigatório (string não-vazia) (RULE-021)"
                 )
-            elif not (cards_root / card_id / "card.yaml").is_file():
-                out.append(
-                    f"backend.{axis}.{platform_key}.card={card_id!r} não existe "
-                    f"em {cards_root}/<name>/card.yaml (RULE-021)"
+            else:
+                canonical_yaml = cards_root / card_id / "card.yaml"
+                local_yaml = (
+                    project_root / ".claude" / "cards" / "local" / card_id / "card.yaml"
                 )
+                if not canonical_yaml.is_file() and not local_yaml.is_file():
+                    out.append(
+                        f"backend.{axis}.{platform_key}.card={card_id!r} não existe "
+                        f"em {cards_root}/<name>/card.yaml nem em "
+                        f".claude/cards/local/<name>/card.yaml (RULE-021)"
+                    )
 
             # RULE-022 — status enum.
             status = cell.get("status")
@@ -243,12 +252,17 @@ def _check_backend(project_root: Path, data: dict[str, Any]) -> list[str]:
                     f"mas status={status!r} (esperado status=migrating-to) (RULE-023)"
                 )
 
-            # RULE-024 — migrating-to referencia card existente.
+            # RULE-024 — migrating-to referencia card existente (canonical OR local).
             if isinstance(migrating_to, str) and migrating_to:
-                if not (cards_root / migrating_to / "card.yaml").is_file():
+                canonical_mig = cards_root / migrating_to / "card.yaml"
+                local_mig = (
+                    project_root / ".claude" / "cards" / "local" / migrating_to / "card.yaml"
+                )
+                if not canonical_mig.is_file() and not local_mig.is_file():
                     out.append(
                         f"backend.{axis}.{platform_key}.migrating-to={migrating_to!r} "
-                        f"não existe em {cards_root}/<name>/card.yaml (RULE-024)"
+                        f"não existe em {cards_root}/<name>/card.yaml nem em "
+                        f".claude/cards/local/<name>/card.yaml (RULE-024)"
                     )
     return out
 

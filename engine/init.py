@@ -7,8 +7,9 @@ This is the MOST IMPORTANT command of feature-forge. It:
 - runs cinematic discovery (cards, stack detection, design system, i18n,
   conventions);
 - proposes the canonical preset (`kmp-mobile`) and asks the user to confirm;
-- asks the user to pick a `backend-candidate` (Cena 6.5 — explicit decision,
-  never auto-selected);
+- asks the user to configure backend cells via bundle picker (greenfield)
+  OR composer-driven detection (brownfield W7.1/W7.2 handlers, never
+  auto-applied — auditor confirms cells before snapshot);
 - resolves card dependencies/conflicts via the resolver;
 - snapshots cards into `.claude/cards/`;
 - merges contributions, writes inventory snapshots, seeds memory L1/L2 dirs;
@@ -1295,9 +1296,10 @@ def _run_pipeline(project_root: Path) -> int:
     if missing_cards:
         renderer.write(
             renderer.colored(
-                f"Atenção: cards declarados mas não encontrados no canonical: "
-                f"{missing_cards}. Phase 4/5 ainda implementa esses cards — "
-                "vou seguir sem eles.",
+                f"Atenção: cards declarados mas ausentes do catálogo canônico: "
+                f"{missing_cards}. Bundle/handler referencia card que não está "
+                "em cards/. Investigue presets/<preset>/bundles/ ou re-rode "
+                "`forge init` após rebuild do catalog — sigo sem eles por ora.",
                 "yellow",
             )
         )
@@ -1315,8 +1317,8 @@ def _run_pipeline(project_root: Path) -> int:
                 why=res.errors[:5],
                 paths=[
                     {
-                        "label": "voltar e escolher outro backend-candidate",
-                        "motive": "alguns cards conflitam com a stack proposta",
+                        "label": "voltar e ajustar a configuração de backend (composer/bundle)",
+                        "motive": "alguns cards conflitam com a stack proposta — bundle/composer não cobriram resolução",
                     },
                     {
                         "label": "personalizar (modo manual)",
@@ -2577,7 +2579,9 @@ def _bundle_to_cells(
             if "all-platforms" in cell_block:
                 card_val = cell_block["all-platforms"]
                 axis_out["all-platforms"] = (
-                    {"card": card_val, "status": "active"} if card_val else None
+                    {"card": card_val, "status": "active"}
+                    if isinstance(card_val, str) and card_val
+                    else None
                 )
             else:
                 for platform, card_val in cell_block.items():

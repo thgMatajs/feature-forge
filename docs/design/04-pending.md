@@ -103,6 +103,32 @@ foram resolvidos como segue:
   (resolvido via criação). Pattern: bundle pode referenciar card a ser
   criado em wave futura. validate_presets.py enforça que refs existem
   no momento do validate.
+- **Uniform-detection duplicada: `_summarize_backend_cells` vs
+  `_render_axes_table`** — ambas implementam "detect uniform across
+  platforms → render compact" em `engine/init.py`, mas shapes de input
+  divergem genuinamente: `_render_axes_table` consome
+  `composer_result` (Cell/Conflict dataclasses, atributo `.card_id` +
+  `.candidates`); `_summarize_backend_cells` consome `cells` dict
+  pós-adapter (`{"card": ..., "status": ...}`). Consolidar exige
+  callable extractor genérico (~30-40 LOC infra) ou normalizar input
+  num shape único. Reviewer W7 L-002 sugere extrair
+  `_format_axis_compact(axis_map, get_card_id_fn)`, mas custo do
+  paralelo é baixo (duplicação cosmética, não comportamental).
+  Revisitar quando 3º callsite emergir ou refactor maior abrir
+  oportunidade barata.
+- **crashlytics rename — filenames de assets preservam nome antigo
+  (v1.3+ cosmético)** — o rename `crashlytics → firebase-crashlytics`
+  no commit `661b2d4` foi card-id-only por design. Os filenames internos
+  ficaram intocados deliberadamente: `templates/crashlytics-tech-spec.md`,
+  `templates/crashlytics-analytics.yaml`, e
+  `validators/check_crashlytics_shared_exception.py`. Também o field name
+  `crashlytics:` em contracts de analytics. Decisão consciente porque
+  filenames são identidade de arquivo (não do card) — rename mecânico
+  geraria diff massivo cross-referencing sem ganho funcional. Reviewer
+  W7 nota que isso vai gerar 1 finding cosmético em cada futuro reviewer
+  até alinharmos. Follow-up: rename cosmético `crashlytics-* →
+  firebase-crashlytics-*` em filenames + field name, com migrator pra
+  contracts existentes. Não-bloqueador, sem impacto runtime.
 
 ### DRIFT-1 — Intent Protocol (Engine intent-only + tty_bridge)
 
