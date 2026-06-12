@@ -7,7 +7,6 @@ escape hatch. For per-edit deltas use `engine.graph.incremental`.
 
 from __future__ import annotations
 
-import fnmatch
 import hashlib
 import re
 import sqlite3
@@ -16,6 +15,9 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
+
+from pathspec import PathSpec
+from pathspec.patterns import GitWildMatchPattern
 
 from engine.graph.gradle_deps import (
     parse_module_dependencies,
@@ -178,18 +180,18 @@ def _iter_files(root: Path, gitignore_rules: Optional[list[tuple[str, bool, bool
                 yield entry
 
 
+# M-07 + M-08: replaced custom parser with `pathspec` (canonical gitignore
+# semantics). The old parser missed bracket classes, escapes, trailing
+# spaces, and `a/**/b` middle-double-star; the custom regex over-matched
+# directories ending in the pattern's suffix.
 def _parse_gitignore(project_root: Path) -> list[tuple[str, bool, bool]]:
     """Parse `.gitignore` (best-effort) — supports nested files in subdirs.
 
-    Returns a list of `(pattern, is_negation, dir_only)` where `pattern` is
-    rooted at `project_root` (i.e., already prefixed with the relative dir of
-    the `.gitignore` file when applicable). Tolerant to missing files.
+    Returns a list of `(pattern, is_negation, dir_only)`. Pattern rooted at
+    `project_root`. Tolerant to missing files.
 
-    Supports: `*`, `**`, leading `/` (root-anchored), trailing `/` (dir-only),
-    leading `!` (negation), comments (`#`), blank lines.
-
-    Bracket character classes `[abc]` and brace expansion `{a,b}` are not
-    supported — patterns containing them fall back to literal matching.
+    Backed by `pathspec` (M-07): supports bracket classes `[abc]`,
+    escaped chars `\\#`, trailing spaces, and `a/**/b` middle-double-star.
     """
     rules: list[tuple[str, bool, bool]] = []
     try:
@@ -215,10 +217,9 @@ def _parse_gitignore(project_root: Path) -> list[tuple[str, bool, bool]]:
             rel_dir = ""
 
         for raw_line in lines:
-            line = raw_line.rstrip()
-            if not line or line.lstrip().startswith("#"):
+            line = raw_line.rstrip("\n")
+            if not line.strip() or line.lstrip().startswith("#"):
                 continue
-            line = line.strip()
             negation = line.startswith("!")
             if negation:
                 line = line[1:]
@@ -245,7 +246,7 @@ def _matches_gitignore(
     *,
     is_dir: bool,
 ) -> bool:
-    """Return True if `path` is ignored. Last matching rule wins (gitignore semantics)."""
+    """Return True if `path` is ignored. Last matching rule wins."""
     try:
         rel = path.resolve().relative_to(project_root).as_posix()
     except ValueError:
@@ -262,44 +263,16 @@ def _matches_gitignore(
     return ignored
 
 
-_GLOB_TRANSLATE_CACHE: dict[str, re.Pattern[str]] = {}
-
-
-def _glob_translate(pattern: str) -> re.Pattern[str]:
-    cached = _GLOB_TRANSLATE_CACHE.get(pattern)
-    if cached is not None:
-        return cached
-    out: list[str] = []
-    i = 0
-    while i < len(pattern):
-        ch = pattern[i]
-        if ch == "*":
-            if i + 1 < len(pattern) and pattern[i + 1] == "*":
-                if i + 2 < len(pattern) and pattern[i + 2] == "/":
-                    out.append("(?:.*/)?")
-                    i += 3
-                    continue
-                out.append(".*")
-                i += 2
-                continue
-            out.append("[^/]*")
-            i += 1
-            continue
-        if ch == "?":
-            out.append("[^/]")
-            i += 1
-            continue
-        out.append(re.escape(ch))
-        i += 1
-    regex = re.compile("^" + "".join(out) + "(?:/.*)?$")
-    _GLOB_TRANSLATE_CACHE[pattern] = regex
-    return regex
+_PATHSPEC_CACHE: dict[str, PathSpec] = {}
 
 
 def _glob_match(rel_path: str, pattern: str) -> bool:
-    if "[" in pattern or "{" in pattern:
-        return fnmatch.fnmatch(rel_path, pattern)
-    return _glob_translate(pattern).match(rel_path) is not None
+    """pathspec-backed match. Encodes canonical gitignore semantics."""
+    spec = _PATHSPEC_CACHE.get(pattern)
+    if spec is None:
+        spec = PathSpec.from_lines(GitWildMatchPattern, [pattern])
+        _PATHSPEC_CACHE[pattern] = spec
+    return spec.match_file(rel_path)
 
 
 # H-01 (security): defensive allowlist. Any new domain table added to
