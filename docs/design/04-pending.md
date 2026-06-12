@@ -86,11 +86,17 @@ foram resolvidos como segue:
 - **Card composability dentro da mesma cell** — v1.0 não suporta "2
   cards ativos na mesma (axis, platform) cell além de migrating-to".
   Use case: side-by-side multi-tenant Firebase. Revisitar follow-up.
-- **`_SKIP_DIRS` worktree bug** — engine walk filtra fixtures sob
+- ~~**`_SKIP_DIRS` worktree bug** — engine walk filtra fixtures sob
   `.claude/worktrees/` causando 1 unit test pré-existente + 4
   integration tests pré-existentes a falharem do worktree (passam da
   main repo root). Fix dedicado pendente — possível via opt-out env
-  var ou path normalization no walk.
+  var ou path normalization no walk.~~ **RESOLVIDO 2026-06-12:** fix em
+  `engine/inventory/_walk_cache.py` + `engine/init.py:_glob_any` —
+  match contra `path.relative_to(project_root).parts` em vez de
+  `path.parts` absoluto. Top-level `.claude/` em project_root continua
+  filtrado (caso legítimo); `.claude/` como parent do worktree não
+  bloqueia walk. Regression test em
+  `tests/unit/test__walk_cache_worktree.py`.
 - **W7.2 Phase A multi-intent re-invocation pitfall** — quando handler
   emite 2+ intents em sequência, response file pode ficar stale entre
   re-invocations causando IntentMismatchError. Workaround atual: tests

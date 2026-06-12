@@ -650,7 +650,14 @@ def _glob_any(project_root: Path, glob: str, needle: str | None) -> bool:
         iterator = project_root.glob(glob)
     count = 0
     for path in iterator:
-        if any(part in _SKIP_DIRS for part in path.parts):
+        # Match _SKIP_DIRS contra parts RELATIVO a project_root — não path.parts
+        # absoluto. Sem isso, paths sob .claude/worktrees/<branch>/ ficam
+        # invisíveis (parent .claude/ é skip-dir legítimo só no top-level).
+        try:
+            relative_parts = path.relative_to(project_root).parts
+        except ValueError:
+            continue
+        if any(part in _SKIP_DIRS for part in relative_parts):
             continue
         if count > 800:
             break
