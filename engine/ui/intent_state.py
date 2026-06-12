@@ -216,6 +216,7 @@ def _append_intent_log(
     }
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
+        f.flush()
 
 
 # --- write_pending ---------------------------------------------------------

@@ -642,3 +642,59 @@ def test_intent_log_tolerates_malformed_lines(tmp_project_root):
     cached = intent_state.read_response(tmp_project_root, intent_id=good_id)
     assert cached is not None
     assert cached["value"] == "ok"
+
+
+# --- _append_intent_log flush durability (PR #13 review #3405254528) -------
+
+
+def test_append_intent_log_flushes_after_write(tmp_project_root, monkeypatch):
+    """``_append_intent_log`` must call ``file.flush()`` after writing.
+
+    Docstring contract: 'JSONL append + flush is the durability contract'.
+    Without an explicit flush, the entry sits in the Python buffer until
+    close — which `with` handles for short-lived calls, but a long-lived
+    forge process re-reading the log mid-flight (multi-intent re-entry)
+    could miss a freshly-appended entry. Regression guard for the missing
+    ``f.flush()`` call observed in PR #13 review.
+    """
+    events: list[tuple[str, object]] = []
+    real_open = Path.open
+
+    def tracking_open(self, *args, **kwargs):
+        handle = real_open(self, *args, **kwargs)
+        original_flush = handle.flush
+        original_close = handle.close
+
+        def spy_flush() -> None:
+            events.append(("flush", self))
+            original_flush()
+
+        def spy_close() -> None:
+            events.append(("close", self))
+            original_close()
+
+        handle.flush = spy_flush  # type: ignore[method-assign]
+        handle.close = spy_close  # type: ignore[method-assign]
+        return handle
+
+    monkeypatch.setattr(Path, "open", tracking_open)
+
+    intent_state._append_intent_log(
+        tmp_project_root,
+        intent_id="ffffffff-ffff-4fff-8fff-ffffffffffff",
+        response={"schema-version": 1, "value": "probe"},
+    )
+
+    log_path = tmp_project_root / ".claude" / "state" / "forge-intent-log.jsonl"
+    log_events = [evt for evt in events if evt[1] == log_path]
+    # Must observe an explicit flush BEFORE the close. ``with`` already
+    # flushes implicitly on close; the durability contract is the
+    # *explicit* mid-block flush so a long-lived process re-reading
+    # the log mid-flight observes the entry without waiting for close.
+    flush_indices = [i for i, evt in enumerate(log_events) if evt[0] == "flush"]
+    close_indices = [i for i, evt in enumerate(log_events) if evt[0] == "close"]
+    assert flush_indices, f"no flush() on {log_path}; events={log_events!r}"
+    assert close_indices, f"no close() on {log_path}; events={log_events!r}"
+    assert min(flush_indices) < min(close_indices), (
+        f"flush must precede close (durability contract); events={log_events!r}"
+    )
