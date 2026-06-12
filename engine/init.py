@@ -125,7 +125,10 @@ class _InitCheckpoint:
     project_root: str
     preset: str | None = None
     selected_card_names: list[str] = field(default_factory=list)
-    backend_choice: str | None = None
+    # W7.4 — substitui ``backend_choice`` (legacy monolítico) por cells
+    # multi-axis (``backend.<axis>.<platform>``). Default ``None`` cobre
+    # checkpoint salvo antes do Step 5 (backend selection ainda não rodou).
+    backend_cells: dict[str, Any] | None = None
     intent_id: str | None = None
 
 
@@ -159,7 +162,9 @@ def _save_checkpoint(cp: _InitCheckpoint) -> None:
             "project-root": cp.project_root,
             "preset": cp.preset,
             "selected-card-names": cp.selected_card_names,
-            "backend-choice": cp.backend_choice,
+            # W7.4 — cells multi-axis (vide adapters em
+            # ``_composer_result_to_cells`` / ``_bundle_to_cells``).
+            "backend-cells": cp.backend_cells,
             "intent-id": cp.intent_id,
         },
     )
@@ -1061,13 +1066,14 @@ def _run_pipeline(project_root: Path) -> int:
         # DRIFT-1 W2.T3b — persist intent-id da pergunta de resume ANTES de
         # invocar ``ui_question.ask``. Mantemos o resto do payload do
         # checkpoint anterior intacto (preset, selected_card_names,
-        # backend_choice) — so atualizamos o campo intent_id. Re-invocacao
+        # backend_cells) — só atualizamos o campo intent_id. Re-invocacao
         # apos exit 2 consome o response correspondente sem re-perguntar.
         _resume_options = {
             "resume": "começar do zero mantendo o checkpoint como audit",
             "discard": "apagar o checkpoint e começar limpo",
             "abort": "sair sem mexer em nada",
         }
+        _saved_cells = existing_checkpoint.get("backend-cells")
         _save_checkpoint(
             _InitCheckpoint(
                 step=str(existing_checkpoint.get("step") or "step-1-greeting"),
@@ -1077,7 +1083,9 @@ def _run_pipeline(project_root: Path) -> int:
                 selected_card_names=list(
                     existing_checkpoint.get("selected-card-names") or []
                 ),
-                backend_choice=existing_checkpoint.get("backend-choice"),
+                backend_cells=(
+                    _saved_cells if isinstance(_saved_cells, dict) else None
+                ),
                 intent_id=ui_question.stable_intent_id(
                     "ask",
                     "Resume de init pendente?",
@@ -1209,83 +1217,69 @@ def _run_pipeline(project_root: Path) -> int:
     checkpoint.at = _utc_now_iso()
     _save_checkpoint(checkpoint)
 
-    # ── Step 5 — Backend selection (Cena 6.5) ────────────────────────────────
-    preset_card_names = [c.get("name") for c in (preset.get("cards") or []) if c.get("name")]
+    # ── Step 5 — Backend selection (W7.4 — multi-axis cells) ─────────────────
+    # Substitui o legacy "backend-candidates" picker monolítico (Cena 6.5)
+    # por bifurcação composer-driven:
+    #   · has_signals → brownfield handler (W7.1): confirm/adjust/scratch
+    #     sobre composer_result. Adapter ``_composer_result_to_cells``
+    #     converte pra ``backend.<axis>.<platform>`` cell shape.
+    #   · sem signals → greenfield handler (W7.2): bundle picker (4
+    #     opções) + opt override. Adapter ``_bundle_to_cells`` carrega o
+    #     YAML do bundle escolhido e emite cells per axis.
+    #
+    # Preset card-set (``preset.cards[].name``) é UNIVERSAL — usado sempre,
+    # independente do handler. Cards do bundle/composer entram POR CIMA.
+    preset_card_names = [
+        c.get("name") for c in (preset.get("cards") or []) if c.get("name")
+    ]
     card_index = _index_cards(canonical_cards)
 
-    backend_candidates = preset.get("backend-candidates") or {}
-    if not backend_candidates:
-        raise InitError("preset kmp-mobile sem backend-candidates declarados.")
+    from engine.detection.composer import compose_backend_axes  # noqa: PLC0415
 
-    candidate_keys = list(backend_candidates.keys())
-    candidate_summaries: dict[str, dict[str, Any]] = {}
+    normalized_for_composer = _normalize_cards_for_composer(canonical_cards)
+    composer_result = compose_backend_axes(project_root, normalized_for_composer)
+    has_signals = any(
+        cell is not None
+        for axis_map in composer_result.values()
+        for cell in axis_map.values()
+    )
 
     renderer.write("")
     renderer.write("[1:00] Backend — preciso da sua escolha")
-    renderer.write("")
-    for idx, key in enumerate(candidate_keys, start=1):
-        spec = backend_candidates[key] or {}
-        cards_extra = spec.get("cards") or []
-        match_count = 0
-        matched_signals_total: list[str] = []
-        for card_name in cards_extra:
-            card = card_index.get(card_name)
-            if card is None:
-                continue
-            score, m = _eval_detection_signals(project_root, card.detection)
-            if score >= float((card.detection or {}).get("threshold") or 0.5):
-                match_count += 1
-            matched_signals_total.extend(m)
-        candidate_summaries[key] = {
-            "spec": spec,
-            "cards": cards_extra,
-            "matches": match_count,
-            "total": len(cards_extra),
-            "signals": matched_signals_total[:6],
-        }
-        renderer.write(
-            f"  [{idx}] {key}  (cards matched: {match_count}/{len(cards_extra)})"
+
+    backend_cells: dict[str, Any] = {}
+    if has_signals:
+        # Brownfield path — W7.1 handler.
+        result = _handle_backend_multi_axis_brownfield(
+            project_root=project_root,
+            active_cards=canonical_cards,
         )
-        desc = spec.get("description")
-        if desc:
-            renderer.write(f"        {desc}")
-        for s in matched_signals_total[:3]:
-            renderer.write(f"        · {s}")
-
-    renderer.write(f"  [{len(candidate_keys)+1}] personalizar — selecionar cards manualmente")
-    renderer.write("")
-
-    options: dict[str, str] = {}
-    for idx, key in enumerate(candidate_keys, start=1):
-        options[str(idx)] = key
-    custom_key = str(len(candidate_keys) + 1)
-    options[custom_key] = "personalizar"
-
-    backend_choice = ui_question.ask(
-        "Qual cenário descreve este projeto?", options, default="1"
-    )
-
-    selected_card_names: list[str] = list(preset_card_names)
-    if backend_choice == custom_key:
-        all_card_options = {
-            c.name: f"{c.category} · {c.description[:60]}…" for c in canonical_cards
-        }
-        picked = ui_question.ask_multi(
-            "Selecione cards manualmente (mínimo 1):",
-            all_card_options,
-            min_selected=1,
-        )
-        selected_card_names = picked
-        checkpoint.backend_choice = "custom"
+        backend_cells = _composer_result_to_cells(result.get("composer_result") or {})
+        bundle_cards = list(result.get("selected_card_names") or [])
     else:
-        chosen_key = options[backend_choice]
-        checkpoint.backend_choice = chosen_key
-        extra = candidate_summaries[chosen_key]["cards"]
-        for name in extra:
-            if name not in selected_card_names:
-                selected_card_names.append(name)
+        # Greenfield path — W7.2 handler.
+        result = _handle_backend_multi_axis_greenfield(
+            project_root=project_root,
+            available_cards=canonical_cards,
+        )
+        bundle_name = result.get("bundle_name")
+        bundle_cards = list(result.get("selected_card_names") or [])
+        backend_cells = _bundle_to_cells(
+            bundle_name=bundle_name,
+            selected_card_names=bundle_cards,
+            forge_root=forge_home(),
+            available_cards=canonical_cards,
+        )
+
+    # Compose final selection: preset universals + handler picks (dedup'd,
+    # preserva ordem do preset primeiro, depois cards do bundle/composer).
+    selected_card_names: list[str] = list(preset_card_names)
+    for name in bundle_cards:
+        if name not in selected_card_names:
+            selected_card_names.append(name)
 
     checkpoint.selected_card_names = selected_card_names
+    checkpoint.backend_cells = backend_cells
     checkpoint.step = "step-6-resolve"
     checkpoint.at = _utc_now_iso()
     _save_checkpoint(checkpoint)
@@ -1618,7 +1612,10 @@ def _run_pipeline(project_root: Path) -> int:
         i18n_inv=i18n_inv,
         conv_inv=conv_inv,
         preset=preset,
-        backend_choice=checkpoint.backend_choice or "unknown",
+        # W7.4 — passa cells (backend.<axis>.<platform>) em vez do choice
+        # legacy. Default {} cobre o caso degenerado (greenfield com
+        # 0 bundle selecionado) — validator emite warn no review (RULE-019).
+        backend_cells=checkpoint.backend_cells or {},
         qa_enabled=qa_enabled,
         qa_auto_run=qa_auto_run,
     )
@@ -1703,7 +1700,8 @@ def _run_pipeline(project_root: Path) -> int:
         "user-confirmed": True,
         "notes": (
             f"Greenfield init · preset={PRESET_NAME} · "
-            f"backend={checkpoint.backend_choice} · cards={len(activated)}"
+            f"backend=[{_summarize_backend_cells(checkpoint.backend_cells)}] · "
+            f"cards={len(activated)}"
         )[:280],
     }
     with history_path.open("a", encoding="utf-8") as fh:
@@ -1718,7 +1716,8 @@ def _run_pipeline(project_root: Path) -> int:
 
     summary = [
         f"Projeto:        {project_root.name}",
-        f"Preset:         {PRESET_NAME}  ·  backend: {checkpoint.backend_choice}",
+        f"Preset:         {PRESET_NAME}",
+        f"Backend:        {_summarize_backend_cells(checkpoint.backend_cells)}",
         f"Cards ativos:   {len(activated)}",
         f"Capabilities:   {n_caps}",
         f"Inventories:    {', '.join(inv_written) if inv_written else '(none)'}",
@@ -1752,7 +1751,7 @@ def _build_workflow_config(
     i18n_inv: Any,
     conv_inv: Any,
     preset: dict[str, Any],
-    backend_choice: str,
+    backend_cells: dict[str, Any],
     qa_enabled: bool = True,
     qa_auto_run: bool = False,
 ) -> dict[str, Any]:
@@ -1760,6 +1759,10 @@ def _build_workflow_config(
 
     Follows docs/schemas/workflow-config.md. Optional blocks are populated
     with sane defaults when init can't infer them (ticketing, external-docs).
+
+    W7.4 — ``backend_cells`` substitui o legacy ``backend_choice``. Shape
+    canônico em ``docs/schemas/backend-axes.md``:
+    ``backend.<axis>.<platform> = {card, status, migrating-to?} | None``.
     """
     now = _utc_now_iso()
     preset_defaults = preset.get("defaults") or {}
@@ -1773,7 +1776,8 @@ def _build_workflow_config(
             "project-name": project_root.name,
             "project-slug": project_slug,
             "preset": PRESET_NAME,
-            "backend-choice": backend_choice,
+            # W7.4 — ``identity.backend-choice`` removido (legacy monolítico).
+            # Backend agora vive em ``backend.<axis>.<platform>`` (block próprio).
             "created-at": now,
             "last-reconfigure": now,
             "forge-version": FORGE_VERSION,
@@ -1809,7 +1813,8 @@ def _build_workflow_config(
         },
         "paths": _build_paths(project_root, conv_inv),
         "conventions": _build_conventions(conv_inv, ds_inv, i18n_inv, preset_defaults),
-        "backend": _build_backend(backend_choice),
+        # W7.4 — cells multi-axis em vez do provider monolítico legacy.
+        "backend": dict(backend_cells) if backend_cells else {},
         "validators": {"fail-fast": True},
         "cleanup": {"bak-retention-days": 7},
         "ticketing": {
@@ -2465,50 +2470,210 @@ def _handle_backend_multi_axis_greenfield(
     }
 
 
-def _build_backend(backend_choice: str) -> dict[str, Any]:
-    """Monta o bloco `backend:` baseado no backend-candidate escolhido (Cena 6.5).
+# ── W7.4 — Backend cells adapters (composer_result / bundle → cells) ────────
 
-    Mapeamento canônico (preset kmp-mobile):
-    - firebase-stack → provider=firebase com services completos
-    - rest-stack     → provider=rest
-    - hybrid         → provider=hybrid (firebase só p/ auth + rest p/ dados)
-    - local-only     → provider=local-only
-    - custom/unknown → provider=none (usuário ajusta manualmente)
+
+def _composer_result_to_cells(
+    composer_result: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, dict[str, Any] | None]]:
+    """W7.1 brownfield adapter: composer_result → backend cells shape.
+
+    Shape de saída segue ``docs/schemas/backend-axes.md`` §"Cell object":
+
+      backend.<axis>.<platform> = {card: <id>, status: "active"} | None
+
+    Regras de conversão:
+      · cell None → None (cell vazia preservada)
+      · cell Cell(card_id=X, ...) → {card: X, status: "active"}
+      · cell Conflict(candidates=(c1, c2, ...)) → {card: c1.card_id,
+        status: "active"}. Convenção: pega primeiro candidate (já
+        ordenado alfabeticamente por card_id em ``engine.detection.
+        composer.Conflict`` — output determinístico). Auditor humano
+        que escolheu Path A (confirm) implicitamente aceitou essa
+        resolução; Path B (adjust — W7-future) é onde o user
+        desambigua per-cell.
+
+    Status sempre ``"active"`` neste adapter — Phase B não infere
+    migration intent automaticamente. Migration entra via
+    ``forge reconfigure`` (W7.3) quando o auditor edita manualmente.
     """
-    choice = (backend_choice or "").strip().lower()
-    if choice == "firebase-stack":
-        return {
-            "provider": "firebase",
-            "firebase": {
-                "dev-project": None,
-                "prod-project": None,
-                "services": ["auth", "firestore", "storage", "crashlytics"],
-            },
-        }
-    if choice == "rest-stack":
-        return {
-            "provider": "rest",
-            "rest": {
-                "base-url": None,
-                "auth-mode": "jwt-bearer",
-            },
-        }
-    if choice == "hybrid":
-        return {
-            "provider": "hybrid",
-            "firebase": {
-                "dev-project": None,
-                "prod-project": None,
-                "services": ["auth"],
-            },
-            "rest": {
-                "base-url": None,
-                "auth-mode": "jwt-bearer",
-            },
-        }
-    if choice == "local-only":
-        return {"provider": "local-only"}
-    return {"provider": "none"}
+    out: dict[str, dict[str, dict[str, Any] | None]] = {}
+    for axis in sorted(composer_result.keys()):
+        axis_map = composer_result[axis]
+        out_axis: dict[str, dict[str, Any] | None] = {}
+        for platform in sorted(axis_map.keys()):
+            cell = axis_map[platform]
+            if cell is None:
+                out_axis[platform] = None
+                continue
+            if hasattr(cell, "candidates"):
+                # Conflict — primeiro candidate por convenção (já ordenado
+                # alfabeticamente). Auditor confirmou via Path A.
+                candidates = getattr(cell, "candidates", ())
+                if candidates:
+                    chosen = candidates[0]
+                    out_axis[platform] = {
+                        "card": chosen.card_id,
+                        "status": "active",
+                    }
+                else:
+                    out_axis[platform] = None
+                continue
+            card_id = getattr(cell, "card_id", None)
+            if isinstance(card_id, str) and card_id:
+                out_axis[platform] = {"card": card_id, "status": "active"}
+            else:
+                out_axis[platform] = None
+        out[axis] = out_axis
+    return out
+
+
+def _bundle_to_cells(
+    bundle_name: str | None,
+    selected_card_names: list[str],
+    *,
+    forge_root: Path,
+    available_cards: list[CardManifest] | None = None,
+) -> dict[str, dict[str, dict[str, Any] | None]]:
+    """W7.2 greenfield adapter: bundle YAML / selected cards → backend cells.
+
+    Dois cenários cobertos:
+
+    1. ``bundle_name`` corresponde a um YAML em
+       ``$FORGE_HOME/presets/<preset>/bundles/<name>.yaml``: carrega o
+       bundle e emite cells per (axis, platform) a partir de
+       ``bundle.defaults``. Forma das cells segue
+       ``docs/schemas/backend-axes.md`` — ``all-platforms`` é
+       desempacotado pras plataformas declaradas no bundle. Cells
+       null no bundle ficam null no output.
+
+    2. ``bundle_name`` é None / sentinela ``custom-from-scratch`` /
+       bundle YAML missing: cai no fallback ``available_cards`` —
+       mapeia cada card selecionado pra (card.category, "all-platforms")
+       como cell ativa. Fallback é silently degenerate quando
+       ``available_cards`` está vazio (teste minimal) — emite cells
+       vazias e o auditor ajusta via ``forge reconfigure``.
+
+    Cards em ``selected_card_names`` mas NÃO referenciados pelo bundle
+    (override-overridden caminho ou scratch) entram pelo fallback com
+    ``all-platforms`` — caller é responsável por validar via cascade
+    (RULE-021) downstream.
+    """
+    cells: dict[str, dict[str, dict[str, Any] | None]] = {}
+
+    # Caminho 1: bundle YAML válido.
+    bundle: dict[str, Any] | None = None
+    if bundle_name and bundle_name != _BUNDLE_SENTINEL_CUSTOM:
+        bundles_dir = forge_root / "presets" / PRESET_NAME / "bundles"
+        bundle = _load_bundle_files(bundles_dir).get(bundle_name)
+
+    if bundle is not None:
+        defaults = bundle.get("defaults") or {}
+        for axis in _BACKEND_AXES:
+            cell_block = defaults.get(axis)
+            if not isinstance(cell_block, dict):
+                continue
+            axis_out: dict[str, dict[str, Any] | None] = {}
+            if "all-platforms" in cell_block:
+                card_val = cell_block["all-platforms"]
+                axis_out["all-platforms"] = (
+                    {"card": card_val, "status": "active"} if card_val else None
+                )
+            else:
+                for platform, card_val in cell_block.items():
+                    if not isinstance(platform, str):
+                        continue
+                    axis_out[platform] = (
+                        {"card": card_val, "status": "active"}
+                        if isinstance(card_val, str) and card_val
+                        else None
+                    )
+            cells[axis] = axis_out
+
+        # Cards em selected_card_names que NÃO estão no bundle (override
+        # selected via _apply_axis_overrides) entram via available_cards.
+        if available_cards:
+            bundle_cards: set[str] = set()
+            for axis_block in defaults.values():
+                if not isinstance(axis_block, dict):
+                    continue
+                for v in axis_block.values():
+                    if isinstance(v, str) and v:
+                        bundle_cards.add(v)
+            extras = [n for n in selected_card_names if n not in bundle_cards]
+            if extras:
+                _fold_extras_into_cells(cells, extras, available_cards)
+        return cells
+
+    # Caminho 2: fallback (custom-from-scratch ou bundle missing).
+    if available_cards:
+        _fold_extras_into_cells(cells, selected_card_names, available_cards)
+    return cells
+
+
+def _fold_extras_into_cells(
+    cells: dict[str, dict[str, dict[str, Any] | None]],
+    extra_card_names: list[str],
+    available_cards: list[CardManifest],
+) -> None:
+    """Compõe cells dos cards listados via category (axis) → all-platforms.
+
+    Override per-axis no W7.2 não declara platforms — assumimos
+    ``all-platforms``. Quando ``forge reconfigure`` (W7.3) edita
+    granularidade, o user ajusta a cell pra per-platform shape se
+    quiser. Cards sem category ou category fora dos 8 axes canônicos
+    são silenciosamente descartados — anti-padrão #6 (cards sem axis
+    não pertencem ao bloco ``backend``).
+    """
+    by_name: dict[str, str] = {}
+    for card in available_cards:
+        if isinstance(card, CardManifest) and card.name and card.category:
+            by_name[card.name] = card.category
+    for card_name in extra_card_names:
+        axis = by_name.get(card_name)
+        if axis is None or axis not in _BACKEND_AXES:
+            continue
+        axis_out = cells.setdefault(axis, {})
+        # Se o axis já existe e tem per-platform shape, NÃO sobrescreve —
+        # esse caminho só popula axes vazios. Caso seja override e o axis
+        # já veio do bundle, o caller (_bundle_to_cells) já filtrou pra
+        # extras-only, então fica simples.
+        if not axis_out:
+            axis_out["all-platforms"] = {"card": card_name, "status": "active"}
+
+
+def _summarize_backend_cells(
+    cells: dict[str, dict[str, dict[str, Any] | None]] | None,
+) -> str:
+    """Render compacto pro display (Step 14 history + Step 15 summary).
+
+    Saída exemplo:
+      data: retrofit-client(android), ktor-client(kmp) · auth: firebase-auth · …
+
+    Vazio se ``cells`` é None / dict vazio.
+    """
+    if not cells:
+        return "(sem cells configuradas)"
+    parts: list[str] = []
+    for axis in sorted(cells.keys()):
+        axis_map = cells[axis] or {}
+        if not isinstance(axis_map, dict):
+            continue
+        # Detect uniform "all-platforms" — emite "axis: card".
+        if "all-platforms" in axis_map:
+            cell = axis_map["all-platforms"]
+            if cell and isinstance(cell, dict) and cell.get("card"):
+                parts.append(f"{axis}: {cell['card']}")
+            continue
+        # Per-platform — emite "axis: card1(p1), card2(p2)".
+        pieces: list[str] = []
+        for platform in sorted(axis_map.keys()):
+            cell = axis_map[platform]
+            if cell and isinstance(cell, dict) and cell.get("card"):
+                pieces.append(f"{cell['card']}({platform})")
+        if pieces:
+            parts.append(f"{axis}: {', '.join(pieces)}")
+    return " · ".join(parts) if parts else "(sem cells configuradas)"
 
 
 def _build_paths(project_root: Path, conv_inv: Any) -> dict[str, Any]:
