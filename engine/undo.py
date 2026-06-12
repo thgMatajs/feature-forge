@@ -58,6 +58,24 @@ _HISTORY_FILE_NAME = "workflow-config-history.jsonl"
 _UNDO_SLUG = "_undo"
 
 
+def _delete_feature_artifacts_guard(project_root: Path, target: Path) -> None:
+    """H-06: refuse rmtree on paths outside the project tree.
+
+    Resolves both `project_root` and `target` then verifies containment.
+    Raises `ValueError` if `target` is not inside `project_root` after
+    resolution — protects against `../../etc`-style slugs that survive
+    `feature_dir()`.
+    """
+    project_resolved = project_root.resolve()
+    target_resolved = target.resolve()
+    try:
+        target_resolved.relative_to(project_resolved)
+    except ValueError as exc:
+        raise ValueError(
+            f"Refusing to delete path outside project: {target_resolved}"
+        ) from exc
+
+
 def _utc_now_iso() -> str:
     """ISO-8601 UTC timestamp — thin shim sobre ``engine.utils.iso``."""
     return _utc_now_iso_shared()
@@ -440,6 +458,7 @@ def _delete_feature_artifacts(project_root: Path, feature_slug: str) -> bool:
     if not question.confirm("Confirma — perde tudo. (2ª)", default=False):
         return False
 
+    _delete_feature_artifacts_guard(project_root, fpath)
     shutil.rmtree(fpath)
     renderer.write(renderer.colored("  ✓ artefatos apagados.", "green"))
     _append_undo_log(
