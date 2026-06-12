@@ -7,6 +7,19 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (REVIEW.md remediation — Bloco 3: mypy advisory, 2026-06-12)
+
+- **H-09** — `mypy >= 1.8` adicionado em `[project.optional-dependencies]
+  dev` + seção `[tool.mypy]` em advisory mode. Baseline de 17 errors
+  registrado em `docs/design/04-pending.md`. CI gate não ativo nesta
+  sessão (rollout incremental planejado).
+
+### Changed (REVIEW.md remediation — Bloco 3: mypy advisory, 2026-06-12)
+
+- **M-10** — Removido import unused `Optional` em `engine/implement.py`,
+  `engine/verify.py`, `engine/status.py`, `engine/vision/screenshot.py`.
+  19 usos remanescentes padronizados pra `X | None` intra-arquivo.
+
 ### Changed (REVIEW.md remediation — Bloco 2: functional bugs, 2026-06-12)
 
 - **M-07 (dep nova)** — Adicionado `pathspec >= 0.12` em
