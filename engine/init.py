@@ -54,7 +54,7 @@ from engine.cards.resolver import resolve
 from engine.cards.snapshotter import snapshot_card
 from engine.detection import _eval as _detection_eval
 from engine.detection._eval import _SKIP_DIRS
-from engine.detection.composer import compose_backend_axes
+from engine.detection.composer import Cell, Conflict, compose_backend_axes
 from engine.graph.builder import build_full
 from engine.inventory.conventions import (
     extract_conventions,
@@ -1681,13 +1681,14 @@ def _detect_axis_uniformity(
         for cell in axis_map.values():
             if cell is None:
                 continue
-            # Conflict is dataclass with `candidates` tuple, Cell has `card_id`.
-            if hasattr(cell, "candidates"):
+            # Conflict é dataclass com `candidates` tuple; Cell tem `card_id`.
+            # isinstance preferível a hasattr (PR #13 review #3405253823) —
+            # contrato explícito via types em vez de duck-typing sobre nomes.
+            if isinstance(cell, Conflict):
                 has_conflict = True
                 break
-            card_id = getattr(cell, "card_id", None)
-            if isinstance(card_id, str):
-                active_card_ids.add(card_id)
+            if isinstance(cell, Cell):
+                active_card_ids.add(cell.card_id)
         if has_conflict:
             uniformity[axis] = False
         else:
@@ -1717,7 +1718,7 @@ def _render_axes_table(
                 (
                     cell
                     for cell in axis_map.values()
-                    if cell is not None and hasattr(cell, "card_id")
+                    if isinstance(cell, Cell)
                 ),
                 None,
             )
@@ -1733,13 +1734,13 @@ def _render_axes_table(
             cell = axis_map[platform]
             if cell is None:
                 lines.append(f"    · {platform}: (nenhum)")
-            elif hasattr(cell, "candidates"):
+            elif isinstance(cell, Conflict):
                 # Conflict — expose ALL candidates so the auditor disambiguates.
                 cand_ids = ", ".join(c.card_id for c in cell.candidates)
                 lines.append(
                     f"    · {platform}: CONFLITO — {cand_ids}"
                 )
-            else:
+            elif isinstance(cell, Cell):
                 lines.append(f"    · {platform}: {cell.card_id}")
     return "\n".join(lines)
 
@@ -1759,13 +1760,11 @@ def _collect_confirm_selection(
         for cell in axis_map.values():
             if cell is None:
                 continue
-            if hasattr(cell, "candidates"):
+            if isinstance(cell, Conflict):
                 for cand in cell.candidates:
                     picked.add(cand.card_id)
-            else:
-                card_id = getattr(cell, "card_id", None)
-                if isinstance(card_id, str):
-                    picked.add(card_id)
+            elif isinstance(cell, Cell):
+                picked.add(cell.card_id)
     return sorted(picked)
 
 
@@ -2245,12 +2244,11 @@ def _composer_result_to_cells(
             if cell is None:
                 out_axis[platform] = None
                 continue
-            if hasattr(cell, "candidates"):
+            if isinstance(cell, Conflict):
                 # Conflict — primeiro candidate por convenção (já ordenado
                 # alfabeticamente). Auditor confirmou via Path A.
-                candidates = getattr(cell, "candidates", ())
-                if candidates:
-                    chosen = candidates[0]
+                if cell.candidates:
+                    chosen = cell.candidates[0]
                     out_axis[platform] = {
                         "card": chosen.card_id,
                         "status": "active",
@@ -2258,9 +2256,8 @@ def _composer_result_to_cells(
                 else:
                     out_axis[platform] = None
                 continue
-            card_id = getattr(cell, "card_id", None)
-            if isinstance(card_id, str) and card_id:
-                out_axis[platform] = {"card": card_id, "status": "active"}
+            if isinstance(cell, Cell) and cell.card_id:
+                out_axis[platform] = {"card": cell.card_id, "status": "active"}
             else:
                 out_axis[platform] = None
         out[axis] = out_axis
