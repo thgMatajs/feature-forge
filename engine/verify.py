@@ -765,6 +765,18 @@ def _invoke_validator(spec: _ValidatorSpec, project_root: Path) -> _ValidatorRes
             message=f"script not found: {spec.script_path}",
         )
 
+    # H-10: project_root must be a real directory before we hand it to
+    # subprocess as cwd. Caller-controlled path apontando pra arquivo /
+    # caminho inexistente vira NotADirectoryError opaco em subprocess.run
+    # (OSError branch abaixo) — checagem explicita produz mensagem
+    # auditavel e fecha o vetor cedo.
+    if not project_root.is_dir():
+        return _ValidatorResult(
+            name=spec.name,
+            status="degraded",
+            message=f"project_root is not a directory: {project_root}",
+        )
+
     started = time.monotonic()
     try:
         proc = subprocess.run(
