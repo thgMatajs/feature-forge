@@ -27,7 +27,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from engine.memory.l1 import (
     L1State,
@@ -167,7 +167,7 @@ def _is_valid_slug(value: str) -> bool:
 # ── Readiness gate ───────────────────────────────────────────────────────────
 
 
-def _readiness_from_handoff(handoff: Path) -> Optional[str]:
+def _readiness_from_handoff(handoff: Path) -> str | None:
     if not handoff.exists():
         return None
     try:
@@ -188,7 +188,7 @@ def _readiness_from_handoff(handoff: Path) -> Optional[str]:
     return None
 
 
-def _readiness_from_review(review: Path) -> Optional[str]:
+def _readiness_from_review(review: Path) -> str | None:
     if not review.exists():
         return None
     text = review.read_text(encoding="utf-8")
@@ -337,7 +337,7 @@ def _topo_sort(tasks: list[TaskContract]) -> list[TaskContract]:
 
 def _pick_next_task(
     tasks: list[TaskContract], *, skip_blocked: bool = False
-) -> Optional[TaskContract]:
+) -> TaskContract | None:
     """Pick the next runnable task in topo order.
 
     When `skip_blocked=True`, tasks with unresolved blocking external deps
@@ -360,7 +360,7 @@ def _pick_next_task(
 
 def _print_blocked_refusal(
     task: TaskContract,
-    alt_task: Optional[TaskContract],
+    alt_task: TaskContract | None,
     project_root: Path,
 ) -> None:
     """Render the canonical 3-caminhos block for a task blocked on external deps.
@@ -1073,7 +1073,7 @@ def _toggle_qa_auto_run_off(project_root: Path) -> None:
 # ── Slug elicitation ─────────────────────────────────────────────────────────
 
 
-def _elicit_slug(argv_slug: Optional[str], project_root: Path) -> str:
+def _elicit_slug(argv_slug: str | None, project_root: Path) -> str:
     if argv_slug:
         if not _is_valid_slug(argv_slug):
             raise SystemExit(

@@ -32,7 +32,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from engine._sandbox.env import build_safe_env
 from engine.memory.l1 import (
@@ -204,7 +204,7 @@ def run(argv: list[str]) -> int:
     )
 
 
-def _extract_feature_slug_hint(argv: list[str]) -> Optional[str]:
+def _extract_feature_slug_hint(argv: list[str]) -> str | None:
     """Lê `--feature-slug X` (ou `--feature-slug=X`) de argv, sem mutar."""
     if not argv:
         return None
@@ -223,7 +223,7 @@ def run_scope(
     project_root: Path,
     *,
     interactive: bool = False,
-    feature_slug_hint: Optional[str] = None,
+    feature_slug_hint: str | None = None,
 ) -> int:
     """Public API for hook-driven verify invocations.
 
@@ -264,7 +264,7 @@ def run_scope(
         interactive=interactive,
         argv_hint=feature_slug_hint,
     )
-    previous_state: Optional[L1State] = None
+    previous_state: L1State | None = None
     if feature_slug:
         previous_state = read_l1_status(feature_slug, project_root)
         if previous_state is not None and previous_state.status != "verifying":
@@ -365,7 +365,7 @@ def _scope_to_feature_slug(
     project_root: Path,
     *,
     interactive: bool = True,
-    argv_hint: Optional[str] = None,
+    argv_hint: str | None = None,
 ) -> str:
     """Resolve the feature slug owning a verify scope.
 
@@ -453,7 +453,7 @@ def _scope_to_feature_slug(
 
 def _restore_l1_status(
     project_root: Path,
-    previous_state: Optional[L1State],
+    previous_state: L1State | None,
     *,
     failed: bool,
     note: str,
@@ -834,7 +834,7 @@ def _invoke_validator(spec: _ValidatorSpec, project_root: Path) -> _ValidatorRes
     )
 
 
-def _extract_json_tail(stdout: str) -> Optional[dict]:
+def _extract_json_tail(stdout: str) -> dict | None:
     """Pull the last JSON object printed by the validator, if any."""
     stripped = stdout.strip()
     if not stripped:

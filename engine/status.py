@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from engine.memory.l1 import (
     blocking_deps,
@@ -302,7 +302,7 @@ def _render_recent_activity(project_root: Path) -> None:
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
-def _safe_read_yaml(path: Path) -> Optional[dict]:
+def _safe_read_yaml(path: Path) -> dict | None:
     if not path.is_file():
         return None
     try:
@@ -323,7 +323,7 @@ def _config_get_path(config: dict, keys: list[str], default: Any) -> Any:
     return cursor
 
 
-def _parse_iso(value: str) -> Optional[datetime]:
+def _parse_iso(value: str) -> datetime | None:
     if not value:
         return None
     cleaned = value.replace("Z", "+00:00")
@@ -355,7 +355,7 @@ def _humanize_delta(iso_at: str) -> str:
     return f"há {days}d"
 
 
-def _doctor_stale_hint(last_run: Any) -> Optional[str]:
+def _doctor_stale_hint(last_run: Any) -> str | None:
     if not isinstance(last_run, str) or not last_run:
         return "rode `forge doctor` (ainda nunca rodou aqui)"
     dt = _parse_iso(last_run)
