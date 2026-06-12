@@ -195,21 +195,23 @@ def main(argv: list[str] | None = None) -> int:
     # cases never leak context across each other.
     token = _cli_command_context.set((cmd, list(rest)))
 
-    # Track whether the consumed-intent log should be wiped at terminal
-    # exit. Default true; the exit-2 (paused) branches flip it to false
-    # because the next re-invocation needs the log to skip already-
-    # answered intents (W7-fix re-entry idempotency).
-    clear_log_on_exit = True
+    # Track the terminating exception so the ``finally`` block can decide
+    # whether to wipe the consumed-intent log. Only ``PausedForInputError``
+    # (exit 2, engine asked the caller for input) preserves the log so the
+    # next re-invocation can skip already-answered intents (W7-fix re-entry
+    # idempotency). Every other terminal path — success, user-cancel,
+    # user-paused, fatal error — wipes it.
+    paused_exc: PausedForInputError | None = None
     try:
         try:
             result = handler(rest)
-        except PausedForInputError:
+        except PausedForInputError as exc:
             # DRIFT-1 §8 — chokepoint emitted .claude/state/forge-pending.json.
             # The caller (Claude Code host or engine.ui.tty_bridge) is expected
             # to read that file, write a response, and re-invoke us with the
             # same argv. No traceback, no message on stdout — the host renders
             # whatever it needs to from the intent payload itself.
-            clear_log_on_exit = False
+            paused_exc = exc
             return EXIT_PAUSED
         except UserPausedError:
             # CR-003 fix — host response carried ``paused: true`` while the
@@ -260,10 +262,10 @@ def main(argv: list[str] | None = None) -> int:
         # user-cancel exit 130, fatal error exit 1, user-paused exit 2)
         # wipe the consumed-intent log so the next forge invocation
         # starts with a clean slate. The exit-2 *engine-paused* branch
-        # (``PausedForInputError``) opts out via ``clear_log_on_exit =
-        # False`` because the next re-invocation needs the log to skip
-        # already-answered intents — that is the whole point of the
-        # idempotency mechanism.
+        # (``PausedForInputError``) opts out — detected via the
+        # ``paused_exc`` sentinel captured by the except clause — because
+        # the next re-invocation needs the log to skip already-answered
+        # intents — that is the whole point of the idempotency mechanism.
         #
         # Critical: we use ``clear_intent_log_only`` here — NOT the full
         # ``clear_intent_files`` — because SPEC §3 mandates forensic
@@ -275,16 +277,21 @@ def main(argv: list[str] | None = None) -> int:
         # Failure to clear is silent: the delete is best-effort and any
         # IO error here is less harmful than the original engine failure
         # that we are trying to surface cleanly.
-        if clear_log_on_exit:
+        if paused_exc is None:
             try:
                 from engine.utils.paths import find_project_root
 
                 project_root = find_project_root()
                 intent_state.clear_intent_log_only(project_root)
-            except Exception:
+            except Exception as exc:  # noqa: BLE001
                 # Best-effort. If we cannot resolve project root or the
-                # delete fails, do not mask the real exit code.
-                pass
+                # delete fails, do not mask the real exit code — but do
+                # surface the failure so it shows up in logs / transcripts.
+                # The original handler exit code is preserved by ``return``
+                # already having executed before this ``finally`` block.
+                sys.stderr.write(
+                    f"[WARN] forge: failed to clear intent log on exit: {exc}\n"
+                )
 
 
 if __name__ == "__main__":  # pragma: no cover
