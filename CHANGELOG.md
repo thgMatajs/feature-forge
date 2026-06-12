@@ -169,6 +169,48 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   (`test_pilot_local_card_added_appears_in_cascade`,
   `test_pilot_local_cards_manifest_written`) verdes pós-categoria fix.
 
+### Fixed (PR #13 review Wave A — 2026-06-12)
+
+Remediação dos 7 fixes contidos do review de PR #13 (DET-6 multi-axis
+backend). Single-file, baixo risco, sem cross-cutting:
+
+- **`engine/cli.py` exit-cleanup refactor + observability** — substitui
+  flag mutável `clear_log_on_exit` por sentinela `paused_exc:
+  PausedForInputError | None` (review #3405256255); substitui bare
+  `except Exception: pass` por logged best-effort no stderr (review
+  #3405253379 + #3404131724). Mesma semântica, observabilidade ganhada.
+- **`engine/ui/intent_state.py::_append_intent_log`** — adiciona
+  `f.flush()` explícito após write pra honrar a docstring "JSONL append
+  + flush is the durability contract" (review #3405254528). Regression
+  test spies em `Path.open` confirma flush precede close.
+- **`validators/validate_presets.py`** — unifica imports em
+  `from validators._common`, remove o dual-branch `if __package__`
+  hack (review #3405254868). Script mode + package mode ambos
+  preservados via insert idempotente do project root em `sys.path`.
+- **`validators/validate_workflow_config.py` RULE-020 cascade guard** —
+  quando `platforms.active` está ausente/vazia/malformada, emite uma
+  única mensagem de guidance em vez de cascatear 1 violação RULE-020
+  por cell (review #3405255318). RULE-021..024 seguem rodando no
+  mesmo pass. Regression test garante "platform desconhecida" não
+  vaza no what-failed.
+- **`docs/design/04-pending.md`** — anota gap RULE-023/024 ciclo
+  `migrating-to` (review #3405255904) — detecção DFS 2-hop deferida
+  pra hardening dedicated; feature menor, baixo impacto runtime.
+
+### Changed (PR #13 review Wave A — 2026-06-12)
+
+- **`tests/unit/test_ui_intent_state.py`** — +1 regression test
+  (`test_append_intent_log_flushes_after_write`).
+- **`tests/unit/test_validators_workflow_config.py`** — +1 regression
+  test (`test_empty_platforms_active_emits_single_guidance_not_cascade`).
+
+Fix 4 do review (delegação `clear_intent_log_only` →
+`clear_intent_files(also_log=True)`) skipped: as semânticas divergem —
+`clear_intent_log_only` preserva pending/response (SPEC §3 forensic),
+`clear_intent_files(also_log=True)` apaga os três. Delegar mudaria
+behavior do finally em `cli.py`. Anotado pra triage Wave B caso o
+cleanup seja revisitado.
+
 ### Fixed (PR #11 master-review remediação — 2026-06-11)
 
 Remediação completa dos 28 findings do master-review de PR #11

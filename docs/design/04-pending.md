@@ -2917,6 +2917,21 @@ Fix forward: remover o `# di OR ` do comentário, deixando apenas
 quando outras refinements em CARD-004 estiverem na mesa. Anti-padrão a
 evitar: deixar pra W8 e arriscar drift adicional pelo caminho.
 
+## RULE-023/024 — detecção de ciclo em `migrating-to` (deferred pós-DET-6)
+
+PR #13 review (thgMatajs, 2026-06-12) apontou que `_check_backend` em
+`validators/validate_workflow_config.py` valida que `cell.migrating-to`
+referencia um card existente (RULE-024), mas não detecta ciclos do tipo
+`card A` em `status=migrating-to` apontando pra `card B` enquanto `card B`
+está em `status=migrating-to` apontando pra `card A`. Um config assim
+passa pelo cascade atual sem warning.
+
+Defer com razão: detecção de ciclo exige DFS 2-hop sobre todas as cells
+backend, é feature menor e baixo impacto (config-malformed convive bem
+com runtime — handlers downstream tratam `migrating-to` como hint, não
+contrato). Entra quando RULE-019..024 receber pass dedicado de
+hardening; até lá fica anotada aqui como gap conhecido.
+
 ## Reading order for new contributors
 
 **For a fresh session retomando o projeto, use o handoff:**
