@@ -302,6 +302,28 @@ def _glob_match(rel_path: str, pattern: str) -> bool:
     return _glob_translate(pattern).match(rel_path) is not None
 
 
+# H-01 (security): defensive allowlist. Any new domain table added to
+# `tables_to_clear` must also land here, or _reset_domain_tables refuses
+# to wipe it. Prevents SQL-injection-like surface if a future refactor
+# ever sources table names from external config.
+_ALLOWED_TABLES: frozenset[str] = frozenset({
+    "reuse_finding_locations",
+    "reuse_findings",
+    "module_deps",
+    "ds_usage",
+    "ds_components",
+    "i18n_usage",
+    "i18n_keys",
+    "imports",
+    "tests",
+    "screens",
+    "routes",
+    "di_graph",
+    "symbols",
+    "files",
+})
+
+
 def _reset_domain_tables(conn: sqlite3.Connection) -> None:
     """Wipe all domain tables (keep schema + meta intact).
 
@@ -353,7 +375,11 @@ def _reset_domain_tables(conn: sqlite3.Connection) -> None:
     try:
         with conn:
             for table in tables_to_clear:
-                conn.execute(f"DELETE FROM {table}")
+                if table not in _ALLOWED_TABLES:
+                    raise ValueError(
+                        f"Blocked unauthorized table wipe: {table}"
+                    )
+                conn.execute(f"DELETE FROM {table}")  # noqa: S608 — allowlist-validated
     finally:
         conn.execute("PRAGMA foreign_keys = ON")
 
