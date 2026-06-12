@@ -7,14 +7,105 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Added (Phase B W1 — DET-6 multi-axis backend foundation, 2026-06-10)
+### Added (Phase B — DET-6 multi-axis backend, 2026-06-11)
 
-- `docs/schemas/backend-axes.md` — novo schema doc formalizando o modelo multi-axis platform-keyed do bloco `backend:` em `workflow-config.yaml`. 8 axes canônicos (auth / persistence-server / realtime / file-storage / crash-reporting / analytics / notifications / flags) × N plataformas → cell-object (`provider`, `status ∈ {planned, configured, in-use, disabled}`, `notes?`). RULE-019..024 declaradas como autoritativas aqui (estrutura cell-object + status enum + axes inalteráveis sem revisita). Refs: commits `c60eeb1` + `26c0822` em `feat/det-6-multi-axis-backend`.
+- **Schema canônico multi-axis** — `docs/schemas/backend-axes.md` define
+  8 axes (`data`, `auth`, `observability`, `analytics`, `storage`,
+  `persistence`, `notifications`, `flags`) cada um produzindo
+  `Map[axis][platform] → Cell | null`. Cell shape: `{card, status,
+  migrating-to?}`. Validação enforçada via RULE-019..024 em
+  `validate_workflow_config.py`. Refs: commits `c60eeb1` + `26c0822`
+  (W1 foundation) + waves W5-W7 que consomem o schema.
+- **6 cards novos** cobrindo 3 axes novos: `firebase-analytics`,
+  `posthog-analytics` (axis analytics); `fcm`, `onesignal` (axis
+  notifications); `firebase-remote-config`, `posthog-flags` (axis flags).
+  Cada card com `card.yaml` + `detection/signals.yaml` + README +
+  template stub. Refs: W4.1-W4.6.
+- **Card sqldelight** — KMP-native persistence axis pra kmp platform.
+  Pareia com `room-database` (android-only). Fecha gap W6 onde
+  `firebase-full.yaml` referenciava card ainda inexistente.
+- **4 starter bundles** em `presets/kmp-mobile/bundles/`:
+  `firebase-full`, `rest-with-firebase-telemetry`, `local-only`, +
+  sentinela `custom-from-scratch` (sem YAML — pula bundle, prompta cada
+  axis). Substituem o bloco `backend-candidates:` monolítico.
+- **Detection composer** — `engine/detection/composer.py` com
+  `compose_backend_axes(project_root, active_cards) ->
+  dict[axis][platform] -> Cell | Conflict | None`. Reusa
+  `_eval_detection_signals` + `_eval_gradle_dep` de `engine/init.py`.
+  Conflict.candidates ordenado determinísticamente por card_id. Refs:
+  W5.1 + W5.2 + W5-fix.
+- **AskUserQuestion-fronted init flow** (consumer da Phase A intent
+  protocol):
+  - `_handle_backend_multi_axis_brownfield` (`engine/init.py`):
+    composer-driven, 3-caminhos confirm/adjust/scratch.
+  - `_handle_backend_multi_axis_greenfield` (`engine/init.py`): bundle
+    picker (4 opções) → opt override → per-axis prompts.
+  - `_handle_backend_axes_submenu` (`engine/reconfigure.py`): tabela
+    current 8 axes × N platforms, multiSelect cells, per-cell prompts
+    (null/card/status/migrating-to) com validation enforçada.
+- **Validator novo** — `validate_presets.py` cobre schema dos bundle
+  YAMLs (axes válidos, platforms válidos, card references existentes).
+  16 tests TDD. Refs: W6.3.
+- **3 adapters em init.py** — `_composer_result_to_cells`,
+  `_bundle_to_cells`, `_summarize_backend_cells` convertem handler
+  returns pra workflow-config cell structure. Refs: W7.1+W7.2.
 
-### Changed (Phase B W1 — DET-6 multi-axis backend foundation, 2026-06-10)
+### Changed (Phase B — DET-6, 2026-06-11)
 
-- `docs/schemas/card.md` — CARD-004 enum revisado: `+ analytics`, `+ notifications`, `+ flags`; `- backend`, `- network` (granularidade backend-axes substitui o blob monolítico). Novo campo opcional `identity.platforms` + CARD-022 (platforms enum dentro do conjunto canônico; ID alocado pós-rebase contra `main` que já consumia CARD-020/021 pra DET-3). Adicionada seção "Backend axes — when identity.category is an axis" cross-referenciando `backend-axes.md`. Open-detail anchors preservados.
-- `docs/schemas/workflow-config.md` — bloco `backend:` reescrito para shape multi-axis `backend.<axis>.<platform>` → cell|null. Removidos `identity.backend-choice` (legacy single-pick) e `backend.provider` string monolítico + sub-blocos provider-específicos. Slots RULE-010 e RULE-011 ficam reservados como audit-trail dos campos legacy + cross-ref pra RULE-019..024 (autoridade em `backend-axes.md`); sub-IDs alfanuméricos eliminados. Top-level table sincronizada.
+- **identity.category cleanup** — 9 cards migrados de `category: backend`
+  ou `category: network` pros 8 axes canônicos. `firebase-auth` →
+  `auth`; `auth-jwt-bearer` → `auth`; `firebase-storage` → `storage`;
+  `firestore-persistence` → `data`; `firestore-realtime` → `data` (sub-
+  axis "realtime" follow-up); `firestore-security-rules` → `data`
+  (sub-axis "rules" follow-up); `rest-api-contract` → `data` (sub-axis
+  "data-contract" follow-up); `retrofit-client` → `data`; `ktor-client`
+  → `data`. CARD-004 enum em `engine/cards/loader.py` ampliado.
+  Refs: W2.
+- **Label refactor** — labels singulares `auth-provider`, `http-client`,
+  `crash-reporting` removidos de `cards/*/card.yaml § provides`.
+  Cardinalidade enforçada pelo cell shape (1 card per cell). Refs: W3.
+- **Card rename** — `cards/crashlytics/` → `cards/firebase-crashlytics/`
+  (paridade com `firebase-auth`, `firebase-analytics`, etc.). 25
+  arquivos atualizados (incluindo 12 consumers cross-card via grep
+  canary). YAML field name `crashlytics:` em contratos analytics
+  mantém-se (concept independente).
+- **`docs/schemas/card.md`** — CARD-004 enum revisado: `+ analytics`,
+  `+ notifications`, `+ flags`; `- backend`, `- network` (granularidade
+  backend-axes substitui o blob monolítico). Novo campo opcional
+  `identity.platforms` + CARD-022 (platforms enum dentro do conjunto
+  canônico; ID alocado pós-rebase contra `main` que já consumia
+  CARD-020/021 pra DET-3). Adicionada seção "Backend axes — when
+  identity.category is an axis" cross-referenciando `backend-axes.md`.
+  Open-detail anchors preservados.
+- **`docs/schemas/workflow-config.md`** — bloco `backend:` reescrito
+  para shape multi-axis `backend.<axis>.<platform>` → cell|null.
+  Removidos `identity.backend-choice` (legacy single-pick) e
+  `backend.provider` string monolítico + sub-blocos provider-específicos.
+  Slots RULE-010 e RULE-011 ficam reservados como audit-trail dos
+  campos legacy + cross-ref pra RULE-019..024 (autoridade em
+  `backend-axes.md`); sub-IDs alfanuméricos eliminados. Top-level
+  table sincronizada.
+- **CARD-022 renumber** — schema rule pra `identity.platforms` (W1)
+  realocada de CARD-020 pra CARD-022 devido à colisão com DET-3
+  (CARD-020/021 já alocados pra gradle-dep). Audit-trail em
+  `docs/schemas/card.md`.
+
+### Removed (Phase B — DET-6, 2026-06-11)
+
+- `backend-candidates:` bloco completo em `presets/kmp-mobile/preset.yaml`
+  (substituído por `bundles-dir` + `bundle-options` sentinela). Refs:
+  W6.2.
+- `identity.backend-choice` field em workflow-config.yaml. ConfiguratorCheckpoint
+  `backend_choice` field idem. 15 referências removidas de
+  `engine/init.py`. Refs: W7.4.
+- `_build_backend` function legacy em `engine/init.py` (mapeava
+  `backend_choice → backend.provider` enum). Substituída por adapters.
+  Refs: W7.4.
+- `_handle_backend` legacy em `engine/reconfigure.py` (handler antigo do
+  submenu backend). Substituído por `_handle_backend_axes_submenu`.
+  Refs: W7.3.
+- Labels singulares `auth-provider`, `http-client`, `crash-reporting`
+  de `provides`. Cardinalidade enforçada pelo schema. Refs: W3.
 
 ### Fixed (PR #11 master-review remediação — 2026-06-11)
 
