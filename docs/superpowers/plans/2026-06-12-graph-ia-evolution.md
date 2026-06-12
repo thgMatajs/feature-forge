@@ -184,6 +184,7 @@ Decisões de reuso:
 | Modificar | `docs/schemas/graph.md` | Doc `symbols.body` column + `--json` flag |
 | Modificar | `AGENTS.md` ou `CLAUDE.md` | Instrução pro modelo: consulte graph antes de ler arquivos |
 | Modificar | `CHANGELOG.md` | `### Added` — body column, --json, Java/XML/ObjC parsers |
+| Modificar | `README.md` | Stats refletindo +18 tests, 3 parsers Java/XML/ObjC, `--json` flag |
 | Modificar | `docs/design/08-session-handoff.md` | "Última atualização" + estado: v1.3.0 graph-ia-evolution |
 | Modificar | `docs/design/04-pending.md` | Marca item relacionado se houver |
 
@@ -760,7 +761,7 @@ _VISIBILITY_RE = re.compile(r"(public|private|protected)")
 class JavaSymbolInfo:
     name: str
     kind: str  # "class" | "interface" | "enum" | "record" | "method" | "constructor"
-    visibility: str = "package-private"
+    visibility: str = "internal"  # alinhado com Kotlin internal (package-scoped)
     signature: Optional[str] = None
     line: int = 0
     body: Optional[str] = None
@@ -815,7 +816,7 @@ def _parse_java(source: str) -> JavaFileInfo:
             kind = "class"
 
         line = source[:start].count("\n") + 1
-        visibility = "package-private"
+        visibility = "internal"  # alinhado com Kotlin internal (package-scoped)
         vis_m = _VISIBILITY_RE.search(kind_raw)
         if vis_m:
             visibility = vis_m.group(1)
@@ -866,7 +867,7 @@ def _parse_java(source: str) -> JavaFileInfo:
 
         line = source[:m.start()].count("\n") + 1
 
-        visibility = "package-private"
+        visibility = "internal"  # alinhado com Kotlin internal (package-scoped)
         vis_m = _VISIBILITY_RE.search(preceding[-100:])
         if vis_m:
             visibility = vis_m.group(1)
@@ -1944,6 +1945,7 @@ resources), Objective-C (`.m`, `.mm`).
 - Modify: `CHANGELOG.md`
 - Modify: `docs/design/08-session-handoff.md`
 - Modify: `docs/design/04-pending.md`
+- Modify: `README.md`
 
 `docs/schemas/graph.md` é load-bearing per `.claude/rules/scope.md` — schema doc é fonte canônica do contrato; sem este edit a coluna `body` e a flag `--json` não entram no contrato, alinhado com Mandamento #6.
 
@@ -2039,6 +2041,30 @@ grep -n -i "body.*column\|--json\|graph.*ia" docs/design/04-pending.md
 Run pra confirmar:
 ```bash
 grep -c "graph-ia-evolution\|graph-ia v1.4" docs/design/04-pending.md  # >= 1 após edit
+```
+
+- [ ] **Step 9.7: Atualizar `README.md` (Mandamento #6 doc-sync — stats)**
+
+Doc-sync per `.claude/rules/doc-sync.md §Checklist pré-commit` item 3: stats mudaram (test count, parser count, command surface), README precisa refletir no mesmo commit.
+
+Antes do edit, localizar as seções pertinentes:
+
+```bash
+grep -n -i "tests\|parsers\|graph" README.md | head -20
+```
+
+Sub-atualizações:
+
+(a) **§Stats** — bump de test count (de baseline pra baseline+18 — 18 tests novos: 7 Java + 5 XML + 6 ObjC) + parser count (de 3 pra 6: kotlin/swift/typescript + java/xml/objc).
+
+(b) **§Command surface** (ou equivalente) — mencionar `forge graph --json <query>` como entrypoint não-interativo pra consumo por IA/automação.
+
+Texto-âncora: replicar pattern de releases anteriores (ver `git log --oneline -- README.md` antes do edit).
+
+Run pra confirmar:
+```bash
+grep -c "\-\-json" README.md  # >= 1 após edit
+grep -c "java\|xml\|objc" README.md  # >= 1 após edit (case-insensitive ok)
 ```
 
 ---
