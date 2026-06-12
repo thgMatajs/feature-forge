@@ -2934,6 +2934,28 @@ hardening; até lá fica anotada aqui como gap conhecido.
 
 ## Reading order for new contributors
 
+## Mypy rollout — advisory mode (2026-06-12)
+
+**Baseline:** `17` errors across `engine/` + `validators/` (captured
+via `mypy engine/ validators/` post-install of `mypy >= 1.8`; 113 source
+files checked, 8 files com erros).
+
+**Scope desta sessão:** apenas setup advisory. CI gate NÃO ativo. Comando
+manual disponível: `mypy engine/ validators/`.
+
+**Rollout incremental (próximas sessões):**
+- Sub-phase 1: zero new errors policy (PR-level gate sem fail-on-existing).
+- Sub-phase 2: top-3 módulos most-error (`engine/implement.py`,
+  `engine/verify.py`, `engine/init.py`) ganham `strict = true` por seção
+  isolada (`[[tool.mypy.overrides]] module = "engine.implement"`).
+- Sub-phase 3: opt-in cascade até ≥80% módulos strict; ativar gate global.
+
+**Why not strict now:** 17 errors → fix de cada um seria scope creep
+além dos 22 findings do REVIEW.md. Setup baseline em advisory destrava o
+pipeline pra abordar em phases dedicadas.
+
+---
+
 **For a fresh session retomando o projeto, use o handoff:**
 
 → `docs/design/08-session-handoff.md` (TL;DR + ordem mandatória + auto-mode prompt)

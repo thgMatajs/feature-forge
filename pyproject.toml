@@ -30,6 +30,7 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-cov>=4.1",
+    "mypy>=1.8",
 ]
 
 [project.scripts]
@@ -41,6 +42,15 @@ forge = "engine.cli:main"
 where = ["."]
 include = ["engine*"]
 exclude = ["tests*", "examples*"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+no_strict_optional = true
+warn_unused_ignores = true
+files = ["engine", "validators"]
+# Advisory mode: errors are reported but do not gate CI. Rollout per-module
+# plan tracked in docs/design/04-pending.md.
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
