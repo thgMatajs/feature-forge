@@ -432,6 +432,18 @@ Antes de iniciar qualquer task de fix, Task 0.1 captura `pytest --collect-only -
   ```
   Expected: FAIL — `_delete_feature_artifacts_guard` não existe ainda.
 
+- [ ] **Step 2.5: Confirmar ausência de helper similar (Mandamento #3 reuse-first)**
+
+  Antes de criar `_delete_feature_artifacts_guard`, confirmar que não existe helper canônico cobrindo path-traversal guard:
+
+  ```bash
+  grep -rn "is_relative_to.*project_root\|relative_to.*project_root" engine/ | head
+  grep -rn "Refusing to delete\|path.*outside.*project" engine/ | head
+  forge graph query Q11 2>/dev/null | grep -i "path.*guard\|traversal\|relative_to" || true
+  ```
+
+  Expected: nenhum helper já cobrindo este caso. Se um helper for encontrado, **parar** e consolidar em vez de criar nova função — reportar ao orquestrador.
+
 - [ ] Step 3: Em `engine/undo.py`, adicionar a função helper logo após os imports (após linha 56, antes de `_utc_now_iso`):
   ```python
   def _delete_feature_artifacts_guard(project_root: Path, target: Path) -> None:
@@ -1289,12 +1301,13 @@ Antes de iniciar qualquer task de fix, Task 0.1 captura `pytest --collect-only -
 - Modify: `pyproject.toml` (dev dep + `[tool.mypy]`)
 - Modify: `docs/design/04-pending.md` (registra baseline + rollout plan)
 
-- [ ] Step 1: Em `pyproject.toml`, localizar `[project.optional-dependencies]` (criar a tabela `dev` se não existir). Adicionar `mypy >= 1.8`:
+- [ ] Step 1: Em `pyproject.toml`, localizar `[project.optional-dependencies]` (criar a tabela `dev` se não existir). Adicionar `"mypy >= 1.8",` ao array `dev` em `[project.optional-dependencies]`, preservando entradas existentes na ordem em que estão.
+
   ```toml
   [project.optional-dependencies]
   dev = [
       "mypy >= 1.8",
-      # ... outras dev deps já existentes ...
+      # demais dev deps existentes preservadas na ordem atual
   ]
   ```
 
@@ -1733,6 +1746,14 @@ Antes de iniciar qualquer task de fix, Task 0.1 captura `pytest --collect-only -
   pytest
   ```
   Expected: PASS, count >= baseline + 11 new tests (Bloco 1: 6, Bloco 2: 5)
+
+- [ ] **Step 3.5: Validator de no-behavior-change pra sites whitelisted**
+
+  ```bash
+  python validators/check_no_behavior_change.py
+  ```
+
+  Expected: PASS. Sites narrowed legitimamente mudam comportamento em erro-paths (exceptions agora propagam ao invés de swallow) — isso é fix de policy intencional. Mas pros sites whitelisted (defensive catches preservados com comment), a intenção é zero mudança. Falha aqui indica narrow acidental num site que deveria ficar broad — reverter o caso específico.
 
 - [ ] Step 4: Commit
   ```bash
