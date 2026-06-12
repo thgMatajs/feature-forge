@@ -31,25 +31,25 @@ from typing import Any
 
 import yaml
 
-# Permitir uso tanto como sibling import (rodando do diretório validators/)
-# quanto como `from validators.validate_presets import …` (tests).
-if __package__ in (None, ""):
-    sys.path.insert(0, str(Path(__file__).parent))
-    from _common import (  # type: ignore[no-redef]
-        make_paths,
-        result_fail,
-        result_pass,
-        result_warn,
-        run_cli,
-    )
-else:
-    from validators._common import (
-        make_paths,
-        result_fail,
-        result_pass,
-        result_warn,
-        run_cli,
-    )
+# Package-import resolution: tests import as ``from validators.validate_presets
+# import …`` which sets ``__package__ = "validators"``; CLI/script execution
+# (``python validators/validate_presets.py``) needs the project root on
+# ``sys.path`` so the same absolute import works. Doing the path insert
+# unconditionally (and idempotently) is simpler than maintaining two branches
+# of imports — PR #13 review #3405254868 flagged the prior dual-branch as
+# noise. The insert is a no-op when the project root is already discoverable
+# (normal package install OR pytest rootdir).
+_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
+from validators._common import (  # noqa: E402
+    make_paths,
+    result_fail,
+    result_pass,
+    result_warn,
+    run_cli,
+)
 
 
 class BundleValidationError(ValueError):
