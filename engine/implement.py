@@ -342,17 +342,13 @@ def _topo_sort(tasks: list[TaskContract]) -> list[TaskContract]:
             chain = " → ".join(stack + [node_id])
             raise SystemExit(f"forge implement: dependency cycle detected ({chain})")
         if node_id not in by_id:
-            # Dependência declarada apontando pra TASK desconhecida — segue
-            # tratando como satisfeita pra não travar o pipeline, mas avisa
-            # visivelmente pra usuário corrigir o contrato.
-            renderer.write(
-                renderer.colored(
-                    f"⚠ Dependência desconhecida: {node_id} — "
-                    "tratando como satisfeita",
-                    "yellow",
-                )
+            # M-02: dep apontando pra task inexistente é erro de contrato,
+            # não warning. Continuar trataria estado inválido como válido
+            # e a feature avançaria com DAG furado.
+            raise SystemExit(
+                f"forge implement: task '{node_id}' declared in "
+                "dependencies does not exist. Fix the dependency reference."
             )
-            return
         visiting.add(node_id)
         for dep in by_id[node_id].dependencies:
             _visit(dep, stack + [node_id])
