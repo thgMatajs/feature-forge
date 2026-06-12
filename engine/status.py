@@ -264,7 +264,7 @@ def _render_recent_activity(project_root: Path) -> None:
     for slug in list_active_features(project_root):
         try:
             history = read_history(slug, project_root)
-        except Exception:  # pragma: no cover - defensive
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
             continue
         for entry in history:
             at = str(entry.get("at") or "")
