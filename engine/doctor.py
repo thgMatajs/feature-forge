@@ -338,8 +338,9 @@ def _stamp_last_doctor_run(
     doctor_block["last-status"] = overall_status
     try:
         write_yaml(config_path, config, atomic=True)
-    except Exception:  # pragma: no cover - defensive
+    except (YamlIOError, OSError):  # pragma: no cover - defensive
         # Doctor must never crash the user's session because of a stamp write.
+        # noqa: BLE001 — narrowed: stamp write is best-effort, observability-only.
         pass
 
 
@@ -434,7 +435,11 @@ def _check_cards(project_root: Path, config: dict) -> _CategoryReport:
             continue
         try:
             actual = compute_directory_sha256(snapshot)
-        except Exception as exc:  # pragma: no cover - defensive
+        except (OSError, ValueError) as exc:  # pragma: no cover - defensive
+            # noqa: BLE001 — broad catch: defensive at category-check boundary —
+            # filesystem walk + sha256 can raise OSError (permissions, race);
+            # ValueError covers malformed paths. Isolated so one snapshot
+            # failure does not cascade to the other 11 doctor categories.
             checks.append(_Check(name, _STATUS_FAIL, f"hash error: {exc}"))
             continue
         if actual == expected:
