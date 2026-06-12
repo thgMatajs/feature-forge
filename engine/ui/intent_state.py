@@ -145,9 +145,39 @@ def _log_path(project_root: Path) -> Path:
 
 # --- consumed-intent log (re-entry idempotency) ----------------------------
 
+# Process-level cache pra `_read_intent_log` (PR #13 review #3405256063).
+# Antes: cada chamada de `read_response` re-parseava o JSONL inteiro do
+# disco, mesmo o log sendo append-only e nunca encolher dentro de uma
+# invocação do forge. Em multi-intent handlers (init brownfield/greenfield,
+# reconfigure backend submenu) isso era O(n) por prompt — n linhas × n
+# prompts.
+#
+# Cache key é o `Path` do log (1 entry por project_root). Value é o dict
+# parseado. Invalidação via `_append_intent_log` (atualiza incremental) e
+# `clear_intent_files`/`clear_intent_log_only` (remove a entry).
+#
+# `_reset_log_cache` é exposto pra tests que precisam reset explícito —
+# fixtures com `tmp_path` em geral usam paths únicos, mas se um test
+# reusa o mesmo path entre invocações o cache pode contaminar.
+_log_cache: dict[Path, dict[str, dict[str, Any]]] = {}
+
+
+def _reset_log_cache() -> None:
+    """Limpa o cache do log de intents (escape hatch pra testes).
+
+    Em runtime de produção não precisa ser chamado — invalidação acontece
+    no write path (`_append_intent_log`) e nos cleanups
+    (`clear_intent_files`, `clear_intent_log_only`). Esta função existe
+    pra testes que reusam Path entre invocações simuladas.
+    """
+    _log_cache.clear()
+
 
 def _read_intent_log(project_root: Path) -> dict[str, dict[str, Any]]:
     """Read consumed-intents log → ``{intent-id: response}``.
+
+    Cached por `path` no module-level `_log_cache`. Hit retorna copy
+    rasa do dict pra evitar mutação externa do cache.
 
     Log is append-only JSONL. Defensive parsing:
 
@@ -165,12 +195,19 @@ def _read_intent_log(project_root: Path) -> dict[str, dict[str, Any]]:
     single dict lookup per ``read_response`` call.
     """
     path = _log_path(project_root)
+    if path in _log_cache:
+        # Copy rasa — protege o cache contra mutação acidental por callers
+        # que façam dict ops downstream. As values (response dicts) são
+        # tratadas como read-only por convenção do `read_response`.
+        return dict(_log_cache[path])
     if not path.exists():
+        _log_cache[path] = {}
         return {}
     try:
         raw = path.read_text(encoding="utf-8")
     except OSError:
         # Filesystem hiccup — treat as no cache, file is best-effort.
+        # Não cacheia o hiccup: próxima chamada tenta de novo (transient).
         return {}
     result: dict[str, dict[str, Any]] = {}
     for line in raw.splitlines():
@@ -189,7 +226,8 @@ def _read_intent_log(project_root: Path) -> dict[str, dict[str, Any]]:
         response = entry.get("response")
         if isinstance(response, dict):
             result[intent_id] = response
-    return result
+    _log_cache[path] = result
+    return dict(result)
 
 
 def _append_intent_log(
@@ -206,6 +244,9 @@ def _append_intent_log(
     here because we are augmenting an existing file rather than
     replacing one — the JSONL format absorbs partial writes
     gracefully.
+
+    Atualiza o cache (PR #13 review #3405256063) — append incremental
+    em vez de invalidar tudo, mantém leituras subsequentes O(1).
     """
     path = _log_path(project_root)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -217,6 +258,14 @@ def _append_intent_log(
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
         f.flush()
+    # Cache update: garantia de coerência leitura-pós-escrita.
+    cached = _log_cache.get(path)
+    if cached is None:
+        # Primeira vez que vemos esse path — popula cache com a entry nova.
+        # Calls subsequentes pegam direto sem re-ler o arquivo inteiro.
+        _log_cache[path] = {intent_id: response}
+    else:
+        cached[intent_id] = response
 
 
 # --- write_pending ---------------------------------------------------------
@@ -393,7 +442,11 @@ def clear_intent_files(
     json_io.delete_if_exists(_pending_path(project_root))
     json_io.delete_if_exists(_response_path(project_root))
     if also_log:
-        json_io.delete_if_exists(_log_path(project_root))
+        log_path = _log_path(project_root)
+        json_io.delete_if_exists(log_path)
+        # Cache invalidation: próxima leitura re-lê do disco (que estará
+        # ausente → {}). Sem isso, callers veriam entries fantasma.
+        _log_cache.pop(log_path, None)
 
 
 def clear_intent_log_only(project_root: Path) -> None:
@@ -409,7 +462,10 @@ def clear_intent_log_only(project_root: Path) -> None:
 
     Idempotent: no-op when the log file is absent.
     """
-    json_io.delete_if_exists(_log_path(project_root))
+    log_path = _log_path(project_root)
+    json_io.delete_if_exists(log_path)
+    # Cache invalidation pareada com o delete on-disk.
+    _log_cache.pop(log_path, None)
 
 
 # --- detect_race -----------------------------------------------------------
