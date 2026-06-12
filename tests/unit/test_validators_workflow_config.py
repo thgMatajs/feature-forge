@@ -274,3 +274,65 @@ def test_rule_024_rejects_unknown_migrating_to_card(tmp_forge_project: Path) -> 
     assert result["status"] == "fail"
     assert "RULE-024" in result["what-failed"], result["what-failed"]
     assert "ghost-target-card" in result["what-failed"]
+
+
+# ── PR #13 review #3405255318 — platforms.active cascade guard ───────────────
+
+
+_BASE_NO_PLATFORMS_ACTIVE = """\
+schema-version: 1
+identity:
+  project-slug: probe-project
+platforms:
+  active: []
+cards:
+  active: []
+paths:
+  feature-roots: {}
+conventions: {}
+workflow:
+  readiness-strictness: standard
+persona: {}
+memory: {}
+graph: {}
+"""
+
+
+def test_empty_platforms_active_emits_single_guidance_not_cascade(
+    tmp_forge_project: Path,
+) -> None:
+    """When ``platforms.active`` is empty, RULE-020 must NOT cascade once
+    per non-``all-platforms`` cell. Instead, one guidance message
+    explaining the root cause + RULE-020 skipped. RULE-021..024 still run.
+    """
+    _seed_card(tmp_forge_project, "stub-card")
+    cfg = (
+        _BASE_NO_PLATFORMS_ACTIVE
+        + "backend:\n"
+        + "  data:\n"
+        + "    android:\n"
+        + "      card: stub-card\n"
+        + "      status: active\n"
+        + "    ios:\n"
+        + "      card: stub-card\n"
+        + "      status: active\n"
+        + "    kmp:\n"
+        + "      card: stub-card\n"
+        + "      status: active\n"
+    )
+    (tmp_forge_project / ".claude" / "workflow-config.yaml").write_text(
+        cfg, encoding="utf-8"
+    )
+    result = v.validate(tmp_forge_project, scope="inferred", id=None)
+    # Without the guard: 3 RULE-020 violations (one per platform). With:
+    # exactly 0 RULE-020 mentions + 1 guidance line.
+    what_failed = result.get("what-failed", "")
+    # Cascade signature would be repeated "platform desconhecida" messages,
+    # one per cell. With the guard, none should appear — only the guidance
+    # line that itself mentions "RULE-020 pulada".
+    assert "platform desconhecida" not in what_failed, (
+        f"RULE-020 cascade não foi suprimida: {what_failed!r}"
+    )
+    assert "platforms.active" in what_failed, (
+        f"esperado guidance sobre platforms.active, got {what_failed!r}"
+    )

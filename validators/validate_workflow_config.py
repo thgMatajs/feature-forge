@@ -165,6 +165,19 @@ def _check_backend(project_root: Path, data: dict[str, Any]) -> list[str]:
         if isinstance(raw_active, list):
             platforms_active = {p for p in raw_active if isinstance(p, str) and p}
 
+    # PR #13 review #3405255318 — if platforms.active is missing/empty/
+    # malformed, RULE-020 would cascade one violation per non-``all-platforms``
+    # cell, drowning the real diagnostic (the missing platforms block).
+    # Emit a single guidance message and skip RULE-020 per cell — RULE-021..024
+    # still run so the user sees card/status/migrating-to issues alongside.
+    skip_rule_020 = not platforms_active
+    if skip_rule_020:
+        out.append(
+            "platforms.active ausente, vazia ou malformada — RULE-020 pulada "
+            "pra evitar cascade de falsos positivos. Corrija platforms.active "
+            "(lista de strings entre {android, ios, kmp, web}) e re-rode."
+        )
+
     cards_root = cards_dir(project_root)
 
     for axis, axis_block in backend.items():
@@ -184,8 +197,11 @@ def _check_backend(project_root: Path, data: dict[str, Any]) -> list[str]:
 
         for platform_key, cell in axis_block.items():
             # RULE-020 — platform ∈ platforms.active OR "all-platforms".
+            # Skipped when platforms.active itself is broken (see guard
+            # above); the cascade would otherwise drown the real fix.
             if (
-                platform_key != "all-platforms"
+                not skip_rule_020
+                and platform_key != "all-platforms"
                 and platform_key not in platforms_active
             ):
                 out.append(
