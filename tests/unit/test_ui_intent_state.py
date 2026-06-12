@@ -395,3 +395,250 @@ def test_detect_race_propagates_non_io_exceptions(
         intent_state.detect_race(tmp_project_root, new_intent_id="x")
     # Pending preservado — não foi feito sweep silencioso pelo broad except.
     assert pending_path.exists()
+
+
+# --- consumed-intent log (W7-fix re-entry idempotency, 2026-06-12) ---------
+
+
+def _write_response_file(project_root: Path, payload: dict) -> Path:
+    """Drop a synthetic forge-response.json — simulates the host caller."""
+    state_dir = project_root / ".claude" / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    path = state_dir / "forge-response.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def _log_file(project_root: Path) -> Path:
+    return project_root / ".claude" / "state" / "forge-intent-log.jsonl"
+
+
+def test_read_response_caches_consumed_response_in_log(tmp_project_root):
+    """First consume of intent-id appends an entry to forge-intent-log.jsonl."""
+    intent_id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+    _write_response_file(tmp_project_root, _response_payload(intent_id=intent_id))
+
+    result = intent_state.read_response(tmp_project_root, intent_id=intent_id)
+    assert result is not None
+    assert result["intent-id"] == intent_id
+
+    log = _log_file(tmp_project_root)
+    assert log.exists(), "consumed-intent log must be created on first consume"
+    lines = log.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1, f"one consume → one log entry, got {lines!r}"
+    entry = json.loads(lines[0])
+    assert entry["intent-id"] == intent_id
+    assert entry["response"]["intent-id"] == intent_id
+    assert "consumed-at" in entry
+
+
+def test_read_response_returns_cached_on_re_entry(tmp_project_root):
+    """Second read of the same intent-id returns the cached response even
+    after the underlying response file has been removed."""
+    intent_id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+    response_path = _write_response_file(
+        tmp_project_root, _response_payload(intent_id=intent_id, value="x")
+    )
+
+    first = intent_state.read_response(tmp_project_root, intent_id=intent_id)
+    assert first is not None
+
+    # Caller (question.py) cleared the response file after consume.
+    response_path.unlink()
+    assert not response_path.exists()
+
+    # Re-entry: handler re-runs from the top, hits the same ask(), which
+    # asks again for intent-id. Without the log this would return None and
+    # the handler would emit a duplicate pending. With the log we return
+    # the cached response and the handler progresses past this ask().
+    cached = intent_state.read_response(tmp_project_root, intent_id=intent_id)
+    assert cached is not None
+    assert cached["intent-id"] == intent_id
+    assert cached["value"] == "x"
+
+
+def test_read_response_idempotent_after_file_overwrite(tmp_project_root):
+    """Multi-intent re-entry scenario: log holds intent A while file holds
+    intent B. Reading A returns cached; reading B reads file fresh."""
+    intent_a = "11111111-aaaa-4aaa-8aaa-111111111111"
+    intent_b = "22222222-bbbb-4bbb-8bbb-222222222222"
+
+    # Phase 1: caller wrote response for A, engine consumes.
+    _write_response_file(
+        tmp_project_root, _response_payload(intent_id=intent_a, value="a")
+    )
+    first = intent_state.read_response(tmp_project_root, intent_id=intent_a)
+    assert first["value"] == "a"
+
+    # Phase 2: question.py clears file post-consume; caller writes response
+    # for the NEXT intent (B).
+    (tmp_project_root / ".claude" / "state" / "forge-response.json").unlink()
+    _write_response_file(
+        tmp_project_root, _response_payload(intent_id=intent_b, value="b")
+    )
+
+    # Re-entry: handler re-runs from the top, hits ask() for intent A
+    # again. Log lookup wins → cached response for A is returned, file is
+    # untouched.
+    again_a = intent_state.read_response(tmp_project_root, intent_id=intent_a)
+    assert again_a["value"] == "a", (
+        "log lookup must return cached value for intent-id A even when "
+        "the response file holds intent-id B"
+    )
+
+    # Handler progresses past ask() for A, hits ask() for B. Now the log
+    # has no entry for B; file holds B; consume succeeds.
+    fresh_b = intent_state.read_response(tmp_project_root, intent_id=intent_b)
+    assert fresh_b["value"] == "b"
+
+
+def test_read_response_still_raises_mismatch_for_unknown_id(tmp_project_root):
+    """When neither log nor file knows the requested intent-id, mismatch
+    still fires — the log only short-circuits *cached* hits, not unknowns."""
+    written_id = "33333333-cccc-4ccc-8ccc-333333333333"
+    expected_id = "44444444-dddd-4ddd-8ddd-444444444444"
+
+    _write_response_file(
+        tmp_project_root, _response_payload(intent_id=written_id)
+    )
+
+    with pytest.raises(intent_state.IntentMismatchError) as exc:
+        intent_state.read_response(tmp_project_root, intent_id=expected_id)
+    assert written_id in str(exc.value)
+    assert expected_id in str(exc.value)
+
+
+def test_read_response_none_when_log_empty_and_file_absent(tmp_project_root):
+    """No log, no file → caller must emit a fresh pending. Idempotency does
+    not invent responses out of thin air."""
+    intent_id = "55555555-eeee-4eee-8eee-555555555555"
+    assert (
+        intent_state.read_response(tmp_project_root, intent_id=intent_id)
+        is None
+    )
+    # Negative invariant: no log file leaked into existence.
+    assert not _log_file(tmp_project_root).exists()
+
+
+def test_clear_intent_files_preserves_log_by_default(tmp_project_root):
+    """Per-prompt cleanup in question.py keeps the log alive — re-entry
+    idempotency depends on the log surviving across per-ask clears."""
+    intent_id = "66666666-ffff-4fff-8fff-666666666666"
+    _write_response_file(tmp_project_root, _response_payload(intent_id=intent_id))
+    intent_state.read_response(tmp_project_root, intent_id=intent_id)
+    assert _log_file(tmp_project_root).exists()
+
+    intent_state.clear_intent_files(tmp_project_root)
+    assert _log_file(tmp_project_root).exists(), (
+        "default clear must NOT touch the log — re-entry needs it alive"
+    )
+
+
+def test_clear_intent_files_also_log_resets(tmp_project_root):
+    """``also_log=True`` exists for callers that already wanted full cleanup
+    plus the log in one shot — the top-level handler in engine/cli.py does
+    NOT use this path (see ``clear_intent_log_only`` below) but the option
+    is here for completeness."""
+    intent_id = "77777777-1111-4aaa-8aaa-777777777777"
+    _write_response_file(tmp_project_root, _response_payload(intent_id=intent_id))
+    intent_state.read_response(tmp_project_root, intent_id=intent_id)
+    assert _log_file(tmp_project_root).exists()
+
+    intent_state.clear_intent_files(tmp_project_root, also_log=True)
+    assert not _log_file(tmp_project_root).exists(), (
+        "also_log=True must delete the consumed-intent log"
+    )
+
+
+def test_clear_intent_log_only_preserves_pending_and_response(tmp_project_root):
+    """The lifecycle clear at top-level handler exit MUST preserve pending
+    and response (SPEC §3 forensic-preservation on error). Only the log
+    goes away."""
+    intent_id = "88888888-2222-4bbb-8bbb-888888888888"
+    response_path = _write_response_file(
+        tmp_project_root, _response_payload(intent_id=intent_id)
+    )
+    pending_path = tmp_project_root / ".claude" / "state" / "forge-pending.json"
+    pending_path.write_text(
+        json.dumps(_pending_payload(intent_id=intent_id)), encoding="utf-8"
+    )
+    intent_state.read_response(tmp_project_root, intent_id=intent_id)
+    assert _log_file(tmp_project_root).exists()
+
+    intent_state.clear_intent_log_only(tmp_project_root)
+
+    assert not _log_file(tmp_project_root).exists(), "log must be gone"
+    assert pending_path.exists(), (
+        "pending must be preserved — SPEC §3 forensic preservation"
+    )
+    assert response_path.exists(), (
+        "response must be preserved — SPEC §3 forensic preservation"
+    )
+
+
+def test_clear_intent_log_only_idempotent_when_log_absent(tmp_project_root):
+    """No log to clear is fine — idempotent."""
+    intent_state.clear_intent_log_only(tmp_project_root)  # should not raise
+
+
+def test_read_response_re_entry_sequence_resolves_without_mismatch(
+    tmp_project_root,
+):
+    """End-to-end simulation of the pre-fix bug: subprocess 1 consumes A,
+    caller writes B, subprocess 2 re-enters and asks for A again. Before
+    the fix this raised IntentMismatchError; with the log it resolves."""
+    intent_a = "88888888-2222-4bbb-8bbb-888888888888"
+    intent_b = "99999999-3333-4ccc-8ccc-999999999999"
+
+    # Subprocess 1: response file holds A; engine consumes; question.py
+    # clears the file at end of ask().
+    _write_response_file(
+        tmp_project_root, _response_payload(intent_id=intent_a, value="alpha")
+    )
+    assert intent_state.read_response(tmp_project_root, intent_id=intent_a) is not None
+    (tmp_project_root / ".claude" / "state" / "forge-response.json").unlink()
+
+    # Engine emits pending for B → exit 2. Caller writes B's response and
+    # re-invokes forge.
+    _write_response_file(
+        tmp_project_root, _response_payload(intent_id=intent_b, value="beta")
+    )
+
+    # Subprocess 2: handler restarts from the top, hits ask() for A first.
+    # WITHOUT the log: response file holds B, mismatch → exit 1 → BUG.
+    # WITH the log: cached A returned; handler progresses to B.
+    a_again = intent_state.read_response(tmp_project_root, intent_id=intent_a)
+    assert a_again is not None and a_again["value"] == "alpha"
+
+    b_now = intent_state.read_response(tmp_project_root, intent_id=intent_b)
+    assert b_now is not None and b_now["value"] == "beta"
+
+
+def test_intent_log_tolerates_malformed_lines(tmp_project_root):
+    """Crash mid-write may leave a partial JSONL line. Reader must skip
+    silently and surface still-good entries."""
+    state_dir = tmp_project_root / ".claude" / "state"
+    state_dir.mkdir(parents=True)
+    log = state_dir / "forge-intent-log.jsonl"
+    good_id = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
+    good_entry = {
+        "intent-id": good_id,
+        "response": {"intent-id": good_id, "value": "ok"},
+        "consumed-at": "2026-06-12T00:00:00+00:00",
+    }
+    log.write_text(
+        "\n".join(
+            [
+                json.dumps(good_entry),
+                "{ not valid json",  # partial / corrupt line
+                "",  # blank line
+                json.dumps({"no-intent-id": "field"}),  # entry shape invalid
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    cached = intent_state.read_response(tmp_project_root, intent_id=good_id)
+    assert cached is not None
+    assert cached["value"] == "ok"

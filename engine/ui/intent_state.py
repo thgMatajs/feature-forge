@@ -34,13 +34,34 @@ Companion helpers added in W3 (caller-side of the loop, consumed by
 - ``write_response(project_root, response)`` — atomic emit using the
   same tempfile-rename strategy.
 
+Re-entry idempotency (W7-fix consumed-log, 2026-06-12):
+
+Multi-intent handlers (forge init brownfield/greenfield, reconfigure
+backend submenu) emit 2+ intents sequentially. Without idempotency the
+handler re-entry would refuse to progress: each subprocess re-invocation
+restarts the handler from the top, hits the FIRST ``ask()`` with its
+stable intent-id, but ``forge-response.json`` already holds the LATEST
+intent's response — ``read_response`` would raise ``IntentMismatchError``
+and exit 1.
+
+Fix: persistent consumed-log at ``.claude/state/forge-intent-log.jsonl``.
+``read_response`` consults the log first; if the intent-id was consumed
+in a prior subprocess invocation, returns the cached response without
+touching ``forge-response.json``. The log lives for the lifetime of a
+single ``forge <cmd>`` invocation lifecycle and is cleared by
+``clear_intent_files(also_log=True)`` from ``engine/cli.py::main()`` at
+terminal exit (success or non-pause error). Exit 2 (paused) does NOT
+clear — the next re-invocation needs the log to skip already-answered
+intents.
+
 Refs:
 - ``docs/superpowers/specs/drift-1-intent-protocol.md`` §2, §3, §9
-- ``docs/schemas/intent-protocol.md``
+- ``docs/schemas/intent-protocol.md`` §4 (consumed-intent log)
 """
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -110,6 +131,93 @@ def _response_path(project_root: Path) -> Path:
     return _state_dir(project_root) / "forge-response.json"
 
 
+def _log_path(project_root: Path) -> Path:
+    """``.claude/state/forge-intent-log.jsonl`` — consumed-intent log for
+    re-entry idempotency in multi-intent handlers.
+
+    Lifetime is bounded by a single ``forge <cmd>`` invocation cycle:
+    written by ``read_response`` on consume, cleared by
+    ``clear_intent_files(also_log=True)`` from the top-level handler at
+    terminal exit.
+    """
+    return _state_dir(project_root) / "forge-intent-log.jsonl"
+
+
+# --- consumed-intent log (re-entry idempotency) ----------------------------
+
+
+def _read_intent_log(project_root: Path) -> dict[str, dict[str, Any]]:
+    """Read consumed-intents log → ``{intent-id: response}``.
+
+    Log is append-only JSONL. Defensive parsing:
+
+    - Missing file → returns ``{}``.
+    - Empty / blank lines → skipped.
+    - Malformed JSON lines → skipped silently (forensic forgiveness:
+      a corrupt entry must not block reading the rest of the log; the
+      cached read is best-effort by design).
+    - Duplicate ``intent-id`` rows → latest entry wins (stable
+      ``intent_id`` generation should make this impossible, but the
+      latest-wins rule is the safest fallback if a duplicate ever
+      slips in).
+
+    Returns a flat dict keyed by ``intent-id`` so callers can do a
+    single dict lookup per ``read_response`` call.
+    """
+    path = _log_path(project_root)
+    if not path.exists():
+        return {}
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        # Filesystem hiccup — treat as no cache, file is best-effort.
+        return {}
+    result: dict[str, dict[str, Any]] = {}
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            entry = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        intent_id = entry.get("intent-id")
+        if not isinstance(intent_id, str):
+            continue
+        response = entry.get("response")
+        if isinstance(response, dict):
+            result[intent_id] = response
+    return result
+
+
+def _append_intent_log(
+    project_root: Path,
+    *,
+    intent_id: str,
+    response: dict[str, Any],
+) -> None:
+    """Append a consumed-intent entry to the log.
+
+    JSONL append + ``flush`` is the durability contract: a process crash
+    after the write would leave at most a partial line, which
+    ``_read_intent_log`` silently skips. No tempfile-rename gymnastics
+    here because we are augmenting an existing file rather than
+    replacing one — the JSONL format absorbs partial writes
+    gracefully.
+    """
+    path = _log_path(project_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    entry = {
+        "intent-id": intent_id,
+        "response": response,
+        "consumed-at": datetime.now(timezone.utc).isoformat(),
+    }
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
 # --- write_pending ---------------------------------------------------------
 
 
@@ -171,17 +279,46 @@ def write_response(project_root: Path, response: dict[str, Any]) -> None:
 def read_response(project_root: Path, intent_id: str) -> dict[str, Any] | None:
     """Read the response file matching ``intent_id``.
 
+    Lookup order (re-entry idempotency, W7-fix 2026-06-12):
+
+    1. **Consumed-intent log** — if ``intent_id`` already appears in
+       ``.claude/state/forge-intent-log.jsonl``, return the cached
+       response. The on-disk response file is not touched. This makes
+       handler re-entry safe across subprocess invocations: the FIRST
+       ``ask()`` in a multi-intent handler will always see its own
+       response cached, regardless of which intent the host most
+       recently answered.
+
+    2. **Response file** — if ``forge-response.json`` exists and its
+       ``intent-id`` matches, the response is recorded to the log and
+       returned. Subsequent re-entries on the same ``intent_id`` hit
+       branch 1 (cached read). The response file itself is preserved
+       here; ``question.py`` clears it via ``clear_intent_files`` at
+       the end of a successful ``ask*`` consume.
+
     Returns:
-    - ``None`` if the response file is absent (caller emits pending).
-    - The decoded dict if the response is present and its ``intent-id``
-      matches ``intent_id``.
+    - ``None`` if neither the log nor the response file holds an entry
+      for ``intent_id`` (caller emits pending and exits 2).
+    - The decoded dict on match (from the log on re-entry, from the
+      file on first consume).
 
     Raises:
-    - ``IntentMismatchError`` if a response is on disk but the
-      ``intent-id`` differs. The file is preserved for forensic value.
+    - ``IntentMismatchError`` if the response file is on disk but its
+      ``intent-id`` differs from ``intent_id`` AND the log lacks an
+      entry for ``intent_id``. The file is preserved for forensic
+      value. The "log lacks entry" guard is important: in a multi-
+      intent re-entry, the log has the first intent's response and the
+      file has the second intent's response — both legitimate, no
+      mismatch.
     - ``json_io.JsonIOError`` (propagated) if the response file is
       malformed JSON.
     """
+    # Branch 1: log lookup — re-entry idempotency.
+    log = _read_intent_log(project_root)
+    if intent_id in log:
+        return log[intent_id]
+
+    # Branch 2: file lookup — first consume in this lifecycle.
     path = _response_path(project_root)
     if not path.exists():
         return None
@@ -195,6 +332,9 @@ def read_response(project_root: Path, intent_id: str) -> dict[str, Any] | None:
             f"expected '{intent_id}', got '{written_id}'. "
             f"File preserved at {path} for inspection."
         )
+    # Persist to log BEFORE returning — next re-entry skips straight to
+    # branch 1 instead of fighting a stale response file.
+    _append_intent_log(project_root, intent_id=intent_id, response=response)
     return response
 
 
@@ -227,15 +367,48 @@ def _check_schema_version(payload: dict[str, Any], *, path: Path, kind: str) -> 
 # --- clear_intent_files ----------------------------------------------------
 
 
-def clear_intent_files(project_root: Path) -> None:
-    """Delete both ``forge-pending.json`` and ``forge-response.json``.
+def clear_intent_files(
+    project_root: Path, *, also_log: bool = False
+) -> None:
+    """Delete ``forge-pending.json`` and ``forge-response.json``.
 
     Idempotent: no-op when either file is already absent. Called by the
     engine after a successful response consume — keeps state clean
     between pauses (sub-Q **Sb** locked in the spec).
+
+    By default the consumed-intent log
+    (``forge-intent-log.jsonl``) is preserved: re-entry idempotency
+    (W7-fix) requires the log to survive across the per-prompt
+    cleanups inside ``question.py`` while a single ``forge <cmd>``
+    invocation is mid-flight.
+
+    Pass ``also_log=True`` when the call site is a successful per-
+    prompt consume AND also wants the log gone. In normal operation
+    callers do not need this — ``engine/cli.py::main()`` handles log
+    lifecycle via ``clear_intent_log_only`` at terminal exit so it
+    can wipe the log without touching pending/response (which SPEC §3
+    preserves forensically on error paths).
     """
     json_io.delete_if_exists(_pending_path(project_root))
     json_io.delete_if_exists(_response_path(project_root))
+    if also_log:
+        json_io.delete_if_exists(_log_path(project_root))
+
+
+def clear_intent_log_only(project_root: Path) -> None:
+    """Delete only ``forge-intent-log.jsonl``, leaving pending/response
+    intact.
+
+    The top-level handler (``engine/cli.py::main()``) calls this in its
+    ``finally`` block at every terminal exit (0 success, 1 error, 130
+    cancel, or user-paused exit 2) EXCEPT the engine-paused exit 2
+    (``PausedForInputError``). Wiping pending/response here would defeat
+    SPEC §3's forensic-preservation rule on error paths — that work
+    belongs to ``question.py``'s success branch via ``clear_intent_files``.
+
+    Idempotent: no-op when the log file is absent.
+    """
+    json_io.delete_if_exists(_log_path(project_root))
 
 
 # --- detect_race -----------------------------------------------------------

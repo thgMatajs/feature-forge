@@ -297,6 +297,76 @@ adicionar só se race aparecer em produção. Acompanha em
 
 ---
 
+## §4 Consumed-intent log (re-entry idempotency)
+
+> Introduzido em 2026-06-12 pra resolver pitfall de handlers
+> multi-intent. Sem ele, `forge init` brownfield/greenfield e
+> `forge reconfigure` (submenu de backend multi-axis) quebravam em
+> produção quando o handler emitia ≥2 perguntas em sequência:
+> cada subprocess re-iniciava o handler do topo, hitava o PRIMEIRO
+> `ask()` com seu `intent-id` estável, mas o `forge-response.json`
+> guardava a resposta do ÚLTIMO intent que o host respondeu —
+> `read_response` raise `IntentMismatchError` e exit 1.
+
+### Arquivo
+
+`.claude/state/forge-intent-log.jsonl` — JSONL append-only. Uma entry
+por linha, cada entry é um dict JSON.
+
+### Shape de cada entry
+
+```yaml
+intent-id:    string         # casa com `intent-id` do pending consumido
+response:     dict           # payload integral da response que foi consumida
+consumed-at:  string (ISO-8601 UTC)
+```
+
+### Lifecycle
+
+- **Escrita:** `engine.ui.intent_state.read_response` faz append quando
+  consome `forge-response.json` com sucesso (intent-id match + schema
+  válido). A append acontece ANTES do retorno pro caller.
+- **Leitura:** `read_response` consulta o log ANTES de tocar
+  `forge-response.json`. Se o `intent_id` solicitado já está no log,
+  retorna a response cacheada — re-entry vira no-op.
+- **Limpeza:** `engine.ui.intent_state.clear_intent_files(...,
+  also_log=True)` é chamado por `engine/cli.py::main()` no `finally`
+  bloco, em TODO exit terminal (0 sucesso, 1 erro, 130 cancel, 2 user-
+  paused). O exit 2 **engine-paused** (`PausedForInputError`) é o
+  ÚNICO caminho que NÃO limpa — a próxima re-invocação precisa do log
+  pra pular intents já respondidos.
+
+### Por que JSONL append-only
+
+- **Atomic enough:** crash mid-write deixa no máximo uma linha
+  parcial; `_read_intent_log` skipa linhas malformadas silenciosamente.
+- **Sem locks:** uma única invocação `forge` escreve no log; race
+  detection (§Race) já bloqueia invocações paralelas concorrentes
+  antes de chegar aqui.
+- **Forense:** mantém histórico ordenado das responses consumidas
+  durante a invocação atual — útil pra debug pós-mortem se o
+  engine fizer choice inesperado.
+
+### Forensic boundary
+
+O log NÃO é "checkpoint persistente" no sentido das cards / memory /
+graph layers. Ele vive uma única invocação `forge <cmd>` e é destruído
+no terminal exit. Quem precisa de persistência cross-invocation usa o
+checkpoint do próprio comando (ex.: `.claude/.init-checkpoint.yaml`).
+
+### Interação com `IntentMismatchError`
+
+`read_response` ainda raise `IntentMismatchError` quando:
+- `intent_id` requerido NÃO está no log, E
+- `forge-response.json` existe com `intent-id` diferente.
+
+Isso é o sintoma genuíno de bug (caller respondeu o intent errado).
+Sem o log, a mesma situação aparecia também em re-entries legítimos
+de handlers multi-intent — falso positivo. Com o log, o false-positive
+fica filtrado.
+
+---
+
 ## Exit code contract
 
 A introdução do exit code **2** é o sinal canônico de "pausa aguardando

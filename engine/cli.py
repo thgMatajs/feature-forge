@@ -194,6 +194,12 @@ def main(argv: list[str] | None = None) -> int:
     # ``reset`` in the ``finally`` undoes the set so concurrent test
     # cases never leak context across each other.
     token = _cli_command_context.set((cmd, list(rest)))
+
+    # Track whether the consumed-intent log should be wiped at terminal
+    # exit. Default true; the exit-2 (paused) branches flip it to false
+    # because the next re-invocation needs the log to skip already-
+    # answered intents (W7-fix re-entry idempotency).
+    clear_log_on_exit = True
     try:
         try:
             result = handler(rest)
@@ -203,6 +209,7 @@ def main(argv: list[str] | None = None) -> int:
             # to read that file, write a response, and re-invoke us with the
             # same argv. No traceback, no message on stdout — the host renders
             # whatever it needs to from the intent payload itself.
+            clear_log_on_exit = False
             return EXIT_PAUSED
         except UserPausedError:
             # CR-003 fix — host response carried ``paused: true`` while the
@@ -210,6 +217,11 @@ def main(argv: list[str] | None = None) -> int:
             # (2 = clean pause, resumable) but a distinct semantic: the user
             # explicitly paused via response, rather than the engine emitting
             # a fresh pending. State already cleared by ``_check_pause_response``.
+            #
+            # Lifecycle note: even though this is exit 2, the user pause is a
+            # *terminal* decision for THIS invocation — the engine is not
+            # waiting for a follow-up response. Subsequent invocations start
+            # fresh, so the log goes too.
             return EXIT_PAUSED
         except UserCancelledError:
             # CR-001 fix — host response carried ``cancelled: true``. Exit 130
@@ -244,6 +256,35 @@ def main(argv: list[str] | None = None) -> int:
         return int(result) if isinstance(result, int) else 0
     finally:
         _cli_command_context.reset(token)
+        # W7-fix lifecycle clear: at every terminal exit (success exit 0,
+        # user-cancel exit 130, fatal error exit 1, user-paused exit 2)
+        # wipe the consumed-intent log so the next forge invocation
+        # starts with a clean slate. The exit-2 *engine-paused* branch
+        # (``PausedForInputError``) opts out via ``clear_log_on_exit =
+        # False`` because the next re-invocation needs the log to skip
+        # already-answered intents — that is the whole point of the
+        # idempotency mechanism.
+        #
+        # Critical: we use ``clear_intent_log_only`` here — NOT the full
+        # ``clear_intent_files`` — because SPEC §3 mandates forensic
+        # preservation of ``forge-pending.json`` and ``forge-response.json``
+        # on error paths (mismatch, race, schema). The log is per-
+        # invocation cache and safe to wipe; pending/response carry the
+        # forensic evidence the user needs to debug.
+        #
+        # Failure to clear is silent: the delete is best-effort and any
+        # IO error here is less harmful than the original engine failure
+        # that we are trying to surface cleanly.
+        if clear_log_on_exit:
+            try:
+                from engine.utils.paths import find_project_root
+
+                project_root = find_project_root()
+                intent_state.clear_intent_log_only(project_root)
+            except Exception:
+                # Best-effort. If we cannot resolve project root or the
+                # delete fails, do not mask the real exit code.
+                pass
 
 
 if __name__ == "__main__":  # pragma: no cover

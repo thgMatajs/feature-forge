@@ -97,12 +97,20 @@ foram resolvidos como segue:
   filtrado (caso legítimo); `.claude/` como parent do worktree não
   bloqueia walk. Regression test em
   `tests/unit/test__walk_cache_worktree.py`.
-- **W7.2 Phase A multi-intent re-invocation pitfall** — quando handler
-  emite 2+ intents em sequência, response file pode ficar stale entre
-  re-invocations causando IntentMismatchError. Workaround atual: tests
-  monkeypatch ui_question functions. Production code precisará gerenciar
-  state cleanup OU handler precisará idempotência. Revisitar com Phase
-  A maintainer.
+- **W7.2 Phase A multi-intent re-invocation pitfall** — ✅ FECHADO em
+  2026-06-12 via consumed-intent log em `engine/ui/intent_state.py`.
+  Quando handler emite 2+ intents em sequência, `read_response` agora
+  consulta `.claude/state/forge-intent-log.jsonl` antes de tocar o
+  response file: intents já consumidos retornam a response cacheada,
+  fazendo re-entry idempotente. Schema doc atualizado em
+  `docs/schemas/intent-protocol.md §4`. Lifecycle clear do log via
+  `clear_intent_log_only` no `engine/cli.py::main()` `finally`,
+  preservando pending/response (SPEC §3 forensic). Tests de regressão
+  em `tests/unit/test_ui_intent_state.py` (cenários: cache hit, file
+  overwrite, unknown-id mismatch, log preservation, log reset, full
+  re-entry sequence, malformed lines). W7.x integration tests
+  permanecem com monkeypatch — remover seria reescrita significativa
+  sem redução de LOC; e2e tests já validam o wiring real.
 - **Bundle YAMLs com card references inexistentes** — bundle
   `firebase-full.yaml` aponta pra `firebase-crashlytics` que ESTAVA
   ausente (resolvido via rename), e `sqldelight` que ESTAVA ausente
