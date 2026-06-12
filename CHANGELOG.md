@@ -28,6 +28,21 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   Decision 22 (no skill runtime deps) não afetadas — pathspec é PyPI
   lib genérica.
 
+### Fixed (REVIEW.md remediation — Bloco 4: broad-except scrub, 2026-06-12)
+
+- **H-03** — Narrow `except Exception` em 24 sites críticos:
+  - `engine/implement.py`: 1 site (JSON read) narrowed; 3 sites preservados broad
+    com `# noqa: BLE001` em validator/QA dispatch boundaries
+  - `engine/verify.py`: 2 sites narrowed `(MemoryError, OSError)` em
+    L1 status write/restore
+  - `engine/graph/builder.py`: 1 site narrowed em inventory load
+  - `engine/init.py`: 2 narrowed (overlay, FS copy) + 4 preservados em
+    discovery-step heuristic scanners
+  - `engine/status.py`: 1 site narrowed (L1 history JSON read)
+  - `engine/doctor.py`: 2 sites narrowed (stamp write + category snapshot)
+  - `validators/validate_*.py`: 18 sites narrowed em 10 validators
+    (YAML reads + 1 file_sha256), `YamlIOError` adicionado aos imports
+
 ### Fixed (REVIEW.md remediation — Bloco 1: security quick wins, 2026-06-12)
 
 - **H-01** — SQL allowlist em `_reset_domain_tables` previne wipe de tabela
