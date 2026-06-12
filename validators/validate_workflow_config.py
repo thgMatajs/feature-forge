@@ -36,6 +36,8 @@ from pathlib import Path
 from typing import Any
 
 from _common import (
+    VALID_BACKEND_AXES,
+    VALID_PROJECT_PLATFORMS,
     make_paths,
     result_fail,
     result_pass,
@@ -63,19 +65,11 @@ _REQUIRED_TOP_LEVEL = (
     "graph",
 )
 
-_VALID_PLATFORMS = {"android", "ios", "kmp", "web"}
+# Backend axes + project platforms — fonte canônica em validators._common
+# (PR #13 review #3405255016). Aliases locais preservam call sites internos.
+_VALID_PLATFORMS = VALID_PROJECT_PLATFORMS
+_VALID_BACKEND_AXES = VALID_BACKEND_AXES
 _VALID_STRICTNESS = {"strict", "standard", "lean"}
-# DET-6 / W7.4 — backend multi-axis (substitui RULE-010/011 monolíticos).
-_VALID_BACKEND_AXES = {
-    "data",
-    "auth",
-    "observability",
-    "analytics",
-    "storage",
-    "persistence",
-    "notifications",
-    "flags",
-}
 _VALID_CELL_STATUSES = {"active", "migrating-to", "deprecated"}
 _SLUG_RE = re.compile(r"^[a-z0-9-]+$")
 # Estados L1 que indicam fase ativa (mutation forbidden via RULE-018).

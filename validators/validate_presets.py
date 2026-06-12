@@ -44,6 +44,8 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from validators._common import (  # noqa: E402
+    VALID_BACKEND_AXES,
+    VALID_BUNDLE_PLATFORM_KEYS,
     make_paths,
     result_fail,
     result_pass,
@@ -56,25 +58,10 @@ class BundleValidationError(ValueError):
     """Bundle YAML não cumpre o schema v1."""
 
 
-# 8 axes canônicos — fonte: docs/schemas/backend-axes.md §"Os 8 axes canônicos".
-VALID_AXES: frozenset[str] = frozenset(
-    {
-        "data",
-        "auth",
-        "observability",
-        "analytics",
-        "storage",
-        "persistence",
-        "notifications",
-        "flags",
-    }
-)
-
-# Platform keys aceitas em cada slot de axis.
-# `all-platforms` é shorthand: expande para android+ios+kmp via composer.
-VALID_PLATFORMS: frozenset[str] = frozenset(
-    {"android", "ios", "kmp", "all-platforms"}
-)
+# Re-export pros nomes locais que tests e callers já consomem
+# (PR #13 review #3405255016 — fonte canônica agora em validators._common).
+VALID_AXES: frozenset[str] = VALID_BACKEND_AXES
+VALID_PLATFORMS: frozenset[str] = VALID_BUNDLE_PLATFORM_KEYS
 
 _REQUIRED_TOP_LEVEL = ("name", "description", "defaults")
 
