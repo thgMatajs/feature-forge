@@ -53,6 +53,7 @@ from engine.cards.merger import merge_contributions
 from engine.cards.resolver import resolve
 from engine.cards.snapshotter import snapshot_card
 from engine.detection import _eval as _detection_eval
+from engine.detection._axes import BACKEND_AXES
 from engine.detection._eval import _SKIP_DIRS
 from engine.detection.composer import Cell, Conflict, compose_backend_axes
 from engine.graph.builder import build_full
@@ -1884,20 +1885,8 @@ def _handle_backend_multi_axis_brownfield(
 
 # ── W7.2 greenfield bundle picker ───────────────────────────────────────────
 
-# 8 axes canônicos do SPEC det-6-multi-axis-backend.md §"Eixos canônicos".
-# Ordem reflete o roteiro de prompt (data primeiro porque é o que mais
-# difere entre stacks). Stable iteration order é importante: vira a ordem
-# dos prompts per-axis e a ordem do ask_multi em opt override.
-_BACKEND_AXES: tuple[str, ...] = (
-    "data",
-    "auth",
-    "observability",
-    "analytics",
-    "storage",
-    "persistence",
-    "notifications",
-    "flags",
-)
+# Os 8 axes canônicos vivem em engine.detection._axes.BACKEND_AXES
+# (shared com reconfigure.py — PR #13 review #3405254057).
 
 # Sentinela do picker — não corresponde a YAML, dispara o caminho per-axis.
 _BUNDLE_SENTINEL_CUSTOM = "custom-from-scratch"
@@ -1959,7 +1948,7 @@ def _bundle_cards_for_axis(bundle: dict[str, Any], axis: str) -> list[str]:
 def _bundle_to_selected_cards(bundle: dict[str, Any]) -> list[str]:
     """União dos cards declarados em todos os axes do bundle (ordenada)."""
     picked: set[str] = set()
-    for axis in _BACKEND_AXES:
+    for axis in BACKEND_AXES:
         picked.update(_bundle_cards_for_axis(bundle, axis))
     return sorted(picked)
 
@@ -2065,7 +2054,7 @@ def _apply_axis_overrides(
     overridden_set = set(overridden_axes)
     picked: set[str] = set()
     # 1) Eixos preservados → bundle defaults.
-    for axis in _BACKEND_AXES:
+    for axis in BACKEND_AXES:
         if axis in overridden_set:
             continue
         picked.update(_bundle_cards_for_axis(bundle, axis))
@@ -2156,7 +2145,7 @@ def _handle_backend_multi_axis_greenfield(
 
     # Caminho A — sentinela: pula bundle, prompta cada axis.
     if choice_key == _BUNDLE_SENTINEL_CUSTOM:
-        selected = _run_per_axis_prompts(available_cards, _BACKEND_AXES)
+        selected = _run_per_axis_prompts(available_cards, BACKEND_AXES)
         return {
             "choice": "scratch",
             "bundle_name": None,
@@ -2190,7 +2179,7 @@ def _handle_backend_multi_axis_greenfield(
     # Caminho C — bundle com override seletivo.
     axis_options: dict[str, str] = {
         axis: f"{axis} (atual: {_render_axis_state(bundle, axis)})"
-        for axis in _BACKEND_AXES
+        for axis in BACKEND_AXES
     }
     overridden_axes = ui_question.ask_multi(
         "Quais eixos quer ajustar?",
@@ -2305,7 +2294,7 @@ def _bundle_to_cells(
 
     if bundle is not None:
         defaults = bundle.get("defaults") or {}
-        for axis in _BACKEND_AXES:
+        for axis in BACKEND_AXES:
             cell_block = defaults.get(axis)
             if not isinstance(cell_block, dict):
                 continue
@@ -2369,7 +2358,7 @@ def _fold_extras_into_cells(
             by_name[card.name] = card.category
     for card_name in extra_card_names:
         axis = by_name.get(card_name)
-        if axis is None or axis not in _BACKEND_AXES:
+        if axis is None or axis not in BACKEND_AXES:
             continue
         axis_out = cells.setdefault(axis, {})
         # Se o axis já existe e tem per-platform shape, NÃO sobrescreve —

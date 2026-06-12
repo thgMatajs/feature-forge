@@ -31,6 +31,7 @@ from typing import Any
 import yaml
 
 from engine.cards import LOCAL_CARD_NAME_RE
+from engine.detection._axes import BACKEND_AXES
 from engine.cards.grant import (
     GrantDecision,
     UserAbortError,
@@ -1285,27 +1286,16 @@ def _handle_conventions(
 # Shape esperado em `working["backend"]`:
 #
 #     backend:
-#       <axis>:                       # ∈ _BACKEND_AXES_RECONFIGURE
+#       <axis>:                       # ∈ BACKEND_AXES
 #         <platform>:                 # ∈ platforms.active OR null cell
 #           card: <card-name>
 #           status: active | migrating-to | deprecated
 #           migrating-to: <card-name> # required when status=migrating-to
 #
-# Helpers vivem privados ao módulo — não promovidos a shared (anti-padrão #7
-# do W7.3 context-pack). `_BACKEND_AXES` em `engine.init` é a fonte canônica
-# da ORDEM dos eixos; replicamos aqui em vez de import pra evitar ciclo de
-# import (init.py ↔ reconfigure.py) e manter o handler self-contained.
-
-_BACKEND_AXES_RECONFIGURE: tuple[str, ...] = (
-    "data",
-    "auth",
-    "observability",
-    "analytics",
-    "storage",
-    "persistence",
-    "notifications",
-    "flags",
-)
+# Helpers vivem privados ao módulo. A ordem canônica dos 8 eixos vem de
+# `engine.detection._axes.BACKEND_AXES` — shared com init.py após
+# PR #13 review #3405254057 (antes duplicada local pra evitar suposto
+# ciclo de import que nunca existiu).
 
 # Status enum canonizado em `docs/schemas/backend-axes.md § Status enum`.
 _VALID_CELL_STATUSES: tuple[str, ...] = ("active", "migrating-to", "deprecated")
@@ -1335,7 +1325,7 @@ def _render_backend_axes_table(
     if not platforms:
         # Fallback: lista linear sem tabela.
         lines = ["(sem platforms.active — render flat)"]
-        for axis in _BACKEND_AXES_RECONFIGURE:
+        for axis in BACKEND_AXES:
             block = cells.get(axis) or {}
             if not isinstance(block, dict):
                 lines.append(f"  {axis:<14} (inválido)")
@@ -1347,7 +1337,7 @@ def _render_backend_axes_table(
     col_w = max(14, max((len(p) for p in platforms), default=0) + 2)
     header = f"  {'axis':<14}" + "".join(f"{p:<{col_w}}" for p in platforms)
     lines = [header, "  " + "-" * (14 + col_w * len(platforms))]
-    for axis in _BACKEND_AXES_RECONFIGURE:
+    for axis in BACKEND_AXES:
         block = cells.get(axis) if isinstance(cells.get(axis), dict) else {}
         row = f"  {axis:<14}"
         for pf in platforms:
@@ -1383,7 +1373,7 @@ def _enumerate_cells_with_labels(
     posição vazia. Label carrega snapshot curto do estado atual.
     """
     out: dict[str, str] = {}
-    for axis in _BACKEND_AXES_RECONFIGURE:
+    for axis in BACKEND_AXES:
         block = cells.get(axis) if isinstance(cells.get(axis), dict) else {}
         for pf in platforms:
             key = f"{axis}|{pf}"
@@ -1629,7 +1619,7 @@ def _handle_backend_axes_submenu(
         except ValueError as exc:
             renderer.write(renderer.colored(f"chave {cell_key!r} inválida: {exc}", "yellow"))
             continue
-        if axis not in _BACKEND_AXES_RECONFIGURE:
+        if axis not in BACKEND_AXES:
             renderer.write(renderer.colored(
                 f"axis {axis!r} fora do enum canônico — pulando.", "yellow"
             ))
