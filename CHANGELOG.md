@@ -7,6 +7,14 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed (REVIEW.md remediation — Bloco 2: functional bugs, 2026-06-12)
+
+- **M-07 (dep nova)** — Adicionado `pathspec >= 0.12` em
+  `[project.dependencies]` runtime. Lib pura Python implementando
+  `.gitignore` semantics canonicas. Decision 19 (Python stack) e
+  Decision 22 (no skill runtime deps) não afetadas — pathspec é PyPI
+  lib genérica.
+
 ### Fixed (REVIEW.md remediation — Bloco 1: security quick wins, 2026-06-12)
 
 - **H-01** — SQL allowlist em `_reset_domain_tables` previne wipe de tabela
@@ -23,6 +31,19 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   subprocess de validators retorna `degraded` em vez de crashar
   (`engine/verify.py`). Batch git-diff optimization fica deferred — ver
   `docs/design/04-pending.md`.
+- **M-02** — Unknown task dep agora levanta `SystemExit` em
+  `_topo_sort` em vez de tratar silenciosamente como satisfeita
+  (`engine/implement.py`).
+- **M-04** — `feature_path` consolidado em `engine/utils/paths.py`;
+  `implement.py` agora encontra non-product features (refactor/spike/chore).
+- **M-07 + M-08** — `pathspec` substitui parser custom de `.gitignore`;
+  bracket classes, escapes, trailing space e `a/**/b` agora cobertos
+  corretamente (`engine/graph/builder.py`).
+- **M-09** — `validators/check_no_invented_behavior.py` reusa
+  `git_staged_files` de `validators/_diff.py` (rename detection -M80%
+  agora disponível).
+- **M-12** — Ignore patterns em `check_secrets` âncoram em `^` —
+  `src/tests/fixtures/secrets/...` não é mais false-positive ignored.
 
 ### Added (Phase B — DET-6 multi-axis backend, 2026-06-11)
 
