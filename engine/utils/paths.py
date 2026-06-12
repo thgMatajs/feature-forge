@@ -121,6 +121,33 @@ def feature_dir(project_root: Path, feature_slug: str) -> Path:
     return feature_workflow_root(project_root) / "features" / feature_slug
 
 
+def feature_path(project_root: Path, slug: str, *, subtype: str = "product") -> Path:
+    """Resolve feature directory honouring workflow-config override + subtype.
+
+    M-04: extracted from `engine/implement.py` and `engine/plan.py` which
+    had divergent implementations — implement.py couldn't see non-product
+    features because it hardcoded subtype="product".
+
+    For `subtype="product"` the layout is the legacy v1.0 path
+    (`docs/feature-implementation-workflow/features/{slug}/`). For
+    refactor/spike/chore/bugfix the directory lives under
+    `non-product/{slug}/` — see filesystem-layout §3.5.
+    """
+    # Lazy imports break circular deps with engine.plan (which historically
+    # owns _resolve_features_root). Re-locate it here when the consolidation
+    # of _resolve_features_root happens — out of scope for M-04.
+    from engine.plan import _resolve_features_root  # noqa: PLC0415
+
+    root = _resolve_features_root(project_root, subtype=subtype)
+    if subtype == "product":
+        default = (
+            project_root / "docs" / "feature-implementation-workflow" / "features"
+        ).resolve()
+        if root == default:
+            return feature_dir(project_root, slug)
+    return root / slug
+
+
 def ensure_dir(path: Path) -> Path:
     """mkdir -p — returns the path for chaining. Idempotent."""
     path.mkdir(parents=True, exist_ok=True)

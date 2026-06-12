@@ -58,6 +58,7 @@ from engine.utils.paths import (
     claude_dir,
     ensure_dir,
     feature_dir,
+    feature_path as _feature_path,
     find_project_root,
     workflow_config_path,
 )
@@ -439,26 +440,6 @@ def _resolve_features_root(project_root: Path, *, subtype: str = "product") -> P
     if subtype != "product":
         return (base / "non-product").resolve()
     return (base / "features").resolve()
-
-
-def _feature_path(project_root: Path, slug: str, *, subtype: str = "product") -> Path:
-    """Compute feature directory, honouring workflow-config override + subtype.
-
-    For `subtype="product"` the layout is identical to the legacy v1.0
-    path (`docs/feature-implementation-workflow/features/{slug}/`). For
-    refactor/spike/chore the directory lives under `non-product/{slug}/`
-    — see discipline §8 + filesystem-layout §3.5.
-    """
-    root = _resolve_features_root(project_root, subtype=subtype)
-    # When subtype=product and override matches the default we still want
-    # feature_dir's canonical layout.
-    if subtype == "product":
-        default = (
-            project_root / "docs" / "feature-implementation-workflow" / "features"
-        ).resolve()
-        if root == default:
-            return feature_dir(project_root, slug)
-    return root / slug
 
 
 def _initialize_status(slug: str, project_root: Path) -> L1State:

@@ -47,6 +47,7 @@ from engine.utils.paths import (
     claude_dir,
     ensure_dir,
     feature_dir,
+    feature_path as _feature_path,
     find_project_root,
     workflow_config_path,
 )
@@ -157,33 +158,6 @@ class TaskContract:
     #    "blocking": bool, "declared-at": str|None, "resolved-at": str|None}
     # Empty list when the task carries no external deps.
     external_deps: list[dict[str, Any]] = field(default_factory=list)
-
-
-# ── Filesystem helpers (mirror plan.py — kept local to avoid import cycle) ───
-
-
-def _resolve_features_root(project_root: Path) -> Path:
-    cfg = read_yaml_or_default(workflow_config_path(project_root), {})
-    if isinstance(cfg, dict):
-        paths = cfg.get("paths") or {}
-        roots = paths.get("feature-roots") if isinstance(paths, dict) else None
-        if isinstance(roots, list) and roots:
-            head = roots[0]
-            if isinstance(head, str):
-                return (project_root / head).resolve()
-        elif isinstance(roots, str):
-            return (project_root / roots).resolve()
-    return (project_root / "docs" / "feature-implementation-workflow" / "features").resolve()
-
-
-def _feature_path(project_root: Path, slug: str) -> Path:
-    root = _resolve_features_root(project_root)
-    default = (
-        project_root / "docs" / "feature-implementation-workflow" / "features"
-    ).resolve()
-    if root == default:
-        return feature_dir(project_root, slug)
-    return root / slug
 
 
 def _is_valid_slug(value: str) -> bool:
