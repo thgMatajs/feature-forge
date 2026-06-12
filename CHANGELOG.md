@@ -169,6 +169,68 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   (`test_pilot_local_card_added_appears_in_cascade`,
   `test_pilot_local_cards_manifest_written`) verdes pós-categoria fix.
 
+### Changed (PR #13 review Wave B — 2026-06-12)
+
+Refactors cross-module do review de PR #13 (DET-6 multi-axis backend).
+Quebram ciclos de import, consolidam constantes duplicadas e
+substituem duck-typing por isinstance dispatch:
+
+- **Ciclo composer↔init quebrado** (review #3405252850 + #3405253600 +
+  #3405256623) — `_eval_detection_signals` + helpers (`_glob_any`,
+  `_eval_gradle_dep`, `_load_toml_catalog`, `_module_matches_coordinate`,
+  `_scan_build_gradle_for_coordinate`, `_SKIP_DIRS`) movidos de
+  `engine/init.py` para novo `engine/detection/_eval.py` (módulo neutro
+  sem deps em init). Composer agora importa de `_eval` em vez de
+  `engine.init` — os dois `# noqa: PLC0415` lazy imports em init.py
+  removidos. `_normalize_cards_for_composer` mantido (refactor maior
+  fora do escopo). 7 arquivos de test ajustados pra novos imports.
+- **Shape guard no composer** (review #3405256439) — quando
+  `card.detection.signals` não é list, composer agora pula o card com
+  `logging.warning` em vez de silenciar via score=0 (que mascarava o
+  card mal-formado no card_index).
+- **`isinstance` em vez de `hasattr` pra Cell/Conflict** (review
+  #3405253823) — 5 sites em init.py
+  (`_detect_axis_uniformity`, `_render_axes_table` × 2,
+  `_collect_confirm_selection`, `_composer_result_to_cells`) trocam
+  duck-typing sobre `cell.candidates` por `isinstance(cell, Conflict)`
+  / `isinstance(cell, Cell)`. Contrato explícito vinculado aos types
+  importados do composer. Regression test paramétrico cobre os 5
+  helpers com instâncias reais.
+- **`BACKEND_AXES` shared** (review #3405254057) — tuple de 8 axes
+  consolidado em `engine/detection/_axes.py`; init.py e reconfigure.py
+  importam de lá. Antes, duas tuplas idênticas
+  (`_BACKEND_AXES` em init, `_BACKEND_AXES_RECONFIGURE` em reconfigure)
+  documentadas como "deliberate pra evitar ciclo" — ciclo nunca
+  existiu, duplicação era defensiva por hábito.
+- **`VALID_AXES` / `VALID_PLATFORMS` shared** (review #3405255016) —
+  3 constantes consolidadas em `validators/_common.py`:
+  `VALID_BACKEND_AXES`, `VALID_BUNDLE_PLATFORM_KEYS`,
+  `VALID_PROJECT_PLATFORMS`. Os dois sets antes-homônimos de "platforms"
+  agora têm nomes desambiguados (bundle slot keys × workflow active
+  platforms — conteúdos semanticamente diferentes). Validators
+  preservam aliases locais pra compat de tests/callers.
+
+### Added (PR #13 review Wave B — 2026-06-12)
+
+- **`engine/detection/_eval.py`** — módulo neutro pra signal evaluation.
+- **`engine/detection/_axes.py`** — fonte canônica de `BACKEND_AXES`.
+- **Cache `_log_cache` em `engine/ui/intent_state.py`** (review
+  #3405256063) — process-level cache evita re-parse O(n) do JSONL em
+  multi-intent handlers. `_append_intent_log` atualiza incrementalmente;
+  `clear_intent_files(also_log=True)` + `clear_intent_log_only`
+  invalidam pareado com delete on-disk. `_reset_log_cache` exposto como
+  escape hatch pra testes.
+- **`tests/unit/test_init_isinstance_cell_conflict.py`** — 9 regression
+  tests cobrindo isinstance dispatch nos 5 sites afetados.
+- **`tests/unit/test_intent_state_log_cache.py`** — 6 regression tests
+  cobrindo cache hit, append incremental, invalidations, reset, mutation
+  protection.
+
+Rapid lane pós-Wave B: 1321 passed (+15 vs Wave A baseline 1306) / 11
+skipped / 6 failures pré-existentes herdadas (cards_resolver_w3 × 4,
+test_run_empty_args, test_no_cards_returns_pass_or_warn — não tocadas
+nesta wave).
+
 ### Fixed (PR #13 review Wave A — 2026-06-12)
 
 Remediação dos 7 fixes contidos do review de PR #13 (DET-6 multi-axis
