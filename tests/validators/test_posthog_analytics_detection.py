@@ -12,7 +12,7 @@ from pathlib import Path
 import yaml
 
 from engine.cards.loader import validate_card_yaml
-from engine.init import _eval_detection_signals
+from engine.detection._eval import _eval_detection_signals
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

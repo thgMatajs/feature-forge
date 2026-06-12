@@ -39,8 +39,13 @@ Pra cada (axis, platform):
 
 ## Reuso
 
-Importa `_eval_detection_signals` de `engine.init`. Não reimplementa
-lógica de gradle-dep, file-content, file-exists, directory-exists.
+Importa `_eval_detection_signals` de `engine.detection._eval`. Não
+reimplementa lógica de gradle-dep, file-content, file-exists,
+directory-exists.
+
+Antes do PR #13 review (Phase B), este módulo importava de
+``engine.init`` — ciclo fechado por lazy imports. O ciclo foi quebrado
+movendo ``_eval_detection_signals`` (e helpers) pra ``_eval.py``.
 """
 
 from __future__ import annotations
@@ -50,7 +55,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from engine.init import _eval_detection_signals
+from engine.detection._eval import _eval_detection_signals
 
 logger = logging.getLogger(__name__)
 
@@ -187,6 +192,20 @@ def compose_backend_axes(
                 "composer: card skipped — missing/empty 'card_id' field "
                 "(axis=%r)",
                 axis,
+            )
+            continue
+
+        # Shape guard (PR #13 review #3405256439): se `detection.signals`
+        # não é list, _eval_detection_signals silenciosamente retorna
+        # score=0 mas o card aparece "ativo" no card_index — quebra o
+        # contract pro auditor humano. Skip explícito + warning emite
+        # observabilidade sem mascarar o card mal-formado.
+        if not isinstance(detection.get("signals"), list):
+            logger.warning(
+                "composer: card skipped — detection.signals not a list "
+                "(card_id=%r, got=%s)",
+                card_id,
+                type(detection.get("signals")).__name__,
             )
             continue
 

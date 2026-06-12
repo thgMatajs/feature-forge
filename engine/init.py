@@ -27,7 +27,6 @@ auto-resume. Exit code 130 is returned to the dispatcher.
 
 from __future__ import annotations
 
-import functools
 import json
 import os
 import shutil
@@ -36,8 +35,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-
-import tomllib  # stdlib ≥3.11 (requires-python enforced)
 
 if TYPE_CHECKING:
     # N5: type-annotate `_check_orphan_signals(catalog)` sem ativar import
@@ -52,10 +49,12 @@ from engine.cards.grant import (
     evaluate_sensitive_grants,
 )
 from engine.cards.loader import load_all_cards, CardManifest
-from engine.cards._signal_shapes import parse_gradle_coordinate
 from engine.cards.merger import merge_contributions
 from engine.cards.resolver import resolve
 from engine.cards.snapshotter import snapshot_card
+from engine.detection import _eval as _detection_eval
+from engine.detection._eval import _SKIP_DIRS
+from engine.detection.composer import compose_backend_axes
 from engine.graph.builder import build_full
 from engine.inventory.conventions import (
     extract_conventions,
@@ -195,53 +194,6 @@ def _utc_now_iso() -> str:
 
 def _is_git_repo(root: Path) -> bool:
     return (root / ".git").exists()
-
-
-def _eval_detection_signals(
-    project_root: Path, detection: dict[str, Any]
-) -> tuple[float, list[str]]:
-    """Evaluate detection signals against the project. Returns (score, matched).
-
-    Supports `file-exists`, `file-content`, `directory-exists` signal types
-    (same schema used by cards and presets — see docs/schemas/card.md
-    §detection.signals).
-    """
-    signals = (detection or {}).get("signals") or []
-    score = 0.0
-    matched: list[str] = []
-    for sig in signals:
-        if not isinstance(sig, dict):
-            continue
-        kind = sig.get("type")
-        conf = float(sig.get("confidence") or 0.0)
-        ok = False
-        if kind == "directory-exists":
-            path = sig.get("path")
-            if isinstance(path, str) and (project_root / path).is_dir():
-                ok = True
-        elif kind == "file-exists":
-            ok = _glob_any(project_root, str(sig.get("glob") or ""), None)
-        elif kind == "gradle-dep":
-            coordinate = sig.get("coordinate")
-            if isinstance(coordinate, str) and coordinate:
-                ok = _eval_gradle_dep(project_root, coordinate)
-        elif kind == "file-content":
-            ok = _glob_any(
-                project_root,
-                str(sig.get("glob") or ""),
-                str(sig.get("contains") or ""),
-            )
-        if ok:
-            score += conf
-            label = (
-                sig.get("coordinate")
-                or sig.get("contains")
-                or sig.get("path")
-                or sig.get("glob")
-                or kind
-            )
-            matched.append(f"{kind}: {label}")
-    return round(score, 3), matched
 
 
 @dataclass
@@ -639,227 +591,6 @@ def _today_iso_for_init() -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
 
-def _glob_any(project_root: Path, glob: str, needle: str | None) -> bool:
-    """Best-effort glob walk with depth + count caps to keep init responsive."""
-    if not glob:
-        return False
-    if glob.startswith("**/"):
-        pattern = glob[3:]
-        iterator = project_root.rglob(pattern)
-    else:
-        iterator = project_root.glob(glob)
-    count = 0
-    for path in iterator:
-        # Match _SKIP_DIRS contra parts RELATIVO a project_root — não path.parts
-        # absoluto. Sem isso, paths sob .claude/worktrees/<branch>/ ficam
-        # invisíveis (parent .claude/ é skip-dir legítimo só no top-level).
-        try:
-            relative_parts = path.relative_to(project_root).parts
-        except ValueError:
-            continue
-        if any(part in _SKIP_DIRS for part in relative_parts):
-            continue
-        if count > 800:
-            break
-        count += 1
-        if not path.is_file():
-            continue
-        if needle is None:
-            return True
-        # Stream linha-a-linha — evita carregar arquivos grandes inteiros em
-        # memória só para procurar uma substring.
-        try:
-            with path.open("r", encoding="utf-8", errors="ignore") as fh:
-                for line in fh:
-                    if needle in line:
-                        return True
-        except OSError:
-            continue
-    return False
-
-
-@functools.lru_cache(maxsize=8)
-def _load_toml_catalog(project_root: Path) -> tuple[dict, ...]:
-    """Carrega e parseia `gradle/*.versions.toml` uma vez por project_root.
-
-    Cache module-level pequeno (maxsize=8) — cada `forge init` típico
-    inspeciona um único project_root, então 8 cobre runs em fila +
-    fixtures de teste sem reter memória. Cache invalida implicitamente
-    entre sessões CLI (cada run é processo novo).
-
-    Retorna tuple de dicts (top-level TOML root) — tuple porque o cache
-    decorator exige imutabilidade do retorno. TOML mal-formado / OSError
-    são ignorados silenciosamente, alinhado a `_glob_any`.
-    """
-    gradle_dir = project_root / "gradle"
-    if not gradle_dir.is_dir():
-        return ()
-    catalogs: list[dict] = []
-    for toml_path in gradle_dir.glob("*.versions.toml"):
-        try:
-            with toml_path.open("rb") as fh:
-                catalogs.append(tomllib.load(fh))
-        except (OSError, tomllib.TOMLDecodeError):
-            continue
-    return tuple(catalogs)
-
-
-def _module_matches_coordinate(module: str, coordinate: str) -> bool:
-    """`entry["module"]` casa `coordinate` ignorando version sufixada.
-
-    TOML canônico declara `module = "group:artifact"`, mas no wild
-    aparece `module = "group:artifact:version"` (B-2). Compara apenas
-    os 2 primeiros segments split por `:`; preserva comportamento
-    canônico `module == coordinate` para a forma de 2 segments.
-
-    Usa `parse_gradle_coordinate` no lado `coordinate` (shape canônica
-    `<group>:<artifact>` validado pelo loader CARD-020). Quando o
-    helper retorna `None`, cai pra fallback string-exato — não introduz
-    comportamento novo, só dedupe (B-3 from PR #11 review).
-    """
-    if module == coordinate:
-        return True
-    coord_parsed = parse_gradle_coordinate(coordinate)
-    if coord_parsed is None:
-        return False
-    mod_parts = module.split(":")
-    if len(mod_parts) < 2:
-        return False
-    coord_group, coord_artifact = coord_parsed
-    return mod_parts[0] == coord_group and mod_parts[1] == coord_artifact
-
-
-def _scan_build_gradle_for_coordinate(project_root: Path, coordinate: str) -> bool:
-    """Substring search em `**/build.gradle*` ignorando comentários.
-
-    Filtra linhas de comentário Groovy/KTS (`//` line-comment e blocos
-    `/* ... */`) antes de testar substring — evita falso positivo de
-    coordenadas mencionadas em comentários do tipo `// io.ktor:foo
-    retirado 2024` (M-5). Mantém o cap de arquivos visitados de
-    `_glob_any` (800) e o skip-dirs canônico. Walk manual em vez de
-    rglob() para evitar descer em node_modules/.gradle/build.
-    """
-    stack: list[Path] = [project_root]
-    count = 0
-    while stack:
-        current = stack.pop()
-        try:
-            entries = list(current.iterdir())
-        except OSError:
-            continue
-        for entry in entries:
-            if entry.is_dir() and not entry.is_symlink():
-                if entry.name in _SKIP_DIRS or entry.name.startswith("."):
-                    continue
-                stack.append(entry)
-            elif entry.is_file() and entry.name.startswith("build.gradle"):
-                if count > 800:
-                    return False
-                count += 1
-                try:
-                    with entry.open("r", encoding="utf-8", errors="ignore") as fh:
-                        in_block_comment = False
-                        for line in fh:
-                            stripped = line.lstrip()
-                            code_segments: list[str] = []
-                            i = 0
-                            src = line
-                            while i < len(src):
-                                if in_block_comment:
-                                    close = src.find("*/", i)
-                                    if close == -1:
-                                        break
-                                    i = close + 2
-                                    in_block_comment = False
-                                    continue
-                                if src.startswith("//", i):
-                                    break
-                                if src.startswith("/*", i):
-                                    in_block_comment = True
-                                    i += 2
-                                    continue
-                                j = i
-                                while j < len(src):
-                                    if src.startswith("//", j) or src.startswith("/*", j):
-                                        break
-                                    j += 1
-                                code_segments.append(src[i:j])
-                                i = j
-                            if stripped.startswith("//"):
-                                continue
-                            code_line = "".join(code_segments)
-                            if coordinate in code_line:
-                                return True
-                except OSError:
-                    continue
-    return False
-
-
-def _eval_gradle_dep(project_root: Path, coordinate: str | None) -> bool:
-    """True se a coordenada Maven existe em qualquer formato Gradle.
-
-    Ordem: 1) catálogo gradle/*.versions.toml, 2) build.gradle(.kts) legado.
-    Curto-circuita no primeiro match. Defensivo contra TOML mal-formado
-    (try/except silencioso, alinhado a `_glob_any`).
-
-    Format aceito do `coordinate`: `<groupId>:<artifactId>` sem version,
-    sem espaços. Shape validation acontece em `engine/cards/loader.py`
-    (regra CARD-020); aqui usamos o helper compartilhado
-    `parse_gradle_coordinate` e retornamos `False` silenciosamente em
-    qualquer shape inválida (B-3 from PR #11 review).
-    """
-    parsed = parse_gradle_coordinate(coordinate)
-    if parsed is None:
-        return False
-    group, artifact = parsed
-
-    # 1) Catálogo TOML (path canônico gradle/*.versions.toml) — cached por
-    # project_root (B-1) e match prefix-tolerant em `module` (B-2).
-    for data in _load_toml_catalog(project_root):
-        libraries = data.get("libraries") or {}
-        if not isinstance(libraries, dict):
-            continue
-        for entry in libraries.values():
-            if not isinstance(entry, dict):
-                continue
-            module = entry.get("module")
-            if isinstance(module, str) and _module_matches_coordinate(module, coordinate):
-                return True
-            grp = entry.get("group")
-            nm = entry.get("name")
-            if (
-                isinstance(grp, str)
-                and isinstance(nm, str)
-                and grp == group
-                and nm == artifact
-            ):
-                return True
-
-    # 2) build.gradle(.kts) legado — substring com filtro de comentários (M-5).
-    if _scan_build_gradle_for_coordinate(project_root, coordinate):
-        return True
-
-    return False
-
-
-_SKIP_DIRS = {
-    "node_modules",
-    "build",
-    ".git",
-    ".gradle",
-    ".idea",
-    "DerivedData",
-    "Pods",
-    "dist",
-    ".next",
-    ".cache",
-    ".venv",
-    "venv",
-    ".claude",
-    "__pycache__",
-}
-
-
 def _load_preset(name: str) -> dict[str, Any]:
     """Load a preset definition from FORGE_HOME/presets/{name}/preset.yaml."""
     path = forge_home() / "presets" / name / "preset.yaml"
@@ -1186,7 +917,9 @@ def _run_pipeline(project_root: Path) -> int:
     # ── Step 3 — Preset suggestion ───────────────────────────────────────────
     preset = _load_preset(PRESET_NAME)
     preset_detection = preset.get("detection") or {}
-    preset_score, matched = _eval_detection_signals(project_root, preset_detection)
+    preset_score, matched = _detection_eval._eval_detection_signals(
+        project_root, preset_detection
+    )
     threshold = float(preset_detection.get("threshold") or 0.6)
 
     summary_lines = [
@@ -1241,8 +974,6 @@ def _run_pipeline(project_root: Path) -> int:
         c.get("name") for c in (preset.get("cards") or []) if c.get("name")
     ]
     card_index = _index_cards(canonical_cards)
-
-    from engine.detection.composer import compose_backend_axes  # noqa: PLC0415
 
     normalized_for_composer = _normalize_cards_for_composer(canonical_cards)
     composer_result = compose_backend_axes(project_root, normalized_for_composer)
@@ -2086,10 +1817,9 @@ def _handle_backend_multi_axis_brownfield(
             o intent-id (primeiro call do par). Top-level handler do CLI
             sai com exit 2; o caller (W7.4) re-invoca após response.
     """
-    # Lazy import — evita ciclo com engine.detection.composer (que importa
-    # _eval_detection_signals deste módulo).
-    from engine.detection.composer import compose_backend_axes
-
+    # Cycle broken in Phase B (PR #13 review): _eval_detection_signals
+    # moved to engine.detection._eval, composer now imports from there.
+    # ``compose_backend_axes`` é import top-level deste módulo.
     normalized = _normalize_cards_for_composer(active_cards)
     composer_result = compose_backend_axes(project_root, normalized)
     uniformity = _detect_axis_uniformity(composer_result)
