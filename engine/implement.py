@@ -171,10 +171,8 @@ def _readiness_from_handoff(handoff: Path) -> str | None:
     if not handoff.exists():
         return None
     try:
-        import json
-
         data = json.loads(handoff.read_text(encoding="utf-8"))
-    except Exception:
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
         return None
     if not isinstance(data, dict):
         return None
@@ -529,7 +527,7 @@ def _run_cc_gate(project_root: Path) -> dict[str, Any]:
 
     try:
         result = cc_validator.validate(project_root)
-    except Exception as exc:  # pragma: no cover — defensive; validator crashes warn
+    except Exception as exc:  # noqa: BLE001 — broad catch: defensive at validator-dispatch boundary; validator crashes warn  # pragma: no cover
         return {
             "status": "warn",
             "message": f"cc-gate validator crashed: {exc}",
@@ -657,7 +655,7 @@ def _run_secrets_gate(project_root: Path) -> dict[str, Any]:
 
     try:
         result = secrets_validator.validate(project_root, stage="per_task")
-    except Exception as exc:  # pragma: no cover — defensive; validator crashes warn
+    except Exception as exc:  # noqa: BLE001 — broad catch: defensive at validator-dispatch boundary; validator crashes warn  # pragma: no cover
         return {
             "status": "warn",
             "message": f"secrets-gate validator crashed: {exc}",
@@ -1005,7 +1003,7 @@ def _maybe_run_qa_pre_retrospective(
                 project_root=project_root,
                 workflow_config=cfg,
             )
-        except Exception as exc:  # noqa: BLE001 — verdict não bloqueia
+        except Exception as exc:  # noqa: BLE001 — broad catch: defensive at qa auto-run cross-module boundary; verdict não bloqueia
             renderer.write(
                 renderer.colored(
                     f"qa auto-run falhou ({type(exc).__name__}: {exc}); "
