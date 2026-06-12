@@ -3,7 +3,7 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-12 (v1.2-dev — Phase B DET-6 multi-axis backend SHIPPING-READY + REVIEWED + E2E COVERED + PR #13 Wave A+B REMEDIADAS em worktree `det-6-w1`)
+**Última atualização:** 2026-06-12 (User-facing docs — 4 guias + 5 diagramas + README Quick Start)
 **Wave A (PR #13 review, 2026-06-12):** 6 fixes contidos remediados em 5 commits sobre `96a0896` (cli paused_exc refactor + intent-state flush + validate_presets imports + RULE-020 cascade guard + doc-sync). Fix 4 (clear_intent_log_only delegation) skipped — semantics divergem, anotado pra Wave B. Rapid lane verde (1306 passing, 6 falhas pré-existentes inalteradas em test_cards_resolver/test_commands_init/test_validators_card_yaml). +2 regression tests.
 **Wave B (PR #13 review, 2026-06-12):** 5 fixes cross-module remediados em 5 commits sobre `b8731f7` (commits `37084c0` → `4b6eada`): (1) ciclo composer↔init quebrado via `engine/detection/_eval.py` novo + shape guard no composer; (2) `isinstance(Cell/Conflict)` em vez de `hasattr` em 5 sites de init.py; (3) `BACKEND_AXES` shared em `engine/detection/_axes.py` (init + reconfigure consomem); (4) cache process-level pra `_read_intent_log` (O(1) cache hit vs O(n) re-parse); (5) `VALID_BACKEND_AXES`/`VALID_BUNDLE_PLATFORM_KEYS`/`VALID_PROJECT_PLATFORMS` consolidados em `validators/_common.py`. Rapid lane sobe pra 1321 passed (+15 vs Wave A baseline). Mesmas 6 falhas pré-existentes herdadas, não tocadas (out of scope).
 **Estado:** v1.2-dev Phase B DET-6 ✅ COMPLETO + REVIEWED. W1-W8 + W7 cluster review fix + E2E coverage + 2 follow-up fixes (_SKIP_DIRS + Phase A pitfall) + DET-6 W2 fixture cleanup tardio. AC-1..AC-10 cobertos. Rapid lane 1310 passing; integration 133 passing (1 deferred: bootstrap.sh worktree edge case); validators 245+8 passing; e2e 21 passing (RUN_E2E=1). Mandamento 0 loop fechado (impl → review → fix → verify) com 2 reviews formais (W5 + W7 cluster). Branch ainda LOCAL — push + PR depois desta sessão. Fechamento absorve B1/B2/DET-5 naturalmente conforme spec. Phase 0 DET-3 ✅ shipped em `main`. Phase A (DRIFT-1) PR #11 master-review remediado integralmente; PR #12 carrega os 14 follow-ups pós-PR #11 (16 commits: `a7d0947..d1b95c5`) — A-1/A-2/M-2/M-3/M-4/M-5/B-1/B-2/B-3 + S-1 edge-case coverage + M-1 assimetria documentada + S-2/S-3 follow-ups capturados; +41 novos tests; rapid lane ~1054 passing, suite total ~1178 collected. v1.2.0 feito + Gap 9 cumulativo + CC gate v1 (PR #4) + PRD docs/product/ (PR #5) + plan-auditor (PR #6) tudo em `main`. `forge qa` shipado (PR #8). QA-11 sandbox env hardening fechado (impl + final review + closeout post-review remediação + post-ultra-review remediation 16 findings); pré-piloto restrito a QA-13 (paranoid state filter — `aborted`/`archived` corretamente excluídos do cross-feature scope). Ultra-review do PR #9 fechou deep-001 (crítico: PYTHONPATH não herda mais do parent), endureceu pattern regex contra false-positive (AUTHOR/CO_AUTHOR), adicionou defense-in-depth no `build_safe_env` (allow_sensitive opt-in), corrigiu UX do grant flow (EOF + re-prompt 3x), mascarou nomes em log (anti-disclosure), guardiou isinstance de shape em sensitive-env-grants e ampliou catch do alert layer pra RuntimeError. 5 findings deferidos a PRs separados (deep-010 warning channel cross-cutting; deep-011/012 scope.py refinements fora da whitelist; deep-014 verify.py plumbing; deep-021 loader.py warning). Branch `worktree-feat+gate-infra-extract` agora consolida (após merge de origin/main) Phase 0 do roadmap de quality-gates expansion — refactor estrito (no-behavior-change) extrai infra reusável do CC gate em `validators/_gate_infra.py` + `validators/_diff.py` + rename de helpers em `validators/_common.py`. CC validator caiu de ~1127 LOC para ~840 LOC compondo helpers públicos. Phase 0 suite verde (baseline 751 - 1 justificado em T4: removed test do lookup `_TOOL_BIN[lang]` interno que não existe pós-refactor). Wave R1.1 `check_secrets` shipping na mesma branch — primeiro consumer real do helper extraído valida a generalização e fechou Gap GATE-INFRA-1 (parametrização de `gate_threshold_lookup` + `format_three_paths_message`); Gap GATE-INFRA-2 (kw-only `cmd_builder` API) registrado pra próximo consumer.
@@ -63,7 +63,6 @@ Próximo passo: PR #7 mergeable + Wave R1.1 verde + considerar Gap 14 (preset co
 - Phase B aguarda push da branch `feat/det-6-multi-axis-backend` (29 commits
   acumulados em worktree `det-6-w1`) + abertura de PR. W8 doc-sync neste
   commit é a última wave; review da PR + merge fecham DET-6 em main.
-
 
 - **Phase 0 (gate-infra-extract) — esta branch** — refactor estrito: 7 commits de
   extração + 1 doc-sync + 4 robustness fixes pós-power-review (render_config,
@@ -185,6 +184,30 @@ Depois siga as instruções. Estou na Fase {N}.
 ~400 arquivos · ~52,500 linhas · 27 decisões locked + 7 direcionais (Fase 3.5) + 2 ADR append-only (Decisão 28, Gap 5; Decisão 31, Revisita 30 sandbox guard via sitecustomize.py)
 v1.2-dev cumulativo (PR #4 CC gate + Phase 0 + R1.1 secrets + PR #8 forge qa CONF + pause/resume): **1113 passed** em main (pós PR #9) (baseline pré-PR #8: 847; +86 tests da CONF wave + pause/resume + review fixes); branch gate-infra-extract registra Gap 9 baseline 637 + CC gate +~63 + Phase 0 -1 justificado + secrets gate +~30 · 17 graph queries · 16 proposal kinds · 20 validators (inclui check_cyclomatic_complexity + check_secrets + validate_extension_feature) · 22 cards canon (+ overlay local)
 ```
+### User-facing documentation (2026-06-12)
+
+**O que:** 4 guias de uso (`docs/guides/`), 5 diagramas Mermaid (`docs/diagrams/`), e README renovado com Quick Start + tabela de documentação.
+
+**Público:** dev mobile que usa forge no dia a dia — estagiário a tech lead.
+
+**Guias:**
+- `docs/guides/getting-started.md` — onboarding: instalação, init, adoção em time
+- `docs/guides/daily-workflow.md` — 13 comandos com cenários e árvore de decisão
+- `docs/guides/feature-lifecycle.md` — pipeline completo do intake à retrospectiva
+- `docs/guides/dot-claude-reference.md` — referência de arquivos `.claude/`
+
+**Diagramas Mermaid:**
+- `docs/diagrams/bootstrap-flow.mermaid`
+- `docs/diagrams/feature-lifecycle.mermaid`
+- `docs/diagrams/command-decision-tree.mermaid`
+- `docs/diagrams/graph-query-flow.mermaid`
+- `docs/diagrams/files-versioned-vs-local.mermaid`
+
+**O que NÃO cobre (deixado pra próxima):**
+- Guia de troubleshooting / FAQ
+- Guia de migração de v1.0 para v1.2
+- Tutoriais em vídeo ou screencast
+- Exemplos por stack específica (Firebase, REST, etc.)
 
 | Categoria | Status |
 |---|---|

@@ -1,0 +1,76 @@
+flowchart TD
+    INICIO(["Nova feature 🚀"])
+
+    subgraph INTAKE["1. Intake — captura da ideia"]
+        A1["Ideia surge (issue, brain, ticket)"]
+        A2["forge plan — esboça<br/>intenção inicial"]
+        A3["forge status — verifica<br/>se há algo similar ativo"]
+    end
+
+    subgraph PRD["2. PRD — documento de requisitos"]
+        B1["PRD em docs/product/*.md"]
+        B2["forge status — consulta<br/>L2-project.yaml + graph.db<br/>pra contexto"]
+    end
+
+    subgraph SPECS["3. Specs"]
+        C1["BDD — cenários de comportamento"]
+        C2["Analytics — eventos e métricas"]
+        C3["Data contract — schemas e migrações"]
+        C4["Navegação — rotas e deep links"]
+        C5["UI/UX — estados, empty, error, loading"]
+    end
+
+    subgraph TECH_SPEC["4. Tech spec + task breakdown"]
+        D1["forge plan — gera PLAN.md<br/>com fases e tarefas"]
+        D2["Quebra em tasks atômicas<br/>(SPIDR)"]
+    end
+
+    subgraph IMPLEMENTACAO["5. Implementação — task a task"]
+        E1["forge implement<br/>executa cada task"]
+        E2["forge verify<br/>valida a implementação"]
+        E3["forge graph — consulta<br/>reuso e blast radius"]
+    end
+
+    subgraph REVIEW["6. Review + merge"]
+        F1["PR com checklist"]
+        F2["forge doctor — health check<br/>antes do merge"]
+        F3["Merge na branch principal"]
+    end
+
+    subgraph RETROSPECTIVA["7. Retrospectiva"]
+        G1["forge evolve — extrai<br/>aprendizados e propõe<br/>evoluções"]
+        G2["forge memory — registra<br/>padrões em L2-project.yaml"]
+        G3["forge undo — reverte<br/>se necessário"]
+    end
+
+    INICIO --> INTAKE
+    INTAKE --> PRD
+    PRD --> SPECS
+    SPECS --> TECH_SPEC
+    TECH_SPEC --> IMPLEMENTACAO
+    IMPLEMENTACAO --> REVIEW
+    REVIEW --> RETROSPECTIVA
+
+    A2 -.- forge_cmd1("forge plan")
+    A3 -.- forge_cmd2("forge status")
+    B2 -.- forge_cmd3("forge status")
+    D1 -.- forge_cmd4("forge plan")
+    E1 -.- forge_cmd5("forge implement")
+    E2 -.- forge_cmd6("forge verify")
+    E3 -.- forge_cmd7("forge graph")
+    F2 -.- forge_cmd8("forge doctor")
+    G1 -.- forge_cmd9("forge evolve")
+    G2 -.- forge_cmd10("forge memory")
+    G3 -.- forge_cmd11("forge undo")
+
+    style forge_cmd1 fill:#e8eaf6,stroke:#3f51b5
+    style forge_cmd2 fill:#e8eaf6,stroke:#3f51b5
+    style forge_cmd3 fill:#e8eaf6,stroke:#3f51b5
+    style forge_cmd4 fill:#e8eaf6,stroke:#3f51b5
+    style forge_cmd5 fill:#e8eaf6,stroke:#3f51b5
+    style forge_cmd6 fill:#e8eaf6,stroke:#3f51b5
+    style forge_cmd7 fill:#e8eaf6,stroke:#3f51b5
+    style forge_cmd8 fill:#e8eaf6,stroke:#3f51b5
+    style forge_cmd9 fill:#e8eaf6,stroke:#3f51b5
+    style forge_cmd10 fill:#e8eaf6,stroke:#3f51b5
+    style forge_cmd11 fill:#e8eaf6,stroke:#3f51b5

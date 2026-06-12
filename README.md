@@ -27,6 +27,24 @@ Skill CLI-first com 13 comandos canônicos (zero flags — toda parametrização
 | Vocabulary | "forge" só como verbo; resto neutro |
 | Scope OUT | arch macro · decisão de produto · code review final · time tracking |
 
+## Quick Start
+
+```bash
+# 1. Instalar
+pip install feature-forge  # ou clone o repo e use bin/forge
+
+# 2. Iniciar num projeto mobile
+cd ~/code/seu-app
+forge init
+
+# 3. Verificar status
+forge status
+```
+
+Pronto. O `forge init` escaneia seu projeto, detecta a stack (KMP, Android, iOS), aplica cards, e já deixa um graph do codebase pronto.
+
+> ⏱ 5 minutos. Sem flags. Tudo interativo.
+
 ## Stack alvo
 
 Backend-agnostic — qualquer combinação:
@@ -174,6 +192,15 @@ Hidden entrypoints (invocados por hooks, nunca tipados pelo usuário):
 
 - `forge ingest --event <type> [payload]` — graph/memory/inventory updater
 - `forge graph detect-incremental <file>` — post-edit reuse detection
+
+## Guias do usuário
+
+| Guia | Pra quem | Lê em |
+|---|---|---|
+| [Primeiros passos](docs/guides/getting-started.md) | Quem nunca usou forge | 10 min |
+| [Comandos do dia a dia](docs/guides/daily-workflow.md) | Quem já usa no dia a dia | 15 min |
+| [Lifecycle de uma feature](docs/guides/feature-lifecycle.md) | Quem quer entender o fluxo completo | 10 min |
+| [O que cada arquivo no .claude/ significa](docs/guides/dot-claude-reference.md) | Quem quer entender o que o forge criou | 5 min |
 
 ## Documentação
 

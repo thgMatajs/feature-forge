@@ -7,6 +7,24 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (User-facing docs, 2026-06-12)
+
+- **`docs/guides/getting-started.md`** — Guia de primeiros passos: onboarding completo para devs mobile, incluindo instalação, init, e adoção em time.
+- **`docs/guides/daily-workflow.md`** — Guia de comandos do dia a dia: cobertura dos 13 comandos com cenários, exemplos e árvore de decisão.
+- **`docs/guides/feature-lifecycle.md`** — Lifecycle de uma feature: pipeline do intake à retrospectiva, com artefatos e variações por subtipo.
+- **`docs/guides/dot-claude-reference.md`** — Referência amigável dos arquivos `.claude/`: tabela versionado vs local, explicações detalhadas.
+- **`docs/diagrams/bootstrap-flow.mermaid`** — Diagrama do fluxo de adoção do forge pelo time.
+- **`docs/diagrams/feature-lifecycle.mermaid`** — Diagrama do pipeline completo de uma feature.
+- **`docs/diagrams/command-decision-tree.mermaid`** — Diagrama de decisão: qual comando usar em cada situação.
+- **`docs/diagrams/graph-query-flow.mermaid`** — Diagrama de fluxo de consulta do graph.
+- **`docs/diagrams/files-versioned-vs-local.mermaid`** — Diagrama de arquivos versionados vs locais.
+
+### Changed (User-facing docs, 2026-06-12)
+
+- **`README.md`** — Adicionada seção "Quick Start" com instalação e first steps + tabela "Guias do usuário" com links para os 4 guias.
+- **`docs/design/08-session-handoff.md`** — Última atualização e seção de User-facing docs registrada.
+
+
 ### Added (Phase B — DET-6 multi-axis backend, 2026-06-11)
 
 - **Schema canônico multi-axis** — `docs/schemas/backend-axes.md` define

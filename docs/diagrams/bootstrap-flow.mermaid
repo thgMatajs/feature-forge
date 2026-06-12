@@ -1,0 +1,36 @@
+flowchart TD
+    subgraph ADOTACAO["Adoção do feature-forge"]
+        direction TB
+        DEV1["Dev 1 (pioneiro)"]
+        INIT["forge init"]
+        CRIACAO["Cria .claude/:"]
+        FILES_CREATED["workflow-config.yaml<br/>cards/ (snapshots)<br/>inventory/<br/>L2-project.yaml<br/>hooks/<br/>memory/L1/*<br/>graph.db"]
+    end
+
+    INIT --> CRIACAO
+    DEV1 --> INIT
+    CRIACAO --> FILES_CREATED
+
+    subgraph GIT["Git"]
+        VERSIONADO["✅ Versionado (commita):<br/>workflow-config.yaml<br/>cards/<br/>inventory/<br/>L2-project.yaml<br/>hooks/"]
+        LOCAL["❌ Ignorado (.gitignore):<br/>graph.db<br/>memory/L1/ (features ativas)<br/>*.bak<br/>checkpoints .yaml"]
+    end
+
+    FILES_CREATED --> GIT
+
+    subgraph TIME["Os outros 9 devs"]
+        PULL["git pull"]
+        CONFIG_OK["Recebem versionados:<br/>cards, inventory,<br/>workflow-config, hooks"]
+        RECONFIGURE["forge reconfigure"]
+        GRAPH_DB["Cada um constrói<br/>graph.db local"]
+    end
+
+    PULL --> CONFIG_OK
+    CONFIG_OK --> RECONFIGURE
+    RECONFIGURE --> GRAPH_DB
+
+    GIT -->|"commit + push"| PULL
+
+    style VERSIONADO fill:#e3fce3,stroke:#2e7d32
+    style LOCAL fill:#ffe3e3,stroke:#c62828
+    style GRAPH_DB fill:#fff3e0,stroke:#e65100
