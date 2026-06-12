@@ -107,6 +107,68 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 - Labels singulares `auth-provider`, `http-client`, `crash-reporting`
   de `provides`. Cardinalidade enforçada pelo schema. Refs: W3.
 
+### Added (Phase B — DET-6 polish, 2026-06-12)
+
+- **Test discipline gap fechado** — `tests/unit/test_validators_workflow_config.py`
+  ganhou 8 tests positive/negative individuais cobrindo RULE-019..024
+  (axis enum, platform check, card.card existence, status enum,
+  migrating-to consistency, migrating-to card existence). Closes M-003
+  do W7 cluster review.
+- **Validator agora aceita local cards** — `validate_workflow_config.py`
+  RULE-021 e RULE-024 reconhecem `.claude/cards/local/<name>/card.yaml`
+  além do snapshot dir canônico. Alinha com behavior do reconfigure
+  (Caminho B do M-001 W7 cluster review).
+- **E2E coverage forge init/reconfigure** — 3 e2e tests novos
+  (`test_e2e_brownfield_init.py`, `test_e2e_greenfield_init.py`,
+  `test_e2e_reconfigure_backend.py`) substituem stubs pre-W7. Helpers
+  compartilhados em `tests/e2e/conftest.py` (`_scaffold_minimal_project`,
+  `_run_forge`, `_drive_intent_loop`). Cobertura AC-6/AC-7/AC-8 end-to-end
+  no CLI level via subprocess + file-based intent protocol.
+- **Consumed-intent log (Phase A protocol)** — `engine/ui/intent_state.py`
+  ganhou `_log_path` + `_read_intent_log` + `_append_intent_log`.
+  `read_response` agora checa log primeiro pra cached response do
+  intent-id; faz handler re-entry idempotente entre subprocess
+  invocations (resolve W7.2 multi-intent re-invocation pitfall).
+  Schema documentado em `docs/schemas/intent-protocol.md §4`.
+
+### Changed (Phase B — DET-6 polish, 2026-06-12)
+
+- **`_SKIP_DIRS` semântica** — `engine/inventory/_walk_cache.py` +
+  `engine/init.py` agora comparam `path.relative_to(project_root).parts`
+  em vez de `path.parts` absoluto. Top-level `.claude/` continua
+  filtrado em project_root; `.claude/` como PARENT do project_root
+  (caso worktree) deixa de filtrar descendentes. Regression test em
+  `tests/unit/test__walk_cache_worktree.py`.
+- **`clear_intent_files` ganhou parâmetro `also_log`** — default `False`
+  preserva log (re-entry idempotency). Caller terminal (engine/cli.py
+  exit lifecycle) passa `also_log=True` para reset. SPEC §3 forensic
+  preservation preservada via função separada `clear_intent_log_only`.
+- **Microcopy stale removido** — `engine/init.py` gate RESOLVER-ERRORS
+  label "voltar e escolher outro backend-candidate" → "voltar e ajustar
+  a configuração de backend (composer/bundle)". Module docstring linhas
+  1-15 atualizada pra refletir composer-driven flow (W7.4) em vez de
+  legacy backend-candidate picker (Cena 6.5).
+- **Test fixture categoria stale** — `tests/integration/test_e2e_local_card_pilot.py`
+  linha 80 `category: "network"` → `category: "data"` (alinhamento tardio
+  com DET-6 W2 migration de cards/network → cards/data).
+
+### Fixed (Phase B — DET-6 polish, 2026-06-12)
+
+- **W7 cluster review findings** — 1 High (stale microcopy) + 4 Medium
+  (cross-validator asymmetry, type guard inconsistency, test discipline
+  gap, module docstring stale) + 3 Low (comment stale, uniform-detection
+  consolidation deferida, crashlytics filenames anotados). Detalhe em
+  `.planning/det-6/W7-cluster-review-r1.md`.
+- **`_SKIP_DIRS` worktree bug** — 2 tests que falhavam do worktree
+  agora passam (`test_eval_gradle_dep::test_ac6_file_content_preserved`
+  + `test_gradle_dep_card_activation::test_ac6_file_content_signal_still_active_alongside_gradle_dep`).
+- **Phase A multi-intent re-invocation pitfall** — handlers que emit
+  2+ intents agora sobrevivem subprocess re-invocations sem
+  `IntentMismatchError`.
+- **DET-6 W2 fixture cleanup tardio** — 2 tests
+  (`test_pilot_local_card_added_appears_in_cascade`,
+  `test_pilot_local_cards_manifest_written`) verdes pós-categoria fix.
+
 ### Fixed (PR #11 master-review remediação — 2026-06-11)
 
 Remediação completa dos 28 findings do master-review de PR #11
