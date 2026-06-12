@@ -27,11 +27,11 @@ identity:
   name:         firestore-security-rules
   version:      1.0.0
   description:  "Cobertura formal de Firestore security rules — rule por collection mexida na feature, testes de regras via emulator + rules-unit-tests, atualização sincronizada do access-matrix.md."
-  category:     backend
+  category:     data
   maturity:     stable
   maintainer:   feature-forge-core
   created-at:   2026-05-29
-  last-updated: 2026-05-29
+  last-updated: 2026-06-10
   license:      MIT
 
 

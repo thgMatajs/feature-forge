@@ -1,0 +1,30 @@
+# cards/onesignal/detection/signals.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Sinais de detecção do card onesignal — espelha o bloco
+# `detection.signals` do card.yaml. Threshold cumulativo 0.5.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+signals:
+  - id:         onesignal-gradle-dep
+    type:       gradle-dep
+    coordinate: "com.onesignal:OneSignal-Android-SDK"
+    confidence: 0.5
+    rationale:  "Coordenada Maven do OneSignal Android SDK (forma legada — pré-v5). v5.x+ usa `com.onesignal:OneSignal` (coberto pelo file-content fallback abaixo)."
+
+  - id:         onesignal-gradle-build-string
+    type:       file-content
+    glob:       "**/build.gradle*"
+    contains:   "com.onesignal:OneSignal"
+    confidence: 0.3
+    rationale:  "Prefix-match que casa OneSignal SDK pré-v5 (`OneSignal-Android-SDK`) e v5.x+ (`OneSignal:5.x`) num único signal."
+
+  - id:         onesignal-kotlin-import
+    type:       file-content
+    glob:       "**/*.kt"
+    contains:   "com.onesignal"
+    confidence: 0.3
+    rationale:  "Import direto do SDK OneSignal no código Kotlin (`com.onesignal.OneSignal` ou `com.onesignal.notifications.*`)."
+
+threshold: 0.5

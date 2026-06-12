@@ -13,6 +13,150 @@ checklist for next sessions.
   `.claude/rules/plan-auditor.md` + integração — ver CHANGELOG
   `[Unreleased]`. Spec: `docs/superpowers/specs/2026-06-04-plan-auditor-design.md`.
 
+### B1 — `identity.backend-choice` ↔ `backend.provider` desync
+
+**Status:** ✅ FECHADO via Phase B DET-6 (2026-06-11). Removeu o
+acoplamento na raiz: `identity.backend-choice` deletado, `backend.provider`
+substituído por cell structure. Desync é arquiteturalmente impossível agora.
+
+### B2 — Seção `firebase:` órfã após swap
+
+**Status:** ✅ FECHADO via Phase B DET-6 (2026-06-11). Schema novo não
+tem subseção `firebase:` (substituído por `backend.<axis>.<platform>`
+cells). Swap = mudança de cells; sem seção legacy órfã possível.
+
+### DET-5 — `retrofit-client` fora do preset kmp-mobile
+
+**Status:** ✅ FECHADO via Phase B DET-6 W4+W6 (2026-06-11). retrofit-client
+agora carrega `category: data` (W2) e é referenciado pelo bundle
+`rest-with-firebase-telemetry.yaml` como default para
+`(data, android)` cell. Bundles substituem o conceito de "preset com
+backend-candidates fechados".
+
+### DET-6 — Modelo bundle-first é abstração errada
+
+**Status:** ✅ FECHADO (2026-06-11). Redesign multi-axis backend
+implementado integralmente conforme `docs/superpowers/specs/det-6-multi-
+axis-backend.md`. AC-2/3/5/6/7/8 cobertos. Commits: rebase em
+`origin/main` + W5 composer + W6 bundles + sqldelight card +
+crashlytics→firebase-crashlytics rename + W7.1/W7.2/W7.3/W7.4 + este
+W8 doc-sync. 29 commits sobre origin/main em `feat/det-6-multi-axis-backend`.
+
+## Open Implementation Details — DET-6 resolution (Phase B closeout, 2026-06-11)
+
+Os 8 itens "Open implementation details" da SPEC `det-6-multi-axis-backend.md`
+foram resolvidos como segue:
+
+1. **Bundle YAML path** — *Resolved inline*. Bundles vivem em
+   `presets/kmp-mobile/bundles/<bundle-name>.yaml` (arquivo separado).
+   Default proposto adotado por paridade com `card.yaml` per card.
+2. **Detection composer module location** — *Resolved inline*. Composer
+   em módulo separado `engine/detection/composer.py`. Default proposto
+   adotado por testability + reuse.
+3. **Status enum `deprecated` semantics** — *Resolved inline*. Cell
+   `status: deprecated` significa "este card está deprecated NESTE
+   projeto" independente de `card.yaml § identity.maturity`. Documentado
+   em `docs/schemas/backend-axes.md` § cell shape.
+4. **`firestore-realtime` fate** — *Deferred follow-up v1.3+*. Card
+   mantém `category: data` (W2). Sub-axis formal "realtime" fica como
+   follow-up (ver §"Follow-ups DET-6 v1.3+" abaixo).
+5. **`rest-api-contract` + `firestore-security-rules` sub-cards** —
+   *Deferred follow-up v1.3+*. Cards mantêm `category: data`. Sub-axes
+   "data-contract"/"rules" como follow-ups (ver §abaixo).
+6. **Phase A dependency API** — *Resolved*. Phase A entregou
+   AskUserQuestion intent protocol via `engine/ui/question.py` +
+   `intent_state.py` + `tty_bridge.py`. W7.1/W7.2/W7.3 consomem
+   `ask_three_paths`, `ask`, `ask_multi`, `confirm` direto.
+7. **`crashlytics` card rename** — *Resolved deviation*. Card renomeado
+   pra `firebase-crashlytics` em commit dedicado (paridade firebase-*).
+   25 arquivos atualizados.
+8. **Platform-applicability source** — *Resolved inline*. Campo
+   `identity.platforms: [android, ios, kmp]` adicionado ao card.yaml
+   schema (CARD-022 — renumber de CARD-020 devido à colisão com DET-3).
+   Composer consome esse campo via caller-supplied normalization
+   (W7.1/W7.2 augmentam dict shape passado pro composer).
+
+### Follow-ups DET-6 v1.3+
+
+- **bootstrap.sh assume `.git/hooks/` é dir (worktree edge case)** —
+  Descoberto 2026-06-12 durante test cleanup pós-`_SKIP_DIRS` fix.
+  Sintoma: `tests/integration/test_claude_rules_system.py::test_bootstrap_is_idempotent`
+  falha quando rodada de dentro de `.claude/worktrees/<branch>/` com
+  `ln: .git/hooks/pre-commit: Not a directory`. Root cause: em git
+  worktree, `.git` é um arquivo pointer com shape
+  `gitdir: <real-gitdir>/worktrees/<branch>`, não um diretório.
+  `bootstrap.sh` (linhas ~17-19) assume `.git/hooks/` é diretório
+  direto. Workaround: rodar bootstrap apenas da main worktree (use
+  case normal — bootstrap é setup inicial). Fix futuro (v1.3+):
+  detectar se `.git` é file, resolver gitdir pointer e ajustar paths
+  target. Refactor não-trivial. Não-bloqueador: afeta apenas test
+  rodado de worktree; desenvolvimento normal não toca esse path.
+- **Sub-axes formal** — `data` poderia ter sub-axes
+  `transport/contract/realtime/rules`. v1.2 mantém flat; revisitar
+  quando padrão emergir em projetos reais.
+- **9º axis (messaging direta)** — chat/push interactivo não é eixo
+  canônico v1.0. Revisitar se demanda surgir.
+- **Card composability dentro da mesma cell** — v1.0 não suporta "2
+  cards ativos na mesma (axis, platform) cell além de migrating-to".
+  Use case: side-by-side multi-tenant Firebase. Revisitar follow-up.
+- ~~**`_SKIP_DIRS` worktree bug** — engine walk filtra fixtures sob
+  `.claude/worktrees/` causando 1 unit test pré-existente + 4
+  integration tests pré-existentes a falharem do worktree (passam da
+  main repo root). Fix dedicado pendente — possível via opt-out env
+  var ou path normalization no walk.~~ **RESOLVIDO 2026-06-12:** fix em
+  `engine/inventory/_walk_cache.py` + `engine/init.py:_glob_any` —
+  match contra `path.relative_to(project_root).parts` em vez de
+  `path.parts` absoluto. Top-level `.claude/` em project_root continua
+  filtrado (caso legítimo); `.claude/` como parent do worktree não
+  bloqueia walk. Regression test em
+  `tests/unit/test__walk_cache_worktree.py`.
+- **W7.2 Phase A multi-intent re-invocation pitfall** — ✅ FECHADO em
+  2026-06-12 via consumed-intent log em `engine/ui/intent_state.py`.
+  Quando handler emite 2+ intents em sequência, `read_response` agora
+  consulta `.claude/state/forge-intent-log.jsonl` antes de tocar o
+  response file: intents já consumidos retornam a response cacheada,
+  fazendo re-entry idempotente. Schema doc atualizado em
+  `docs/schemas/intent-protocol.md §4`. Lifecycle clear do log via
+  `clear_intent_log_only` no `engine/cli.py::main()` `finally`,
+  preservando pending/response (SPEC §3 forensic). Tests de regressão
+  em `tests/unit/test_ui_intent_state.py` (cenários: cache hit, file
+  overwrite, unknown-id mismatch, log preservation, log reset, full
+  re-entry sequence, malformed lines). W7.x integration tests
+  permanecem com monkeypatch — remover seria reescrita significativa
+  sem redução de LOC; e2e tests já validam o wiring real.
+- **Bundle YAMLs com card references inexistentes** — bundle
+  `firebase-full.yaml` aponta pra `firebase-crashlytics` que ESTAVA
+  ausente (resolvido via rename), e `sqldelight` que ESTAVA ausente
+  (resolvido via criação). Pattern: bundle pode referenciar card a ser
+  criado em wave futura. validate_presets.py enforça que refs existem
+  no momento do validate.
+- **Uniform-detection duplicada: `_summarize_backend_cells` vs
+  `_render_axes_table`** — ambas implementam "detect uniform across
+  platforms → render compact" em `engine/init.py`, mas shapes de input
+  divergem genuinamente: `_render_axes_table` consome
+  `composer_result` (Cell/Conflict dataclasses, atributo `.card_id` +
+  `.candidates`); `_summarize_backend_cells` consome `cells` dict
+  pós-adapter (`{"card": ..., "status": ...}`). Consolidar exige
+  callable extractor genérico (~30-40 LOC infra) ou normalizar input
+  num shape único. Reviewer W7 L-002 sugere extrair
+  `_format_axis_compact(axis_map, get_card_id_fn)`, mas custo do
+  paralelo é baixo (duplicação cosmética, não comportamental).
+  Revisitar quando 3º callsite emergir ou refactor maior abrir
+  oportunidade barata.
+- **crashlytics rename — filenames de assets preservam nome antigo
+  (v1.3+ cosmético)** — o rename `crashlytics → firebase-crashlytics`
+  no commit `661b2d4` foi card-id-only por design. Os filenames internos
+  ficaram intocados deliberadamente: `templates/crashlytics-tech-spec.md`,
+  `templates/crashlytics-analytics.yaml`, e
+  `validators/check_crashlytics_shared_exception.py`. Também o field name
+  `crashlytics:` em contracts de analytics. Decisão consciente porque
+  filenames são identidade de arquivo (não do card) — rename mecânico
+  geraria diff massivo cross-referencing sem ganho funcional. Reviewer
+  W7 nota que isso vai gerar 1 finding cosmético em cada futuro reviewer
+  até alinharmos. Follow-up: rename cosmético `crashlytics-* →
+  firebase-crashlytics-*` em filenames + field name, com migrator pra
+  contracts existentes. Não-bloqueador, sem impacto runtime.
+
 ### DRIFT-1 — Intent Protocol (Engine intent-only + tty_bridge)
 
 - **Branch:** `feat/drift-1-intent-protocol`
@@ -2500,44 +2644,22 @@ Pilot conduzido em projeto KMP real (inchurch-app-main, Android+iOS+KMP, módulo
 
 Implicação: todos findings de UX/microcopy/persona/banner do piloto se aplicam SÓ ao modo fallback. Sobrevivem ao redesign apenas findings de dados/detecção (abaixo).
 
-### Findings ativos (sobrevivem ao redesign DRIFT-1)
+### Findings do piloto v1.2-dev — status
 
-#### B1 — `identity.backend-choice` ↔ `backend.provider` desync (Crítico)
-
-Após `forge reconfigure` editando `backend.provider` (firebase→rest), `identity.backend-choice` permanece com valor antigo (`firebase-stack`). Dois campos descrevem o mesmo conceito com valores divergentes. `engine/reconfigure.py:_handle_backend` (linha ~1108) escreve apenas `backend["provider"]`, nunca toca `identity.backend-choice`. Downstream (`forge plan`, cards ativos) continua gerando spec Firebase apesar do user ter trocado pra REST.
-
-**Acoplamento com DET-6:** alto. Se redesign DET-6 remover `identity.backend-choice`, B1 vira moot.
-
-#### B2 — Seção `firebase:` órfã após swap (Alto)
-
-Ao trocar `backend.provider: firebase → rest`, seção `backend.firebase.{dev-project, services, ...}` permanece no YAML como dado morto. Cleanup ausente. Mesmo arquivo `engine/reconfigure.py:_handle_backend`.
-
-**Acoplamento com DET-6:** alto. Cleanup logic depende de qual modelo prevalece.
-
-#### ✅ resolvido 2026-06-10: DET-3 — Scanner cego pra `libs.versions.toml` (Alto)
-
-Cards `ktor-client` (`cards/ktor-client/detection/signals.yaml`) + `retrofit-client` (`cards/retrofit-client/detection/signals.yaml`) declaram signals apenas em `**/build.gradle*`. Projetos modernos usam Gradle version catalogs (`gradle/libs.versions.toml`) onde as deps são declaradas. Scanner não cobre esse pattern → cards não matcham → todos os backend-candidates do preset `kmp-mobile` mostram `(cards matched: 0/N)` → default vence por ser primeiro da lista, não por evidência.
-
-**Acoplamento com DET-6:** baixo. Detection layer é independente do modelo de bundles vs eixos.
-
-**Resolução shipped 2026-06-10:** Plan `docs/superpowers/plans/det-3-gradle-dep-signal.md`. Novo signal type `gradle-dep` + helper `_eval_gradle_dep` em `engine/init.py` + regra CARD-020 em `engine/cards/loader.py` + migration de 9 signals em 8 cards (crashlytics, firebase-auth ×2, firebase-storage, firestore-persistence, firestore-realtime, koin-annotations, kotlinx-serialization-json, ktor-client/core). Catálogo `gradle/libs.versions.toml` agora coberto. Audit determinístico em `.planning/det-3/migration-audit.json`. Suite: 1125 passed.
-
-#### DET-5 — `retrofit-client` fora do preset kmp-mobile (Alto)
-
-`cards/retrofit-client/` existe como card canônico (com signals corretos), mas `presets/kmp-mobile/preset.yaml` `backend-candidates` (linha ~127-163) não inclui retrofit em nenhum dos 4 bundles (firebase-stack, rest-stack, hybrid-firebase-auth-rest-data, local-only). Projeto Android tradicional com 30+ services em retrofit2 fica sem caminho de detecção positiva.
-
-**Acoplamento com DET-6:** médio. Se bundles morrerem na Phase B, isso vira "adicionar retrofit aos cards listados por padrão"; se bundles sobreviverem como starter templates, é "adicionar retrofit a rest-stack ou criar android-rest-stack".
-
-#### DET-6 — Modelo bundle-first é abstração errada (Crítico de design)
-
-Preset `kmp-mobile` define backend como escolha entre 4 bundles fechados (firebase-stack, rest-stack, hybrid-firebase-auth-rest-data, local-only). Realidade observada: projetos misturam Firebase só pra Crashlytics + Analytics + REST pra dados + JWT pra identity, ou GraphQL + Firebase Auth + Sentry. Bundles não cobrem combinações reais. Modelo correto: backend como **eixos independentes** — Data transport, Identity, Observability, Analytics, Storage blob, Persistence local.
-
-**Surface findings (de Explore agent map):**
-- Cards já carregam `identity.category` (backend, observability, auth, storage, persistence, etc.) + capability-labels com constraints singular — base parcial pra multi-eixo já existe.
-- `backend-candidates` consumido apenas em `engine/init.py:979-990` — baixo blast radius.
-- `identity.backend-choice` consumido apenas em `engine/reconfigure.py:1114` (e é só comentário de enum) — código praticamente morto downstream.
-- Decisions 14 + 15 não bloqueiam multi-eixo; talvez precisem ADR note.
-- Schema doc `docs/schemas/workflow-config.md` está out-of-sync com `engine/init.py` (não documenta `identity.backend-choice`).
+- **B1 / B2 / DET-5 / DET-6** — ✅ FECHADOS em [Unreleased] via Phase B
+  DET-6 (2026-06-11). Ver §"Fechado em [Unreleased]" no topo deste doc
+  pra rationale e refs de commits. Descrições históricas dos findings
+  preservadas no git log da entrada original (commit pré-`b9c2c24`).
+- **DET-3 — Scanner cego pra `libs.versions.toml`** — ✅ resolvido
+  2026-06-10. Plan `docs/superpowers/plans/det-3-gradle-dep-signal.md`.
+  Novo signal type `gradle-dep` + helper `_eval_gradle_dep` em
+  `engine/init.py` + regra CARD-020 em `engine/cards/loader.py` +
+  migration de 9 signals em 8 cards (crashlytics, firebase-auth ×2,
+  firebase-storage, firestore-persistence, firestore-realtime,
+  koin-annotations, kotlinx-serialization-json, ktor-client/core).
+  Catálogo `gradle/libs.versions.toml` agora coberto. Audit
+  determinístico em `.planning/det-3/migration-audit.json`. Suite:
+  1125 passed.
 
 ### Phase sequencing decidido (2026-06-10)
 
@@ -2752,6 +2874,63 @@ Phase A W1 verification log em
 `.git` arquivo (worktree). Provável fix 1-2 linhas usando
 `git rev-parse --git-dir` ou similar. Phase-independente —
 pode ser endereçado a qualquer momento.
+
+## Phase B — DET-6 multi-axis backend code review follow-ups (2026-06-10 W1)
+
+Deferidos do review de Phase B W1 (`.planning/det-6-w1-review/REVIEW.md`)
+durante doc-sync W1. Não-bloqueantes pro avanço W2; revisitar em W2 ou
+cleanup pass dedicado dentro da própria branch `feat/det-6-multi-axis-backend`
+antes do PR final ao fim de W8.
+
+### W1-L-002 — Open-details #6/#7 em `workflow-config.md` em vez de `card.md` / `backend-axes.md`
+
+**Categoria:** schema-foundation (doc placement)
+**Severidade:** baixa (deviation cosmética; placement semanticamente correto)
+**Status:** deferred — revisitar em W8 doc-sync se quisermos uniformizar
+
+PLAN W1.4 nominou apenas `docs/schemas/card.md` e `docs/schemas/backend-axes.md`
+como locais pra inline `<!-- open-detail -->` comments. Os anchors #6 (Phase A
+API shape — referência ao formato de `signal-id`/`detector` que Phase A
+consolidará) e #7 (rename `crashlytics` → `crash-reporting` discutido em
+Phase B brainstorm) acabaram em `docs/schemas/workflow-config.md` porque
+semanticamente pertencem ao contexto desse schema (axes-resolution + status
+enum vivem lá). Não é regressão — só desvio do nominal do PLAN.
+
+Fix forward: ao consolidar W8 (final doc-sync da Phase B antes do PR), mover
+os 2 anchors pra `backend-axes.md` se a sentence ainda fizer sentido lá; ou
+manter onde estão com nota cross-ref. Decisão fica pro W8.
+
+### W1-L-003 — `docs/schemas/card.md:164` `# di OR dependency-injection` contradiz CARD-004
+
+**Categoria:** schema-foundation (pre-existente fora W1)
+**Severidade:** baixa (contradição interna do schema; sem efeito runtime)
+**Status:** deferred — candidate fix em W2 (category cleanup) ou cleanup pass
+
+`docs/schemas/card.md` linha 164 carrega um comentário pré-existente
+`# di OR dependency-injection` que sugere alternância no enum de
+`identity.category`. CARD-004 (revisado em W1) enumera apenas
+`dependency-injection` — o "di" curto não está no enum canônico. Zero diff
+sobre essa linha em W1 (`c60eeb1` + `26c0822` não tocaram a linha 164).
+
+Fix forward: remover o `# di OR ` do comentário, deixando apenas
+`# dependency-injection`. Trivial — pode entrar no próximo commit de W2
+quando outras refinements em CARD-004 estiverem na mesa. Anti-padrão a
+evitar: deixar pra W8 e arriscar drift adicional pelo caminho.
+
+## RULE-023/024 — detecção de ciclo em `migrating-to` (deferred pós-DET-6)
+
+PR #13 review (thgMatajs, 2026-06-12) apontou que `_check_backend` em
+`validators/validate_workflow_config.py` valida que `cell.migrating-to`
+referencia um card existente (RULE-024), mas não detecta ciclos do tipo
+`card A` em `status=migrating-to` apontando pra `card B` enquanto `card B`
+está em `status=migrating-to` apontando pra `card A`. Um config assim
+passa pelo cascade atual sem warning.
+
+Defer com razão: detecção de ciclo exige DFS 2-hop sobre todas as cells
+backend, é feature menor e baixo impacto (config-malformed convive bem
+com runtime — handlers downstream tratam `migrating-to` como hint, não
+contrato). Entra quando RULE-019..024 receber pass dedicado de
+hardening; até lá fica anotada aqui como gap conhecido.
 
 ## Reading order for new contributors
 

@@ -49,7 +49,7 @@ canônicos: `attempt`, `success`, `error`, `offline`, `validation_error`,
 
 ### 3. Crashlytics binding em `*_error` (condicional)
 
-Quando o card `crashlytics` está ativo, todo evento com sufixo `_error`
+Quando o card `firebase-crashlytics` está ativo, todo evento com sufixo `_error`
 deve declarar bloco `crashlytics:`:
 
 ```yaml
@@ -58,7 +58,7 @@ deve declarar bloco `crashlytics:`:
   params:
     - { name: error_code, const-ref: "AuthAnalytics.Params.ERROR_CODE", required: true }
   crashlytics:
-    when-card-active: "crashlytics"
+    when-card-active: "firebase-crashlytics"
     exception-class:  "FirebaseAuthAnalyticsException"
     bind-params:      ["error_code"]
     cause-type:       "LOGIN"      # ou REGISTER, FORGOT_PASSWORD
@@ -69,9 +69,9 @@ A classe `FirebaseAuthAnalyticsException` vive em
 cadeia de erro do Crashlytics — a mesma exception é chamada por ambos os
 trackers nativos.
 
-Quando o card `crashlytics` está **inativo**, omita o bloco
+Quando o card `firebase-crashlytics` está **inativo**, omita o bloco
 `crashlytics:` (não escreva `crashlytics: false` — apenas omita) e
-adicione `# crashlytics card inativo — recordException não disparado` em
+adicione `# firebase-crashlytics card inativo — recordException não disparado` em
 `notes:`.
 
 ### 4. Validation errors são eventos separados

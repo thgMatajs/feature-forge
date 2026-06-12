@@ -1,0 +1,83 @@
+[
+  {
+    "card": "firebase-auth",
+    "path": "cards/firebase-auth/card.yaml",
+    "current_category": "backend",
+    "new_category": "auth",
+    "axis": "auth",
+    "action": "rename",
+    "reason": "firebase-auth provides identity (auth-provider), maps to auth axis per SPEC §identity.category cleanup."
+  },
+  {
+    "card": "auth-jwt-bearer",
+    "path": "cards/auth-jwt-bearer/card.yaml",
+    "current_category": "backend",
+    "new_category": "auth",
+    "axis": "auth",
+    "action": "rename",
+    "reason": "auth-jwt-bearer provides JWT bearer auth, maps to auth axis per SPEC §identity.category cleanup."
+  },
+  {
+    "card": "firebase-storage",
+    "path": "cards/firebase-storage/card.yaml",
+    "current_category": "backend",
+    "new_category": "storage",
+    "axis": "storage",
+    "action": "rename",
+    "reason": "firebase-storage provides object storage, maps to storage axis per SPEC §identity.category cleanup."
+  },
+  {
+    "card": "firestore-persistence",
+    "path": "cards/firestore-persistence/card.yaml",
+    "current_category": "backend",
+    "new_category": "data",
+    "axis": "data",
+    "action": "rename",
+    "reason": "firestore-persistence is a remote-data store, maps to data axis per SPEC §identity.category cleanup."
+  },
+  {
+    "card": "firestore-realtime",
+    "path": "cards/firestore-realtime/card.yaml",
+    "current_category": "backend",
+    "new_category": "data",
+    "axis": "data",
+    "action": "rename",
+    "reason": "firestore-realtime mantém atrelado a data; sub-axis \"realtime\" fica como Open implementation detail #4 (ver docs/schemas/card.md)."
+  },
+  {
+    "card": "firestore-security-rules",
+    "path": "cards/firestore-security-rules/card.yaml",
+    "current_category": "backend",
+    "new_category": "data",
+    "axis": "data",
+    "action": "rename",
+    "reason": "firestore-security-rules mantém atrelado a data; sub-axis \"rules\" fica como Open implementation detail #5 (ver docs/schemas/card.md)."
+  },
+  {
+    "card": "rest-api-contract",
+    "path": "cards/rest-api-contract/card.yaml",
+    "current_category": "backend",
+    "new_category": "data",
+    "axis": "data",
+    "action": "rename",
+    "reason": "rest-api-contract descreve contrato HTTP, maps to data axis; sub-axis \"data-contract\" fica como Open implementation detail #5."
+  },
+  {
+    "card": "retrofit-client",
+    "path": "cards/retrofit-client/card.yaml",
+    "current_category": "network",
+    "new_category": "data",
+    "axis": "data",
+    "action": "rename",
+    "reason": "retrofit-client é HTTP client Android consumindo data, vai de network (deprecated) para data axis per SPEC §identity.category cleanup."
+  },
+  {
+    "card": "ktor-client",
+    "path": "cards/ktor-client/card.yaml",
+    "current_category": "kmp",
+    "new_category": "data",
+    "axis": "data",
+    "action": "rename",
+    "reason": "ktor-client é HTTP client KMP consumindo data; categoria muda de stack/tooling (kmp) para axis funcional (data) per SPEC §identity.category cleanup. KMP-capability fica refletida em identity.platforms (W6)."
+  }
+]

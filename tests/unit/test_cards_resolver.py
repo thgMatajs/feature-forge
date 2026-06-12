@@ -132,3 +132,75 @@ def test_resolve_resolved_capabilities_first_provider_wins():
         assert result.resolved_capabilities["shared-cap"] == "alpha"
     finally:
         r.known_singular_labels = original
+
+
+# ── W3 (DET-6) — labels singulares deprecated ────────────────────────────────
+# auth-provider / http-client / crash-reporting foram reclassificadas no
+# catalog (capability-labels.md) como "removed in v1.2 — superseded by schema
+# enforcement". O resolver consome o set singular DIRETO do catalog, então
+# essas labels não devem mais aparecer em known_singular_labels(). Isso
+# valida que o RESOLVER deixou de enforçar singular-conflict pra elas — a
+# cardinalidade per-cell é responsabilidade do workflow-config (W7+).
+#
+# Tests rodam contra catalog LIVE (sem monkeypatch). Se algum dia restaurarem
+# qualquer dessas labels ao Singular type column, o test acende.
+
+
+def test_w3_auth_provider_no_longer_singular_in_catalog():
+    """auth-provider foi removida do set Singular em W3 (DET-6).
+
+    Catalog reclassificou como "removed in v1.2 — superseded by schema
+    enforcement". Confirma que o parser do catalog não traz mais essa label
+    pro set singular consumido pelo resolver.
+    """
+    from engine.cards import loader
+
+    loader._reset_catalog_cache()
+    singular = loader.known_singular_labels()
+    assert (
+        "auth-provider" not in singular
+    ), "auth-provider deve estar removida do set Singular após W3"
+
+
+def test_w3_http_client_no_longer_singular_in_catalog():
+    """http-client foi removida do set Singular em W3 (DET-6)."""
+    from engine.cards import loader
+
+    loader._reset_catalog_cache()
+    singular = loader.known_singular_labels()
+    assert (
+        "http-client" not in singular
+    ), "http-client deve estar removida do set Singular após W3"
+
+
+def test_w3_crash_reporting_no_longer_singular_in_catalog():
+    """crash-reporting foi removida do set Singular em W3 (DET-6)."""
+    from engine.cards import loader
+
+    loader._reset_catalog_cache()
+    singular = loader.known_singular_labels()
+    assert (
+        "crash-reporting" not in singular
+    ), "crash-reporting deve estar removida do set Singular após W3"
+
+
+def test_w3_two_cards_sharing_removed_label_do_not_conflict_via_live_catalog():
+    """Cenário ponta-a-ponta: 2 cards proveem `auth-provider` legacy
+    (caso patológico pre-W3). Resolver deve aceitar — schema novo enforça
+    cardinalidade per-cell, não via singular label.
+
+    Sem monkeypatch — exercita o catalog real do projeto pós-reclassificação.
+    """
+    from engine.cards import loader
+
+    loader._reset_catalog_cache()
+    cards = [
+        _card("firebase-auth-legacy", provides=["auth-provider"]),
+        _card("custom-auth-legacy", provides=["auth-provider"]),
+    ]
+    result = resolver.resolve(cards)
+    # Não pode haver CONFLICT-SINGULAR para auth-provider — label foi
+    # reclassificada e schema novo cuida da cardinalidade.
+    assert not any(
+        "CONFLICT-SINGULAR" in e and "auth-provider" in e for e in result.errors
+    ), f"esperava aceitar 2 providers de auth-provider; got: {result.errors}"

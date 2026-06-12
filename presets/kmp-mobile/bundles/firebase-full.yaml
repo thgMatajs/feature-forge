@@ -1,0 +1,31 @@
+# presets/kmp-mobile/bundles/firebase-full.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# Read by:        forge init (bundle picker — W7)
+# Validated by:   validators/validate_presets.py
+# Spec:           docs/superpowers/specs/det-6-multi-axis-backend.md §Starter
+#                 bundles (linhas 116-130)
+# ──────────────────────────────────────────────────────────────────────────
+# Bundle "firebase-full" — stack Firebase máxima em todos os 8 eixos de
+# backend onde aplicável. Bundle é template de partida: após o picker, o
+# user pode override per-(axis, platform) cell antes de finalizar o init.
+#
+# Persistence é platform-divergente: Room no Android, null no iOS (consome
+# via KMP shared), SQLDelight no KMP (cell `(persistence, kmp)`). O card
+# `sqldelight` foi introduzido em W6 fechando o gap deixado em W6.1.
+# Observabilidade aponta para `firebase-crashlytics`, alinhado com a
+# convenção firebase-* dos outros cards Firebase do catálogo.
+
+schema-version: 1
+name:           firebase-full
+description:    "Firebase across all backend axes; ready for serverless apps."
+
+defaults:
+  data:          { all-platforms: firestore-persistence }
+  auth:          { all-platforms: firebase-auth }
+  observability: { all-platforms: firebase-crashlytics }
+  analytics:     { all-platforms: firebase-analytics }
+  storage:       { all-platforms: firebase-storage }
+  persistence:   { android: room-database, ios: null, kmp: sqldelight }
+  notifications: { all-platforms: fcm }
+  flags:         { all-platforms: firebase-remote-config }

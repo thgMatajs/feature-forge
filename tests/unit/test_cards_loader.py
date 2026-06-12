@@ -109,6 +109,44 @@ def test_validate_card_yaml_card_004_unknown_category():
     assert any("CARD-004" in v for v in violations)
 
 
+# ── DET-6 / Phase B W2: backend axes acceptance + deprecated rejection ──────
+
+
+@pytest.mark.parametrize(
+    "axis",
+    ["analytics", "notifications", "flags", "data", "auth", "observability", "storage"],
+)
+def test_validate_card_yaml_card_004_accepts_backend_axis(axis):
+    """CARD-004 must accept the 8 backend axes consolidated in DET-6 Phase B."""
+    card = _valid_card_dict()
+    card["identity"]["category"] = axis
+    violations = loader.validate_card_yaml(card, Path("."))
+    assert not any("CARD-004" in v for v in violations), (
+        f"CARD-004 should accept {axis!r} (DET-6 backend axis); got {violations}"
+    )
+
+
+def test_validate_card_yaml_card_004_accepts_analytics_category():
+    """TDD anchor (W2.3): analytics is a new backend axis, must pass CARD-004."""
+    card = _valid_card_dict()
+    card["identity"]["category"] = "analytics"
+    violations = loader.validate_card_yaml(card, Path("."))
+    assert not any("CARD-004" in v for v in violations), (
+        f"CARD-004 should accept analytics; got {violations}"
+    )
+
+
+@pytest.mark.parametrize("deprecated", ["backend", "network"])
+def test_validate_card_yaml_card_004_rejects_deprecated_categories(deprecated):
+    """`backend` e `network` foram split em 8 axes em Phase B (DET-6); loader não aceita mais."""
+    card = _valid_card_dict()
+    card["identity"]["category"] = deprecated
+    violations = loader.validate_card_yaml(card, Path("."))
+    assert any("CARD-004" in v for v in violations), (
+        f"CARD-004 should reject deprecated {deprecated!r}; got {violations}"
+    )
+
+
 def test_validate_card_yaml_card_005_invalid_maturity():
     bad = _valid_card_dict()
     bad["identity"]["maturity"] = "shiny"

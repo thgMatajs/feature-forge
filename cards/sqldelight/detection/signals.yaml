@@ -1,0 +1,35 @@
+# cards/sqldelight/detection/signals.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Sinais de detecção do card sqldelight — espelha o bloco
+# `detection.signals` do card.yaml. Threshold cumulativo 0.5.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+signals:
+  - id:         sqldelight-gradle-runtime
+    type:       gradle-dep
+    coordinate: "app.cash.sqldelight:runtime"
+    confidence: 0.5
+    rationale:  "Coordenada Maven canônica do runtime SQLDelight — consumida em todos os targets KMP."
+
+  - id:         sqldelight-gradle-android-driver
+    type:       gradle-dep
+    coordinate: "app.cash.sqldelight:android-driver"
+    confidence: 0.3
+    rationale:  "Driver Android-specific. Aparece sozinho em projetos que ainda não migraram pra commonMain — sinaliza intenção, não uso ativo."
+
+  - id:         sqldelight-gradle-native-driver
+    type:       gradle-dep
+    coordinate: "app.cash.sqldelight:native-driver"
+    confidence: 0.3
+    rationale:  "Driver iOS/native. Pareado com android-driver em projetos KMP que usam SQLDelight cross-platform."
+
+  - id:         sqldelight-gradle-plugin
+    type:       file-content
+    glob:       "**/*.gradle.kts"
+    contains:   "app.cash.sqldelight"
+    confidence: 0.3
+    rationale:  "Plugin Gradle aplicado em build.gradle.kts — confirma configuração ativa (block sqldelight { } esperado)."
+
+threshold: 0.5

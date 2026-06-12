@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from engine.init import _eval_detection_signals, _eval_gradle_dep
+from engine.detection._eval import _eval_detection_signals, _eval_gradle_dep
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 
@@ -166,7 +166,7 @@ def test_b1_toml_catalog_cached_per_project_root(tmp_path: Path) -> None:
     """
     from unittest.mock import patch
 
-    from engine.init import _eval_gradle_dep, _load_toml_catalog
+    from engine.detection._eval import _eval_gradle_dep, _load_toml_catalog
 
     # Cache pode estar quente por testes anteriores — limpa para isolar.
     _load_toml_catalog.cache_clear()
@@ -177,7 +177,7 @@ def test_b1_toml_catalog_cached_per_project_root(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    with patch("engine.init.tomllib.load", wraps=__import__("tomllib").load) as spy:
+    with patch("engine.detection._eval.tomllib.load", wraps=__import__("tomllib").load) as spy:
         first = _eval_gradle_dep(tmp_path, "io.ktor:ktor-client-core")
         second = _eval_gradle_dep(tmp_path, "io.ktor:ktor-client-core")
         third = _eval_gradle_dep(tmp_path, "io.ktor:ktor-client-core")
@@ -195,7 +195,7 @@ def test_b2_toml_module_with_version_suffix_matches() -> None:
     libs.versions.toml. Helper deve comparar apenas os 2 primeiros
     segments split por `:`.
     """
-    from engine.init import _load_toml_catalog
+    from engine.detection._eval import _load_toml_catalog
 
     _load_toml_catalog.cache_clear()
 
@@ -251,7 +251,7 @@ def test_s1_toml_with_utf8_bom_silently_skipped() -> None:
     `libs.versions.toml` começa com BOM. Comportamento atual é o trade-off
     aceito (silent skip alinhado a `_glob_any`).
     """
-    from engine.init import _load_toml_catalog
+    from engine.detection._eval import _load_toml_catalog
 
     _load_toml_catalog.cache_clear()
 
@@ -272,7 +272,7 @@ def test_s1_mixed_comment_and_real_dep_detected_once() -> None:
     dep real só porque ela aparece também num comentário; e também não
     deve contar dobrado. Score == confidence única do signal.
     """
-    from engine.init import _load_toml_catalog
+    from engine.detection._eval import _load_toml_catalog
 
     _load_toml_catalog.cache_clear()
 
@@ -306,7 +306,7 @@ def test_s1_toml_block_table_form_matches() -> None:
     a refatorações futuras (ex.: alguém trocar `libraries.values()` por
     parsing manual).
     """
-    from engine.init import _load_toml_catalog
+    from engine.detection._eval import _load_toml_catalog
 
     _load_toml_catalog.cache_clear()
 
@@ -335,7 +335,7 @@ def test_s1_ktx_variant_does_not_match_base_coordinate_exact() -> None:
     `mod_parts[1].startswith(coord_parts[1] + "-")`), este test trava
     e força revisita explícita da decisão.
     """
-    from engine.init import _eval_gradle_dep, _load_toml_catalog
+    from engine.detection._eval import _eval_gradle_dep, _load_toml_catalog
 
     _load_toml_catalog.cache_clear()
 
@@ -361,7 +361,7 @@ def test_s1_custom_catalog_path_ignored_per_spec_nongoals() -> None:
     Comportamento atual: score 0 (silent). Limitação documentada em
     M-4 do review PR #11 (`forge doctor` poderia avisar; defer aceito).
     """
-    from engine.init import _eval_gradle_dep, _load_toml_catalog
+    from engine.detection._eval import _eval_gradle_dep, _load_toml_catalog
 
     _load_toml_catalog.cache_clear()
 

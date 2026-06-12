@@ -10,8 +10,9 @@
 #   (REST para auth/feature-x + Firestore para feature-y). Não conflita.
 #
 # Combina obrigatoriamente com:
-#   - http-client       (provido por `ktor-client` — KMP cross-platform)
-#   - serialization-json(provido por `kotlinx-serialization-json`)
+#   - serialization-json (provido por `kotlinx-serialization-json`)
+#   - HTTP transport (axis data) — garantido pelo cell (data, platform) no
+#     workflow-config (DET-6); não declarado mais como `requires:`.
 # ──────────────────────────────────────────────────────────────────────────
 
 schema-version: 1
@@ -22,11 +23,11 @@ identity:
   name:         rest-api-contract
   version:      1.0.0
   description:  "Convenções REST canônicas: endpoints como const em ApiEndpoints.kt, DTOs `{Entity}Request/Response`, error envelope padronizado, mapping HTTP status → domain errors, pagination cursor-based."
-  category:     backend
+  category:     data
   maturity:     stable
   maintainer:   feature-forge-core
   created-at:   2026-05-29
-  last-updated: 2026-05-29
+  last-updated: 2026-06-10
   license:      MIT
 
 
@@ -39,10 +40,10 @@ provides:
 
 
 # ── DEPENDENCIES ──────────────────────────────────────────────────────────
-# Convenções REST presumem cliente HTTP cross-platform + serialização JSON.
-# Sem esses dois cards o contrato não tem como ser executado.
+# Convenções REST presumem serialização JSON. Cliente HTTP cross-platform é
+# garantido pelo cell (data, platform) no workflow-config (DET-6) — não
+# declarado mais como dependency cross-card.
 requires:
-  - http-client
   - serialization-json
 
 

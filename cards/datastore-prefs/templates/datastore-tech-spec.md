@@ -69,7 +69,7 @@ Lista no tech-spec EXATAMENTE quais chaves a feature adiciona:
 - Reads reativas → `fun observe{Concept}(): Flow<Value>`, derivado de
   `dataStore.data.map { it[KEY] ?: DEFAULT }`. Sempre aplicar
   `.catch { emit(DEFAULT) }` para tolerar `IOException` em leitura
-  corrompida (loggar com Crashlytics se card `crashlytics` ativo).
+  corrompida (loggar com Crashlytics se card `firebase-crashlytics` ativo).
 - Read pontual single-shot → `suspend fun get{Concept}(): Value`, com
   `dataStore.data.first()`.
 - Write → `suspend fun set{Concept}(value: Value)`, com

@@ -44,7 +44,11 @@ _SKIP_DIRS = frozenset(
 def walk_project(project_root: str, extensions: tuple[str, ...]) -> tuple[Path, ...]:
     """Walk `project_root` retornando paths cujo suffix está em `extensions`.
 
-    - Pula diretórios irrelevantes (`_SKIP_DIRS`).
+    - Pula diretórios irrelevantes (`_SKIP_DIRS`) — match é feito contra
+      `path.relative_to(project_root).parts`, não `path.parts`. Isso garante
+      que `.claude` só filtra quando é top-level no project_root (caso
+      legítimo); quando aparece como PARENT do project_root (ex.: worktree
+      em `.../.claude/worktrees/<branch>/`), não bloqueia o walk.
     - Resultado é tupla imutável sorted, segura para cache LRU.
     - Caller passa `str` (Path não é hashable em algumas combinações antigas).
     """
@@ -56,7 +60,12 @@ def walk_project(project_root: str, extensions: tuple[str, ...]) -> tuple[Path, 
     for path in root.rglob("*"):
         if not path.is_file():
             continue
-        if any(part in _SKIP_DIRS for part in path.parts):
+        try:
+            relative = path.relative_to(root)
+        except ValueError:
+            # path não é descendente de root — skip por segurança
+            continue
+        if any(part in _SKIP_DIRS for part in relative.parts):
             continue
         if path.suffix.lower() in ext_set:
             paths.append(path)

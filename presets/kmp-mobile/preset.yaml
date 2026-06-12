@@ -12,7 +12,7 @@
 # Não existe mais preset "kmp-mobile-firebase" como entidade. A combinação
 # Firebase é uma das opções de backend que o usuário pode ativar em cima
 # deste preset (cards firebase-auth, firestore-persistence, firestore-realtime,
-# firestore-security-rules, firebase-storage, crashlytics). Igualmente válido
+# firestore-security-rules, firebase-storage, firebase-crashlytics). Igualmente válido
 # ativar stack REST (ktor-client, rest-api-contract, room-database,
 # datastore-prefs, auth-jwt-bearer) ou mix híbrido.
 # ──────────────────────────────────────────────────────────────────────────
@@ -119,48 +119,25 @@ capabilities-latent:
   - swift-language      # Swift compiler (vem com Xcode)
 
 
-# ── BACKEND — cards candidatos por forge init (NÃO ativados por default) ──
-# Forge init detecta o backend real do projeto através de signals dos cards
-# individuais e pergunta interativamente quais ativar. Esta seção lista os
-# candidatos canônicos v1 que o preset reconhece — útil pra UX do init guiar
-# a escolha do usuário.
-backend-candidates:
-  firebase-stack:
-    description: "Stack Firebase completa (Auth + Firestore + Storage + Crashlytics)"
-    cards:
-      - firebase-auth
-      - firestore-persistence
-      - firestore-realtime
-      - firestore-security-rules
-      - firebase-storage
-      - crashlytics
-    detection-hint: "google-services.json + GoogleService-Info.plist presentes"
-  rest-stack:
-    description: "Stack REST com Ktor + JWT bearer + Room local"
-    cards:
-      - ktor-client
-      - rest-api-contract
-      - kotlinx-serialization-json
-      - room-database
-      - datastore-prefs
-      - auth-jwt-bearer
-    detection-hint: "io.ktor:ktor-client + @SerialName em DTOs"
-  hybrid-firebase-auth-rest-data:
-    description: "Firebase Auth (identity) + REST API (dados) + Room (cache local)"
-    cards:
-      - firebase-auth
-      - ktor-client
-      - rest-api-contract
-      - kotlinx-serialization-json
-      - room-database
-      - crashlytics
-    detection-hint: "google-services.json + ktor-client deps"
-  local-only:
-    description: "App offline-first sem backend (Room local + DataStore prefs)"
-    cards:
-      - room-database
-      - datastore-prefs
-    detection-hint: "androidx.room presente, sem google-services.json nem ktor-client"
+# ── BACKEND BUNDLES — templates de partida (greenfield) ───────────────────
+# Bundles agora são templates pro flow de init greenfield. Após bundle
+# picker, user pode override per-(axis, platform) cell antes de finalizar.
+# Detection-driven flow (brownfield) usa engine/detection/composer.py em
+# vez de candidatos enumerados aqui.
+#
+# 4ª opção do bundle picker é sentinel "custom-from-scratch" (sem YAML —
+# pula bundle resolution e vai direto pros prompts per-axis).
+#
+# Definições canônicas: presets/kmp-mobile/bundles/<name>.yaml. Cada
+# arquivo é validado por validators/validate_presets.py (schema check +
+# axes/platforms enum + card-references existem em cards/).
+bundles-dir: ./bundles/
+
+bundle-options:
+  - firebase-full
+  - rest-with-firebase-telemetry
+  - local-only
+  - custom-from-scratch  # sentinel — sem arquivo, ver SPEC §AC-7
 
 
 # ── DETECTION — sinais a nível de preset ──────────────────────────────────

@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from engine.cards.loader import load_card
-from engine.init import _eval_detection_signals
+from engine.detection._eval import _eval_detection_signals
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CARDS_DIR = REPO_ROOT / "cards"

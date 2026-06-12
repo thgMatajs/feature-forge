@@ -1,0 +1,30 @@
+# cards/posthog-analytics/detection/signals.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Sinais de detecção do card posthog-analytics — espelha o bloco
+# `detection.signals` do card.yaml. Threshold cumulativo 0.5.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+signals:
+  - id:         posthog-analytics-gradle-dep
+    type:       gradle-dep
+    coordinate: "com.posthog:posthog-android"
+    confidence: 0.5
+    rationale:  "Coordenada Maven canônica do PostHog Android SDK."
+
+  - id:         posthog-analytics-gradle-build-string
+    type:       file-content
+    glob:       "**/build.gradle*"
+    contains:   "com.posthog:posthog-android"
+    confidence: 0.3
+    rationale:  "Fallback string match em build.gradle para projetos com configuração não-padrão (composer W5 cobre via gradle-dep)."
+
+  - id:         posthog-analytics-kotlin-import
+    type:       file-content
+    glob:       "**/*.kt"
+    contains:   "com.posthog.android"
+    confidence: 0.3
+    rationale:  "Import direto do SDK PostHog no código Kotlin."
+
+threshold: 0.5

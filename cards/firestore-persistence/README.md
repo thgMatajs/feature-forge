@@ -159,7 +159,7 @@ o engine merge resolve a ordem alfabeticamente.
 - **Não cobre security rules** — card `firestore-security-rules` cuida
   (`firestore.rules`, emulator rules-tests, threat model).
 - **Não cobre Firebase Auth, Storage, Crashlytics, RemoteConfig** — cada
-  um é card próprio (`firebase-auth`, `firebase-storage`, `crashlytics`).
+  um é card próprio (`firebase-auth`, `firebase-storage`, `firebase-crashlytics`).
 - **Não cobre persistência local** (`persistence-local` → cards
   `room-kmp`, `swiftdata`, etc.). Cache offline-first é composição de dois
   cards.

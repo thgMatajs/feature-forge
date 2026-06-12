@@ -7,6 +7,272 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (Phase B — DET-6 multi-axis backend, 2026-06-11)
+
+- **Schema canônico multi-axis** — `docs/schemas/backend-axes.md` define
+  8 axes (`data`, `auth`, `observability`, `analytics`, `storage`,
+  `persistence`, `notifications`, `flags`) cada um produzindo
+  `Map[axis][platform] → Cell | null`. Cell shape: `{card, status,
+  migrating-to?}`. Validação enforçada via RULE-019..024 em
+  `validate_workflow_config.py`. Refs: commits `c60eeb1` + `26c0822`
+  (W1 foundation) + waves W5-W7 que consomem o schema.
+- **6 cards novos** cobrindo 3 axes novos: `firebase-analytics`,
+  `posthog-analytics` (axis analytics); `fcm`, `onesignal` (axis
+  notifications); `firebase-remote-config`, `posthog-flags` (axis flags).
+  Cada card com `card.yaml` + `detection/signals.yaml` + README +
+  template stub. Refs: W4.1-W4.6.
+- **Card sqldelight** — KMP-native persistence axis pra kmp platform.
+  Pareia com `room-database` (android-only). Fecha gap W6 onde
+  `firebase-full.yaml` referenciava card ainda inexistente.
+- **4 starter bundles** em `presets/kmp-mobile/bundles/`:
+  `firebase-full`, `rest-with-firebase-telemetry`, `local-only`, +
+  sentinela `custom-from-scratch` (sem YAML — pula bundle, prompta cada
+  axis). Substituem o bloco `backend-candidates:` monolítico.
+- **Detection composer** — `engine/detection/composer.py` com
+  `compose_backend_axes(project_root, active_cards) ->
+  dict[axis][platform] -> Cell | Conflict | None`. Reusa
+  `_eval_detection_signals` + `_eval_gradle_dep` de `engine/init.py`.
+  Conflict.candidates ordenado determinísticamente por card_id. Refs:
+  W5.1 + W5.2 + W5-fix.
+- **AskUserQuestion-fronted init flow** (consumer da Phase A intent
+  protocol):
+  - `_handle_backend_multi_axis_brownfield` (`engine/init.py`):
+    composer-driven, 3-caminhos confirm/adjust/scratch.
+  - `_handle_backend_multi_axis_greenfield` (`engine/init.py`): bundle
+    picker (4 opções) → opt override → per-axis prompts.
+  - `_handle_backend_axes_submenu` (`engine/reconfigure.py`): tabela
+    current 8 axes × N platforms, multiSelect cells, per-cell prompts
+    (null/card/status/migrating-to) com validation enforçada.
+- **Validator novo** — `validate_presets.py` cobre schema dos bundle
+  YAMLs (axes válidos, platforms válidos, card references existentes).
+  16 tests TDD. Refs: W6.3.
+- **3 adapters em init.py** — `_composer_result_to_cells`,
+  `_bundle_to_cells`, `_summarize_backend_cells` convertem handler
+  returns pra workflow-config cell structure. Refs: W7.1+W7.2.
+
+### Changed (Phase B — DET-6, 2026-06-11)
+
+- **identity.category cleanup** — 9 cards migrados de `category: backend`
+  ou `category: network` pros 8 axes canônicos. `firebase-auth` →
+  `auth`; `auth-jwt-bearer` → `auth`; `firebase-storage` → `storage`;
+  `firestore-persistence` → `data`; `firestore-realtime` → `data` (sub-
+  axis "realtime" follow-up); `firestore-security-rules` → `data`
+  (sub-axis "rules" follow-up); `rest-api-contract` → `data` (sub-axis
+  "data-contract" follow-up); `retrofit-client` → `data`; `ktor-client`
+  → `data`. CARD-004 enum em `engine/cards/loader.py` ampliado.
+  Refs: W2.
+- **Label refactor** — labels singulares `auth-provider`, `http-client`,
+  `crash-reporting` removidos de `cards/*/card.yaml § provides`.
+  Cardinalidade enforçada pelo cell shape (1 card per cell). Refs: W3.
+- **Card rename** — `cards/crashlytics/` → `cards/firebase-crashlytics/`
+  (paridade com `firebase-auth`, `firebase-analytics`, etc.). 25
+  arquivos atualizados (incluindo 12 consumers cross-card via grep
+  canary). YAML field name `crashlytics:` em contratos analytics
+  mantém-se (concept independente).
+- **`docs/schemas/card.md`** — CARD-004 enum revisado: `+ analytics`,
+  `+ notifications`, `+ flags`; `- backend`, `- network` (granularidade
+  backend-axes substitui o blob monolítico). Novo campo opcional
+  `identity.platforms` + CARD-022 (platforms enum dentro do conjunto
+  canônico; ID alocado pós-rebase contra `main` que já consumia
+  CARD-020/021 pra DET-3). Adicionada seção "Backend axes — when
+  identity.category is an axis" cross-referenciando `backend-axes.md`.
+  Open-detail anchors preservados.
+- **`docs/schemas/workflow-config.md`** — bloco `backend:` reescrito
+  para shape multi-axis `backend.<axis>.<platform>` → cell|null.
+  Removidos `identity.backend-choice` (legacy single-pick) e
+  `backend.provider` string monolítico + sub-blocos provider-específicos.
+  Slots RULE-010 e RULE-011 ficam reservados como audit-trail dos
+  campos legacy + cross-ref pra RULE-019..024 (autoridade em
+  `backend-axes.md`); sub-IDs alfanuméricos eliminados. Top-level
+  table sincronizada.
+- **CARD-022 renumber** — schema rule pra `identity.platforms` (W1)
+  realocada de CARD-020 pra CARD-022 devido à colisão com DET-3
+  (CARD-020/021 já alocados pra gradle-dep). Audit-trail em
+  `docs/schemas/card.md`.
+
+### Removed (Phase B — DET-6, 2026-06-11)
+
+- `backend-candidates:` bloco completo em `presets/kmp-mobile/preset.yaml`
+  (substituído por `bundles-dir` + `bundle-options` sentinela). Refs:
+  W6.2.
+- `identity.backend-choice` field em workflow-config.yaml. ConfiguratorCheckpoint
+  `backend_choice` field idem. 15 referências removidas de
+  `engine/init.py`. Refs: W7.4.
+- `_build_backend` function legacy em `engine/init.py` (mapeava
+  `backend_choice → backend.provider` enum). Substituída por adapters.
+  Refs: W7.4.
+- `_handle_backend` legacy em `engine/reconfigure.py` (handler antigo do
+  submenu backend). Substituído por `_handle_backend_axes_submenu`.
+  Refs: W7.3.
+- Labels singulares `auth-provider`, `http-client`, `crash-reporting`
+  de `provides`. Cardinalidade enforçada pelo schema. Refs: W3.
+
+### Added (Phase B — DET-6 polish, 2026-06-12)
+
+- **Test discipline gap fechado** — `tests/unit/test_validators_workflow_config.py`
+  ganhou 8 tests positive/negative individuais cobrindo RULE-019..024
+  (axis enum, platform check, card.card existence, status enum,
+  migrating-to consistency, migrating-to card existence). Closes M-003
+  do W7 cluster review.
+- **Validator agora aceita local cards** — `validate_workflow_config.py`
+  RULE-021 e RULE-024 reconhecem `.claude/cards/local/<name>/card.yaml`
+  além do snapshot dir canônico. Alinha com behavior do reconfigure
+  (Caminho B do M-001 W7 cluster review).
+- **E2E coverage forge init/reconfigure** — 3 e2e tests novos
+  (`test_e2e_brownfield_init.py`, `test_e2e_greenfield_init.py`,
+  `test_e2e_reconfigure_backend.py`) substituem stubs pre-W7. Helpers
+  compartilhados em `tests/e2e/conftest.py` (`_scaffold_minimal_project`,
+  `_run_forge`, `_drive_intent_loop`). Cobertura AC-6/AC-7/AC-8 end-to-end
+  no CLI level via subprocess + file-based intent protocol.
+- **Consumed-intent log (Phase A protocol)** — `engine/ui/intent_state.py`
+  ganhou `_log_path` + `_read_intent_log` + `_append_intent_log`.
+  `read_response` agora checa log primeiro pra cached response do
+  intent-id; faz handler re-entry idempotente entre subprocess
+  invocations (resolve W7.2 multi-intent re-invocation pitfall).
+  Schema documentado em `docs/schemas/intent-protocol.md §4`.
+
+### Changed (Phase B — DET-6 polish, 2026-06-12)
+
+- **`_SKIP_DIRS` semântica** — `engine/inventory/_walk_cache.py` +
+  `engine/init.py` agora comparam `path.relative_to(project_root).parts`
+  em vez de `path.parts` absoluto. Top-level `.claude/` continua
+  filtrado em project_root; `.claude/` como PARENT do project_root
+  (caso worktree) deixa de filtrar descendentes. Regression test em
+  `tests/unit/test__walk_cache_worktree.py`.
+- **`clear_intent_files` ganhou parâmetro `also_log`** — default `False`
+  preserva log (re-entry idempotency). Caller terminal (engine/cli.py
+  exit lifecycle) passa `also_log=True` para reset. SPEC §3 forensic
+  preservation preservada via função separada `clear_intent_log_only`.
+- **Microcopy stale removido** — `engine/init.py` gate RESOLVER-ERRORS
+  label "voltar e escolher outro backend-candidate" → "voltar e ajustar
+  a configuração de backend (composer/bundle)". Module docstring linhas
+  1-15 atualizada pra refletir composer-driven flow (W7.4) em vez de
+  legacy backend-candidate picker (Cena 6.5).
+- **Test fixture categoria stale** — `tests/integration/test_e2e_local_card_pilot.py`
+  linha 80 `category: "network"` → `category: "data"` (alinhamento tardio
+  com DET-6 W2 migration de cards/network → cards/data).
+
+### Fixed (Phase B — DET-6 polish, 2026-06-12)
+
+- **W7 cluster review findings** — 1 High (stale microcopy) + 4 Medium
+  (cross-validator asymmetry, type guard inconsistency, test discipline
+  gap, module docstring stale) + 3 Low (comment stale, uniform-detection
+  consolidation deferida, crashlytics filenames anotados). Detalhe em
+  `.planning/det-6/W7-cluster-review-r1.md`.
+- **`_SKIP_DIRS` worktree bug** — 2 tests que falhavam do worktree
+  agora passam (`test_eval_gradle_dep::test_ac6_file_content_preserved`
+  + `test_gradle_dep_card_activation::test_ac6_file_content_signal_still_active_alongside_gradle_dep`).
+- **Phase A multi-intent re-invocation pitfall** — handlers que emit
+  2+ intents agora sobrevivem subprocess re-invocations sem
+  `IntentMismatchError`.
+- **DET-6 W2 fixture cleanup tardio** — 2 tests
+  (`test_pilot_local_card_added_appears_in_cascade`,
+  `test_pilot_local_cards_manifest_written`) verdes pós-categoria fix.
+
+### Changed (PR #13 review Wave B — 2026-06-12)
+
+Refactors cross-module do review de PR #13 (DET-6 multi-axis backend).
+Quebram ciclos de import, consolidam constantes duplicadas e
+substituem duck-typing por isinstance dispatch:
+
+- **Ciclo composer↔init quebrado** (review #3405252850 + #3405253600 +
+  #3405256623) — `_eval_detection_signals` + helpers (`_glob_any`,
+  `_eval_gradle_dep`, `_load_toml_catalog`, `_module_matches_coordinate`,
+  `_scan_build_gradle_for_coordinate`, `_SKIP_DIRS`) movidos de
+  `engine/init.py` para novo `engine/detection/_eval.py` (módulo neutro
+  sem deps em init). Composer agora importa de `_eval` em vez de
+  `engine.init` — os dois `# noqa: PLC0415` lazy imports em init.py
+  removidos. `_normalize_cards_for_composer` mantido (refactor maior
+  fora do escopo). 7 arquivos de test ajustados pra novos imports.
+- **Shape guard no composer** (review #3405256439) — quando
+  `card.detection.signals` não é list, composer agora pula o card com
+  `logging.warning` em vez de silenciar via score=0 (que mascarava o
+  card mal-formado no card_index).
+- **`isinstance` em vez de `hasattr` pra Cell/Conflict** (review
+  #3405253823) — 5 sites em init.py
+  (`_detect_axis_uniformity`, `_render_axes_table` × 2,
+  `_collect_confirm_selection`, `_composer_result_to_cells`) trocam
+  duck-typing sobre `cell.candidates` por `isinstance(cell, Conflict)`
+  / `isinstance(cell, Cell)`. Contrato explícito vinculado aos types
+  importados do composer. Regression test paramétrico cobre os 5
+  helpers com instâncias reais.
+- **`BACKEND_AXES` shared** (review #3405254057) — tuple de 8 axes
+  consolidado em `engine/detection/_axes.py`; init.py e reconfigure.py
+  importam de lá. Antes, duas tuplas idênticas
+  (`_BACKEND_AXES` em init, `_BACKEND_AXES_RECONFIGURE` em reconfigure)
+  documentadas como "deliberate pra evitar ciclo" — ciclo nunca
+  existiu, duplicação era defensiva por hábito.
+- **`VALID_AXES` / `VALID_PLATFORMS` shared** (review #3405255016) —
+  3 constantes consolidadas em `validators/_common.py`:
+  `VALID_BACKEND_AXES`, `VALID_BUNDLE_PLATFORM_KEYS`,
+  `VALID_PROJECT_PLATFORMS`. Os dois sets antes-homônimos de "platforms"
+  agora têm nomes desambiguados (bundle slot keys × workflow active
+  platforms — conteúdos semanticamente diferentes). Validators
+  preservam aliases locais pra compat de tests/callers.
+
+### Added (PR #13 review Wave B — 2026-06-12)
+
+- **`engine/detection/_eval.py`** — módulo neutro pra signal evaluation.
+- **`engine/detection/_axes.py`** — fonte canônica de `BACKEND_AXES`.
+- **Cache `_log_cache` em `engine/ui/intent_state.py`** (review
+  #3405256063) — process-level cache evita re-parse O(n) do JSONL em
+  multi-intent handlers. `_append_intent_log` atualiza incrementalmente;
+  `clear_intent_files(also_log=True)` + `clear_intent_log_only`
+  invalidam pareado com delete on-disk. `_reset_log_cache` exposto como
+  escape hatch pra testes.
+- **`tests/unit/test_init_isinstance_cell_conflict.py`** — 9 regression
+  tests cobrindo isinstance dispatch nos 5 sites afetados.
+- **`tests/unit/test_intent_state_log_cache.py`** — 6 regression tests
+  cobrindo cache hit, append incremental, invalidations, reset, mutation
+  protection.
+
+Rapid lane pós-Wave B: 1321 passed (+15 vs Wave A baseline 1306) / 11
+skipped / 6 failures pré-existentes herdadas (cards_resolver_w3 × 4,
+test_run_empty_args, test_no_cards_returns_pass_or_warn — não tocadas
+nesta wave).
+
+### Fixed (PR #13 review Wave A — 2026-06-12)
+
+Remediação dos 7 fixes contidos do review de PR #13 (DET-6 multi-axis
+backend). Single-file, baixo risco, sem cross-cutting:
+
+- **`engine/cli.py` exit-cleanup refactor + observability** — substitui
+  flag mutável `clear_log_on_exit` por sentinela `paused_exc:
+  PausedForInputError | None` (review #3405256255); substitui bare
+  `except Exception: pass` por logged best-effort no stderr (review
+  #3405253379 + #3404131724). Mesma semântica, observabilidade ganhada.
+- **`engine/ui/intent_state.py::_append_intent_log`** — adiciona
+  `f.flush()` explícito após write pra honrar a docstring "JSONL append
+  + flush is the durability contract" (review #3405254528). Regression
+  test spies em `Path.open` confirma flush precede close.
+- **`validators/validate_presets.py`** — unifica imports em
+  `from validators._common`, remove o dual-branch `if __package__`
+  hack (review #3405254868). Script mode + package mode ambos
+  preservados via insert idempotente do project root em `sys.path`.
+- **`validators/validate_workflow_config.py` RULE-020 cascade guard** —
+  quando `platforms.active` está ausente/vazia/malformada, emite uma
+  única mensagem de guidance em vez de cascatear 1 violação RULE-020
+  por cell (review #3405255318). RULE-021..024 seguem rodando no
+  mesmo pass. Regression test garante "platform desconhecida" não
+  vaza no what-failed.
+- **`docs/design/04-pending.md`** — anota gap RULE-023/024 ciclo
+  `migrating-to` (review #3405255904) — detecção DFS 2-hop deferida
+  pra hardening dedicated; feature menor, baixo impacto runtime.
+
+### Changed (PR #13 review Wave A — 2026-06-12)
+
+- **`tests/unit/test_ui_intent_state.py`** — +1 regression test
+  (`test_append_intent_log_flushes_after_write`).
+- **`tests/unit/test_validators_workflow_config.py`** — +1 regression
+  test (`test_empty_platforms_active_emits_single_guidance_not_cascade`).
+
+Fix 4 do review (delegação `clear_intent_log_only` →
+`clear_intent_files(also_log=True)`) skipped: as semânticas divergem —
+`clear_intent_log_only` preserva pending/response (SPEC §3 forensic),
+`clear_intent_files(also_log=True)` apaga os três. Delegar mudaria
+behavior do finally em `cli.py`. Anotado pra triage Wave B caso o
+cleanup seja revisitado.
+
 ### Fixed (PR #11 master-review remediação — 2026-06-11)
 
 Remediação completa dos 28 findings do master-review de PR #11

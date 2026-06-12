@@ -7,8 +7,9 @@ This is the MOST IMPORTANT command of feature-forge. It:
 - runs cinematic discovery (cards, stack detection, design system, i18n,
   conventions);
 - proposes the canonical preset (`kmp-mobile`) and asks the user to confirm;
-- asks the user to pick a `backend-candidate` (Cena 6.5 — explicit decision,
-  never auto-selected);
+- asks the user to configure backend cells via bundle picker (greenfield)
+  OR composer-driven detection (brownfield W7.1/W7.2 handlers, never
+  auto-applied — auditor confirms cells before snapshot);
 - resolves card dependencies/conflicts via the resolver;
 - snapshots cards into `.claude/cards/`;
 - merges contributions, writes inventory snapshots, seeds memory L1/L2 dirs;
@@ -26,7 +27,6 @@ auto-resume. Exit code 130 is returned to the dispatcher.
 
 from __future__ import annotations
 
-import functools
 import json
 import os
 import shutil
@@ -35,8 +35,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-
-import tomllib  # stdlib ≥3.11 (requires-python enforced)
 
 if TYPE_CHECKING:
     # N5: type-annotate `_check_orphan_signals(catalog)` sem ativar import
@@ -51,10 +49,13 @@ from engine.cards.grant import (
     evaluate_sensitive_grants,
 )
 from engine.cards.loader import load_all_cards, CardManifest
-from engine.cards._signal_shapes import parse_gradle_coordinate
 from engine.cards.merger import merge_contributions
 from engine.cards.resolver import resolve
 from engine.cards.snapshotter import snapshot_card
+from engine.detection import _eval as _detection_eval
+from engine.detection._axes import BACKEND_AXES
+from engine.detection._eval import _SKIP_DIRS
+from engine.detection.composer import Cell, Conflict, compose_backend_axes
 from engine.graph.builder import build_full
 from engine.inventory.conventions import (
     extract_conventions,
@@ -125,7 +126,10 @@ class _InitCheckpoint:
     project_root: str
     preset: str | None = None
     selected_card_names: list[str] = field(default_factory=list)
-    backend_choice: str | None = None
+    # W7.4 — substitui ``backend_choice`` (legacy monolítico) por cells
+    # multi-axis (``backend.<axis>.<platform>``). Default ``None`` cobre
+    # checkpoint salvo antes do Step 5 (backend selection ainda não rodou).
+    backend_cells: dict[str, Any] | None = None
     intent_id: str | None = None
 
 
@@ -159,7 +163,9 @@ def _save_checkpoint(cp: _InitCheckpoint) -> None:
             "project-root": cp.project_root,
             "preset": cp.preset,
             "selected-card-names": cp.selected_card_names,
-            "backend-choice": cp.backend_choice,
+            # W7.4 — cells multi-axis (vide adapters em
+            # ``_composer_result_to_cells`` / ``_bundle_to_cells``).
+            "backend-cells": cp.backend_cells,
             "intent-id": cp.intent_id,
         },
     )
@@ -189,53 +195,6 @@ def _utc_now_iso() -> str:
 
 def _is_git_repo(root: Path) -> bool:
     return (root / ".git").exists()
-
-
-def _eval_detection_signals(
-    project_root: Path, detection: dict[str, Any]
-) -> tuple[float, list[str]]:
-    """Evaluate detection signals against the project. Returns (score, matched).
-
-    Supports `file-exists`, `file-content`, `directory-exists` signal types
-    (same schema used by cards and presets — see docs/schemas/card.md
-    §detection.signals).
-    """
-    signals = (detection or {}).get("signals") or []
-    score = 0.0
-    matched: list[str] = []
-    for sig in signals:
-        if not isinstance(sig, dict):
-            continue
-        kind = sig.get("type")
-        conf = float(sig.get("confidence") or 0.0)
-        ok = False
-        if kind == "directory-exists":
-            path = sig.get("path")
-            if isinstance(path, str) and (project_root / path).is_dir():
-                ok = True
-        elif kind == "file-exists":
-            ok = _glob_any(project_root, str(sig.get("glob") or ""), None)
-        elif kind == "gradle-dep":
-            coordinate = sig.get("coordinate")
-            if isinstance(coordinate, str) and coordinate:
-                ok = _eval_gradle_dep(project_root, coordinate)
-        elif kind == "file-content":
-            ok = _glob_any(
-                project_root,
-                str(sig.get("glob") or ""),
-                str(sig.get("contains") or ""),
-            )
-        if ok:
-            score += conf
-            label = (
-                sig.get("coordinate")
-                or sig.get("contains")
-                or sig.get("path")
-                or sig.get("glob")
-                or kind
-            )
-            matched.append(f"{kind}: {label}")
-    return round(score, 3), matched
 
 
 @dataclass
@@ -633,220 +592,6 @@ def _today_iso_for_init() -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
 
-def _glob_any(project_root: Path, glob: str, needle: str | None) -> bool:
-    """Best-effort glob walk with depth + count caps to keep init responsive."""
-    if not glob:
-        return False
-    if glob.startswith("**/"):
-        pattern = glob[3:]
-        iterator = project_root.rglob(pattern)
-    else:
-        iterator = project_root.glob(glob)
-    count = 0
-    for path in iterator:
-        if any(part in _SKIP_DIRS for part in path.parts):
-            continue
-        if count > 800:
-            break
-        count += 1
-        if not path.is_file():
-            continue
-        if needle is None:
-            return True
-        # Stream linha-a-linha — evita carregar arquivos grandes inteiros em
-        # memória só para procurar uma substring.
-        try:
-            with path.open("r", encoding="utf-8", errors="ignore") as fh:
-                for line in fh:
-                    if needle in line:
-                        return True
-        except OSError:
-            continue
-    return False
-
-
-@functools.lru_cache(maxsize=8)
-def _load_toml_catalog(project_root: Path) -> tuple[dict, ...]:
-    """Carrega e parseia `gradle/*.versions.toml` uma vez por project_root.
-
-    Cache module-level pequeno (maxsize=8) — cada `forge init` típico
-    inspeciona um único project_root, então 8 cobre runs em fila +
-    fixtures de teste sem reter memória. Cache invalida implicitamente
-    entre sessões CLI (cada run é processo novo).
-
-    Retorna tuple de dicts (top-level TOML root) — tuple porque o cache
-    decorator exige imutabilidade do retorno. TOML mal-formado / OSError
-    são ignorados silenciosamente, alinhado a `_glob_any`.
-    """
-    gradle_dir = project_root / "gradle"
-    if not gradle_dir.is_dir():
-        return ()
-    catalogs: list[dict] = []
-    for toml_path in gradle_dir.glob("*.versions.toml"):
-        try:
-            with toml_path.open("rb") as fh:
-                catalogs.append(tomllib.load(fh))
-        except (OSError, tomllib.TOMLDecodeError):
-            continue
-    return tuple(catalogs)
-
-
-def _module_matches_coordinate(module: str, coordinate: str) -> bool:
-    """`entry["module"]` casa `coordinate` ignorando version sufixada.
-
-    TOML canônico declara `module = "group:artifact"`, mas no wild
-    aparece `module = "group:artifact:version"` (B-2). Compara apenas
-    os 2 primeiros segments split por `:`; preserva comportamento
-    canônico `module == coordinate` para a forma de 2 segments.
-
-    Usa `parse_gradle_coordinate` no lado `coordinate` (shape canônica
-    `<group>:<artifact>` validado pelo loader CARD-020). Quando o
-    helper retorna `None`, cai pra fallback string-exato — não introduz
-    comportamento novo, só dedupe (B-3 from PR #11 review).
-    """
-    if module == coordinate:
-        return True
-    coord_parsed = parse_gradle_coordinate(coordinate)
-    if coord_parsed is None:
-        return False
-    mod_parts = module.split(":")
-    if len(mod_parts) < 2:
-        return False
-    coord_group, coord_artifact = coord_parsed
-    return mod_parts[0] == coord_group and mod_parts[1] == coord_artifact
-
-
-def _scan_build_gradle_for_coordinate(project_root: Path, coordinate: str) -> bool:
-    """Substring search em `**/build.gradle*` ignorando comentários.
-
-    Filtra linhas de comentário Groovy/KTS (`//` line-comment e blocos
-    `/* ... */`) antes de testar substring — evita falso positivo de
-    coordenadas mencionadas em comentários do tipo `// io.ktor:foo
-    retirado 2024` (M-5). Mantém o cap de arquivos visitados de
-    `_glob_any` (800) e o skip-dirs canônico. Walk manual em vez de
-    rglob() para evitar descer em node_modules/.gradle/build.
-    """
-    stack: list[Path] = [project_root]
-    count = 0
-    while stack:
-        current = stack.pop()
-        try:
-            entries = list(current.iterdir())
-        except OSError:
-            continue
-        for entry in entries:
-            if entry.is_dir() and not entry.is_symlink():
-                if entry.name in _SKIP_DIRS or entry.name.startswith("."):
-                    continue
-                stack.append(entry)
-            elif entry.is_file() and entry.name.startswith("build.gradle"):
-                if count > 800:
-                    return False
-                count += 1
-                try:
-                    with entry.open("r", encoding="utf-8", errors="ignore") as fh:
-                        in_block_comment = False
-                        for line in fh:
-                            stripped = line.lstrip()
-                            code_segments: list[str] = []
-                            i = 0
-                            src = line
-                            while i < len(src):
-                                if in_block_comment:
-                                    close = src.find("*/", i)
-                                    if close == -1:
-                                        break
-                                    i = close + 2
-                                    in_block_comment = False
-                                    continue
-                                if src.startswith("//", i):
-                                    break
-                                if src.startswith("/*", i):
-                                    in_block_comment = True
-                                    i += 2
-                                    continue
-                                j = i
-                                while j < len(src):
-                                    if src.startswith("//", j) or src.startswith("/*", j):
-                                        break
-                                    j += 1
-                                code_segments.append(src[i:j])
-                                i = j
-                            if stripped.startswith("//"):
-                                continue
-                            code_line = "".join(code_segments)
-                            if coordinate in code_line:
-                                return True
-                except OSError:
-                    continue
-    return False
-
-
-def _eval_gradle_dep(project_root: Path, coordinate: str | None) -> bool:
-    """True se a coordenada Maven existe em qualquer formato Gradle.
-
-    Ordem: 1) catálogo gradle/*.versions.toml, 2) build.gradle(.kts) legado.
-    Curto-circuita no primeiro match. Defensivo contra TOML mal-formado
-    (try/except silencioso, alinhado a `_glob_any`).
-
-    Format aceito do `coordinate`: `<groupId>:<artifactId>` sem version,
-    sem espaços. Shape validation acontece em `engine/cards/loader.py`
-    (regra CARD-020); aqui usamos o helper compartilhado
-    `parse_gradle_coordinate` e retornamos `False` silenciosamente em
-    qualquer shape inválida (B-3 from PR #11 review).
-    """
-    parsed = parse_gradle_coordinate(coordinate)
-    if parsed is None:
-        return False
-    group, artifact = parsed
-
-    # 1) Catálogo TOML (path canônico gradle/*.versions.toml) — cached por
-    # project_root (B-1) e match prefix-tolerant em `module` (B-2).
-    for data in _load_toml_catalog(project_root):
-        libraries = data.get("libraries") or {}
-        if not isinstance(libraries, dict):
-            continue
-        for entry in libraries.values():
-            if not isinstance(entry, dict):
-                continue
-            module = entry.get("module")
-            if isinstance(module, str) and _module_matches_coordinate(module, coordinate):
-                return True
-            grp = entry.get("group")
-            nm = entry.get("name")
-            if (
-                isinstance(grp, str)
-                and isinstance(nm, str)
-                and grp == group
-                and nm == artifact
-            ):
-                return True
-
-    # 2) build.gradle(.kts) legado — substring com filtro de comentários (M-5).
-    if _scan_build_gradle_for_coordinate(project_root, coordinate):
-        return True
-
-    return False
-
-
-_SKIP_DIRS = {
-    "node_modules",
-    "build",
-    ".git",
-    ".gradle",
-    ".idea",
-    "DerivedData",
-    "Pods",
-    "dist",
-    ".next",
-    ".cache",
-    ".venv",
-    "venv",
-    ".claude",
-    "__pycache__",
-}
-
-
 def _load_preset(name: str) -> dict[str, Any]:
     """Load a preset definition from FORGE_HOME/presets/{name}/preset.yaml."""
     path = forge_home() / "presets" / name / "preset.yaml"
@@ -1061,13 +806,14 @@ def _run_pipeline(project_root: Path) -> int:
         # DRIFT-1 W2.T3b — persist intent-id da pergunta de resume ANTES de
         # invocar ``ui_question.ask``. Mantemos o resto do payload do
         # checkpoint anterior intacto (preset, selected_card_names,
-        # backend_choice) — so atualizamos o campo intent_id. Re-invocacao
+        # backend_cells) — só atualizamos o campo intent_id. Re-invocacao
         # apos exit 2 consome o response correspondente sem re-perguntar.
         _resume_options = {
             "resume": "começar do zero mantendo o checkpoint como audit",
             "discard": "apagar o checkpoint e começar limpo",
             "abort": "sair sem mexer em nada",
         }
+        _saved_cells = existing_checkpoint.get("backend-cells")
         _save_checkpoint(
             _InitCheckpoint(
                 step=str(existing_checkpoint.get("step") or "step-1-greeting"),
@@ -1077,7 +823,9 @@ def _run_pipeline(project_root: Path) -> int:
                 selected_card_names=list(
                     existing_checkpoint.get("selected-card-names") or []
                 ),
-                backend_choice=existing_checkpoint.get("backend-choice"),
+                backend_cells=(
+                    _saved_cells if isinstance(_saved_cells, dict) else None
+                ),
                 intent_id=ui_question.stable_intent_id(
                     "ask",
                     "Resume de init pendente?",
@@ -1170,7 +918,9 @@ def _run_pipeline(project_root: Path) -> int:
     # ── Step 3 — Preset suggestion ───────────────────────────────────────────
     preset = _load_preset(PRESET_NAME)
     preset_detection = preset.get("detection") or {}
-    preset_score, matched = _eval_detection_signals(project_root, preset_detection)
+    preset_score, matched = _detection_eval._eval_detection_signals(
+        project_root, preset_detection
+    )
     threshold = float(preset_detection.get("threshold") or 0.6)
 
     summary_lines = [
@@ -1209,83 +959,67 @@ def _run_pipeline(project_root: Path) -> int:
     checkpoint.at = _utc_now_iso()
     _save_checkpoint(checkpoint)
 
-    # ── Step 5 — Backend selection (Cena 6.5) ────────────────────────────────
-    preset_card_names = [c.get("name") for c in (preset.get("cards") or []) if c.get("name")]
+    # ── Step 5 — Backend selection (W7.4 — multi-axis cells) ─────────────────
+    # Substitui o legacy "backend-candidates" picker monolítico (Cena 6.5)
+    # por bifurcação composer-driven:
+    #   · has_signals → brownfield handler (W7.1): confirm/adjust/scratch
+    #     sobre composer_result. Adapter ``_composer_result_to_cells``
+    #     converte pra ``backend.<axis>.<platform>`` cell shape.
+    #   · sem signals → greenfield handler (W7.2): bundle picker (4
+    #     opções) + opt override. Adapter ``_bundle_to_cells`` carrega o
+    #     YAML do bundle escolhido e emite cells per axis.
+    #
+    # Preset card-set (``preset.cards[].name``) é UNIVERSAL — usado sempre,
+    # independente do handler. Cards do bundle/composer entram POR CIMA.
+    preset_card_names = [
+        c.get("name") for c in (preset.get("cards") or []) if c.get("name")
+    ]
     card_index = _index_cards(canonical_cards)
 
-    backend_candidates = preset.get("backend-candidates") or {}
-    if not backend_candidates:
-        raise InitError("preset kmp-mobile sem backend-candidates declarados.")
-
-    candidate_keys = list(backend_candidates.keys())
-    candidate_summaries: dict[str, dict[str, Any]] = {}
+    normalized_for_composer = _normalize_cards_for_composer(canonical_cards)
+    composer_result = compose_backend_axes(project_root, normalized_for_composer)
+    has_signals = any(
+        cell is not None
+        for axis_map in composer_result.values()
+        for cell in axis_map.values()
+    )
 
     renderer.write("")
     renderer.write("[1:00] Backend — preciso da sua escolha")
-    renderer.write("")
-    for idx, key in enumerate(candidate_keys, start=1):
-        spec = backend_candidates[key] or {}
-        cards_extra = spec.get("cards") or []
-        match_count = 0
-        matched_signals_total: list[str] = []
-        for card_name in cards_extra:
-            card = card_index.get(card_name)
-            if card is None:
-                continue
-            score, m = _eval_detection_signals(project_root, card.detection)
-            if score >= float((card.detection or {}).get("threshold") or 0.5):
-                match_count += 1
-            matched_signals_total.extend(m)
-        candidate_summaries[key] = {
-            "spec": spec,
-            "cards": cards_extra,
-            "matches": match_count,
-            "total": len(cards_extra),
-            "signals": matched_signals_total[:6],
-        }
-        renderer.write(
-            f"  [{idx}] {key}  (cards matched: {match_count}/{len(cards_extra)})"
+
+    backend_cells: dict[str, Any] = {}
+    if has_signals:
+        # Brownfield path — W7.1 handler.
+        result = _handle_backend_multi_axis_brownfield(
+            project_root=project_root,
+            active_cards=canonical_cards,
         )
-        desc = spec.get("description")
-        if desc:
-            renderer.write(f"        {desc}")
-        for s in matched_signals_total[:3]:
-            renderer.write(f"        · {s}")
-
-    renderer.write(f"  [{len(candidate_keys)+1}] personalizar — selecionar cards manualmente")
-    renderer.write("")
-
-    options: dict[str, str] = {}
-    for idx, key in enumerate(candidate_keys, start=1):
-        options[str(idx)] = key
-    custom_key = str(len(candidate_keys) + 1)
-    options[custom_key] = "personalizar"
-
-    backend_choice = ui_question.ask(
-        "Qual cenário descreve este projeto?", options, default="1"
-    )
-
-    selected_card_names: list[str] = list(preset_card_names)
-    if backend_choice == custom_key:
-        all_card_options = {
-            c.name: f"{c.category} · {c.description[:60]}…" for c in canonical_cards
-        }
-        picked = ui_question.ask_multi(
-            "Selecione cards manualmente (mínimo 1):",
-            all_card_options,
-            min_selected=1,
-        )
-        selected_card_names = picked
-        checkpoint.backend_choice = "custom"
+        backend_cells = _composer_result_to_cells(result.get("composer_result") or {})
+        bundle_cards = list(result.get("selected_card_names") or [])
     else:
-        chosen_key = options[backend_choice]
-        checkpoint.backend_choice = chosen_key
-        extra = candidate_summaries[chosen_key]["cards"]
-        for name in extra:
-            if name not in selected_card_names:
-                selected_card_names.append(name)
+        # Greenfield path — W7.2 handler.
+        result = _handle_backend_multi_axis_greenfield(
+            project_root=project_root,
+            available_cards=canonical_cards,
+        )
+        bundle_name = result.get("bundle_name")
+        bundle_cards = list(result.get("selected_card_names") or [])
+        backend_cells = _bundle_to_cells(
+            bundle_name=bundle_name,
+            selected_card_names=bundle_cards,
+            forge_root=forge_home(),
+            available_cards=canonical_cards,
+        )
+
+    # Compose final selection: preset universals + handler picks (dedup'd,
+    # preserva ordem do preset primeiro, depois cards do bundle/composer).
+    selected_card_names: list[str] = list(preset_card_names)
+    for name in bundle_cards:
+        if name not in selected_card_names:
+            selected_card_names.append(name)
 
     checkpoint.selected_card_names = selected_card_names
+    checkpoint.backend_cells = backend_cells
     checkpoint.step = "step-6-resolve"
     checkpoint.at = _utc_now_iso()
     _save_checkpoint(checkpoint)
@@ -1301,9 +1035,10 @@ def _run_pipeline(project_root: Path) -> int:
     if missing_cards:
         renderer.write(
             renderer.colored(
-                f"Atenção: cards declarados mas não encontrados no canonical: "
-                f"{missing_cards}. Phase 4/5 ainda implementa esses cards — "
-                "vou seguir sem eles.",
+                f"Atenção: cards declarados mas ausentes do catálogo canônico: "
+                f"{missing_cards}. Bundle/handler referencia card que não está "
+                "em cards/. Investigue presets/<preset>/bundles/ ou re-rode "
+                "`forge init` após rebuild do catalog — sigo sem eles por ora.",
                 "yellow",
             )
         )
@@ -1321,8 +1056,8 @@ def _run_pipeline(project_root: Path) -> int:
                 why=res.errors[:5],
                 paths=[
                     {
-                        "label": "voltar e escolher outro backend-candidate",
-                        "motive": "alguns cards conflitam com a stack proposta",
+                        "label": "voltar e ajustar a configuração de backend (composer/bundle)",
+                        "motive": "alguns cards conflitam com a stack proposta — bundle/composer não cobriram resolução",
                     },
                     {
                         "label": "personalizar (modo manual)",
@@ -1618,7 +1353,10 @@ def _run_pipeline(project_root: Path) -> int:
         i18n_inv=i18n_inv,
         conv_inv=conv_inv,
         preset=preset,
-        backend_choice=checkpoint.backend_choice or "unknown",
+        # W7.4 — passa cells (backend.<axis>.<platform>) em vez do choice
+        # legacy. Default {} cobre o caso degenerado (greenfield com
+        # 0 bundle selecionado) — validator emite warn no review (RULE-019).
+        backend_cells=checkpoint.backend_cells or {},
         qa_enabled=qa_enabled,
         qa_auto_run=qa_auto_run,
     )
@@ -1703,7 +1441,8 @@ def _run_pipeline(project_root: Path) -> int:
         "user-confirmed": True,
         "notes": (
             f"Greenfield init · preset={PRESET_NAME} · "
-            f"backend={checkpoint.backend_choice} · cards={len(activated)}"
+            f"backend=[{_summarize_backend_cells(checkpoint.backend_cells)}] · "
+            f"cards={len(activated)}"
         )[:280],
     }
     with history_path.open("a", encoding="utf-8") as fh:
@@ -1718,7 +1457,8 @@ def _run_pipeline(project_root: Path) -> int:
 
     summary = [
         f"Projeto:        {project_root.name}",
-        f"Preset:         {PRESET_NAME}  ·  backend: {checkpoint.backend_choice}",
+        f"Preset:         {PRESET_NAME}",
+        f"Backend:        {_summarize_backend_cells(checkpoint.backend_cells)}",
         f"Cards ativos:   {len(activated)}",
         f"Capabilities:   {n_caps}",
         f"Inventories:    {', '.join(inv_written) if inv_written else '(none)'}",
@@ -1752,7 +1492,7 @@ def _build_workflow_config(
     i18n_inv: Any,
     conv_inv: Any,
     preset: dict[str, Any],
-    backend_choice: str,
+    backend_cells: dict[str, Any],
     qa_enabled: bool = True,
     qa_auto_run: bool = False,
 ) -> dict[str, Any]:
@@ -1760,6 +1500,10 @@ def _build_workflow_config(
 
     Follows docs/schemas/workflow-config.md. Optional blocks are populated
     with sane defaults when init can't infer them (ticketing, external-docs).
+
+    W7.4 — ``backend_cells`` substitui o legacy ``backend_choice``. Shape
+    canônico em ``docs/schemas/backend-axes.md``:
+    ``backend.<axis>.<platform> = {card, status, migrating-to?} | None``.
     """
     now = _utc_now_iso()
     preset_defaults = preset.get("defaults") or {}
@@ -1773,7 +1517,8 @@ def _build_workflow_config(
             "project-name": project_root.name,
             "project-slug": project_slug,
             "preset": PRESET_NAME,
-            "backend-choice": backend_choice,
+            # W7.4 — ``identity.backend-choice`` removido (legacy monolítico).
+            # Backend agora vive em ``backend.<axis>.<platform>`` (block próprio).
             "created-at": now,
             "last-reconfigure": now,
             "forge-version": FORGE_VERSION,
@@ -1809,7 +1554,8 @@ def _build_workflow_config(
         },
         "paths": _build_paths(project_root, conv_inv),
         "conventions": _build_conventions(conv_inv, ds_inv, i18n_inv, preset_defaults),
-        "backend": _build_backend(backend_choice),
+        # W7.4 — cells multi-axis em vez do provider monolítico legacy.
+        "backend": dict(backend_cells) if backend_cells else {},
         "validators": {"fail-fast": True},
         "cleanup": {"bak-retention-days": 7},
         "ticketing": {
@@ -1869,50 +1615,792 @@ def _build_workflow_config(
     return config
 
 
-def _build_backend(backend_choice: str) -> dict[str, Any]:
-    """Monta o bloco `backend:` baseado no backend-candidate escolhido (Cena 6.5).
+# ── DET-6 W7.1 — Brownfield multi-axis backend handler ──────────────────────
 
-    Mapeamento canônico (preset kmp-mobile):
-    - firebase-stack → provider=firebase com services completos
-    - rest-stack     → provider=rest
-    - hybrid         → provider=hybrid (firebase só p/ auth + rest p/ dados)
-    - local-only     → provider=local-only
-    - custom/unknown → provider=none (usuário ajusta manualmente)
+
+def _card_platforms(card: CardManifest) -> list[str]:
+    """Lê `identity.platforms` do card.yaml com fallback canônico KMP.
+
+    Open Detail #8 do SPEC: nem todo card.yaml declara `identity.platforms`
+    ainda — W7.1 não força backfill (W2/W4 lidam com schema). Quando ausente,
+    usa o fallback canônico ``["android", "ios", "kmp"]`` (preset kmp-mobile)
+    pra manter o composer com input não-vazio. Cards android-only / ios-only
+    DEVEM declarar explicitamente quando schema for atualizado.
     """
-    choice = (backend_choice or "").strip().lower()
-    if choice == "firebase-stack":
+    identity = (card.raw.get("identity") or {}) if card.raw else {}
+    declared = identity.get("platforms")
+    if isinstance(declared, list) and declared:
+        return [str(p) for p in declared if isinstance(p, str) and p]
+    # Fallback KMP-mobile — fonte canônica do preset v1.0.
+    return ["android", "ios", "kmp"]
+
+
+def _normalize_cards_for_composer(
+    cards: list[CardManifest],
+) -> list[dict[str, Any]]:
+    """Converte `CardManifest` para a shape de input do composer (W5).
+
+    Composer espera dicts ``{card_id, axis, platforms, detection}`` — ver
+    ``engine/detection/composer.py`` docstring + AC-5. Manifests com `axis`
+    vazio (category não-canônica) são silenciosamente descartados aqui
+    porque o composer já tem o mesmo guard com logging.warning — duplicar
+    o log poluiria stderr. Cards sem nome são também descartados (o
+    composer também guarda).
+    """
+    normalized: list[dict[str, Any]] = []
+    for c in cards:
+        if not isinstance(c, CardManifest):
+            continue
+        if not c.name or not c.category:
+            continue
+        normalized.append(
+            {
+                "card_id": c.name,
+                "axis": c.category,
+                "platforms": _card_platforms(c),
+                "detection": dict(c.detection or {}),
+            }
+        )
+    return normalized
+
+
+def _detect_axis_uniformity(
+    composer_result: dict[str, dict[str, Any]],
+) -> dict[str, bool]:
+    """Por axis: True se mesma card_id em TODAS as platforms ativas (não-None).
+
+    Adaptive UX (SPEC §"Adaptive UX"): axes uniformes geram 1 linha
+    compacta ("axis — card (todas)") em vez de 1 linha per platform.
+    Conflict count como NÃO-uniforme (precisa expansão pra mostrar
+    candidates). Axes com 0 cells ativas → uniform=True (vacuosamente
+    — caller decide se mostra ou esconde).
+    """
+    uniformity: dict[str, bool] = {}
+    for axis, axis_map in composer_result.items():
+        active_card_ids: set[str] = set()
+        has_conflict = False
+        for cell in axis_map.values():
+            if cell is None:
+                continue
+            # Conflict é dataclass com `candidates` tuple; Cell tem `card_id`.
+            # isinstance preferível a hasattr (PR #13 review #3405253823) —
+            # contrato explícito via types em vez de duck-typing sobre nomes.
+            if isinstance(cell, Conflict):
+                has_conflict = True
+                break
+            if isinstance(cell, Cell):
+                active_card_ids.add(cell.card_id)
+        if has_conflict:
+            uniformity[axis] = False
+        else:
+            uniformity[axis] = len(active_card_ids) <= 1
+    return uniformity
+
+
+def _render_axes_table(
+    composer_result: dict[str, dict[str, Any]],
+    uniformity: dict[str, bool],
+) -> str:
+    """Render textual table — uma linha por axis (uniform) ou per platform.
+
+    Voz: mentor calmo, formato denso pra caber no body do intent. Não
+    é prose decorativa — é input pro auditor humano confirmar/ajustar.
+    Determinístico: axes ordenados alfabeticamente; platforms idem.
+    """
+    if not composer_result:
+        return "  (nenhum card detectado — composer retornou estrutura vazia)"
+
+    lines: list[str] = []
+    for axis in sorted(composer_result.keys()):
+        axis_map = composer_result[axis]
+        if uniformity.get(axis, False):
+            # Compact line: 1 card ou 0 cards no axis inteiro.
+            active = next(
+                (
+                    cell
+                    for cell in axis_map.values()
+                    if isinstance(cell, Cell)
+                ),
+                None,
+            )
+            if active is None:
+                lines.append(f"  {axis}: (nenhum card detectado)")
+            else:
+                lines.append(f"  {axis}: {active.card_id} (todas plataformas)")
+            continue
+
+        # Expanded: per (axis, platform) row.
+        lines.append(f"  {axis}:")
+        for platform in sorted(axis_map.keys()):
+            cell = axis_map[platform]
+            if cell is None:
+                lines.append(f"    · {platform}: (nenhum)")
+            elif isinstance(cell, Conflict):
+                # Conflict — expose ALL candidates so the auditor disambiguates.
+                cand_ids = ", ".join(c.card_id for c in cell.candidates)
+                lines.append(
+                    f"    · {platform}: CONFLITO — {cand_ids}"
+                )
+            elif isinstance(cell, Cell):
+                lines.append(f"    · {platform}: {cell.card_id}")
+    return "\n".join(lines)
+
+
+def _collect_confirm_selection(
+    composer_result: dict[str, dict[str, Any]],
+) -> list[str]:
+    """Path A (confirm): cards selecionados = cards ativos no composer_result.
+
+    Conflict cells contribuem TODOS os candidates — Path A confirma
+    "como-is", que inclui o estado pré-resolução. Path B (adjust) é onde
+    o usuário escolhe entre candidatos de uma Conflict. Determinístico:
+    ordenação alfabética + dedup.
+    """
+    picked: set[str] = set()
+    for axis_map in composer_result.values():
+        for cell in axis_map.values():
+            if cell is None:
+                continue
+            if isinstance(cell, Conflict):
+                for cand in cell.candidates:
+                    picked.add(cand.card_id)
+            elif isinstance(cell, Cell):
+                picked.add(cell.card_id)
+    return sorted(picked)
+
+
+def _handle_backend_multi_axis_brownfield(
+    *,
+    project_root: Path,
+    active_cards: list[CardManifest],
+) -> dict[str, Any]:
+    """Brownfield multi-axis backend handler — DET-6 W7.1, cobre AC-6.
+
+    Substitui (em projetos com signals matching) o legacy backend picker
+    inline em ``_run_pipeline`` linha ~1264. W7.1 só ADICIONA esta função;
+    o wiring real (decisão de qual handler chamar) entra em W7.4 com a
+    remoção do legacy. Até lá, esta função é chamada apenas pelo
+    integration test ``tests/integration/test_init_brownfield_multi_axis.py``.
+
+    Fluxo:
+      1. Roda ``compose_backend_axes`` (W5) sobre ``active_cards``
+         normalizados pra shape do composer.
+      2. Detecta uniformity per axis (adaptive UX — SPEC §"Adaptive UX").
+      3. Renderiza tabela (axis × platform → card / conflict / null).
+      4. Emit ``ask_three_paths`` (Phase A) com 3 opções:
+         a) confirmar detection como-is
+         b) ajustar células divergentes
+         c) começar do zero (custom-from-scratch — DEFERRED a W7.2)
+      5. Processa resposta:
+         - "a" (confirm) → aplica composer_result direto, retorna result
+           com ``choice="confirm"`` + ``selected_card_names``.
+         - "b" (adjust) → DEFERRED a W7.2 (multi-select per cell). Por
+           enquanto retorna ``choice="adjust"`` + selected vazio pra
+           caller decidir o fallback.
+         - "c" (scratch) → DEFERRED a W7.2 (greenfield-style picker).
+           Retorna ``choice="scratch"`` + selected vazio.
+
+    Args:
+        project_root: raiz do projeto sob análise (composer + signals).
+        active_cards: lista de ``CardManifest`` que o pipeline já tem em mão.
+
+    Returns:
+        Dict com keys:
+          - ``choice``: "confirm" | "adjust" | "scratch"
+          - ``selected_card_names``: list[str] (vazia em adjust/scratch
+            até W7.2 implementar os paths)
+          - ``composer_result``: dict aninhado retornado pelo composer
+            (passa adiante pro caller fazer downstream do label).
+
+    Raises:
+        PausedForInputError: quando não há ``forge-response.json`` casando
+            o intent-id (primeiro call do par). Top-level handler do CLI
+            sai com exit 2; o caller (W7.4) re-invoca após response.
+    """
+    # Cycle broken in Phase B (PR #13 review): _eval_detection_signals
+    # moved to engine.detection._eval, composer now imports from there.
+    # ``compose_backend_axes`` é import top-level deste módulo.
+    normalized = _normalize_cards_for_composer(active_cards)
+    composer_result = compose_backend_axes(project_root, normalized)
+    uniformity = _detect_axis_uniformity(composer_result)
+    table = _render_axes_table(composer_result, uniformity)
+
+    # Three-paths block — labels carregam motive textual pro host renderizar
+    # o bloco canônico de discipline §1.
+    paths = [
+        {
+            "label": "Confirmar detection como-is",
+            "motive": (
+                "Aceita a tabela detectada acima e segue com esses cards "
+                "pro Step 6 (resolve)."
+            ),
+        },
+        {
+            "label": "Ajustar células divergentes",
+            "motive": (
+                "Você escolhe per-cell o card vencedor (útil quando há "
+                "Conflito ou quando a uniformidade não bate com a stack "
+                "real do projeto). [W7.2 implementa o multi-select.]"
+            ),
+        },
+        {
+            "label": "Começar do zero (custom-from-scratch)",
+            "motive": (
+                "Ignora a detection e cai no greenfield-style picker. "
+                "[W7.2 implementa o fluxo greenfield.]"
+            ),
+        },
+    ]
+
+    # Render mentor-calmo body + tabela. ``ask_three_paths`` carrega
+    # ``paths-detail`` no payload, mas a tabela detectada precisa estar
+    # visível ANTES do host renderizar as 3 opções — entra no gate_name
+    # como prefix textual (host concatena com o block de paths).
+    gate_name = "init-brownfield-detection\n\nDetection composta:\n" + table
+
+    choice_key = ui_question.ask_three_paths(gate_name, paths)
+
+    if choice_key == "a":
         return {
-            "provider": "firebase",
-            "firebase": {
-                "dev-project": None,
-                "prod-project": None,
-                "services": ["auth", "firestore", "storage", "crashlytics"],
-            },
+            "choice": "confirm",
+            "selected_card_names": _collect_confirm_selection(composer_result),
+            "composer_result": composer_result,
         }
-    if choice == "rest-stack":
+    if choice_key == "b":
+        # W7.2 implementa o multi-select per cell. W7.1 retorna o sinal
+        # pro caller decidir fallback até lá — não silencia, mas também
+        # não trava o init (deviation tracked no commit body).
         return {
-            "provider": "rest",
-            "rest": {
-                "base-url": None,
-                "auth-mode": "jwt-bearer",
-            },
+            "choice": "adjust",
+            "selected_card_names": [],
+            "composer_result": composer_result,
         }
-    if choice == "hybrid":
+    # choice_key == "c"
+    return {
+        "choice": "scratch",
+        "selected_card_names": [],
+        "composer_result": composer_result,
+    }
+
+
+# ── W7.2 greenfield bundle picker ───────────────────────────────────────────
+
+# Os 8 axes canônicos vivem em engine.detection._axes.BACKEND_AXES
+# (shared com reconfigure.py — PR #13 review #3405254057).
+
+# Sentinela do picker — não corresponde a YAML, dispara o caminho per-axis.
+_BUNDLE_SENTINEL_CUSTOM = "custom-from-scratch"
+
+
+def _load_bundle_files(bundles_dir: Path) -> dict[str, dict[str, Any]]:
+    """Carrega os bundle YAMLs em `bundles_dir/<name>.yaml`.
+
+    Retorna ``{bundle_name: parsed_yaml_dict}``. Bundles inválidos (yaml
+    parse error, schema-version != 1, name ausente) são silenciosamente
+    pulados — ``validate_presets.py`` (W6.3) já é o gate canônico de
+    schema; o handler aqui só carrega o que dá. Caller decide o que fazer
+    se um bundle esperado faltar.
+    """
+    loaded: dict[str, dict[str, Any]] = {}
+    if not bundles_dir.is_dir():
+        return loaded
+    for path in sorted(bundles_dir.glob("*.yaml")):
+        try:
+            data = read_yaml_or_default(path, default=None)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        name = data.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        loaded[name] = data
+    return loaded
+
+
+def _bundle_cards_for_axis(bundle: dict[str, Any], axis: str) -> list[str]:
+    """Extrai os cards não-null de um (bundle, axis) cell.
+
+    Shape canônico (W6.1 / validate_presets W6.3):
+
+      defaults:
+        <axis>:
+          all-platforms: <card-name | null>
+          # ou
+          android: <card-name | null>
+          ios:     <card-name | null>
+          kmp:     <card-name | null>
+
+    Retorna lista de strings (ordenada, dedup'd) com os cards declarados.
+    Vazia se cell inteira é null ou se axis ausente.
+    """
+    defaults = bundle.get("defaults") or {}
+    cell = defaults.get(axis) or {}
+    if not isinstance(cell, dict):
+        return []
+    cards: set[str] = set()
+    for value in cell.values():
+        if isinstance(value, str) and value:
+            cards.add(value)
+    return sorted(cards)
+
+
+def _bundle_to_selected_cards(bundle: dict[str, Any]) -> list[str]:
+    """União dos cards declarados em todos os axes do bundle (ordenada)."""
+    picked: set[str] = set()
+    for axis in BACKEND_AXES:
+        picked.update(_bundle_cards_for_axis(bundle, axis))
+    return sorted(picked)
+
+
+def _render_axis_state(bundle: dict[str, Any], axis: str) -> str:
+    """Formata o estado atual da cell `(bundle, axis)` pra label do ask_multi.
+
+    Casos cobertos:
+      · all-platforms: <card> → "<card>"
+      · all-platforms: null → "(nenhum)"
+      · per-platform shape → "android:<a> · kmp:<k>" (skip nulls)
+    """
+    defaults = bundle.get("defaults") or {}
+    cell = defaults.get(axis) or {}
+    if not isinstance(cell, dict) or not cell:
+        return "(nenhum)"
+    if "all-platforms" in cell:
+        value = cell["all-platforms"]
+        return str(value) if value else "(nenhum)"
+    parts: list[str] = []
+    for platform in sorted(cell.keys()):
+        value = cell[platform]
+        if value:
+            parts.append(f"{platform}:{value}")
+    return " · ".join(parts) if parts else "(nenhum)"
+
+
+def _per_axis_options(
+    available_cards: list[CardManifest],
+    axis: str,
+) -> dict[str, str]:
+    """Monta options dict pro ask() per-axis prompt.
+
+    Keys são card names (mesma convenção dos bundles); labels carregam a
+    descrição curta. Inclui sempre key ``"skip"`` no fim — opt-out
+    explícito, mantém cell None nesse axis.
+
+    Filtra ``available_cards`` por ``category == axis``: card só aparece
+    como opção do axis "data" se o YAML do card declarar ``identity.category:
+    data``. Cards sem category compatível são silenciosamente excluídos.
+
+    Quando ``available_cards`` está vazio (teste ou greenfield puro sem
+    catalog carregado), retorna apenas a opção ``"skip"`` — o user só
+    consegue optar por "deixar vazio".
+    """
+    options: dict[str, str] = {}
+    for card in available_cards:
+        if not isinstance(card, CardManifest):
+            continue
+        if card.category != axis:
+            continue
+        if not card.name:
+            continue
+        label = card.description or card.name
+        options[card.name] = label
+    options["skip"] = "(nenhum — deixar este eixo vazio)"
+    return options
+
+
+def _run_per_axis_prompts(
+    available_cards: list[CardManifest],
+    axes_to_prompt: tuple[str, ...] | list[str],
+) -> list[str]:
+    """Itera ``axes_to_prompt`` perguntando o card por axis.
+
+    Retorna a lista (ordenada, dedup'd) de cards selecionados. Cada axis
+    emite um ``ask`` independente (1 intent por axis). Response "skip"
+    deixa o axis vazio. Compartilhável com W7.3 reconfigure no futuro
+    — mantém o escopo privado em init.py por enquanto (W7.2 não promove).
+    """
+    picked: set[str] = set()
+    for axis in axes_to_prompt:
+        options = _per_axis_options(available_cards, axis)
+        chosen = ui_question.ask(
+            f"Qual card para o eixo '{axis}'?",
+            options,
+            default="skip",
+        )
+        if chosen and chosen != "skip":
+            picked.add(chosen)
+    return sorted(picked)
+
+
+def _apply_axis_overrides(
+    bundle: dict[str, Any],
+    overridden_axes: list[str],
+    overridden_cards: list[str],
+    available_cards: list[CardManifest],
+) -> list[str]:
+    """Compõe o set final: bundle defaults nos axes preservados + overrides.
+
+    Lógica:
+      · Pra cada axis NÃO em ``overridden_axes`` → mantém cards do bundle.
+      · Pra cada axis EM ``overridden_axes`` → descarta os cards default
+        do bundle nesse axis, aplica os cards de ``overridden_cards`` cuja
+        category == axis (filtrado via ``available_cards``).
+
+    Retorna lista ordenada e dedup'd. Quando ``available_cards`` está
+    vazia (teste sem catalog), o filtro por category falha gracefully e
+    o axis overridden fica vazio (sem nenhum card — consistente com
+    response "skip").
+    """
+    overridden_set = set(overridden_axes)
+    picked: set[str] = set()
+    # 1) Eixos preservados → bundle defaults.
+    for axis in BACKEND_AXES:
+        if axis in overridden_set:
+            continue
+        picked.update(_bundle_cards_for_axis(bundle, axis))
+    # 2) Eixos overridden → cards do override casados ao axis via catalog.
+    card_axis: dict[str, str] = {}
+    for card in available_cards:
+        if isinstance(card, CardManifest) and card.name and card.category:
+            card_axis[card.name] = card.category
+    for card_name in overridden_cards:
+        axis = card_axis.get(card_name)
+        if axis is None or axis in overridden_set:
+            # Se sem catalog (axis=None), confia que o caller só passou
+            # cards de axes overridden — adiciona direto.
+            picked.add(card_name)
+    return sorted(picked)
+
+
+def _handle_backend_multi_axis_greenfield(
+    *,
+    project_root: Path,
+    available_cards: list[CardManifest],
+) -> dict[str, Any]:
+    """Greenfield multi-axis backend handler — DET-6 W7.2, cobre AC-7.
+
+    Roda quando o composer não emitiu signals (zero detection — caso
+    típico de projeto novo). Substitui (em projetos sem signals) o legacy
+    backend picker linha ~1264 do ``_run_pipeline``. W7.2 só ADICIONA esta
+    função; wiring real entra em W7.4 com a remoção do legacy.
+
+    Fluxo (SPEC §"Greenfield init com bundle picker"):
+
+      1. Carrega os bundle YAMLs em ``$FORGE_HOME/presets/kmp-mobile/bundles/``.
+      2. Emit ``ask()`` com 4 opções: 3 bundles + sentinela
+         ``custom-from-scratch``.
+      3. Se sentinela → roda per-axis prompts pros 8 axes canônicos.
+         Retorna ``choice="scratch"``.
+      4. Se bundle → ``confirm()`` "quer customizar algum axis?".
+         · Não → aplica bundle.defaults direto. Retorna
+           ``choice="bundle"`` + ``bundle_name``.
+         · Sim → ``ask_multi()`` "quais axes?", depois per-axis prompts
+           só pros selecionados. Retorna ``choice="bundle-overridden"``
+           + ``bundle_name``.
+
+    Args:
+        project_root: raiz do projeto sob init (usado pelo intent state).
+            Atualmente o handler resolve ``bundles_dir`` via ``forge_home()``
+            (catálogo canônico, não per-project), mas o parâmetro fica na
+            assinatura por simetria com o W7.1 brownfield e pra suportar
+            W7.4 (que vai passar pra downstream do label).
+        available_cards: catálogo carregado (mesma shape do W7.1). Usado
+            pra mapear card→axis no per-axis prompt e no apply_overrides.
+            Vazia em testes minimais — handler degrada gracefully (per-
+            axis prompts mostram só "skip").
+
+    Returns:
+        Dict com keys:
+          · ``choice``: "bundle" | "bundle-overridden" | "scratch"
+          · ``bundle_name``: nome do bundle escolhido (None em "scratch")
+          · ``selected_card_names``: list[str] (ordenada, dedup'd)
+
+    Raises:
+        PausedForInputError: na primeira chamada de cada intent emitido
+            sem response ainda no disco. Top-level handler do CLI sai com
+            exit 2; caller (W7.4) re-invoca após response.
+    """
+    bundles_dir = forge_home() / "presets" / PRESET_NAME / "bundles"
+    bundles = _load_bundle_files(bundles_dir)
+
+    # Opções fixas da SPEC §"Starter bundles". Não dependem da existência
+    # física do YAML — se o YAML faltar, falhamos depois (no apply) com
+    # mensagem clara; o picker apresenta as 4 opções canônicas.
+    picker_options: dict[str, str] = {
+        "firebase-full": "Firebase em todos os eixos (serverless-ready)",
+        "rest-with-firebase-telemetry": (
+            "REST API para dados + Firebase para identity, telemetria, push"
+        ),
+        "local-only": "Offline-first, sem backend remoto",
+        _BUNDLE_SENTINEL_CUSTOM: (
+            "Começar do zero — escolher cada eixo manualmente"
+        ),
+    }
+
+    choice_key = ui_question.ask(
+        "Qual stack inicial pra este projeto?",
+        picker_options,
+        default="firebase-full",
+    )
+
+    # Caminho A — sentinela: pula bundle, prompta cada axis.
+    if choice_key == _BUNDLE_SENTINEL_CUSTOM:
+        selected = _run_per_axis_prompts(available_cards, BACKEND_AXES)
         return {
-            "provider": "hybrid",
-            "firebase": {
-                "dev-project": None,
-                "prod-project": None,
-                "services": ["auth"],
-            },
-            "rest": {
-                "base-url": None,
-                "auth-mode": "jwt-bearer",
-            },
+            "choice": "scratch",
+            "bundle_name": None,
+            "selected_card_names": selected,
         }
-    if choice == "local-only":
-        return {"provider": "local-only"}
-    return {"provider": "none"}
+
+    # Caminho B/C — bundle escolhido. Resolve o YAML.
+    bundle = bundles.get(choice_key)
+    if bundle is None:
+        # Bundle YAML missing — degrada pra "scratch" com selected vazio.
+        # Auditor humano vê o choice no commit body e ajusta manualmente.
+        return {
+            "choice": "scratch",
+            "bundle_name": None,
+            "selected_card_names": [],
+        }
+
+    wants_override = ui_question.confirm(
+        f"Quer customizar algum eixo do bundle '{choice_key}'?",
+        default=False,
+    )
+
+    # Caminho B — bundle como-is.
+    if not wants_override:
+        return {
+            "choice": "bundle",
+            "bundle_name": choice_key,
+            "selected_card_names": _bundle_to_selected_cards(bundle),
+        }
+
+    # Caminho C — bundle com override seletivo.
+    axis_options: dict[str, str] = {
+        axis: f"{axis} (atual: {_render_axis_state(bundle, axis)})"
+        for axis in BACKEND_AXES
+    }
+    overridden_axes = ui_question.ask_multi(
+        "Quais eixos quer ajustar?",
+        axis_options,
+        min_selected=1,
+    )
+    overridden_cards = _run_per_axis_prompts(available_cards, overridden_axes)
+    selected = _apply_axis_overrides(
+        bundle, overridden_axes, overridden_cards, available_cards
+    )
+    return {
+        "choice": "bundle-overridden",
+        "bundle_name": choice_key,
+        "selected_card_names": selected,
+    }
+
+
+# ── W7.4 — Backend cells adapters (composer_result / bundle → cells) ────────
+
+
+def _composer_result_to_cells(
+    composer_result: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, dict[str, Any] | None]]:
+    """W7.1 brownfield adapter: composer_result → backend cells shape.
+
+    Shape de saída segue ``docs/schemas/backend-axes.md`` §"Cell object":
+
+      backend.<axis>.<platform> = {card: <id>, status: "active"} | None
+
+    Regras de conversão:
+      · cell None → None (cell vazia preservada)
+      · cell Cell(card_id=X, ...) → {card: X, status: "active"}
+      · cell Conflict(candidates=(c1, c2, ...)) → {card: c1.card_id,
+        status: "active"}. Convenção: pega primeiro candidate (já
+        ordenado alfabeticamente por card_id em ``engine.detection.
+        composer.Conflict`` — output determinístico). Auditor humano
+        que escolheu Path A (confirm) implicitamente aceitou essa
+        resolução; Path B (adjust — W7-future) é onde o user
+        desambigua per-cell.
+
+    Status sempre ``"active"`` neste adapter — Phase B não infere
+    migration intent automaticamente. Migration entra via
+    ``forge reconfigure`` (W7.3) quando o auditor edita manualmente.
+    """
+    out: dict[str, dict[str, dict[str, Any] | None]] = {}
+    for axis in sorted(composer_result.keys()):
+        axis_map = composer_result[axis]
+        out_axis: dict[str, dict[str, Any] | None] = {}
+        for platform in sorted(axis_map.keys()):
+            cell = axis_map[platform]
+            if cell is None:
+                out_axis[platform] = None
+                continue
+            if isinstance(cell, Conflict):
+                # Conflict — primeiro candidate por convenção (já ordenado
+                # alfabeticamente). Auditor confirmou via Path A.
+                if cell.candidates:
+                    chosen = cell.candidates[0]
+                    out_axis[platform] = {
+                        "card": chosen.card_id,
+                        "status": "active",
+                    }
+                else:
+                    out_axis[platform] = None
+                continue
+            if isinstance(cell, Cell) and cell.card_id:
+                out_axis[platform] = {"card": cell.card_id, "status": "active"}
+            else:
+                out_axis[platform] = None
+        out[axis] = out_axis
+    return out
+
+
+def _bundle_to_cells(
+    bundle_name: str | None,
+    selected_card_names: list[str],
+    *,
+    forge_root: Path,
+    available_cards: list[CardManifest] | None = None,
+) -> dict[str, dict[str, dict[str, Any] | None]]:
+    """W7.2 greenfield adapter: bundle YAML / selected cards → backend cells.
+
+    Dois cenários cobertos:
+
+    1. ``bundle_name`` corresponde a um YAML em
+       ``$FORGE_HOME/presets/<preset>/bundles/<name>.yaml``: carrega o
+       bundle e emite cells per (axis, platform) a partir de
+       ``bundle.defaults``. Forma das cells segue
+       ``docs/schemas/backend-axes.md`` — ``all-platforms`` é
+       desempacotado pras plataformas declaradas no bundle. Cells
+       null no bundle ficam null no output.
+
+    2. ``bundle_name`` é None / sentinela ``custom-from-scratch`` /
+       bundle YAML missing: cai no fallback ``available_cards`` —
+       mapeia cada card selecionado pra (card.category, "all-platforms")
+       como cell ativa. Fallback é silently degenerate quando
+       ``available_cards`` está vazio (teste minimal) — emite cells
+       vazias e o auditor ajusta via ``forge reconfigure``.
+
+    Cards em ``selected_card_names`` mas NÃO referenciados pelo bundle
+    (override-overridden caminho ou scratch) entram pelo fallback com
+    ``all-platforms`` — caller é responsável por validar via cascade
+    (RULE-021) downstream.
+    """
+    cells: dict[str, dict[str, dict[str, Any] | None]] = {}
+
+    # Caminho 1: bundle YAML válido.
+    bundle: dict[str, Any] | None = None
+    if bundle_name and bundle_name != _BUNDLE_SENTINEL_CUSTOM:
+        bundles_dir = forge_root / "presets" / PRESET_NAME / "bundles"
+        bundle = _load_bundle_files(bundles_dir).get(bundle_name)
+
+    if bundle is not None:
+        defaults = bundle.get("defaults") or {}
+        for axis in BACKEND_AXES:
+            cell_block = defaults.get(axis)
+            if not isinstance(cell_block, dict):
+                continue
+            axis_out: dict[str, dict[str, Any] | None] = {}
+            if "all-platforms" in cell_block:
+                card_val = cell_block["all-platforms"]
+                axis_out["all-platforms"] = (
+                    {"card": card_val, "status": "active"}
+                    if isinstance(card_val, str) and card_val
+                    else None
+                )
+            else:
+                for platform, card_val in cell_block.items():
+                    if not isinstance(platform, str):
+                        continue
+                    axis_out[platform] = (
+                        {"card": card_val, "status": "active"}
+                        if isinstance(card_val, str) and card_val
+                        else None
+                    )
+            cells[axis] = axis_out
+
+        # Cards em selected_card_names que NÃO estão no bundle (override
+        # selected via _apply_axis_overrides) entram via available_cards.
+        if available_cards:
+            bundle_cards: set[str] = set()
+            for axis_block in defaults.values():
+                if not isinstance(axis_block, dict):
+                    continue
+                for v in axis_block.values():
+                    if isinstance(v, str) and v:
+                        bundle_cards.add(v)
+            extras = [n for n in selected_card_names if n not in bundle_cards]
+            if extras:
+                _fold_extras_into_cells(cells, extras, available_cards)
+        return cells
+
+    # Caminho 2: fallback (custom-from-scratch ou bundle missing).
+    if available_cards:
+        _fold_extras_into_cells(cells, selected_card_names, available_cards)
+    return cells
+
+
+def _fold_extras_into_cells(
+    cells: dict[str, dict[str, dict[str, Any] | None]],
+    extra_card_names: list[str],
+    available_cards: list[CardManifest],
+) -> None:
+    """Compõe cells dos cards listados via category (axis) → all-platforms.
+
+    Override per-axis no W7.2 não declara platforms — assumimos
+    ``all-platforms``. Quando ``forge reconfigure`` (W7.3) edita
+    granularidade, o user ajusta a cell pra per-platform shape se
+    quiser. Cards sem category ou category fora dos 8 axes canônicos
+    são silenciosamente descartados — anti-padrão #6 (cards sem axis
+    não pertencem ao bloco ``backend``).
+    """
+    by_name: dict[str, str] = {}
+    for card in available_cards:
+        if isinstance(card, CardManifest) and card.name and card.category:
+            by_name[card.name] = card.category
+    for card_name in extra_card_names:
+        axis = by_name.get(card_name)
+        if axis is None or axis not in BACKEND_AXES:
+            continue
+        axis_out = cells.setdefault(axis, {})
+        # Se o axis já existe e tem per-platform shape, NÃO sobrescreve —
+        # esse caminho só popula axes vazios. Caso seja override e o axis
+        # já veio do bundle, o caller (_bundle_to_cells) já filtrou pra
+        # extras-only, então fica simples.
+        if not axis_out:
+            axis_out["all-platforms"] = {"card": card_name, "status": "active"}
+
+
+def _summarize_backend_cells(
+    cells: dict[str, dict[str, dict[str, Any] | None]] | None,
+) -> str:
+    """Render compacto pro display (Step 14 history + Step 15 summary).
+
+    Saída exemplo:
+      data: retrofit-client(android), ktor-client(kmp) · auth: firebase-auth · …
+
+    Vazio se ``cells`` é None / dict vazio.
+    """
+    if not cells:
+        return "(sem cells configuradas)"
+    parts: list[str] = []
+    for axis in sorted(cells.keys()):
+        axis_map = cells[axis] or {}
+        if not isinstance(axis_map, dict):
+            continue
+        # Detect uniform "all-platforms" — emite "axis: card".
+        if "all-platforms" in axis_map:
+            cell = axis_map["all-platforms"]
+            if cell and isinstance(cell, dict) and cell.get("card"):
+                parts.append(f"{axis}: {cell['card']}")
+            continue
+        # Per-platform — emite "axis: card1(p1), card2(p2)".
+        pieces: list[str] = []
+        for platform in sorted(axis_map.keys()):
+            cell = axis_map[platform]
+            if cell and isinstance(cell, dict) and cell.get("card"):
+                pieces.append(f"{cell['card']}({platform})")
+        if pieces:
+            parts.append(f"{axis}: {', '.join(pieces)}")
+    return " · ".join(parts) if parts else "(sem cells configuradas)"
 
 
 def _build_paths(project_root: Path, conv_inv: Any) -> dict[str, Any]:
