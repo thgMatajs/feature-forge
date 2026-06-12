@@ -30,7 +30,7 @@ from _common import (
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from engine.utils.paths import inventory_dir  # noqa: E402
-from engine.utils.yaml_io import read_yaml_or_default  # noqa: E402
+from engine.utils.yaml_io import YamlIOError, read_yaml_or_default  # noqa: E402
 
 
 _KNOWN_STATE_PATTERNS = {"stateui", "stateflow-pure", "custom-sealed"}
@@ -42,7 +42,7 @@ def _validate_design_system(project_root: Path, path: Path) -> list[str]:
         return [f"design-system.yaml ausente em {path}"]
     try:
         data = read_yaml_or_default(path, {}) or {}
-    except Exception as exc:  # noqa: BLE001
+    except (YamlIOError, OSError, UnicodeDecodeError) as exc:
         return [f"design-system.yaml YAML error: {exc}"]
     if not isinstance(data, dict):
         return ["design-system.yaml: top-level not mapping"]
@@ -75,7 +75,7 @@ def _validate_i18n(project_root: Path, path: Path) -> list[str]:
         return [f"i18n.yaml ausente em {path}"]
     try:
         data = read_yaml_or_default(path, {}) or {}
-    except Exception as exc:  # noqa: BLE001
+    except (YamlIOError, OSError, UnicodeDecodeError) as exc:
         return [f"i18n.yaml YAML error: {exc}"]
     if not isinstance(data, dict):
         return ["i18n.yaml: top-level not mapping"]
@@ -96,7 +96,7 @@ def _validate_conventions(path: Path) -> list[str]:
         return [f"conventions.yaml ausente em {path}"]
     try:
         data = read_yaml_or_default(path, {}) or {}
-    except Exception as exc:  # noqa: BLE001
+    except (YamlIOError, OSError, UnicodeDecodeError) as exc:
         return [f"conventions.yaml YAML error: {exc}"]
     if not isinstance(data, dict):
         return ["conventions.yaml: top-level not mapping"]

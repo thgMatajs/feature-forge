@@ -49,7 +49,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from engine.utils.paths import cards_dir, memory_dir, workflow_config_path  # noqa: E402
 from engine.utils.sha256 import file_sha256  # noqa: E402
-from engine.utils.yaml_io import read_yaml_or_default  # noqa: E402
+from engine.utils.yaml_io import YamlIOError, read_yaml_or_default  # noqa: E402
 
 _REQUIRED_TOP_LEVEL = (
     "schema-version",
@@ -338,7 +338,7 @@ def _check_card_sha(project_root: Path, data: dict[str, Any]) -> list[str]:
             continue
         try:
             actual = file_sha256(card_yaml)
-        except Exception as exc:  # noqa: BLE001
+        except OSError as exc:
             out.append(f"card {name}: sha256 erro ({exc})")
             continue
         if actual != recorded:
@@ -367,7 +367,7 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
 
     try:
         data = read_yaml_or_default(cfg_path, {}) or {}
-    except Exception as exc:  # noqa: BLE001
+    except (YamlIOError, OSError, UnicodeDecodeError) as exc:
         return result_fail(
             "workflow-config.yaml YAML parse error",
             what_failed=str(exc),
