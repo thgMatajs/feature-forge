@@ -1276,25 +1276,389 @@ def _handle_conventions(
             conv[key] = val
 
 
-def _handle_backend(
-    project_root: Path, current: dict[str, Any], working: dict[str, Any]
-) -> None:
-    del project_root, current
-    backend = working.setdefault("backend", {})
-    provider = question.ask_text(
-        "backend.provider (firebase|rest|graphql|...)",
-        default=backend.get("provider", "") or "",
+# ── W7.3 multi-axis backend submenu (DET-6) ─────────────────────────────────
+#
+# Substitui o legacy `_handle_backend` (provider monolítico) pelo modelo
+# multi-axis platform-keyed canonizado em `docs/schemas/backend-axes.md`.
+# Cobertura AC-8 do SPEC det-6-multi-axis-backend.
+#
+# Shape esperado em `working["backend"]`:
+#
+#     backend:
+#       <axis>:                       # ∈ _BACKEND_AXES_RECONFIGURE
+#         <platform>:                 # ∈ platforms.active OR null cell
+#           card: <card-name>
+#           status: active | migrating-to | deprecated
+#           migrating-to: <card-name> # required when status=migrating-to
+#
+# Helpers vivem privados ao módulo — não promovidos a shared (anti-padrão #7
+# do W7.3 context-pack). `_BACKEND_AXES` em `engine.init` é a fonte canônica
+# da ORDEM dos eixos; replicamos aqui em vez de import pra evitar ciclo de
+# import (init.py ↔ reconfigure.py) e manter o handler self-contained.
+
+_BACKEND_AXES_RECONFIGURE: tuple[str, ...] = (
+    "data",
+    "auth",
+    "observability",
+    "analytics",
+    "storage",
+    "persistence",
+    "notifications",
+    "flags",
+)
+
+# Status enum canonizado em `docs/schemas/backend-axes.md § Status enum`.
+_VALID_CELL_STATUSES: tuple[str, ...] = ("active", "migrating-to", "deprecated")
+
+
+def _platforms_active(working: dict[str, Any]) -> list[str]:
+    """Lê `platforms.active` do working config (default lista vazia)."""
+    block = working.get("platforms") or {}
+    active = block.get("active") or []
+    if not isinstance(active, list):
+        return []
+    return [p for p in active if isinstance(p, str) and p]
+
+
+def _render_backend_axes_table(
+    cells: dict[str, Any], platforms: list[str]
+) -> str:
+    """Renderiza tabela `axis × platform → cell` em texto monoespaçado.
+
+    Cells vazias / null aparecem como `—`. Cells preenchidas mostram
+    `<card>[*]` onde `[*]` é status marker (`!` migrating-to, `~`
+    deprecated; vazio se active).
+
+    Se `platforms` é vazio, renderiza apenas a coluna axis (cell payload
+    flat) — caso degenerado mas suportado pra projetos pré-platforms.
+    """
+    if not platforms:
+        # Fallback: lista linear sem tabela.
+        lines = ["(sem platforms.active — render flat)"]
+        for axis in _BACKEND_AXES_RECONFIGURE:
+            block = cells.get(axis) or {}
+            if not isinstance(block, dict):
+                lines.append(f"  {axis:<14} (inválido)")
+                continue
+            lines.append(f"  {axis:<14} {len(block)} entrada(s)")
+        return "\n".join(lines)
+
+    # Header
+    col_w = max(14, max((len(p) for p in platforms), default=0) + 2)
+    header = f"  {'axis':<14}" + "".join(f"{p:<{col_w}}" for p in platforms)
+    lines = [header, "  " + "-" * (14 + col_w * len(platforms))]
+    for axis in _BACKEND_AXES_RECONFIGURE:
+        block = cells.get(axis) if isinstance(cells.get(axis), dict) else {}
+        row = f"  {axis:<14}"
+        for pf in platforms:
+            cell = (block or {}).get(pf)
+            row += f"{_format_cell_short(cell):<{col_w}}"
+        lines.append(row)
+    return "\n".join(lines)
+
+
+def _format_cell_short(cell: Any) -> str:
+    """Renderiza cell em string curta pra tabela: `card[!~]` ou `—`."""
+    if cell is None:
+        return "—"
+    if not isinstance(cell, dict):
+        return "?"
+    card = cell.get("card") or "?"
+    status = cell.get("status") or "active"
+    marker = ""
+    if status == "migrating-to":
+        marker = "!"
+    elif status == "deprecated":
+        marker = "~"
+    return f"{card}{marker}"
+
+
+def _enumerate_cells_with_labels(
+    cells: dict[str, Any], platforms: list[str]
+) -> dict[str, str]:
+    """Monta `{axis|platform: label}` pra ask_multi.
+
+    Inclui TODAS as combinações `(axis, platform)` canônicas — não só as
+    que já existem em `cells` — pra permitir o user CRIAR cell em
+    posição vazia. Label carrega snapshot curto do estado atual.
+    """
+    out: dict[str, str] = {}
+    for axis in _BACKEND_AXES_RECONFIGURE:
+        block = cells.get(axis) if isinstance(cells.get(axis), dict) else {}
+        for pf in platforms:
+            key = f"{axis}|{pf}"
+            current = (block or {}).get(pf)
+            out[key] = f"{axis}/{pf}: {_format_cell_short(current)}"
+    return out
+
+
+def _parse_cell_key(key: str) -> tuple[str, str]:
+    """Inverte `_enumerate_cells_with_labels`: `axis|platform` → tupla."""
+    if "|" not in key:
+        raise ValueError(f"cell key inválida (falta '|'): {key!r}")
+    axis, platform = key.split("|", 1)
+    return axis, platform
+
+
+def _card_exists(card_name: str, project_root: Path) -> bool:
+    """Card existe em `cards/<name>/card.yaml` (canonical OR project local)?
+
+    Checa primeiro canonical (snapshot copy via Decision 15), depois local
+    overlay em `.claude/cards/local/`. Não carrega o YAML — só presença.
+    """
+    if not card_name:
+        return False
+    canonical_yaml = cards_canonical_dir() / card_name / "card.yaml"
+    if canonical_yaml.is_file():
+        return True
+    local_yaml = (
+        project_root / ".claude" / "cards" / "local" / card_name / "card.yaml"
     )
-    if provider:
-        backend["provider"] = provider
-    ticketing = working.setdefault("ticketing", {})
-    if question.confirm("Editar ticketing?", default=False):
-        for key in ("provider", "workspace", "default-project"):
-            val = question.ask_text(
-                f"ticketing.{key}", default=ticketing.get(key, "") or ""
+    return local_yaml.is_file()
+
+
+def _validate_cell_value(
+    cell_value: dict[str, Any] | None,
+    axis: str,
+    project_root: Path,
+) -> None:
+    """Valida cell shape conforme `docs/schemas/backend-axes.md § Cell object`.
+
+    Raises:
+        ValueError: se shape inválido. Caller decide se aborta a edição
+            inteira ou só esse axis — handler atual mostra erro mentor-
+            calmo e mantém valor anterior.
+    """
+    del axis  # axis enum check é feito antes do dispatch
+    if cell_value is None:
+        return  # opt-out explícito sempre OK
+    if not isinstance(cell_value, dict):
+        raise ValueError(f"cell deve ser dict ou None, got {type(cell_value).__name__}")
+    card = cell_value.get("card")
+    if not isinstance(card, str) or not card:
+        raise ValueError("cell.card obrigatório (string não-vazia)")
+    if not _card_exists(card, project_root):
+        raise ValueError(
+            f"cell.card={card!r} não existe em cards/<name>/card.yaml "
+            f"(canonical OU .claude/cards/local/)"
+        )
+    status = cell_value.get("status")
+    if status not in _VALID_CELL_STATUSES:
+        raise ValueError(
+            f"cell.status={status!r} fora do enum "
+            f"{list(_VALID_CELL_STATUSES)!r}"
+        )
+    migrating_to = cell_value.get("migrating-to")
+    if status == "migrating-to":
+        if not isinstance(migrating_to, str) or not migrating_to:
+            raise ValueError(
+                "cell.migrating-to obrigatório quando status=migrating-to "
+                "(string não-vazia)"
             )
-            if val:
-                ticketing[key] = val
+        if not _card_exists(migrating_to, project_root):
+            raise ValueError(
+                f"cell.migrating-to={migrating_to!r} não existe em "
+                f"cards/<name>/card.yaml"
+            )
+    else:
+        if migrating_to is not None:
+            raise ValueError(
+                f"cell.migrating-to MUST be absent quando status={status!r} "
+                f"(presente: {migrating_to!r})"
+            )
+
+
+def _prompt_cell_value(
+    axis: str,
+    platform: str,
+    *,
+    current: dict[str, Any] | None,
+    project_root: Path,
+) -> dict[str, Any] | None:
+    """Roda prompts pra editar a cell `(axis, platform)`.
+
+    Roteiro:
+      1) ask: ação top-level — opt-out (null) | edit cell | manter.
+      2) Se "edit": ask_text card name, ask status, se migrating-to → ask_text migrating-to.
+      3) Validate via `_validate_cell_value`; se erro → renderiza mensagem
+         mentor-calma e RETORNA o valor `current` (mantém estado).
+
+    Retorna a cell final (dict ou None) — caller escreve em `working`.
+    """
+    cur_card = current.get("card") if isinstance(current, dict) else None
+    cur_status = (
+        current.get("status") if isinstance(current, dict) else None
+    ) or "active"
+    cur_migrating = (
+        current.get("migrating-to") if isinstance(current, dict) else None
+    )
+    summary = _format_cell_short(current)
+
+    action = question.ask(
+        f"Cell {axis}/{platform} atual: {summary}. Ação?",
+        {
+            "edit":   "editar card / status / migrating-to",
+            "null":   "opt-out (null) — sem provider neste eixo×plataforma",
+            "keep":   "manter como está",
+        },
+        default="edit",
+    )
+    if action == "keep":
+        return current
+    if action == "null":
+        return None
+
+    # edit path
+    new_card = question.ask_text(
+        f"cell.card (atual {cur_card or '—'})",
+        default=cur_card or "",
+    ).strip()
+    if not new_card:
+        renderer.write(renderer.colored(
+            "card vazio — mantendo cell anterior.", "yellow"
+        ))
+        return current
+
+    new_status = question.ask(
+        f"cell.status (atual {cur_status})",
+        {s: s for s in _VALID_CELL_STATUSES},
+        default=cur_status if cur_status in _VALID_CELL_STATUSES else "active",
+    )
+
+    new_migrating: str | None = None
+    if new_status == "migrating-to":
+        new_migrating = question.ask_text(
+            f"cell.migrating-to (alvo da migração; atual {cur_migrating or '—'})",
+            default=cur_migrating or "",
+        ).strip() or None
+
+    candidate: dict[str, Any] = {"card": new_card, "status": new_status}
+    if new_migrating is not None:
+        candidate["migrating-to"] = new_migrating
+
+    try:
+        _validate_cell_value(candidate, axis, project_root)
+    except ValueError as exc:
+        renderer.write(renderer.colored(
+            f"⚠️  cell {axis}/{platform} rejeitada: {exc}", "yellow"
+        ))
+        renderer.write(renderer.dim("Mantendo valor anterior."))
+        return current
+    return candidate
+
+
+def _handle_backend_axes_submenu(
+    project_root: Path,
+    current: dict[str, Any],
+    working: dict[str, Any],
+) -> None:
+    """Reconfigure backend axes — tabela 8 axes × N platforms.
+
+    Substitui `_handle_backend` legacy (provider monolítico). Cobertura
+    AC-8 do SPEC det-6-multi-axis-backend.
+
+    Fluxo:
+      1. Lê `working["backend"]` (default {}) + `platforms.active`.
+      2. Renderiza tabela `axis × platform`.
+      3. ask_multi: quais cells editar (≥1).
+      4. Per cell selecionada: prompts (null / pick card / status /
+         migrating-to). Validation per cell — erro mantém valor anterior.
+      5. Muta `working["backend"][axis][platform]`. Apply (.bak + history
+         + sha256) fica delegado ao `_run` principal de reconfigure (não
+         duplica lógica).
+
+    Side effects:
+      - Renderiza tabela + warnings no stdout via `renderer`.
+      - Muta `working["backend"]` in-place.
+      - NÃO escreve arquivo — o apply final é responsabilidade do `_run`.
+
+    Args:
+        project_root: usado pra validar existência de cards referenciados.
+        current: snapshot pré-edição (não usado aqui — `_show_diff` já
+            mostra o delta depois).
+        working: dict mutável; recebe as edições per cell.
+    """
+    del current  # working já reflete o estado vigente; diff renderizado depois
+
+    backend_block = working.setdefault("backend", {})
+    if not isinstance(backend_block, dict):
+        renderer.write(renderer.colored(
+            "backend: bloco inválido (não é dict) — reinicializando vazio.",
+            "yellow",
+        ))
+        backend_block = {}
+        working["backend"] = backend_block
+
+    platforms = _platforms_active(working)
+    if not platforms:
+        renderer.write(renderer.colored(
+            "⚠️  platforms.active está vazio. Configure plataformas via "
+            "`forge init` ou edite workflow-config.yaml antes.",
+            "yellow",
+        ))
+        return
+
+    # 1. Render tabela current.
+    renderer.write("")
+    renderer.write(renderer.section_header("backend axes — estado atual"))
+    renderer.write(_render_backend_axes_table(backend_block, platforms))
+    renderer.write(renderer.dim(
+        "Legenda: `card!` = migrating-to · `card~` = deprecated · `—` = null/vazio"
+    ))
+    renderer.write("")
+
+    # 2. Multi-select: quais cells editar.
+    options = _enumerate_cells_with_labels(backend_block, platforms)
+    if not options:
+        renderer.write("Nada a editar — sem axes×platforms combináveis.")
+        return
+
+    picked = question.ask_multi(
+        "Quais cells (axis × platform) editar? (multi-select; ENTER vazio = sair)",
+        options,
+        min_selected=0,
+    )
+    if not picked:
+        renderer.write("Nada selecionado — saindo do submenu backend.")
+        return
+
+    # 3. Per cell: prompts + validate.
+    for cell_key in picked:
+        try:
+            axis, platform = _parse_cell_key(cell_key)
+        except ValueError as exc:
+            renderer.write(renderer.colored(f"chave {cell_key!r} inválida: {exc}", "yellow"))
+            continue
+        if axis not in _BACKEND_AXES_RECONFIGURE:
+            renderer.write(renderer.colored(
+                f"axis {axis!r} fora do enum canônico — pulando.", "yellow"
+            ))
+            continue
+        if platform not in platforms:
+            renderer.write(renderer.colored(
+                f"platform {platform!r} não está em platforms.active — pulando.",
+                "yellow",
+            ))
+            continue
+
+        axis_block = backend_block.get(axis)
+        if not isinstance(axis_block, dict):
+            axis_block = {}
+            backend_block[axis] = axis_block
+        existing = axis_block.get(platform)
+        new_value = _prompt_cell_value(
+            axis,
+            platform,
+            current=existing if isinstance(existing, dict) else None,
+            project_root=project_root,
+        )
+        # `None` = opt-out explícito (cell preserved as null);
+        # dict = ativo; ambos válidos pelo schema.
+        axis_block[platform] = new_value
+        renderer.write(renderer.colored(
+            f"  ✓ {axis}/{platform} → {_format_cell_short(new_value)}",
+            "green",
+        ))
 
 
 def _handle_persona(
@@ -1663,7 +2027,7 @@ _CATEGORY_HANDLERS = {
     "card-local":    _handle_card_local,
     "paths":         _handle_paths,
     "conventions":   _handle_conventions,
-    "backend":       _handle_backend,
+    "backend":       _handle_backend_axes_submenu,
     "persona":       _handle_persona,
     "memory":        _handle_memory,
     "hooks":         _handle_hooks,
