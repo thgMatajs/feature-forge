@@ -575,7 +575,12 @@ _SECRETS_TOOL_INSTALL_HINTS: dict[str, str] = {
 # Defaults: fixture dir pra evitar false positives quando o próprio
 # repo testa o gate. Ordem é literal — repo dev pode prepender em
 # ``secrets-gate.ignore-paths`` mas não substitui.
-_DEFAULT_IGNORE_PATTERNS: list[str] = [r"tests/fixtures/secrets/.*"]
+# M-12: anchor pattern to start-of-path. Prevents false-positive ignores
+# like `src/tests/fixtures/secrets/x.py` which is NOT the project's tests
+# root. The default ignore is exclusively the repo's tests/ root; consumers
+# who need additional ignore paths must opt-in via
+# ``secrets-gate.ignore-paths`` in workflow-config.
+_DEFAULT_IGNORE_PATTERNS: list[str] = [r"^tests/fixtures/secrets/"]
 
 
 def _load_workflow_config(project_root: Path) -> dict[str, Any]:
@@ -630,7 +635,21 @@ def validate(
     )
     if isinstance(extra_ignore, list):
         ignore_patterns.extend(str(p) for p in extra_ignore)
-    staged = _filter_ignored(staged, ignore_patterns)
+    # M-12: match patterns against paths RELATIVE to project_root so that
+    # the anchored default ``^tests/fixtures/secrets/`` correctly targets
+    # only the repo's tests root (not nested ``src/tests/...`` or absolute
+    # path prefixes). Preserve original Path objects for downstream tools.
+    _rel_map: dict[str, Path] = {}
+    _rel_paths: list[Path] = []
+    for _p in staged:
+        try:
+            _rel = _p.relative_to(project_root)
+        except ValueError:
+            _rel = _p
+        _rel_paths.append(_rel)
+        _rel_map[str(_rel)] = _p
+    _rel_kept = _filter_ignored(_rel_paths, ignore_patterns)
+    staged = [_rel_map[str(r)] for r in _rel_kept]
     if not staged:
         return result_pass(
             "ignore-paths filtrou todos os staged files — nada a scanear"
