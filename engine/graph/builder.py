@@ -33,6 +33,7 @@ from engine.graph.parser_typescript import TypeScriptFileInfo, parse_typescript_
 from engine.inventory.design_system import read_design_system_inventory
 from engine.utils.paths import graph_db_path
 from engine.utils.sqlite_io import open_db, set_meta, transaction
+from engine.utils.yaml_io import YamlIOError
 
 _EXCLUDED_DIRS = frozenset(
     {
@@ -599,7 +600,7 @@ def _populate_ds_components_from_inventory(conn: sqlite3.Connection, project_roo
     """Seed ds_components from `.claude/inventory/design-system.yaml` if present."""
     try:
         inv = read_design_system_inventory(project_root)
-    except Exception:
+    except (OSError, UnicodeDecodeError, YamlIOError, KeyError, TypeError, AttributeError):
         inv = None
     if inv is None:
         return
