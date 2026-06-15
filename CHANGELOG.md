@@ -24,6 +24,44 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 - `.gitignore`: `.planning/*` agora catch-all (whitelist explícita pra `det-3/`, `det-6/`, `drift-1/`). Scratch de review/audit/fix não polui mais o working tree.
 - `.claude/rules/orchestrator-persona.md`: nova seção §Cleanup de `.planning/` ao final do trabalho — disciplina manual paralela aos `.bak` retention.
 
+### Fixed (PR #14 docs review — 2026-06-15)
+
+Aplicando findings do review independente do PR #14 (`docs/user-guides`).
+Counts agora consistentes entre guides, diagrams, `CLAUDE.md` raiz e a
+ground truth do `main`.
+
+- **Counts factuais** corrigidos em todos os artefatos:
+  - `forge doctor`: 14/12 → **16 categorias** (`engine/doctor.py` tem 16
+    funções `_check_*`)
+  - `forge verify`: 8/20/15 → **3 validators built-in + N contribuídos por
+    cards ativos**; 21 validators no diretório `validators/` (era anunciado
+    como 15 no `CLAUDE.md`)
+  - Commands: 13 user-facing (ingest é hook interno, documentado como tal)
+  - Tests: 637 → ~1531 (consulte handoff pra count atual)
+- **`forge ingest`**: nova seção em `daily-workflow.md` documentando que
+  é hook interno (não digitado manualmente) — fecha gap apontado em
+  H-001.
+- **`feature-lifecycle.md` Fase 5**: lista de gates expandida pra cobrir
+  `check_no_invented_behavior`, `check_files_in_allowed_files`,
+  `check_no_behavior_change` (refactor); separa gates da task do cascade
+  completo do `forge verify`.
+- **`feature-lifecycle.mermaid`**: Fase 6 corrigida pra `forge verify`
+  (era `forge doctor`); `forge undo` movido pra subgraph TRANSVERSAL
+  (não é comando de retrospectiva).
+- **`files-versioned-vs-local.mermaid`**: `memory/L1/archived/` isolado
+  no nó VERSIONADO; `memory/L1/ (WIP)` no LOCAL — resolve ambiguidade
+  visual do nó único anterior.
+- **`forge raw` (daily-workflow)**: adiciona `rebuild-templates` como 4º
+  subcomando (estava omitido).
+- **Q11–Q17 labels**: padronizado pra slugs canônicos em inglês entre
+  `getting-started.md` (tabela), `daily-workflow.md` (menu) e
+  `graph-query-flow.mermaid`.
+- **Voz mentor calmo**: `shipada/shipado` → `entregue`; `Fora da caixa`
+  → `Por padrão`; `Phase 6` qualificado como `Phase 6 do roadmap
+  (docs/design/02-phases.md)`.
+- **`CLAUDE.md` raiz**: counts em §Anatomia rápida e §Comandos úteis
+  alinhados à ground truth.
+
 ### Changed (User-facing docs, 2026-06-12)
 
 - **`README.md`** — Adicionada seção "Quick Start" com instalação e first steps + tabela "Guias do usuário" com links para os 4 guias.
