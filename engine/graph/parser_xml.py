@@ -66,6 +66,11 @@ class XmlSymbolInfo:
     kind: str
     line: int = 0
     context: Optional[str] = None  # e.g., tag name for view IDs
+    # H-007 (REVIEW v1.3.0): True quando ``binding_action`` é
+    # invocação (``::method`` ou ``-> lambda()``); False pra property
+    # reads (``@{viewModel.userName}``). Encode no dataclass pra
+    # downstream queries filtrarem por intenção sem reparse do ``name``.
+    is_method_call: bool = False
 
 
 @dataclass
@@ -79,7 +84,9 @@ class XmlFileInfo:
 
 
 def parse_xml_file(path: Path) -> XmlFileInfo:
-    source = path.read_text(encoding="utf-8")
+    # H-001 (REVIEW v1.3.0): ``errors="replace"`` alinha com parser_kotlin /
+    # parser_swift — XML mal-formado em bytes não trava o builder.
+    source = path.read_text(encoding="utf-8", errors="replace")
     return _parse_xml(source, path)
 
 
@@ -163,18 +170,22 @@ def _parse_xml(source: str, path: Path) -> XmlFileInfo:
             res_key = f"{m.group(1)}/{m.group(2)}"
             resource_keys.append(res_key)
 
-        # Binding actions (@{...}) — only expressions with method invocation
-        # or lambda arrow (heuristic: skip pure property reads like
-        # `@{viewModel.userName}`).
+        # Binding actions (@{...}) — H-007 (REVIEW v1.3.0): registra TODOS,
+        # tanto invocações (``::method``, ``-> lambda()``) quanto property
+        # reads (``@{viewModel.userName}``). Property reads são bindings
+        # legítimos no Android data binding (one-way / two-way). Flag
+        # ``is_method_call`` permite que queries downstream filtrem por
+        # intenção sem perder cobertura.
         for m in _RE_BINDING_EXPR.finditer(source):
             expr = m.group(1).strip()
-            if "::" in expr or "->" in expr:
-                line = source[:m.start()].count("\n") + 1
-                symbols.append(XmlSymbolInfo(
-                    name=expr,
-                    kind="binding_action",
-                    line=line,
-                ))
+            is_method_call = ("::" in expr) or ("->" in expr) or ("(" in expr)
+            line = source[:m.start()].count("\n") + 1
+            symbols.append(XmlSymbolInfo(
+                name=expr,
+                kind="binding_action",
+                line=line,
+                is_method_call=is_method_call,
+            ))
 
     return XmlFileInfo(
         is_layout=is_layout,

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from engine.graph.parser_java import parse_java_file
+from engine.graph.parser_java import _parse_java, parse_java_file
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 
@@ -36,7 +36,8 @@ def test_java_basic_parses_methods() -> None:
 
 
 def test_java_annotations_parses_annotation() -> None:
-    info = parse_java_file(FIXTURES / "java-annotations" / "com" / "example" / "InjectService.java")
+    # L-004 (REVIEW v1.3.0): fixture renomeada java-annotations → java-annotated-class.
+    info = parse_java_file(FIXTURES / "java-annotated-class" / "com" / "example" / "InjectService.java")
     classes = [s for s in info.symbols if s.kind == "class"]
     assert len(classes) >= 1
     assert classes[0].name == "InjectService"
@@ -57,3 +58,46 @@ def test_java_constructor_body() -> None:
     ctors = [s for s in info.symbols if s.kind == "constructor"]
     assert len(ctors) >= 1
     assert ctors[0].body is not None
+
+
+# ---------------------------------------------------------------------------
+# C-001 (REVIEW v1.3.0) — regressão: o regex _RE_METHOD não pode mais
+# capturar símbolos fantasma a partir de call expressions (``return foo(x);``,
+# ``new Foo(z);``, ``super(args);``) nem operadores ``new``/``this``/``super``.
+# ---------------------------------------------------------------------------
+
+def test_java_no_phantom_symbols_from_call_expressions() -> None:
+    src = "class Foo { void m() { return foo(x); new Foo(z); } }"
+    info = _parse_java(src)
+    kinds_names = [(s.kind, s.name) for s in info.symbols]
+    # Esperado: apenas ``class Foo`` e ``method m``.
+    assert ("class", "Foo") in kinds_names
+    assert ("method", "m") in kinds_names
+    # Fantasmas que o regex casava antes do fix:
+    assert ("constructor", "Foo") not in kinds_names, (
+        "``new Foo(z);`` virou constructor fantasma — C-001 regression"
+    )
+    assert ("method", "foo") not in kinds_names, (
+        "``return foo(x);`` virou method fantasma — C-001 regression"
+    )
+
+
+def test_java_no_phantom_from_throw_and_super() -> None:
+    src = """
+    class Bar {
+        void m() {
+            throw err(x);
+            super(args);
+            this(y);
+        }
+    }
+    """
+    info = _parse_java(src)
+    kinds_names = {(s.kind, s.name) for s in info.symbols}
+    # ``throw err(x);``, ``super(args);``, ``this(y);`` não podem virar method/ctor.
+    assert ("method", "err") not in kinds_names
+    assert ("method", "args") not in kinds_names
+    assert ("method", "y") not in kinds_names
+    # ``class Bar`` + ``method m`` é o esperado.
+    assert ("class", "Bar") in kinds_names
+    assert ("method", "m") in kinds_names

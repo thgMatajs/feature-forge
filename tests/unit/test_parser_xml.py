@@ -53,3 +53,49 @@ def test_xml_strings_resource() -> None:
     assert "email_hint" in string_keys
     assert "password_hint" in string_keys
     assert "login_action" in string_keys
+
+
+# ---------------------------------------------------------------------------
+# H-007 (REVIEW v1.3.0) — property reads (`@{viewModel.userName}`) precisam
+# virar binding_action symbols. Antes do fix, o filter
+# ``if "::" in expr or "->" in expr`` descartava todo property read.
+# ---------------------------------------------------------------------------
+
+def test_xml_property_read_binding_captured() -> None:
+    """@{viewModel.userName} (property read) deve gerar binding_action."""
+    info = parse_xml_file(FIXTURES / "xml-layout" / "res" / "layout" / "fragment_profile.xml")
+    bindings = [s for s in info.symbols if s.kind == "binding_action"]
+    # Property read deve estar presente (regression: antes era filtrado).
+    assert any("viewModel.userName" in s.name for s in bindings), (
+        f"Property read ``@{{viewModel.userName}}`` não foi capturada — "
+        f"H-007 regression. Bindings vistos: {[b.name for b in bindings]}"
+    )
+    # E a lambda ``@{() -> viewModel.onLogout()}`` continua presente.
+    assert any("onLogout" in s.name for s in bindings)
+
+
+def test_xml_binding_action_is_method_call_flag() -> None:
+    """is_method_call distingue property read de invocation/lambda."""
+    info = parse_xml_file(FIXTURES / "xml-layout" / "res" / "layout" / "fragment_profile.xml")
+    bindings = [s for s in info.symbols if s.kind == "binding_action"]
+    by_name = {b.name: b for b in bindings}
+
+    # Property read → is_method_call = False
+    prop_read = next(
+        (b for n, b in by_name.items() if "userName" in n and "(" not in n),
+        None,
+    )
+    assert prop_read is not None
+    assert prop_read.is_method_call is False, (
+        "Property read deveria ter is_method_call=False"
+    )
+
+    # Lambda com invocation → is_method_call = True
+    lambda_call = next(
+        (b for n, b in by_name.items() if "onLogout" in n),
+        None,
+    )
+    assert lambda_call is not None
+    assert lambda_call.is_method_call is True, (
+        "Lambda invocation deveria ter is_method_call=True"
+    )

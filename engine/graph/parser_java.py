@@ -54,6 +54,19 @@ _RE_CLASS = re.compile(
     re.MULTILINE,
 )
 
+# Reserved words that look like a "type" token when the regex matches
+# a call-expression statement (e.g. ``return foo(x);`` or ``new Foo(z);``).
+# C-001 (REVIEW v1.3.0): without this filter, the regex captures phantom
+# symbols from every call/new/throw/control-flow statement, inflating
+# symbols table 5-10x on real Android repos and corrupting Q12/Q13
+# body-hash dup detection. Reserved words can never be the *type* of a
+# method declaration in valid Java, so filtering them out is safe.
+_JAVA_RESERVED_TYPE_BLOCKLIST = frozenset({
+    "return", "new", "this", "super", "throw", "if", "while", "for",
+    "switch", "do", "else", "case", "break", "continue", "yield",
+    "synchronized", "try", "catch", "finally", "assert", "instanceof",
+})
+
 _RE_METHOD = re.compile(
     r"(?:(?:public|private|protected|static|final|abstract|synchronized|native|default)\s+)*"
     r"(?:\w+(?:\[\])?(?:<[^>]*>)?\.)?"
@@ -67,6 +80,19 @@ _RE_METHOD = re.compile(
 
 # Visibility prefix detection
 _VISIBILITY_RE = re.compile(r"(public|private|protected)")
+
+# Comment strippers — single-line (``// ...``) and block (``/* ... */``).
+# Usados antes de _VISIBILITY_RE pra evitar false positive em comentários
+# como ``// public method``. M-009 (REVIEW v1.3.0).
+_RE_LINE_COMMENT = re.compile(r"//[^\n]*")
+_RE_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+
+
+def _strip_comments(text: str) -> str:
+    """Remove block and line comments — defensive against visibility false-positives."""
+    text = _RE_BLOCK_COMMENT.sub("", text)
+    text = _RE_LINE_COMMENT.sub("", text)
+    return text
 
 
 @dataclass
@@ -91,8 +117,13 @@ class JavaFileInfo:
 
 
 def parse_java_file(path: Path) -> JavaFileInfo:
-    """Parse a single .java file. Returns a populated ``JavaFileInfo``."""
-    source = path.read_text(encoding="utf-8")
+    """Parse a single .java file. Returns a populated ``JavaFileInfo``.
+
+    H-001 (REVIEW v1.3.0): ``errors="replace"`` alinha com parser_kotlin /
+    parser_swift — bytes inválidos viram ``U+FFFD`` em vez de explodir o
+    builder em UnicodeDecodeError. Best-effort parsing tolera lixo.
+    """
+    source = path.read_text(encoding="utf-8", errors="replace")
     return _parse_java(source)
 
 
@@ -128,7 +159,9 @@ def _parse_java(source: str) -> JavaFileInfo:
         line = source[:start].count("\n") + 1
 
         visibility = "internal"  # alinhado com Kotlin internal (package-scoped)
-        vis_m = _VISIBILITY_RE.search(kind_raw)
+        # M-009: stripa comments antes da detecção pra evitar false positive
+        # quando ``// public method`` aparece antes da declaração.
+        vis_m = _VISIBILITY_RE.search(_strip_comments(kind_raw))
         if vis_m:
             visibility = vis_m.group(1)
 
@@ -178,6 +211,19 @@ def _parse_java(source: str) -> JavaFileInfo:
         params = m.group(3)
         full_match = m.group(0)
 
+        # C-001 (REVIEW v1.3.0): rejeita matches onde o "tipo" é uma reserved
+        # word — só pode acontecer quando o regex casou uma call-expression
+        # statement (``return foo(x);``), ``new Foo(z);``, ``throw e(x);`` etc.
+        # Em declaração de método válida, o token de tipo NUNCA é palavra
+        # reservada. Sem este filtro, instâncias de classes viram "constructor"
+        # fantasma (via heurística is_constructor mais abaixo), inflando o
+        # symbols table e corrompendo Q12/Q13 (body-hash dup detection).
+        # Strip ``<...>`` generic suffix antes do lookup pra que ``return<T>``
+        # (sintaticamente impossível em Java, mas defensivo) também caia.
+        raw_type_base = raw_type.split("<", 1)[0]
+        if raw_type_base in _JAVA_RESERVED_TYPE_BLOCKLIST:
+            continue
+
         # Constructor heuristic: method name matches an enclosing class
         # name collected above.
         is_constructor = method_name in class_names
@@ -197,13 +243,14 @@ def _parse_java(source: str) -> JavaFileInfo:
         # match start.
         preceding = source[max(0, m.start() - 200):m.start()]
         visibility = "internal"  # alinhado com Kotlin internal (package-scoped)
-        # Also accept visibility tokens captured inside ``full_match`` (the
-        # regex consumes leading modifiers via a non-capturing group).
-        vis_m = _VISIBILITY_RE.search(full_match)
+        # M-009: stripa comments do full_match e da janela de preceding
+        # antes da detecção pra evitar matchear ``// public xyz`` em vez do
+        # modifier real da declaração.
+        vis_m = _VISIBILITY_RE.search(_strip_comments(full_match))
         if vis_m:
             visibility = vis_m.group(1)
         else:
-            vis_m = _VISIBILITY_RE.search(preceding[-100:])
+            vis_m = _VISIBILITY_RE.search(_strip_comments(preceding[-100:]))
             if vis_m:
                 visibility = vis_m.group(1)
 

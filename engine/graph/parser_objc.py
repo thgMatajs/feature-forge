@@ -32,20 +32,35 @@ _RE_INTERFACE = re.compile(
 _RE_PROTOCOL = re.compile(r'@protocol\s+(\w+)', re.MULTILINE)
 _RE_IMPLEMENTATION = re.compile(r'@implementation\s+(\w+)', re.MULTILINE)
 
-# Method: - (void)methodName or + (instancetype)methodName:(type)param
-_RE_METHOD = re.compile(
-    r'^([+-])\s*'
-    r'(?:\(([\w\s\*<>,\[\]{}]+)\))?\s*'  # return type in parens
-    r'(\w+)\s*'  # method name / first segment
-    r'(?::\s*\(([\w\s\*<>]+)\)\s*(\w+)\s*)?'  # optional first param
-    r'(?:\s*(?:\w+)\s*:\s*\(([\w\s\*<>]+)\)\s*(\w+)\s*)*',  # more params
+# Method header start — ``-`` (instance) or ``+`` (class). L-003 (REVIEW
+# v1.3.0): ancora ``^[+-]\s*\(`` exige parêntese imediato após whitespace,
+# impedindo que comentários ``// - here's a note`` casem. Captura toda a
+# header até o primeiro ``{`` ou ``;`` pra que o parser extraia selector
+# segments num passo separado (C-002).
+_RE_METHOD_HEADER = re.compile(
+    r'^([+-])\s*'                            # 1: class/instance
+    r'\(([\w\s\*<>,\[\]{}]+)\)\s*'            # 2: return type
+    r'([^\n{;]+?)'                            # 3: rest of header (selector + params)
+    r'\s*(?:\{|;)',                           # body opener or no-body decl
     re.MULTILINE,
 )
 
+# Selector segment matcher — captura ``label:`` (com ou sem (type)param).
+# Usado pra reconstrução ObjC-canonical do selector composto.
+# C-002 (REVIEW v1.3.0).
+_RE_SEL_SEGMENT = re.compile(
+    r'(\w+)\s*:\s*\([^)]+\)\s*\w+',  # label:(type)param
+)
+
+# Property: também aceita generics como ``NSArray<UserModel *> *users``.
+# L-002 (REVIEW v1.3.0). O separador entre tipo e nome aceita ``*`` (zero
+# ou mais), espaços, ou nenhum espaço quando ``*`` está colado no tipo
+# (``NSArray<UserModel *>*users``).
 _RE_PROPERTY = re.compile(
     r'@property\s*(?:\([^)]*\))?\s*'
-    r'(\w+(?:\s*\*)?)\s+'  # type
-    r'(\w+)\s*;',  # name
+    r'(\w+(?:\s*<[^>]+>)?)'             # 1: type (com generics opcional)
+    r'(?:\s*\*+\s*|\s+)'                 # ponteiros OU whitespace
+    r'(\w+)\s*;',                        # 2: name
     re.MULTILINE,
 )
 
@@ -71,7 +86,9 @@ class ObjcFileInfo:
 
 
 def parse_objc_file(path: Path) -> ObjcFileInfo:
-    source = path.read_text(encoding="utf-8")
+    # H-001 (REVIEW v1.3.0): ``errors="replace"`` alinha com
+    # parser_kotlin / parser_swift.
+    source = path.read_text(encoding="utf-8", errors="replace")
     return _parse_objc(source)
 
 
@@ -106,40 +123,62 @@ def _parse_objc(source: str) -> ObjcFileInfo:
             body_hash=body_hash,
         ))
 
-    # @protocol
+    # @protocol — L-007 + H-009 (REVIEW v1.3.0): popula ``signature`` e
+    # ``body_hash`` pra paridade com @interface.
     for m in _RE_PROTOCOL.finditer(source):
         name = m.group(1)
         line = source[:m.start()].count("\n") + 1
         end_m = re.search(r'@end', source[m.end():])
         body = source[m.end():m.end() + end_m.start()] if end_m else None
+        body_hash = hash_body(body) if body else None
         symbols.append(ObjcSymbolInfo(
             name=name,
             kind="protocol",
+            signature=f"@protocol {name}",
             line=line,
             body=body,
+            body_hash=body_hash,
         ))
 
-    # @implementation
+    # @implementation — L-007 + H-009 (REVIEW v1.3.0).
     for m in _RE_IMPLEMENTATION.finditer(source):
         name = m.group(1)
         line = source[:m.start()].count("\n") + 1
         end_m = re.search(r'@end', source[m.end():])
         body = source[m.end():m.end() + end_m.start()] if end_m else None
+        body_hash = hash_body(body) if body else None
         symbols.append(ObjcSymbolInfo(
             name=name,
             kind="implementation",
+            signature=f"@implementation {name}",
             line=line,
             body=body,
+            body_hash=body_hash,
         ))
 
-    # Methods (simplified — best effort)
-    for m in _RE_METHOD.finditer(source):
+    # Methods — C-002 + L-003 (REVIEW v1.3.0).
+    # Estratégia: _RE_METHOD_HEADER captura toda a header até ``{`` ou ``;``.
+    # Selector composto é reconstruído por _RE_SEL_SEGMENT (todos os labels:),
+    # caindo de volta no primeiro identifier se o método não tiver
+    # argumentos (e.g., ``- (NSString *)displayName``). L-003 ancora
+    # ``^[+-]\s*\(`` exigindo ``(`` imediatamente após o prefixo, então
+    # comentários ``// - here's a note`` não casam.
+    for m in _RE_METHOD_HEADER.finditer(source):
         is_class = m.group(1) == "+"
-        ret_type = m.group(2) or "void"
-        sel_parts = [m.group(3)]
-        if m.group(4) and m.group(5):
-            sel_parts.append(f"{m.group(3)}:{m.group(5)}")
-        full_sel = ":".join(sel_parts)
+        ret_type = (m.group(2) or "void").strip()
+        rest = m.group(3)
+
+        sel_parts = _RE_SEL_SEGMENT.findall(rest)
+        if sel_parts:
+            # Selector composto: ``label1:label2:label3:``
+            full_sel = ":".join(sel_parts) + ":"
+        else:
+            # No-argument method — o primeiro identifier é o selector.
+            head_m = re.match(r'\s*(\w+)', rest)
+            if head_m is None:
+                continue
+            full_sel = head_m.group(1)
+
         line = source[:m.start()].count("\n") + 1
         prefix = "+" if is_class else "-"
         sig = f"{prefix} ({ret_type}){full_sel}"

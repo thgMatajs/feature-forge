@@ -760,8 +760,28 @@ def _persist_objc(conn: sqlite3.Connection, file_id: int, info: ObjcFileInfo) ->
     permitir queries language-agnostic seguirem matching simples por kind
     prefix. Imports são gravados com kind ``import`` igual aos demais
     parsers — ``#import`` e ``@import`` já vêm normalizados pelo parser.
+
+    H-009 (REVIEW v1.3.0): visibility deriva do kind ObjC. Símbolos
+    declarados via ``@interface``/``@protocol``/``@category`` (interface
+    surface — declared in .h files OR forward-declared em .m) marcam-se
+    como ``public``. ``@implementation`` é detalhe interno (``internal``).
+    Métodos e properties herdam ``public`` por default (são API até prova
+    em contrário). Schema columns ``receiver_type`` e ``modifiers``
+    populadas mesmo quando ``None`` — explícito > implícito.
     """
     edges = 0
+
+    def _visibility_for(s) -> str:
+        # H-009: kind ObjC mapeado pra visibility canônica.
+        # ``class`` aqui vem de @interface (surface declarada).
+        # ``implementation`` é internal — só existe em .m.
+        if s.kind in {"class", "protocol", "category"}:
+            return "public"
+        if s.kind == "implementation":
+            return "internal"
+        # method / property — assume API até prova em contrário.
+        return "public"
+
     symbol_rows = [
         (
             file_id,
@@ -770,9 +790,11 @@ def _persist_objc(conn: sqlite3.Connection, file_id: int, info: ObjcFileInfo) ->
             s.signature,
             s.line,
             s.line,
-            "public",
+            _visibility_for(s),
+            s.receiver_type,
             s.body_hash,
             s.body_tokens,
+            " ".join(s.modifiers) if s.modifiers else None,
             s.body,
         )
         for s in info.symbols
@@ -781,8 +803,8 @@ def _persist_objc(conn: sqlite3.Connection, file_id: int, info: ObjcFileInfo) ->
         conn.executemany(
             "INSERT INTO symbols("
             "  file_id, name, kind, signature, line_start, line_end, visibility, "
-            "  body_hash, body_tokens, body"
-            ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "  receiver_type, body_hash, body_tokens, modifiers, body"
+            ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             symbol_rows,
         )
 
