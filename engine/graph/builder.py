@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from pathspec import PathSpec
-from pathspec.patterns import GitWildMatchPattern
+from pathspec.patterns.gitignore.spec import GitIgnoreSpecPattern
 
 from engine.graph.gradle_deps import (
     parse_module_dependencies,
@@ -271,7 +271,7 @@ def _glob_match(rel_path: str, pattern: str) -> bool:
     """pathspec-backed match. Encodes canonical gitignore semantics."""
     spec = _PATHSPEC_CACHE.get(pattern)
     if spec is None:
-        spec = PathSpec.from_lines(GitWildMatchPattern, [pattern])
+        spec = PathSpec.from_lines(GitIgnoreSpecPattern, [pattern])
         _PATHSPEC_CACHE[pattern] = spec
     return spec.match_file(rel_path)
 
