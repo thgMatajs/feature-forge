@@ -31,7 +31,6 @@ from __future__ import annotations
 import re
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -68,7 +67,7 @@ from engine.utils.checkpoint_io import (
     load_yaml_checkpoint as _load_yaml_checkpoint_io,
     save_yaml_checkpoint as _save_yaml_checkpoint_io,
 )
-from engine.utils.iso import utc_now_iso as _utc_now_iso_shared
+from engine.utils.iso import utc_now_iso
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -328,12 +327,13 @@ def _plan_checkpoint_path(project_root: Path) -> Path:
     return claude_dir(project_root) / ".plan-checkpoint.yaml"
 
 
-# Os 4 helpers abaixo são thin shims sobre ``engine.utils.checkpoint_io`` +
-# ``engine.utils.iso`` — consolidação dos 30 duplicates + 10 cópias de
-# ``_utc_now_iso_*`` apontada pelos findings #5 e #21 do master review do
-# PR #11. Os nomes ``_save_plan_checkpoint`` etc. permanecem como API
-# privada do módulo para preservar os contracts dos testes em
+# Os helpers abaixo são thin shims sobre ``engine.utils.checkpoint_io`` —
+# consolidação dos 30 duplicates apontada pelos findings #5 e #21 do master
+# review do PR #11. Os nomes ``_save_plan_checkpoint`` etc. permanecem como
+# API privada do módulo para preservar os contracts dos testes em
 # ``tests/unit/test_engine_plan_resume.py`` (Mandamento #2 — verde).
+# L-03 (PR #remediation): ``_utc_now_iso_*`` shims removidos; callers
+# usam ``utc_now_iso`` direto de ``engine.utils.iso``.
 
 
 def _save_plan_checkpoint(cp: _PlanCheckpoint) -> None:
@@ -361,11 +361,6 @@ def _load_plan_checkpoint(project_root: Path) -> dict[str, Any] | None:
 def _clear_plan_checkpoint(project_root: Path) -> None:
     """Remove the checkpoint — best-effort; silent on OSError (idempotent)."""
     _clear_checkpoint_io(_plan_checkpoint_path(project_root))
-
-
-def _utc_now_iso_plan() -> str:
-    """ISO-8601 UTC timestamp — thin shim sobre ``engine.utils.iso``."""
-    return _utc_now_iso_shared()
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -1128,7 +1123,7 @@ def _elicit_slug(argv_slug: Optional[str], project_root: Optional[Path] = None) 
         _save_plan_checkpoint(
             _PlanCheckpoint(
                 step="step-elicit-slug",
-                at=_utc_now_iso_plan(),
+                at=utc_now_iso(),
                 project_root=str(project_root),
                 intent_id=question.stable_intent_id(
                     "ask_text",
@@ -1440,7 +1435,7 @@ def run(argv: list[str]) -> int:
     _save_plan_checkpoint(
         _PlanCheckpoint(
             step="step-post-slug",
-            at=_utc_now_iso_plan(),
+            at=utc_now_iso(),
             project_root=str(project_root),
             intent_id=None,
             feature_slug=slug,
@@ -1656,7 +1651,7 @@ def record_external_dep(
         "integration": integration,
         "description": description,
         "blocking": bool(blocking),
-        "captured-at": _utc_now_iso(),
+        "captured-at": utc_now_iso(),
     }
 
     existing = read_elicitation(slug, project_root) or {}
@@ -1687,11 +1682,6 @@ def record_external_dep(
         },
     )
     return cast(dict[str, Any], entry)
-
-
-def _utc_now_iso() -> str:
-    """ISO 8601 UTC with second precision and trailing Z — thin shim sobre ``engine.utils.iso``."""
-    return _utc_now_iso_shared()
 
 
 # Re-export for cli dispatcher + test surface.

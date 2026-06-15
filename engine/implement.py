@@ -57,7 +57,7 @@ from engine.utils.checkpoint_io import (
     load_yaml_checkpoint as _load_yaml_checkpoint_io,
     save_yaml_checkpoint as _save_yaml_checkpoint_io,
 )
-from engine.utils.iso import utc_now_iso as _utc_now_iso_shared
+from engine.utils.iso import utc_now_iso
 
 _SLUG_PATTERN = re.compile(r"^[a-z][a-z0-9-]{1,48}[a-z0-9]$")
 _TASK_ID_PATTERN = re.compile(r"^TASK-(\d{4})$")
@@ -99,12 +99,13 @@ def _implement_checkpoint_path(project_root: Path) -> Path:
     return claude_dir(project_root) / ".implement-checkpoint.yaml"
 
 
-# Os 4 helpers abaixo são thin shims sobre ``engine.utils.checkpoint_io`` +
-# ``engine.utils.iso`` — consolidação dos 30 duplicates + 10 cópias de
-# ``_utc_now_iso_*`` apontada pelos findings #5 e #21 do master review do
-# PR #11. Os nomes ``_save_implement_checkpoint`` etc. permanecem como API
-# privada do módulo para preservar os contracts dos testes em
+# Os helpers abaixo são thin shims sobre ``engine.utils.checkpoint_io`` —
+# consolidação dos 30 duplicates apontada pelos findings #5 e #21 do master
+# review do PR #11. Os nomes ``_save_implement_checkpoint`` etc. permanecem
+# como API privada do módulo para preservar os contracts dos testes em
 # ``tests/unit/test_engine_implement_resume.py`` (Mandamento #2 — verde).
+# L-03 (PR #remediation): ``_utc_now_iso_*`` shims removidos; callers
+# usam ``utc_now_iso`` direto de ``engine.utils.iso``.
 
 
 def _save_implement_checkpoint(cp: _ImplementCheckpoint) -> None:
@@ -131,11 +132,6 @@ def _load_implement_checkpoint(project_root: Path) -> dict[str, Any] | None:
 def _clear_implement_checkpoint(project_root: Path) -> None:
     """Remove the checkpoint — best-effort; silent on OSError (idempotent)."""
     _clear_checkpoint_io(_implement_checkpoint_path(project_root))
-
-
-def _utc_now_iso_implement() -> str:
-    """ISO-8601 UTC timestamp — thin shim sobre ``engine.utils.iso``."""
-    return _utc_now_iso_shared()
 
 
 # ── Data shapes ──────────────────────────────────────────────────────────────
@@ -1086,7 +1082,7 @@ def _elicit_slug(argv_slug: str | None, project_root: Path) -> str:
     _save_implement_checkpoint(
         _ImplementCheckpoint(
             step="step-elicit-slug",
-            at=_utc_now_iso_implement(),
+            at=utc_now_iso(),
             project_root=str(project_root),
             intent_id=question.stable_intent_id(
                 "ask_text",
@@ -1133,7 +1129,7 @@ def run(argv: list[str]) -> int:
     _save_implement_checkpoint(
         _ImplementCheckpoint(
             step="step-post-slug",
-            at=_utc_now_iso_implement(),
+            at=utc_now_iso(),
             project_root=str(project_root),
             intent_id=None,
             feature_slug=slug,
