@@ -103,7 +103,9 @@ forge evolve     # 6 kinds: consolidate / promote / kmp-migration / etc
 forge graph      # opções 12–17 ou "r" (combined view)
 ```
 
-Requer Python 3.11+ + PyYAML (única dep externa).
+Requer Python 3.11+ + PyYAML + pathspec (runtime). Dev: pytest + mypy.
+Install canônico: `pip install -e .` na raiz do repo (também rodado
+idempotentemente por `bash .claude/bootstrap.sh`).
 
 ## Where it lives
 
