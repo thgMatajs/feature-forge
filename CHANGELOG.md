@@ -16,8 +16,12 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 - **L-01 + L-04** — Removido parâmetro `project_root` dead em
   `_print_blocked_refusal` (`engine/implement.py`).
 - **L-03** — Consolidado `_utc_now_iso_implement/_plan/_verify` em
-  import direto de `engine.utils.iso.utc_now_iso` (5 shims removidos,
-  12 callers substituídos em 3 arquivos).
+  import direto de `engine.utils.iso.utc_now_iso` em `engine/implement.py`,
+  `engine/plan.py`, `engine/verify.py` (5 shims, 12 callers). Shims
+  similares em outros módulos (`engine/undo.py`, `engine/evolve.py`,
+  `engine/reconfigure.py`, `engine/memory_cli.py`, `engine/graph_cli.py`,
+  `engine/init.py`, `engine/doctor.py`) ficam fora de scope desta entrega
+  — gap registrado em `04-pending.md` (LO-01 follow-up).
 - **L-06** — `sys.path.insert` em `tests/conftest.py` mantido com
   comment justificando + gap aberto em `04-pending.md` pra revisitar
   quando CI pipeline oficial vier.

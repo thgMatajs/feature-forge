@@ -3002,6 +3002,57 @@ prevenir reabertura em review futura.
   "Mypy rollout — advisory mode" acima).
 - **PEP 649 monitor** — L-08, ver entrada acima.
 
+## Final review 2026-06-15 — follow-up gaps
+
+### Consolidação completa de `feature_path` (M-04 / WR-03 follow-up)
+
+**Origem:** Final review 2026-06-15 (WR-03).
+**Estado:** `feature_path` consolidado em `engine/utils/paths.py`, mas
+`_resolve_features_root` continua em `engine/plan.py`. `paths.feature_path`
+lazy-importa pra evitar ciclo. Engine startup-time degradado marginalmente
+(plan.py é carregado no primeiro call de feature_path). Ciclo não materializa
+porque o import é lazy, mas refactor futuro que torne eager quebra os dois
+módulos.
+**Caminho preferido:** mover `_resolve_features_root` pra `engine/utils/paths.py`
+virando leaf real. Backwards-compat: re-export shim em plan.py.
+**Quando revisitar:** próxima sessão de refactor disciplinado.
+
+### YAML cap — anchor explosion + special files (H-02 / MD-01 follow-up)
+
+**Origem:** Final review 2026-06-15 (MD-01).
+**Estado:** `_YAML_MAX_BYTES = 10MB` em `engine/utils/yaml_io.py` cobre
+arquivos regular grandes, mas não:
+- Symlinks pra `/dev/zero`, FIFOs, sockets, block devices (st_size retorna 0)
+- Anchor-based expansion (alias bomb) — arquivo 100KB pode expandir pra GB
+**Mitigação atual:** vetor requer attacker-controlled YAML; engine só lê
+paths internamente controlados. Não-bloqueador.
+**Caminho preferido:** adicionar `path.is_file()` check antes do `st_size`;
+considerar `yaml.CSafeLoader` com limits explícitos pra anchor depth.
+**Quando revisitar:** se feature-forge vier a aceitar YAML user-uploaded.
+
+### Consolidação completa de `_utc_now_iso` shims (L-03 / LO-01 follow-up)
+
+**Origem:** Final review 2026-06-15 (LO-01).
+**Estado:** 5 shims removidos em implement/plan/verify (Bloco 5 / L-03).
+Shims similares permanecem em `engine/undo.py:79-81`, `engine/evolve.py`,
+`engine/reconfigure.py`, `engine/memory_cli.py`, `engine/graph_cli.py`,
+`engine/init.py`, `engine/doctor.py` (alias `_utc_now_iso_shared` ou
+wrappers locais). CHANGELOG entry corrigida pra refletir scope verdadeiro.
+**Caminho preferido:** mesma cirurgia (import direto de `utc_now_iso`)
+nos 7 módulos restantes.
+**Quando revisitar:** próxima sessão de cleanup técnico.
+
+### `check_secrets` relativization perf (M-12 / LO-03 follow-up)
+
+**Origem:** Final review 2026-06-15 (LO-03).
+**Estado:** M-12 introduziu re-mapping `_rel_map: dict[str, Path]` +
+`_rel_paths: list[Path]` antes do filter em `validators/check_secrets.py:638-655`.
+Funcional, mas hot-path per-task hook ganhou 2-passagem + dict allocation.
+**Caminho preferido:** refactor pra single-pass com generator + walrus, ou
+inline-relativize sem map intermediário.
+**Quando revisitar:** se profiling mostrar gargalo (improvável; check_secrets
+roda em batches pequenos de staged files).
+
 ---
 
 **For a fresh session retomando o projeto, use o handoff:**
