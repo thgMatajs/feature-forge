@@ -3017,18 +3017,25 @@ módulos.
 virando leaf real. Backwards-compat: re-export shim em plan.py.
 **Quando revisitar:** próxima sessão de refactor disciplinado.
 
-### YAML cap — anchor explosion + special files (H-02 / MD-01 follow-up)
+### YAML cap — anchor explosion + special files (H-02 / MD-01 / A-003 follow-up)
 
-**Origem:** Final review 2026-06-15 (MD-01).
+**Origem:** Final review 2026-06-15 (MD-01); reforçado pelo master review
+PR #15 finding A-003 (2026-06-15).
 **Estado:** `_YAML_MAX_BYTES = 10MB` em `engine/utils/yaml_io.py` cobre
 arquivos regular grandes, mas não:
 - Symlinks pra `/dev/zero`, FIFOs, sockets, block devices (st_size retorna 0)
-- Anchor-based expansion (alias bomb) — arquivo 100KB pode expandir pra GB
+- Anchor-based expansion (alias bomb) — arquivo 100KB com `&a [...]`
+  referenciado N vezes cabe em <1MB e ainda explode em memória/CPU
+  durante `yaml.safe_load`. PyYAML não tem flag nativa pra limitar
+  aliases — exige wrap manual.
 **Mitigação atual:** vetor requer attacker-controlled YAML; engine só lê
-paths internamente controlados. Não-bloqueador.
+paths internamente controlados. Não-bloqueador hoje.
 **Caminho preferido:** adicionar `path.is_file()` check antes do `st_size`;
-considerar `yaml.CSafeLoader` com limits explícitos pra anchor depth.
-**Quando revisitar:** se feature-forge vier a aceitar YAML user-uploaded.
+implementar `yaml.SafeLoader` com `composer` custom que limita
+profundidade/contagem de aliases (ou `yaml.CSafeLoader` se aceitarmos
+extensão C).
+**Quando revisitar:** se feature-forge vier a aceitar YAML user-uploaded
+(presets externos, cards de terceiros via `forge evolve`, etc.).
 
 ### Consolidação completa de `_utc_now_iso` shims (L-03 / LO-01 follow-up)
 

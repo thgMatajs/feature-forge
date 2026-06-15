@@ -264,7 +264,13 @@ def _render_recent_activity(project_root: Path) -> None:
     for slug in list_active_features(project_root):
         try:
             history = read_history(slug, project_root)
-        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        except (MemoryError, OSError, UnicodeDecodeError):
+            # B-001 (master review PR #15): `read_history` wraps
+            # `JSONDecodeError` in `MemoryError` (engine/memory/l1.py).
+            # JSONDecodeError directly is never raised from this path —
+            # catching it was a no-op and a malformed JSONL crashed the
+            # status render. Now we tolerate the wrapped error and skip
+            # the offending feature's history (best-effort observability).
             continue
         for entry in history:
             at = str(entry.get("at") or "")

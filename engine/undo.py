@@ -29,6 +29,7 @@ from typing import Any, Optional
 from engine.memory.l1 import (
     L1State,
     append_history,
+    current_subtype,
     list_active_features,
     read_history,
     read_l1_status,
@@ -41,7 +42,7 @@ from engine.utils.paths import (
     ProjectRootNotFoundError,
     claude_dir,
     ensure_dir,
-    feature_dir,
+    feature_path,
     find_project_root,
     memory_l2_path,
     workflow_config_path,
@@ -74,6 +75,13 @@ def _delete_feature_artifacts_guard(project_root: Path, target: Path) -> None:
         raise ValueError(
             f"Refusing to delete path outside project: {target_resolved}"
         ) from exc
+    # A-001 (master review PR #15): `Path.relative_to` returns `Path('.')`
+    # when target == project — i.e. it does NOT raise ValueError on equality.
+    # A malicious slug like `../../..` could resolve to the project root and
+    # slip past the containment check above, then `shutil.rmtree(project_root)`
+    # would obliterate the entire project after the 2 confirms. Reject equality.
+    if target_resolved == project_resolved:
+        raise ValueError("Refusing to delete project root")
 
 
 def _utc_now_iso() -> str:
@@ -443,7 +451,13 @@ def _abort_feature(project_root: Path, feature_slug: str, reason: str) -> bool:
 
 
 def _delete_feature_artifacts(project_root: Path, feature_slug: str) -> bool:
-    fpath = feature_dir(project_root, feature_slug)
+    # A-002 (master review PR #15): use `feature_path` honoring subtype so
+    # non-product features (refactor/spike/chore/bugfix) — which live under
+    # `non-product/{slug}/` per filesystem-layout §3.5 — are actually
+    # deletable. The old `feature_dir(...)` always pointed to the product
+    # folder, leaving non-product artifacts orphaned after `forge undo`.
+    subtype = current_subtype(feature_slug, project_root)
+    fpath = feature_path(project_root, feature_slug, subtype=subtype)
 
     # MD-02 (final review 2026-06-15): path-traversal guard runs FIRST,
     # before any branch that could leak the resolved path to the user
