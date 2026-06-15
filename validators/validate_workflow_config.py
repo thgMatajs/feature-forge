@@ -339,6 +339,10 @@ def _check_card_sha(project_root: Path, data: dict[str, Any]) -> list[str]:
         try:
             actual = file_sha256(card_yaml)
         except OSError as exc:
+            # B-005 (master review PR #15): OSError é exaustivo aqui —
+            # `file_sha256` faz binary read + `hashlib.sha256.update` em
+            # streaming; nem `hashlib` nem o binary IO levantam outra
+            # exceção esperada (pattern já adotado em init.py MD-03).
             out.append(f"card {name}: sha256 erro ({exc})")
             continue
         if actual != recorded:

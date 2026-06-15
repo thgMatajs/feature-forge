@@ -31,6 +31,15 @@ def set_seed(seed: int | None) -> None:
 
     `seed=None` clears the pin; subsequent calls use a fresh
     `random.Random()` per call (no module-global state).
+
+    A-010 (master review PR #15): **not thread-safe**. `set_seed` and
+    `_get_rng` operam sobre `_seed` / `_rng_seeded` module-global sem lock.
+    Em testes multi-threaded (pytest-xdist usando threading, não processos)
+    duas threads que setam seed em paralelo podem ver `_rng_seeded`
+    parcialmente reseedado. Pinning é só para fixtures sequenciais —
+    se thread isolation for ambicionada, trocar `_seed`/`_rng_seeded` por
+    `threading.local()`. Hoje o projeto não usa threading (xdist roda
+    processos), então o risco é teórico.
     """
     global _seed
     _seed = seed

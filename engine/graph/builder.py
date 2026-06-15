@@ -374,6 +374,12 @@ def _reset_domain_tables(
         # H-04: PRAGMA restore is best-effort. If the connection is closing
         # (or the DELETE above already raised), we still try to flip FK back
         # on; failure here must NOT mask the original exception.
+        #
+        # A-007 (master review PR #15): explicit — `ValueError` do guard de
+        # allowlist (linhas 368-371) também passa por este `finally`. PRAGMA
+        # é restaurado mesmo quando o erro foi de validação (allowlist miss),
+        # não apenas de I/O do DELETE. Sem este finally, validation-error
+        # deixaria FKs desabilitadas pra resto da vida da conexão.
         try:
             conn.execute("PRAGMA foreign_keys = ON")
         except sqlite3.Error:
@@ -617,6 +623,15 @@ def _populate_ds_components_from_inventory(conn: sqlite3.Connection, project_roo
     try:
         inv = read_design_system_inventory(project_root)
     except (OSError, UnicodeDecodeError, YamlIOError, KeyError, TypeError, AttributeError):
+        # B-004 (master review PR #15): cada tipo é esperado, não shotgun.
+        # - OSError: filesystem read em inventory_dir
+        # - UnicodeDecodeError: design-system.yaml com encoding inválido
+        # - YamlIOError: parser do read_yaml em YAML malformado
+        # - KeyError: `c["name"]` em entry de components sem o campo
+        # - TypeError: `dict(c.get("paths") or {})` quando `paths` não é mapping
+        # - AttributeError: `tokens_raw.get(...)` quando o nó é list em vez de dict
+        # Seed é best-effort; inventory inválido vira ds_components vazio (cascade
+        # segue com graph parcial em vez de explodir o builder inteiro).
         inv = None
     if inv is None:
         return

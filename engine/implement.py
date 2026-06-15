@@ -296,8 +296,19 @@ def _collect_tasks(feature_path: Path) -> list[TaskContract]:
     return [_load_task_contract(p) for p in files]
 
 
+class TaskGraphError(RuntimeError):
+    """A-008 (master review PR #15): domain exception para erros no DAG de tasks.
+
+    Substitui `SystemExit` em `_topo_sort` — `SystemExit` é `BaseException`,
+    não pega em `except Exception`, e qualquer chamador defensivo (tests,
+    hooks, embedded use) perdia mensagem ou terminava abruptamente. Validação
+    de DAG não é shutdown; o CLI `run()` é quem mapeia esta exceção pro
+    exit code não-zero do entry-point.
+    """
+
+
 def _topo_sort(tasks: list[TaskContract]) -> list[TaskContract]:
-    """Stable topological sort by `dependencies`. Cycles raise SystemExit."""
+    """Stable topological sort by `dependencies`. Cycles raise TaskGraphError."""
     by_id = {t.task_id: t for t in tasks}
     visiting: set[str] = set()
     visited: set[str] = set()
@@ -308,12 +319,14 @@ def _topo_sort(tasks: list[TaskContract]) -> list[TaskContract]:
             return
         if node_id in visiting:
             chain = " → ".join(stack + [node_id])
-            raise SystemExit(f"forge implement: dependency cycle detected ({chain})")
+            raise TaskGraphError(
+                f"forge implement: dependency cycle detected ({chain})"
+            )
         if node_id not in by_id:
             # M-02: dep apontando pra task inexistente é erro de contrato,
             # não warning. Continuar trataria estado inválido como válido
             # e a feature avançaria com DAG furado.
-            raise SystemExit(
+            raise TaskGraphError(
                 f"forge implement: task '{node_id}' declared in "
                 "dependencies does not exist. Fix the dependency reference."
             )
@@ -1180,7 +1193,12 @@ def run(argv: list[str]) -> int:
                 {"event": "blocked-external-cleared"},
             )
 
-    task = _pick_next_task(tasks)
+    try:
+        task = _pick_next_task(tasks)
+    except TaskGraphError as exc:
+        # A-008 (master review PR #15): map domain exception to CLI exit code.
+        sys.stderr.write(f"{exc}\n")
+        return 1
     if task is None:
         renderer.write("")
         renderer.write(
@@ -1231,7 +1249,11 @@ def run(argv: list[str]) -> int:
     task_blockers = _task_blocking_deps(task)
     if task_blockers:
         # Find an alternative task (deps satisfied AND zero blocking external).
-        alternative = _pick_next_task(tasks, skip_blocked=True)
+        try:
+            alternative = _pick_next_task(tasks, skip_blocked=True)
+        except TaskGraphError as exc:
+            sys.stderr.write(f"{exc}\n")
+            return 1
         # Skip the same task if topo handed us the blocked one again.
         if alternative is not None and alternative.task_id == task.task_id:
             alternative = None

@@ -239,6 +239,20 @@ def run_scope(
         scope_type = "feature"
     scope_target = scope_id or ""
 
+    # A-009 (master review PR #15): se `project_root` não existe, `read_yaml_or_default`
+    # devolve `{}` silenciosamente e o cascade roda com config vazia, reportando
+    # "0 validators registered" em vez de avisar que o caminho é inválido.
+    # Espelha o guard já existente em `_run_validator`.
+    if not project_root.is_dir():
+        if interactive:
+            renderer.write(
+                renderer.colored(
+                    f"forge verify: project_root inexistente — {project_root}",
+                    "red",
+                )
+            )
+        return 1
+
     config = read_yaml_or_default(workflow_config_path(project_root), {}) or {}
 
     if interactive:

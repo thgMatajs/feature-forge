@@ -224,8 +224,14 @@ def _check_cross_refs(feature_root: Path) -> list[str]:
     if data_contract.is_file():
         try:
             data = read_yaml_or_default(data_contract, {}) or {}
-        except (YamlIOError, OSError, UnicodeDecodeError):
-            return warns
+        except (YamlIOError, OSError, UnicodeDecodeError) as exc:
+            # B-008 (master review PR #15): reporta como warn em vez de
+            # silenciar. Antes a função devolvia `warns` vazio em parse error,
+            # escondendo cross-refs não verificados; agora pelo menos o
+            # usuário vê que houve falha de parse.
+            return [
+                f"data-contract-spec.yaml: parse error ({exc}); cross-refs not checked"
+            ]
         for key in ("prd_ref", "intake_ref", "screen_analysis_ref", "ui_state_spec_ref"):
             val = data.get(key)
             if not val or not isinstance(val, str):
