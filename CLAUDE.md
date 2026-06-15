@@ -197,26 +197,23 @@ a compreensão do projeto.
 ### Como consultar
 
 ```bash
-# Listar símbolos de um módulo
-forge graph --json q4 <module-name>
+# Listar símbolos de um módulo (Q4 = symbols; arg é MODULE name)
+forge graph --json q4 <module-name>           # ex: q4 :feature:auth
 
-# Encontrar features similares por slug
+# Encontrar features similares por slug (Q1 = similar-features)
 forge graph --json q1 <feature-slug>
 
-# Calcular blast radius de arquivos (impacto de mudança)
-forge graph --json q2 --file path/to/Foo.kt
+# Calcular blast radius de arquivos (Q2 = blast-radius; args posicionais — file paths)
+forge graph --json q2 path/to/Foo.kt
 
-# Encontrar imports de um símbolo
-forge graph --json q4 LoginUseCase
-
-# Encontrar orphan files (sem importers)
+# Encontrar orphan files (Q3 = orphan-files; sem args)
 forge graph --json q3
 
-# Listar dependências de DI
+# Listar dependências de DI (Q8 = di-deps; arg é class name)
 forge graph --json q8 <class-name>
 
-# Listar todas as queries disponíveis
-forge graph --help
+# Listar reuse-findings combinados (alias `r`)
+forge graph --json r
 ```
 
 ### Linguagens cobertas

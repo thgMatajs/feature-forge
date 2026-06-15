@@ -76,7 +76,7 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 | Validators Python | 25 + 3 helpers (`_gate_infra`, `_diff`, `_common`) — inclui `check_cyclomatic_complexity` (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon), `check_secrets` (gitleaks + trufflehog), `check_no_behavior_change` (refactor), `validate_extension_feature` (extends-feature cross-cutting), `validate_presets` (Phase B DET-6 — bundle YAML schema) |
 | Hooks | 9 + 1 reuse incremental (`post-edit-detect-duplications.sh`) |
 | Graph parsers | 6 (Kotlin / Swift / TypeScript + Java / XML / Objective-C — Java/XML/ObjC novos em v1.3.0 graph-ia-evolution). Body extraction (`symbols.body`) cobre brace-delimited bodies (5 linguagens; XML é NULL). |
-| Tests | 1566 collected em v1.3.0 (unit + integration + e2e · ~20 skipped · baseline histórico em CHANGELOG.md). Phase A DRIFT-1 acresceu +118 sobre o pré-W2 1046; Phase B DET-6 acresceu W4-W7 (~88 unit + 12 integration) + W8 polish (+23 rapid + 3 integration + 4 e2e); REVIEW.md remediation Blocos 1-5 (2026-06-12) levou a 1523 collected (WR-01 fix-pack adicionou +1 regression test); **v1.3.0 graph-ia-evolution acresceu +43 cumulativos (~26 dos parsers Java/XML/ObjC + onboarding UX, + ondas auxiliares como body column persistence e --json) chegando a 1566 collected**. |
+| Tests | 1566 collected em v1.3.0 (unit + integration + e2e · ~20 skipped · baseline histórico em CHANGELOG.md). Phase A DRIFT-1 acresceu +118 sobre o pré-W2 1046; Phase B DET-6 acresceu W4-W7 (~88 unit + 12 integration) + W8 polish (+23 rapid + 3 integration + 4 e2e); REVIEW.md remediation Blocos 1-5 (2026-06-12) levou a 1523 collected (WR-01 fix-pack adicionou +1 regression test); **v1.3.0 graph-ia-evolution acresceu +35 tests novos (Java 7 + XML 5 + ObjC 6 + bootstrap 4 + lazy 4 + json 9), chegando a 1566 collected (delta inclui merges de main)**. |
 | LOC total | ~52.500 |
 | Engine LOC | ~33.500 (Python; engine/ apenas — validators/ adicional ~7.300) |
 | Files total | ~400 |
@@ -93,7 +93,7 @@ export FORGE_HOME=~/Documents/feature-forge
 export PATH="$FORGE_HOME/bin:$PATH"
 
 # Verifica
-forge --version  # → forge 1.2.0
+forge --version  # → forge 1.3.0
 
 # Init num projeto novo (Step 11.5 já escaneia duplicações existentes)
 cd ~/code/my-project

@@ -8,6 +8,10 @@ The graph DB lives at `.claude/graph.db` and is accessed concurrently by:
 WAL mode lets readers and writers coexist without blocking. The full schema
 is documented in `docs/schemas/graph.md`; this module ships the canonical
 DDL so a fresh `.claude/graph.db` can be bootstrapped without parsing markdown.
+
+NOTE: Idempotent migrations (e.g., ``_ensure_graph_body_column``,
+``_ensure_reuse_intelligence_columns``) live in ``engine/graph/builder.py``,
+not here. This module only holds canonical DDL + connection helpers.
 """
 
 from __future__ import annotations

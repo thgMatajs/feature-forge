@@ -18,7 +18,9 @@ branch de graph-ia-evolution e seguem release lifecycle separado.)
 Expansão do codebase graph pra consumo direto por IA: símbolos agora
 carregam `body` text, novos parsers cobrem Java/XML/ObjC, flag `--json`
 habilita queries non-interactive, e onboarding UX detecta bootstrap state
-ausente. 8 ondas de implementação acumuladas em `feat/graph-ia-evolution`.
+ausente. 8 ondas lógicas (11 commits atômicos: plan-extension + extension-fix
++ doc-sync ficaram em commits separados das ondas principais) acumuladas em
+`feat/graph-ia-evolution`.
 
 - **`symbols.body` column** — `engine/utils/sqlite_io.py` ganha
   `_ensure_graph_body_column` (ALTER TABLE idempotente). DBs novos
@@ -89,8 +91,9 @@ ausente. 8 ondas de implementação acumuladas em `feat/graph-ia-evolution`.
 - **`docs/design/08-session-handoff.md`** — Estado v1.3.0 entregue;
   Última atualização 2026-06-15.
 - **`README.md`** — §Stats bump (parser count 3 → 6, test count
-  baseline + 26 cobertura nova) + §Command surface menciona
-  `forge graph --json` como entrypoint non-interactive.
+  baseline + 35 tests novos: Java 7 + XML 5 + ObjC 6 + bootstrap 4 +
+  lazy 4 + json 9) + §Command surface menciona `forge graph --json`
+  como entrypoint non-interactive.
 - **`docs/design/04-pending.md`** — registra v1.3.0 shipped + 6
   non-goals como follow-ups v1.4+ (tree-sitter, MCP server, ObjC call
   graph, call graph preciso, SCHEMA_VERSION bump, visualização

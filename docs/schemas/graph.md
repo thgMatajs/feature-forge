@@ -68,15 +68,21 @@ CREATE TABLE symbols (
   file_id         INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
   name            TEXT NOT NULL,                 -- e.g., "LoginViewModel"
   kind            TEXT NOT NULL,                 -- class | object | interface | enum | fun | val | sealed_class
-  signature       TEXT,                           -- e.g., "fun login(email: String, password: String): Flow<StateUI<LoginUI>>"
+  signature       TEXT,                          -- e.g., "fun login(email: String, password: String): Flow<StateUI<LoginUI>>"
   line_start      INTEGER,
   line_end        INTEGER,
   visibility      TEXT,                          -- public | internal | private | protected
+  receiver_type   TEXT,                          -- reuse-intelligence: receiver type para extension functions
+  body_hash       TEXT,                          -- reuse-intelligence: hash do body normalizado (Q12/Q15 dedup)
+  body_tokens     TEXT,                          -- reuse-intelligence: tokens normalizados pra similarity
+  modifiers       TEXT,                          -- reuse-intelligence: modifiers serializados (space-separated)
   body            TEXT                           -- raw source text com comentários preservados (v1.3+); ver §body column
 );
-CREATE INDEX idx_symbols_name ON symbols(name);
-CREATE INDEX idx_symbols_file ON symbols(file_id);
-CREATE INDEX idx_symbols_kind ON symbols(kind);
+CREATE INDEX idx_symbols_name          ON symbols(name);
+CREATE INDEX idx_symbols_file          ON symbols(file_id);
+CREATE INDEX idx_symbols_kind          ON symbols(kind);
+CREATE INDEX idx_symbols_receiver_type ON symbols(receiver_type);
+CREATE INDEX idx_symbols_body_hash     ON symbols(body_hash);
 ```
 
 #### `symbols.body` column (v1.3+)
@@ -94,10 +100,12 @@ compreensão de codebases grandes.
 
 DBs criados antes do v1.3 são migrados em-place via `ALTER TABLE symbols
 ADD COLUMN body TEXT` executado idempotentemente por
-`_ensure_graph_body_column` em `engine/utils/sqlite_io.py`. Re-execução
+`_ensure_graph_body_column` em `engine/graph/builder.py`. Re-execução
 do helper em DB já migrado é no-op. SCHEMA_VERSION não é bumpado — a
 migração é aditiva e backwards-compatible (queries antigas continuam
-funcionando, ignorando a coluna nova).
+funcionando, ignorando a coluna nova). `engine/utils/sqlite_io.py`
+contém apenas o DDL canônico e helpers de conexão; migrations idempotentes
+vivem em `builder.py`.
 
 ### `imports`
 
@@ -292,8 +300,12 @@ forge graph --json <query> [args...]
 Onde `<query>` é um dos formatos:
 - Alias curto: `q1`, `q2`, …, `q17`, `r` (combined reuse view).
 - Numeric key: `1`, `2`, …, `17`.
-- Label textual do handler: `where-is-used`, `blast-radius`,
-  `screens-using`, `similar-features`, etc.
+- Label textual do handler: `similar-features`, `blast-radius`,
+  `orphan-files`, `symbols`, `ds-used-in`, `i18n-used-in`, `routes`,
+  `di-deps`, `tests-for`, `commits`, `reusable-helpers`, `dup-within-module`,
+  `dup-cross-module`, `kmp-migration`, `near-duplicates`,
+  `redundant-platform`, `dup-ts-helpers`, `reuse-findings` (catálogo
+  canônico em `_HANDLERS`, `engine/graph_cli.py:267-286`).
 
 Output é JSON parseável (`json.loads`-válido) em stdout; stderr
 reservado pra erros. Modo interactivo (`forge graph` sem `--json`)
@@ -302,10 +314,12 @@ continua disponível e inalterado.
 Exemplos:
 
 ```
-forge graph --json q3                                         # orphan i18n keys
-forge graph --json q4 MeoCard                                 # screens using MeoCard
-forge graph --json q2 lembrete-rega                           # features similar to lembrete-rega
-forge graph --json blast-radius LoginViewModel                # blast radius por label
+forge graph --json q3                                         # orphan-files (no args)
+forge graph --json q4 :feature:auth                           # symbols no módulo
+forge graph --json q1 lembrete-rega                           # similar-features por slug
+forge graph --json q2 path/to/LoginViewModel.kt               # blast-radius (file paths posicionais)
+forge graph --json blast-radius path/to/LoginViewModel.kt     # idem via label
+forge graph --json r                                          # reuse-findings combined
 ```
 
 Para CI/scripts determinísticos, combinar com `--no-auto-build` desativa
