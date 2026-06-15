@@ -133,8 +133,9 @@ testes.
 - **Refactor**: pula Wave B (comportamento não muda, contratos existentes
   continuam valendo)
 - **Bugfix lógico**: pula Wave B (só roda se o bug envolve UI observável)
-- **Spike / chore**: na v1.0, estas subtypes não têm implementação completa
-  — o forge oferece 3 caminhos (tratar como product, pausar, abortar)
+- **Spike / chore**: na versão atual estas subtypes ainda são stub
+  (vide `docs/design/04-pending.md`) — o forge oferece 3 caminhos
+  (tratar como product, pausar, abortar)
 
 ---
 
@@ -182,7 +183,7 @@ completo de Plan Mode → Apply → gates → commit.
 
 **Comando:** `forge implement feature-slug`
 
-> **Apply Mode — v1 (atual):** O forge exibe o contrato da task e instrui o desenvolvedor; a escrita de código é manual. Apply Mode automatizado (engine escrevendo código via Claude Code) está planejado para Phase 6 e ainda não foi shipado.
+> **Apply Mode — v1 (atual):** O forge exibe o contrato da task e instrui o desenvolvedor; a escrita de código é manual. Apply Mode automatizado (engine escrevendo código via Claude Code) está planejado para Phase 6 do roadmap (vide `docs/design/02-phases.md`) e ainda não foi entregue.
 
 **O ciclo de cada task:**
 
@@ -195,9 +196,17 @@ completo de Plan Mode → Apply → gates → commit.
    conforme o contrato gerado pelo forge — qualquer edição fora dos arquivos
    permitidos vira um **Finding** (com 3 caminhos: atualizar contrato,
    reverter, ou split em nova task)
-5. **Gates**: o forge roda automaticamente após a implementação:
-   - `check_cyclomatic_complexity` — gate de complexidade ciclomática
-   - `check_secrets` — gate de detecção de segredos (gitleaks)
+5. **Gates da task**: o forge roda gates específicos definidos no task
+   contract após a implementação. Tipicamente incluem:
+   - `check_cyclomatic_complexity` — complexidade ciclomática
+   - `check_secrets` — detecção de segredos (gitleaks + trufflehog)
+   - `check_no_invented_behavior` — bloqueia analytics/comportamento não
+     previsto no spec
+   - `check_files_in_allowed_files` — gate de escopo da task
+   - `check_no_behavior_change` — quando o subtype é refactor
+   O cascade completo de 21 validators (incluindo `validate_workflow_config`,
+   `validate_task_contract`, `validate_extension_feature`,
+   `validate_card_yaml`, etc.) roda via `forge verify` separado (Fase 6).
 6. **Handoff**: instruções pra commit + `forge verify` + passar pra
    próxima task
 
@@ -275,8 +284,8 @@ você deu (e confirma com você). Cada subtipo ajusta o pipeline:
 | **product** | Completo (7 fases) | Pipeline padrão, Waves A–E completas |
 | **bugfix** | Pula PRD, usa intake próprio, Wave B condicional | Detecta ticket Jira (IN-37234, PD-1234). Exige 5-whys na retrospec. Wave B só roda se o bug é de UI observável |
 | **refactor** | Pula PRD e Wave B, sem specs de UI | Contrato **no-behavior-change** é gate forte. `check_no_behavior_change` valida que comportamento não mudou |
-| **spike** | Stub em v1.0 | Investigação técnica. Forge oferece 3 caminhos: tratar como product, pausar até v1.1+, ou abortar |
-| **chore** | Stub em v1.0 | Manutenção (bump de dependência, cleanup). Mesmo tratamento de spike |
+| **spike** | Stub até versão futura (vide `docs/design/04-pending.md`) | Investigação técnica. Forge oferece 3 caminhos: tratar como product, pausar, ou abortar |
+| **chore** | Stub até versão futura (vide `docs/design/04-pending.md`) | Manutenção (bump de dependência, cleanup). Mesmo tratamento de spike |
 
 ---
 
