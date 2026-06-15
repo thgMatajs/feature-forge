@@ -108,7 +108,7 @@ no MESMO commit:
 - `docs/design/08-session-handoff.md` (Última atualização + Conhecidos
   limites se aplicável)
 - `README.md` (se stats mudaram)
-- `docs/guides/` e `docs/diagrams/` (se mudança afeta comportamento
+- `docs/guides/` e `docs/diagrams/` (se a mudança afeta comportamento
   documentado — ver matriz em `.claude/rules/doc-sync.md`)
 
 Matriz código→docs: `.claude/rules/doc-sync.md`.
@@ -165,8 +165,8 @@ Detalhe: `.claude/rules/superpowers.md`.
 
 ## Anatomia rápida
 
-- `engine/` — Python core, 13 commands handlers + foundation + state + integrations
-- `validators/` — 15 validators + helpers (tests obrigatórios em `tests/validators/`)
+- `engine/` — Python core, 13 user-facing command handlers (+ `ingest` hook interno) + foundation + state + integrations
+- `validators/` — 21 validators + helpers (tests obrigatórios em `tests/validators/`)
 - `templates/`, `cards/`, `presets/` — composição declarativa, YAML/MD
 - `docs/design/` — fonte de verdade pra "por que" (quase tudo load-bearing)
 - `hooks/` — git + Claude Code hooks que `forge init` instala em **projetos consumidores** (diferente de `.claude/hooks/` que é deste repo)
@@ -178,10 +178,10 @@ Mapa completo: `.claude/rules/project-anatomy.md`.
 ## Comandos úteis
 
 ```bash
-pytest                              # 637 tests, default lane (+12 skipped e2e)
+pytest                              # ~1531 tests, default lane (consulte handoff pra count atual)
 pytest -m "not integration"         # rápido (rapid lane)
-forge verify                        # validators cascade (15 validators)
-forge doctor                        # health check 12 categorias
+forge verify                        # validators cascade (3 built-in + N contribuídos por cards ativos; 21 no diretório)
+forge doctor                        # health check 16 categorias
 ./bin/forge --version               # smoke
 ```
 

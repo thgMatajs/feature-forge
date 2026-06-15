@@ -3,8 +3,9 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-15 (master review PR #15 — todos os 22 findings aplicados)
-**Estado master review PR #15:** todos os 22 findings (14 Group A + 8 Group B) aplicados em 5 commits atomicos sobre `fix/review-md-remediation`. Test baseline 1350 → 1353 (3 novos testes de A-013 cobrindo path-traversal do guard de undo). Detalhes em CHANGELOG `## [Unreleased] > ### Fixed (master review PR #15 remediation)`.
+**Última atualização:** 2026-06-15 (PR #14 — user guides + housekeeping + post-review fixes)
+**Estado PR #14:** 4 guias (`getting-started`, `daily-workflow`, `feature-lifecycle`, `dot-claude-reference`) + 5 diagramas mermaid + README Quick Start. Acrescido housekeeping: `.gitignore` `.planning/*` catch-all (whitelist `det-3/`, `det-6/`, `drift-1/`) + nova seção §Cleanup de `.planning/` em `.claude/rules/orchestrator-persona.md`. Post-review (fresh independent review encontrou 5 Critical + 4 High + 5 Medium + 4 Low) endereçado dentro do PR: counts factuais alinhados à ground truth (`forge doctor` 16 categorias, `forge verify` 3 built-in + N de cards / 21 no diretório, 13 user-facing commands + `ingest` documentado como hook interno), Fase 6/7 corrigidas no diagrama de lifecycle (verify, não doctor), L1/archived isolado no diagrama versionado-vs-local, gates list expandida em feature-lifecycle.md Fase 5, PT-BR neutro (shipada → entregue, fora da caixa → por padrão), Phase 6 qualificado como Phase 6 do roadmap. `CLAUDE.md` raiz também atualizado.
+**Estado master review PR #15 (mergeado pós-fix):** todos os 22 findings (14 Group A + 8 Group B) aplicados em 5 commits atomicos sobre `fix/review-md-remediation`. Test baseline 1350 → 1353 (3 novos testes de A-013 cobrindo path-traversal do guard de undo). Detalhes em CHANGELOG `## [Unreleased] > ### Fixed (master review PR #15 remediation)`.
 **Estado REVIEW.md remediation (anterior):** 22 findings VÁLIDOS do REVIEW.md endereçados; 8 anti-goals anotados em `04-pending.md`; mypy advisory + pathspec dep adicionados.
 **Wave A (PR #13 review, 2026-06-12):** 6 fixes contidos remediados em 5 commits sobre `96a0896` (cli paused_exc refactor + intent-state flush + validate_presets imports + RULE-020 cascade guard + doc-sync). Fix 4 (clear_intent_log_only delegation) skipped — semantics divergem, anotado pra Wave B. Rapid lane verde (1306 passing, 6 falhas pré-existentes inalteradas em test_cards_resolver/test_commands_init/test_validators_card_yaml). +2 regression tests.
 **Wave B (PR #13 review, 2026-06-12):** 5 fixes cross-module remediados em 5 commits sobre `b8731f7` (commits `37084c0` → `4b6eada`): (1) ciclo composer↔init quebrado via `engine/detection/_eval.py` novo + shape guard no composer; (2) `isinstance(Cell/Conflict)` em vez de `hasattr` em 5 sites de init.py; (3) `BACKEND_AXES` shared em `engine/detection/_axes.py` (init + reconfigure consomem); (4) cache process-level pra `_read_intent_log` (O(1) cache hit vs O(n) re-parse); (5) `VALID_BACKEND_AXES`/`VALID_BUNDLE_PLATFORM_KEYS`/`VALID_PROJECT_PLATFORMS` consolidados em `validators/_common.py`. Rapid lane sobe pra 1321 passed (+15 vs Wave A baseline). Mesmas 6 falhas pré-existentes herdadas, não tocadas (out of scope).
@@ -65,7 +66,6 @@ Próximo passo: PR #7 mergeable + Wave R1.1 verde + considerar Gap 14 (preset co
 - Phase B aguarda push da branch `feat/det-6-multi-axis-backend` (29 commits
   acumulados em worktree `det-6-w1`) + abertura de PR. W8 doc-sync neste
   commit é a última wave; review da PR + merge fecham DET-6 em main.
-
 
 - **Phase 0 (gate-infra-extract) — esta branch** — refactor estrito: 7 commits de
   extração + 1 doc-sync + 4 robustness fixes pós-power-review (render_config,
@@ -187,6 +187,30 @@ Depois siga as instruções. Estou na Fase {N}.
 ~400 arquivos · ~52,500 linhas · 27 decisões locked + 7 direcionais (Fase 3.5) + 2 ADR append-only (Decisão 28, Gap 5; Decisão 31, Revisita 30 sandbox guard via sitecustomize.py)
 v1.2-dev cumulativo (PR #4 CC gate + Phase 0 + R1.1 secrets + PR #8 forge qa CONF + pause/resume): **1113 passed** em main (pós PR #9) (baseline pré-PR #8: 847; +86 tests da CONF wave + pause/resume + review fixes); branch gate-infra-extract registra Gap 9 baseline 637 + CC gate +~63 + Phase 0 -1 justificado + secrets gate +~30 · 17 graph queries · 16 proposal kinds · 20 validators (inclui check_cyclomatic_complexity + check_secrets + validate_extension_feature) · 22 cards canon (+ overlay local)
 ```
+### User-facing documentation (2026-06-12)
+
+**O que:** 4 guias de uso (`docs/guides/`), 5 diagramas Mermaid (`docs/diagrams/`), e README renovado com Quick Start + tabela de documentação.
+
+**Público:** dev mobile que usa forge no dia a dia — estagiário a tech lead.
+
+**Guias:**
+- `docs/guides/getting-started.md` — onboarding: instalação, init, adoção em time
+- `docs/guides/daily-workflow.md` — 13 comandos com cenários e árvore de decisão
+- `docs/guides/feature-lifecycle.md` — pipeline completo do intake à retrospectiva
+- `docs/guides/dot-claude-reference.md` — referência de arquivos `.claude/`
+
+**Diagramas Mermaid:**
+- `docs/diagrams/bootstrap-flow.mermaid`
+- `docs/diagrams/feature-lifecycle.mermaid`
+- `docs/diagrams/command-decision-tree.mermaid`
+- `docs/diagrams/graph-query-flow.mermaid`
+- `docs/diagrams/files-versioned-vs-local.mermaid`
+
+**O que NÃO cobre (deixado pra próxima):**
+- Guia de troubleshooting / FAQ
+- Guia de migração de v1.0 para v1.2
+- Tutoriais em vídeo ou screencast
+- Exemplos por stack específica (Firebase, REST, etc.)
 
 | Categoria | Status |
 |---|---|

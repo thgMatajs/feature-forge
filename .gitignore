@@ -53,17 +53,15 @@ dist/
 # GSD / superpowers — temporary scratch
 .gsd-tmp/
 
-# Plan auditor + review subagents — review outputs (per-rodada, não versionado)
-.planning/plan-reviews/
-.planning/code-reviews/
-.planning/final-review/
-.planning/master-review/
-
-# Per-phase planning artifacts (per-session, não versionado)
-# Manter .planning/ root track, ignorar subdirs por padrão exceto specs/plans canônicos
-.planning/*-review/
-.planning/rebase-*/
-.planning/*-fixes-review/
+# .planning/ — per-session scratch (review outputs, audit dirs, fix workspaces)
+# Default: tudo ignorado. Whitelist explícita pra artefatos persistentes
+# que são deliberadamente versionados (audit JSONs + verification md de
+# phases canônicas).
+.planning/*
+!.planning/.gitkeep
+!.planning/det-3/
+!.planning/det-6/
+!.planning/drift-1/
 
 # Ultra-review skill outputs
 .ultra-review/

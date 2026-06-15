@@ -1,0 +1,33 @@
+flowchart LR
+    subgraph LEGACY["Legenda"]
+        L_DIR["→ Caminho em .claude/"]
+    end
+
+    subgraph VERSIONADO["✅ Versionado (git commit)"]
+        direction TB
+        V1["workflow-config.yaml<br/>→ .claude/workflow-config.yaml<br/>Config principal do projeto"]
+        V2["cards/ (snapshots)<br/>→ .claude/cards/<br/>Cards ativados + locais"]
+        V3["inventory/<br/>→ .claude/inventory/<br/>Design system, i18n,<br/>convenções"]
+        V4["L2-project.yaml<br/>→ .claude/memory/L2-project.yaml<br/>Memória de longo prazo:<br/>padrões e decisões"]
+        V5["memory/L1/archived/<br/>→ .claude/memory/L1/archived/<br/>Sumário de features<br/>concluídas (histórico)"]
+        V6["hooks/<br/>→ .claude/hooks/<br/>Git hooks + scripts<br/>pós-subagente"]
+        V7["proposed-evolutions.yaml<br/>→ .claude/proposed-evolutions.yaml<br/>Propostas de evolução<br/>do catálogo"]
+        V8["forge-version-lock.yaml<br/>→ .claude/forge-version-lock.yaml<br/>Versão do CLI no init<br/>(trava compatibilidade)"]
+        V9["workflow-config-history.jsonl<br/>→ .claude/workflow-config-history.jsonl<br/>Histórico de reconfigurations<br/>(append-only)"]
+    end
+
+    subgraph LOCAL["❌ Local / Não versionado (.gitignore)"]
+        direction TB
+        L1["graph.db<br/>→ .claude/graph.db<br/>SQLite do grafo da base<br/>(reconstruído localmente)"]
+        L2["memory/L1/ (WIP)<br/>→ .claude/memory/L1/<br/>Features ativas em WIP<br/>(exceto archived/ — versionado)"]
+        L3["*.bak<br/>Backups de segurança<br/>pré-mutação"]
+        L4["Checkpoints .yaml<br/>→ .init-checkpoint.yaml<br/>→ .reconfigure-draft.yaml<br/>Estado de pause/resume"]
+    end
+
+    VERSIONADO -->|"git push comparte<br/>com o time"| TIME["Time todo"]
+    LOCAL -->|"cada dev gera<br/>o seu"| LOCAL_DEV["Ambiente local<br/>(não compartilhado)"]
+
+    style VERSIONADO fill:#e3fce3,stroke:#2e7d32,stroke-width:2px
+    style LOCAL fill:#ffe3e3,stroke:#c62828,stroke-width:2px
+    style TIME fill:#e8eaf6,stroke:#3f51b5
+    style LOCAL_DEV fill:#fff3e0,stroke:#e65100
