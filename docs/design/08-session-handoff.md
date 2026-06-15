@@ -223,7 +223,7 @@ v1.2-dev cumulativo (PR #4 CC gate + Phase 0 + R1.1 secrets + PR #8 forge qa CON
 - **Branch:** `fix/review-md-remediation`
 - **Spec:** `docs/superpowers/specs/2026-06-12-review-md-remediation-design.md`
 - **Plan:** `docs/superpowers/plans/2026-06-12-review-md-remediation.md`
-- **Pytest baseline:** `1522` tests collected (capturado via `pytest --collect-only -q`; reconciliado com README §State no final review 2026-06-15 / WR-04 — depende de `pathspec` instalado, ver CR-01 fix)
+- **Pytest baseline:** `1523` tests collected (capturado via `pytest --collect-only -q`; reconciliado com README §State no final review 2026-06-15 / WR-04 — depende de `pathspec` instalado, ver CR-01 fix)
 - **Lanes pra esta sessão:**
   - Bloco 1, 2, 3, 5: rapid lane (`pytest -m "not integration and not e2e"`) verde
   - Bloco 4: full lane (`pytest`) verde ao fim do bloco (cruza módulos críticos)
