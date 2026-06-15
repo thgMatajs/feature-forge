@@ -10,6 +10,8 @@ import pytest
 
 from engine.inventory import conventions, design_system, i18n
 
+pytestmark = pytest.mark.meobonsai
+
 
 @pytest.mark.integration
 def test_design_system_extraction_finds_meo_components(meobonsai_root):
