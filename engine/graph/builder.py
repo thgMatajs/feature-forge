@@ -8,6 +8,7 @@ escape hatch. For per-edit deltas use `engine.graph.incremental`.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import sqlite3
 import time
@@ -181,6 +182,57 @@ def _iter_files(root: Path, gitignore_rules: Optional[list[tuple[str, bool, bool
                 yield entry
 
 
+def _find_gitignore_files(project_root: Path) -> list[Path]:
+    """Return absolute paths of every `.gitignore` reachable from `project_root`.
+
+    Uses `os.scandir` recursively and skips `_EXCLUDED_DIRS` + symlinks ANTES
+    da descida — `Path.rglob` desce em `node_modules`/`build`/`.gradle` antes
+    de qualquer filtro, o que trava em monorepos mobile grandes. Tolerante a
+    `PermissionError`/`OSError` por subárvore. Ordem do retorno é irrelevante.
+    """
+    found: list[Path] = []
+    # Tracking visited real-paths previne loop infinito em symlink cycles
+    # (raros mas devastadores). Mesmo com `follow_symlinks=False`, cobrimos
+    # hard links e bind mounts esquisitos com baixo custo (set lookup).
+    visited: set[str] = set()
+    stack: list[Path] = [project_root]
+    while stack:
+        current = stack.pop()
+        try:
+            real = os.path.realpath(current)
+        except OSError:
+            continue
+        if real in visited:
+            continue
+        visited.add(real)
+        try:
+            it = os.scandir(current)
+        except (PermissionError, OSError, FileNotFoundError):
+            continue
+        with it:
+            for entry in it:
+                name = entry.name
+                try:
+                    is_symlink = entry.is_symlink()
+                except OSError:
+                    is_symlink = False
+                if is_symlink:
+                    # Nunca segue symlinks — evita loops e prevents
+                    # escapar do project_root via link aleatório.
+                    continue
+                try:
+                    is_dir = entry.is_dir(follow_symlinks=False)
+                except OSError:
+                    continue
+                if is_dir:
+                    if name in _EXCLUDED_DIRS:
+                        continue
+                    stack.append(Path(entry.path))
+                elif name == ".gitignore":
+                    found.append(Path(entry.path))
+    return found
+
+
 # M-07 + M-08: replaced custom parser with `pathspec` (canonical gitignore
 # semantics). The old parser missed bracket classes, escapes, trailing
 # spaces, and `a/**/b` middle-double-star; the custom regex over-matched
@@ -195,17 +247,9 @@ def _parse_gitignore(project_root: Path) -> list[tuple[str, bool, bool]]:
     escaped chars `\\#`, trailing spaces, and `a/**/b` middle-double-star.
     """
     rules: list[tuple[str, bool, bool]] = []
-    try:
-        gitignores = list(project_root.rglob(".gitignore"))
-    except (PermissionError, OSError):
-        return rules
+    gitignores = _find_gitignore_files(project_root)
 
     for gi_path in gitignores:
-        try:
-            if any(part in _EXCLUDED_DIRS for part in gi_path.relative_to(project_root).parts):
-                continue
-        except ValueError:
-            continue
         try:
             lines = gi_path.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
