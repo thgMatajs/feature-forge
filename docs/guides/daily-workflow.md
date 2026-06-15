@@ -9,7 +9,7 @@
 
 ---
 
-Este guia cobre os 13 comandos do forge na prática. Para cada um você vai ver:
+Este guia cobre os 13 comandos user-facing do forge na prática. Para cada um você vai ver:
 
 - **O que faz** — descrição direta
 - **Quando usar** — cenário concreto do dia a dia
@@ -104,7 +104,7 @@ forge plan <slug>
 **Quando usar:** Você tem um plano com `readiness=ready` e quer começar a
 codar a primeira (ou próxima) tarefa.
 
-> **Nota:** `forge implement` (v1) exibe o contrato da tarefa e instrui o dev sobre o que implementar; a escrita de código é manual. Automação completa via Claude Code está planejada para Phase 6 e ainda não foi shipada.
+> **Nota:** `forge implement` (v1) exibe o contrato da tarefa e instrui o dev sobre o que implementar; a escrita de código é manual. Automação completa via Claude Code está planejada para Phase 6 do roadmap (vide `docs/design/02-phases.md`) e ainda não foi entregue.
 
 **Exemplo:**
 
@@ -206,9 +206,10 @@ $ forge verify
 
 ┌─ forge verify ──────────────────────────────────────┐
 │ Escopo: login-screen (feature)                       │
-├─ check_workflow_config           ✓  210ms            │
-├─ check_card_integrity            ✓  180ms            │
-├─ check_inventory_freshness       ✓  95ms             │
+├─ validate_workflow_config        ✓  210ms            │
+├─ validate_card_yaml              ✓  180ms            │
+├─ validate_inventory              ✓  95ms             │
+├─ check_no_invented_behavior      ✓  120ms            │
 ├─ check_cyclomatic_complexity     ✓  1.2s             │
 │    Kotlin: 3.1 avg · Swift: 2.8 avg · OK            │
 ├─ check_secrets                   ✓  4.5s             │
@@ -216,8 +217,14 @@ $ forge verify
 ├─ validate_extension_feature      ✓  150ms            │
 │    (sem extends-feature setado — skip)               │
 └──────────────────────────────────────────────────────┘
-  ✅ Todos os 8 validators passaram
+  ✅ Todos os N validators passaram
 ```
+
+> **Nota:** O `forge verify` roda 3 validators built-in (`check_no_invented_behavior`,
+> `check_cyclomatic_complexity`, `check_secrets`) **mais** os validators contribuídos
+> pelos cards ativos no projeto. O cascade real depende do preset — N é determinado
+> em tempo de execução. O diretório `validators/` tem 21 validators canônicos no
+> total; cards selecionam o subset relevante via `contributes.validators`.
 
 **Quando um gate forte falha:**
 
@@ -242,7 +249,7 @@ $ forge verify
 
 ## forge doctor — Diagnóstico da instalação
 
-**O que faz:** Health check em 14 categorias. Lê tudo, não muda nada (exceto
+**O que faz:** Health check em 16 categorias. Lê tudo, não muda nada (exceto
 marcar `doctor.last-run` no config). Tem modo `quick` (crítico) e `full`.
 
 **Quando usar:** "Algo parece estranho." — o status mostra algo vermelho,
@@ -257,19 +264,24 @@ $ forge doctor
 ┌─ forge doctor ──────────────────────────────────────┐
 │ Modo: full                                           │
 │                                                       │
-│  ✅ config            workflow-config.yaml OK        │
-│  ✅ cards             8 cards ativos, 0 conflitos    │
-│  ✅ inventory         DS + i18n + conventions OK     │
-│  ✅ memory L2         12KB / 256KB (4% usado)        │
-│  ✅ memory L1         2 features ativas              │
-│  ✅ graph             graph.db: 2140 nós, OK         │
-│  ✅ hooks             9 hooks instalados             │
-│  ⚠️  reuse findings    3 propostas pendentes         │
-│  ✅ cc-gate-tools     detekt + swiftlint OK          │
-│  ✅ secrets-tools     gitleaks + trufflehog OK       │
-│  ✅ forge version     1.2.0 (compatível)             │
+│  ✅ config              workflow-config.yaml OK      │
+│  ✅ cards               8 cards ativos, 0 conflitos  │
+│  ✅ inventory           DS + i18n + conventions OK   │
+│  ✅ memory L2           12KB / 256KB (4% usado)      │
+│  ✅ memory L1           2 features ativas            │
+│  ✅ graph               graph.db: 2140 nós, OK       │
+│  ⚠️  reuse findings      3 propostas pendentes       │
+│  ✅ hooks               9 hooks instalados           │
+│  ✅ mcps                ticketing OK                 │
+│  ✅ i18n                catálogo coerente             │
+│  ✅ bak overdue         0 backups vencidos           │
+│  ✅ forge version lock  1.2.0 (compatível)           │
+│  ✅ secrets tools       gitleaks + trufflehog OK     │
+│  ✅ qa coherence        artefatos coerentes          │
+│  ✅ cc-gate tools       detekt + swiftlint OK        │
+│  ✅ gradle catalogs     libs.versions.toml OK        │
 │                                                       │
-│  Resumo: 14/14 verde · 0 hard fails                  │
+│  Resumo: 15/16 verde · 1 warning · 0 hard fails      │
 │  ⏱  3.2s                                             │
 └──────────────────────────────────────────────────────┘
 ```
@@ -317,13 +329,13 @@ $ forge graph
 │ Q8   di-deps                                         │
 │ Q9   tests-for                                       │
 │ Q10  commits                                         │
-│ Q11  Helpers reutilizáveis candidatos                │
-│ Q12  Duplicatas dentro do módulo                     │
-│ Q13  Duplicatas entre módulos                        │
-│ Q14  Candidatos a migração KMP                       │
-│ Q15  Near-duplicates                                 │
-│ Q16  Plataforma-redundante (Android vs iOS)          │
-│ Q17  Helpers TypeScript                              │
+│ Q11  reusable-helpers                                │
+│ Q12  dup-within-module                               │
+│ Q13  dup-cross-module                                │
+│ Q14  kmp-migration                                   │
+│ Q15  near-duplicates                                 │
+│ Q16  redundant-platform                              │
+│ Q17  dup-ts-helpers                                  │
 │ r    Combined view (todas as reuse queries)          │
 └──────────────────────────────────────────────────────┘
 
@@ -547,9 +559,17 @@ $ forge raw verify-card meucard.yaml
 $ forge raw edit-config
 # → abre $EDITOR no workflow-config.yaml
 
+$ forge raw rebuild-templates
+# → re-merge das contribuições de cards em FORGE_HOME/templates/
+
 $ forge raw forge-debug
 # → dump de env + resolved paths + cards ativos
 ```
+
+Subcomandos disponíveis hoje: `verify-card`, `edit-config`,
+`rebuild-templates`, `forge-debug`. Verifique a lista atual com
+`python -c "from engine import raw; print(raw._SUBCOMMANDS.keys())"`
+se algum nome divergir.
 
 ---
 
@@ -613,7 +633,7 @@ Qual é o seu próximo passo?
 
 ---
 
-## Resumo dos 13 comandos
+## Resumo dos 13 comandos user-facing
 
 | Comando | O que faz | Quando usar |
 |---|---|---|
@@ -630,3 +650,16 @@ Qual é o seu próximo passo?
 | `forge undo` | Reverte última ação | Erro |
 | `forge raw` | Escape hatch | Raramente |
 | `forge qa` | Gate adversarial red-team | Antes de fechar feature |
+
+### `forge ingest` — comando interno (não digitado manualmente)
+
+Existe um 14º entrypoint: `forge ingest`. Ele **não** é user-facing — é
+invocado pelos git hooks e pelos Claude Code hooks que o `forge init`
+instala (`post-edit`, `post-commit`, `pre-commit`, `session-start`,
+`post-write-feature-artifact`). Roteia sinais pra graph delta, memory
+append, inventory refresh e drift detection. Sempre sai com exit code 0
+(hooks não devem bloquear git/edit), erros vão pra stderr como warnings.
+
+Você não digita `forge ingest` no terminal. Documentado aqui só pra que,
+ao ver o nome em logs ou no `engine/`, você saiba o que é. Detalhe em
+`docs/design/06-command-surface.md §Hidden internal entrypoints`.
