@@ -32,7 +32,7 @@ from _common import (
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from engine.utils.paths import feature_dir, workflow_config_path  # noqa: E402
-from engine.utils.yaml_io import read_yaml_or_default  # noqa: E402
+from engine.utils.yaml_io import YamlIOError, read_yaml_or_default  # noqa: E402
 
 
 _VALID_PERSISTENCE_STRATEGIES = {
@@ -95,7 +95,7 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
 
     try:
         data = read_yaml_or_default(contract, {}) or {}
-    except Exception as exc:  # noqa: BLE001
+    except (YamlIOError, OSError, UnicodeDecodeError) as exc:
         return result_fail(
             "data-contract-spec.yaml inválido (YAML parse error)",
             what_failed=str(exc),

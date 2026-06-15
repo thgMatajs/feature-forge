@@ -30,7 +30,7 @@ from _common import (
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from engine.utils.paths import feature_dir, inventory_dir  # noqa: E402
-from engine.utils.yaml_io import read_yaml_or_default  # noqa: E402
+from engine.utils.yaml_io import YamlIOError, read_yaml_or_default  # noqa: E402
 
 
 _CANONICAL_STATES = {"idle", "processing", "processed", "error", "loading", "success"}
@@ -108,7 +108,7 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
 
     try:
         ui_data = read_yaml_or_default(ui_spec, {}) or {}
-    except Exception as exc:  # noqa: BLE001
+    except (YamlIOError, OSError, UnicodeDecodeError) as exc:
         return result_fail(
             "ui-state-spec.yaml inválido (YAML parse error)",
             what_failed=str(exc),

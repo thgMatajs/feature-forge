@@ -2934,6 +2934,163 @@ hardening; até lá fica anotada aqui como gap conhecido.
 
 ## Reading order for new contributors
 
+## Mypy rollout — advisory mode (2026-06-12)
+
+**Baseline:** `17` errors across `engine/` + `validators/` (captured
+via `mypy engine/ validators/` post-install of `mypy >= 1.8`; 113 source
+files checked, 8 files com erros).
+
+**Scope desta sessão:** apenas setup advisory. CI gate NÃO ativo. Comando
+manual disponível: `mypy engine/ validators/`.
+
+**Rollout incremental (próximas sessões):**
+- Sub-phase 1: zero new errors policy (PR-level gate sem fail-on-existing).
+- Sub-phase 2: top-3 módulos most-error (`engine/implement.py`,
+  `engine/verify.py`, `engine/init.py`) ganham `strict = true` por seção
+  isolada (`[[tool.mypy.overrides]] module = "engine.implement"`).
+- Sub-phase 3: opt-in cascade até ≥80% módulos strict; ativar gate global.
+
+**Why not strict now:** 17 errors → fix de cada um seria scope creep
+além dos 22 findings do REVIEW.md. Setup baseline em advisory destrava o
+pipeline pra abordar em phases dedicadas.
+
+### L-06 — `sys.path.insert` em `tests/conftest.py`
+
+**Origem:** REVIEW.md 2026-06-11.
+**Estado atual:** mantém `sys.path.insert(0, _ROOT)` em `tests/conftest.py`
+e em `validators/_common.py:20-21`. Comment inline aponta pra esta entrada.
+**Caminho preferido:** substituir por `pip install -e .` quando CI pipeline
+oficial vier (sem CI hoje, mudança seria churn sem ganho).
+**Quando revisitar:** ao landing do primeiro CI workflow (GitHub Actions /
+similar) ou quando o primeiro projeto piloto adotar feature-forge fora
+deste repo.
+
+## REVIEW.md 2026-06-11 — itens verificados sem ação
+
+Findings do REVIEW.md auditados contra o estado pós-PR #13 e classificados
+como `verified-not-needed` ou `policy-decision`. Documentados aqui pra
+prevenir reabertura em review futura.
+
+- **H-05** — `verified-not-needed`. Sandbox env já endereçado em PR #9
+  ultra-review; `engine/_sandbox/env.py` contém `SENSITIVE_PATTERN` +
+  flag `allow_sensitive`. Reviewer não viu o estado atual.
+- **H-08** — `verified-not-needed`. `_qa_run` é wrapper thin; lógica
+  não-trivial em `run_qa` já coberta em `tests/engine/test_qa.py`.
+- **L-02** — `policy-decision`. Comentários PR-reference são history
+  trace documental (Decision 7 / `01-decisions.md`), não metanarrativa
+  removível.
+- **L-05** — `policy-decision`. Log "seguindo pro retrospective sem
+  findings" refere ciclo QA atual, comportamento intencional.
+- **L-08** — `monitor-only`. PEP 649 é debt distante; pyproject pinned
+  em Python 3.11, revisitar quando 3.14 ship (pin bump). Sem ação útil
+  agora.
+- **M-03** — `verified-not-needed`. `_infer_active_feature` já preenche
+  target quando slug vem vazio; reviewer leu fluxo parcial.
+- **M-06** — `verified-not-needed`. `safe_dump` schema validation é
+  YAGNI; dados gravados são internally-generated.
+- **M-11** — `verified-not-needed`. Lógica defensiva em `_resolve_slug`
+  já trata o cenário; finding interpretou ambiguamente a interação
+  com `_infer_active_feature`.
+
+## REVIEW.md 2026-06-11 — gaps deferred (próxima sessão)
+
+- **Batch git-diff optimization em `validators/_diff.py`** —
+  H-10 finding parcial. `extract_diff_hunks` roda git por arquivo;
+  batch (N→1 git invocations) é optimization, não correctness. Revisitar
+  em sessão dedicada de performance.
+- **Mypy strict rollout per module** — H-09 sub-phase 2+ (ver subseção
+  "Mypy rollout — advisory mode" acima).
+- **PEP 649 monitor** — L-08, ver entrada acima.
+
+## Final review 2026-06-15 — follow-up gaps
+
+### Consolidação completa de `feature_path` (M-04 / WR-03 follow-up)
+
+**Origem:** Final review 2026-06-15 (WR-03).
+**Estado:** `feature_path` consolidado em `engine/utils/paths.py`, mas
+`_resolve_features_root` continua em `engine/plan.py`. `paths.feature_path`
+lazy-importa pra evitar ciclo. Engine startup-time degradado marginalmente
+(plan.py é carregado no primeiro call de feature_path). Ciclo não materializa
+porque o import é lazy, mas refactor futuro que torne eager quebra os dois
+módulos.
+**Caminho preferido:** mover `_resolve_features_root` pra `engine/utils/paths.py`
+virando leaf real. Backwards-compat: re-export shim em plan.py.
+**Quando revisitar:** próxima sessão de refactor disciplinado.
+
+### YAML cap — anchor explosion + special files (H-02 / MD-01 / A-003 follow-up)
+
+**Origem:** Final review 2026-06-15 (MD-01); reforçado pelo master review
+PR #15 finding A-003 (2026-06-15).
+**Estado:** `_YAML_MAX_BYTES = 10MB` em `engine/utils/yaml_io.py` cobre
+arquivos regular grandes, mas não:
+- Symlinks pra `/dev/zero`, FIFOs, sockets, block devices (st_size retorna 0)
+- Anchor-based expansion (alias bomb) — arquivo 100KB com `&a [...]`
+  referenciado N vezes cabe em <1MB e ainda explode em memória/CPU
+  durante `yaml.safe_load`. PyYAML não tem flag nativa pra limitar
+  aliases — exige wrap manual.
+**Mitigação atual:** vetor requer attacker-controlled YAML; engine só lê
+paths internamente controlados. Não-bloqueador hoje.
+**Caminho preferido:** adicionar `path.is_file()` check antes do `st_size`;
+implementar `yaml.SafeLoader` com `composer` custom que limita
+profundidade/contagem de aliases (ou `yaml.CSafeLoader` se aceitarmos
+extensão C).
+**Quando revisitar:** se feature-forge vier a aceitar YAML user-uploaded
+(presets externos, cards de terceiros via `forge evolve`, etc.).
+
+### Consolidação completa de `_utc_now_iso` shims (L-03 / LO-01 follow-up)
+
+**Origem:** Final review 2026-06-15 (LO-01).
+**Estado:** 5 shims removidos em implement/plan/verify (Bloco 5 / L-03);
+3 shims adicionais removidos em `engine/memory/{l1,l2,distiller}.py`
+(master review M-3, commit `112244a` 2026-06-15). Shims similares
+permanecem em `engine/undo.py`, `engine/evolve.py`, `engine/reconfigure.py`,
+`engine/memory_cli.py`, `engine/graph_cli.py`, `engine/init.py`,
+`engine/doctor.py` (7 módulos restantes — alias `_utc_now_iso_shared` ou
+wrappers locais).
+**Caminho preferido:** mesma cirurgia (import direto de `utc_now_iso`)
+nos 7 módulos restantes.
+**Quando revisitar:** próxima sessão de cleanup técnico.
+
+### `check_secrets` relativization perf (M-12 / LO-03 follow-up)
+
+**Origem:** Final review 2026-06-15 (LO-03).
+**Estado:** M-12 introduziu re-mapping `_rel_map: dict[str, Path]` +
+`_rel_paths: list[Path]` antes do filter em `validators/check_secrets.py:638-655`.
+Funcional, mas hot-path per-task hook ganhou 2-passagem + dict allocation.
+**Caminho preferido:** refactor pra single-pass com generator + walrus, ou
+inline-relativize sem map intermediário.
+**Quando revisitar:** se profiling mostrar gargalo (improvável; check_secrets
+roda em batches pequenos de staged files).
+
+### Scope discipline — M-02 mudou comportamento dentro de PR de narrow-except (B-006 follow-up)
+
+**Origem:** Master review PR #15, finding B-006 (2026-06-15).
+**Estado:** M-02 alterou `_topo_sort` de "warning + continue" pra "raise" ao
+ver dep desconhecida — mudança comportamental, fora do escopo declarado de
+H-03 (narrow broad-except). Justificada no comment do código, mas tecnicamente
+viola Mandamento #4 (scope contido). Endereçado parcialmente pela troca para
+`TaskGraphError(RuntimeError)` em A-008 (domain exception, não SystemExit),
+o que reduz superfície de surpresa.
+**Caminho preferido:** próximas rodadas de scrub, separar mudanças
+comportamentais em commits explícitos com prefixo `feat`/`fix` em vez de
+`chore`/refactor. Já corrigido na convention de commits desta sessão.
+**Quando revisitar:** N/A — backward-looking; serve como reminder de scope
+hygiene para revisores futuros.
+
+### Test exit-code precision — broad SystemExit assertion (B-007 follow-up)
+
+**Origem:** Master review PR #15, finding B-007 (2026-06-15).
+**Estado:** `tests/unit/test_commands_{implement,plan,verify}.py` capturam
+`SystemExit` largo (qualquer code non-zero/None passa). Robustez contra
+regressão silenciosa pediria pin do exit code esperado (provavelmente `1`
+ou `in {1, 2}`).
+**Caminho preferido:** próximo touch nesses testes, anotar exit code
+esperado por comando.
+**Quando revisitar:** próxima sessão que mexer em `engine/cli.py` ou nos
+handlers `engine/{implement,plan,verify}.py`.
+
+---
+
 **For a fresh session retomando o projeto, use o handoff:**
 
 → `docs/design/08-session-handoff.md` (TL;DR + ordem mandatória + auto-mode prompt)

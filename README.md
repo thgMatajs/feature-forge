@@ -2,7 +2,7 @@
 
 A standalone CLI skill that orchestrates end-to-end planning + implementation of mobile features across Android, iOS, KMP, and Web. Backend-agnostic (Firebase, REST, GraphQL, local-only).
 
-> **State:** v1.2-dev · 2026-06-12 · 1310 tests rapid lane + 133 integration + 21 e2e (~1480 total collected, Phase B DET-6 multi-axis backend SHIPPING-READY + REVIEWED + E2E COVERED em worktree `det-6-w1`; Phase A DRIFT-1 PR #11 master-review remediado integralmente; DET-3 gradle-dep signal type mergido de `main`) · 25 validators · 13 comandos · 29 cards · 4 bundles · ~400 arquivos · ~52.5K LOC
+> **State:** v1.2-dev · 2026-06-12 · 1523 tests collected (REVIEW.md remediation Blocos 1-5 ✅; Phase B DET-6 multi-axis backend SHIPPING-READY + REVIEWED + E2E COVERED em worktree `det-6-w1`; Phase A DRIFT-1 PR #11 master-review remediado integralmente; DET-3 gradle-dep signal type mergido de `main`) · 25 validators · 13 comandos · 29 cards · 4 bundles · ~400 arquivos · ~52.5K LOC
 
 ## What it is
 
@@ -93,9 +93,9 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 | Preset | kmp-mobile (8 stack cards + 4 bundles: firebase-full + rest-with-firebase-telemetry + local-only + custom-from-scratch sentinela) — substitui o bloco `backend-candidates` monolítico desde Phase B DET-6 |
 | Validators Python | 25 + 3 helpers (`_gate_infra`, `_diff`, `_common`) — inclui `check_cyclomatic_complexity` (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon), `check_secrets` (gitleaks + trufflehog), `check_no_behavior_change` (refactor), `validate_extension_feature` (extends-feature cross-cutting), `validate_presets` (Phase B DET-6 — bundle YAML schema) |
 | Hooks | 9 + 1 reuse incremental (`post-edit-detect-duplications.sh`) |
-| Tests | ~1480 collected / 1310 rapid lane + 133 integration + 21 e2e (unit + integration + e2e · ~20 skipped · baseline histórico em CHANGELOG.md). Phase A DRIFT-1 acresceu +118 sobre o pré-W2 1046; Phase B DET-6 acresceu W4-W7 (~88 unit + 12 integration) + W8 polish (+23 rapid + 3 integration + 4 e2e) chegando a 1310 rapid + 133 integration + 21 e2e. |
+| Tests | 1523 collected (unit + integration + e2e · ~20 skipped · baseline histórico em CHANGELOG.md). Phase A DRIFT-1 acresceu +118 sobre o pré-W2 1046; Phase B DET-6 acresceu W4-W7 (~88 unit + 12 integration) + W8 polish (+23 rapid + 3 integration + 4 e2e); REVIEW.md remediation Blocos 1-5 (2026-06-12) acresceu +N regression tests chegando a 1523 collected (WR-01 fix-pack adicionou +1 regression test). |
 | LOC total | ~52.500 |
-| Engine LOC | ~22.000 (Python) |
+| Engine LOC | ~33.500 (Python; engine/ apenas — validators/ adicional ~7.300) |
 | Files total | ~400 |
 | Decisões locked | 27 + 7 direcionais (Fase 3.5) |
 | Subtypes feature | 5 (product / refactor / bugfix / spike / chore) |
@@ -121,14 +121,16 @@ forge evolve     # 6 kinds: consolidate / promote / kmp-migration / etc
 forge graph      # opções 12–17 ou "r" (combined view)
 ```
 
-Requer Python 3.11+ + PyYAML (única dep externa).
+Requer Python 3.11+ + PyYAML + pathspec (runtime). Dev: pytest + mypy.
+Install canônico: `pip install -e .` na raiz do repo (também rodado
+idempotentemente por `bash .claude/bootstrap.sh`).
 
 ## Where it lives
 
 ```
 ~/Documents/feature-forge/              canonical source (this repo)
   bin/forge                             Bash dispatcher
-  engine/                               Python engine (~21.900 LOC)
+  engine/                               Python engine (~33.500 LOC)
     graph/                              parsers (Kotlin/Swift/TS) + builder +
                                         gradle_modules + gradle_deps +
                                         _body_text + duplicates + reuse_apply +

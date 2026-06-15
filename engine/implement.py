@@ -27,7 +27,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from engine.memory.l1 import (
     L1State,
@@ -47,6 +47,7 @@ from engine.utils.paths import (
     claude_dir,
     ensure_dir,
     feature_dir,
+    feature_path as _feature_path,
     find_project_root,
     workflow_config_path,
 )
@@ -56,7 +57,7 @@ from engine.utils.checkpoint_io import (
     load_yaml_checkpoint as _load_yaml_checkpoint_io,
     save_yaml_checkpoint as _save_yaml_checkpoint_io,
 )
-from engine.utils.iso import utc_now_iso as _utc_now_iso_shared
+from engine.utils.iso import utc_now_iso
 
 _SLUG_PATTERN = re.compile(r"^[a-z][a-z0-9-]{1,48}[a-z0-9]$")
 _TASK_ID_PATTERN = re.compile(r"^TASK-(\d{4})$")
@@ -98,12 +99,13 @@ def _implement_checkpoint_path(project_root: Path) -> Path:
     return claude_dir(project_root) / ".implement-checkpoint.yaml"
 
 
-# Os 4 helpers abaixo são thin shims sobre ``engine.utils.checkpoint_io`` +
-# ``engine.utils.iso`` — consolidação dos 30 duplicates + 10 cópias de
-# ``_utc_now_iso_*`` apontada pelos findings #5 e #21 do master review do
-# PR #11. Os nomes ``_save_implement_checkpoint`` etc. permanecem como API
-# privada do módulo para preservar os contracts dos testes em
+# Os helpers abaixo são thin shims sobre ``engine.utils.checkpoint_io`` —
+# consolidação dos 30 duplicates apontada pelos findings #5 e #21 do master
+# review do PR #11. Os nomes ``_save_implement_checkpoint`` etc. permanecem
+# como API privada do módulo para preservar os contracts dos testes em
 # ``tests/unit/test_engine_implement_resume.py`` (Mandamento #2 — verde).
+# L-03 (PR #remediation): ``_utc_now_iso_*`` shims removidos; callers
+# usam ``utc_now_iso`` direto de ``engine.utils.iso``.
 
 
 def _save_implement_checkpoint(cp: _ImplementCheckpoint) -> None:
@@ -132,11 +134,6 @@ def _clear_implement_checkpoint(project_root: Path) -> None:
     _clear_checkpoint_io(_implement_checkpoint_path(project_root))
 
 
-def _utc_now_iso_implement() -> str:
-    """ISO-8601 UTC timestamp — thin shim sobre ``engine.utils.iso``."""
-    return _utc_now_iso_shared()
-
-
 # ── Data shapes ──────────────────────────────────────────────────────────────
 
 
@@ -159,33 +156,6 @@ class TaskContract:
     external_deps: list[dict[str, Any]] = field(default_factory=list)
 
 
-# ── Filesystem helpers (mirror plan.py — kept local to avoid import cycle) ───
-
-
-def _resolve_features_root(project_root: Path) -> Path:
-    cfg = read_yaml_or_default(workflow_config_path(project_root), {})
-    if isinstance(cfg, dict):
-        paths = cfg.get("paths") or {}
-        roots = paths.get("feature-roots") if isinstance(paths, dict) else None
-        if isinstance(roots, list) and roots:
-            head = roots[0]
-            if isinstance(head, str):
-                return (project_root / head).resolve()
-        elif isinstance(roots, str):
-            return (project_root / roots).resolve()
-    return (project_root / "docs" / "feature-implementation-workflow" / "features").resolve()
-
-
-def _feature_path(project_root: Path, slug: str) -> Path:
-    root = _resolve_features_root(project_root)
-    default = (
-        project_root / "docs" / "feature-implementation-workflow" / "features"
-    ).resolve()
-    if root == default:
-        return feature_dir(project_root, slug)
-    return root / slug
-
-
 def _is_valid_slug(value: str) -> bool:
     return bool(_SLUG_PATTERN.match(value))
 
@@ -193,14 +163,12 @@ def _is_valid_slug(value: str) -> bool:
 # ── Readiness gate ───────────────────────────────────────────────────────────
 
 
-def _readiness_from_handoff(handoff: Path) -> Optional[str]:
+def _readiness_from_handoff(handoff: Path) -> str | None:
     if not handoff.exists():
         return None
     try:
-        import json
-
         data = json.loads(handoff.read_text(encoding="utf-8"))
-    except Exception:
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
         return None
     if not isinstance(data, dict):
         return None
@@ -214,7 +182,7 @@ def _readiness_from_handoff(handoff: Path) -> Optional[str]:
     return None
 
 
-def _readiness_from_review(review: Path) -> Optional[str]:
+def _readiness_from_review(review: Path) -> str | None:
     if not review.exists():
         return None
     text = review.read_text(encoding="utf-8")
@@ -328,8 +296,19 @@ def _collect_tasks(feature_path: Path) -> list[TaskContract]:
     return [_load_task_contract(p) for p in files]
 
 
+class TaskGraphError(RuntimeError):
+    """A-008 (master review PR #15): domain exception para erros no DAG de tasks.
+
+    Substitui `SystemExit` em `_topo_sort` — `SystemExit` é `BaseException`,
+    não pega em `except Exception`, e qualquer chamador defensivo (tests,
+    hooks, embedded use) perdia mensagem ou terminava abruptamente. Validação
+    de DAG não é shutdown; o CLI `run()` é quem mapeia esta exceção pro
+    exit code não-zero do entry-point.
+    """
+
+
 def _topo_sort(tasks: list[TaskContract]) -> list[TaskContract]:
-    """Stable topological sort by `dependencies`. Cycles raise SystemExit."""
+    """Stable topological sort by `dependencies`. Cycles raise TaskGraphError."""
     by_id = {t.task_id: t for t in tasks}
     visiting: set[str] = set()
     visited: set[str] = set()
@@ -340,19 +319,17 @@ def _topo_sort(tasks: list[TaskContract]) -> list[TaskContract]:
             return
         if node_id in visiting:
             chain = " → ".join(stack + [node_id])
-            raise SystemExit(f"forge implement: dependency cycle detected ({chain})")
-        if node_id not in by_id:
-            # Dependência declarada apontando pra TASK desconhecida — segue
-            # tratando como satisfeita pra não travar o pipeline, mas avisa
-            # visivelmente pra usuário corrigir o contrato.
-            renderer.write(
-                renderer.colored(
-                    f"⚠ Dependência desconhecida: {node_id} — "
-                    "tratando como satisfeita",
-                    "yellow",
-                )
+            raise TaskGraphError(
+                f"forge implement: dependency cycle detected ({chain})"
             )
-            return
+        if node_id not in by_id:
+            # M-02: dep apontando pra task inexistente é erro de contrato,
+            # não warning. Continuar trataria estado inválido como válido
+            # e a feature avançaria com DAG furado.
+            raise TaskGraphError(
+                f"forge implement: task '{node_id}' declared in "
+                "dependencies does not exist. Fix the dependency reference."
+            )
         visiting.add(node_id)
         for dep in by_id[node_id].dependencies:
             _visit(dep, stack + [node_id])
@@ -367,7 +344,7 @@ def _topo_sort(tasks: list[TaskContract]) -> list[TaskContract]:
 
 def _pick_next_task(
     tasks: list[TaskContract], *, skip_blocked: bool = False
-) -> Optional[TaskContract]:
+) -> TaskContract | None:
     """Pick the next runnable task in topo order.
 
     When `skip_blocked=True`, tasks with unresolved blocking external deps
@@ -390,8 +367,7 @@ def _pick_next_task(
 
 def _print_blocked_refusal(
     task: TaskContract,
-    alt_task: Optional[TaskContract],
-    project_root: Path,
+    alt_task: TaskContract | None,
 ) -> None:
     """Render the canonical 3-caminhos block for a task blocked on external deps.
 
@@ -401,7 +377,6 @@ def _print_blocked_refusal(
       C) Pause the feature entirely (deferred)
     """
     blocking = _task_blocking_deps(task)
-    del project_root  # not currently needed for the render
 
     renderer.write("")
     renderer.write(
@@ -559,7 +534,7 @@ def _run_cc_gate(project_root: Path) -> dict[str, Any]:
 
     try:
         result = cc_validator.validate(project_root)
-    except Exception as exc:  # pragma: no cover — defensive; validator crashes warn
+    except Exception as exc:  # noqa: BLE001 — broad catch: defensive at validator-dispatch boundary; validator crashes warn  # pragma: no cover
         return {
             "status": "warn",
             "message": f"cc-gate validator crashed: {exc}",
@@ -687,7 +662,7 @@ def _run_secrets_gate(project_root: Path) -> dict[str, Any]:
 
     try:
         result = secrets_validator.validate(project_root, stage="per_task")
-    except Exception as exc:  # pragma: no cover — defensive; validator crashes warn
+    except Exception as exc:  # noqa: BLE001 — broad catch: defensive at validator-dispatch boundary; validator crashes warn  # pragma: no cover
         return {
             "status": "warn",
             "message": f"secrets-gate validator crashed: {exc}",
@@ -1035,7 +1010,7 @@ def _maybe_run_qa_pre_retrospective(
                 project_root=project_root,
                 workflow_config=cfg,
             )
-        except Exception as exc:  # noqa: BLE001 — verdict não bloqueia
+        except Exception as exc:  # noqa: BLE001 — broad catch: defensive at qa auto-run cross-module boundary; verdict não bloqueia
             renderer.write(
                 renderer.colored(
                     f"qa auto-run falhou ({type(exc).__name__}: {exc}); "
@@ -1103,7 +1078,7 @@ def _toggle_qa_auto_run_off(project_root: Path) -> None:
 # ── Slug elicitation ─────────────────────────────────────────────────────────
 
 
-def _elicit_slug(argv_slug: Optional[str], project_root: Path) -> str:
+def _elicit_slug(argv_slug: str | None, project_root: Path) -> str:
     if argv_slug:
         if not _is_valid_slug(argv_slug):
             raise SystemExit(
@@ -1120,7 +1095,7 @@ def _elicit_slug(argv_slug: Optional[str], project_root: Path) -> str:
     _save_implement_checkpoint(
         _ImplementCheckpoint(
             step="step-elicit-slug",
-            at=_utc_now_iso_implement(),
+            at=utc_now_iso(),
             project_root=str(project_root),
             intent_id=question.stable_intent_id(
                 "ask_text",
@@ -1167,7 +1142,7 @@ def run(argv: list[str]) -> int:
     _save_implement_checkpoint(
         _ImplementCheckpoint(
             step="step-post-slug",
-            at=_utc_now_iso_implement(),
+            at=utc_now_iso(),
             project_root=str(project_root),
             intent_id=None,
             feature_slug=slug,
@@ -1218,7 +1193,12 @@ def run(argv: list[str]) -> int:
                 {"event": "blocked-external-cleared"},
             )
 
-    task = _pick_next_task(tasks)
+    try:
+        task = _pick_next_task(tasks)
+    except TaskGraphError as exc:
+        # A-008 (master review PR #15): map domain exception to CLI exit code.
+        sys.stderr.write(f"{exc}\n")
+        return 1
     if task is None:
         renderer.write("")
         renderer.write(
@@ -1269,7 +1249,11 @@ def run(argv: list[str]) -> int:
     task_blockers = _task_blocking_deps(task)
     if task_blockers:
         # Find an alternative task (deps satisfied AND zero blocking external).
-        alternative = _pick_next_task(tasks, skip_blocked=True)
+        try:
+            alternative = _pick_next_task(tasks, skip_blocked=True)
+        except TaskGraphError as exc:
+            sys.stderr.write(f"{exc}\n")
+            return 1
         # Skip the same task if topo handed us the blocked one again.
         if alternative is not None and alternative.task_id == task.task_id:
             alternative = None
@@ -1309,7 +1293,7 @@ def run(argv: list[str]) -> int:
                 },
             )
 
-        _print_blocked_refusal(task, alternative, project_root)
+        _print_blocked_refusal(task, alternative)
         # A3 fix: do NOT unconditionally release here. This branch fires
         # BEFORE we acquire the phase lock for `task.task_id` (the
         # `with phase_lock_held(...)` below). An unconditional release would

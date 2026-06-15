@@ -17,11 +17,11 @@ import sys
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
 from engine.memory import MemoryError
+from engine.utils.iso import utc_now_iso
 from engine.utils.paths import ensure_dir, memory_dir, memory_l1_path
 from engine.utils.yaml_io import read_yaml, read_yaml_or_default, write_yaml
 
@@ -98,11 +98,6 @@ class L1State:
 
 
 # ── Internal helpers ─────────────────────────────────────────────────────────
-
-
-def _utc_now_iso() -> str:
-    """ISO 8601 UTC with second precision and trailing Z."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _coerce_optional_slug(
@@ -295,7 +290,7 @@ def write_l1_status(state: L1State, project_root: Path) -> None:
             f"got {type(state.parent_feature).__name__}"
         )
     if not state.last_action_at:
-        state.last_action_at = _utc_now_iso()
+        state.last_action_at = utc_now_iso()
 
     payload: dict[str, Any] = dict(state.raw) if state.raw else {}
     payload.update(
@@ -342,7 +337,7 @@ def append_history(
     if not isinstance(event, dict):
         raise MemoryError("history event must be a dict")
     enriched = dict(event)
-    enriched.setdefault("at", _utc_now_iso())
+    enriched.setdefault("at", utc_now_iso())
     enriched.setdefault("kind", enriched.pop("event", "unspecified"))
     path = _l1_dir(project_root, feature_slug) / _HISTORY_FILE
     _append_jsonl(path, enriched)
@@ -376,7 +371,7 @@ def write_dispatch_log(
     if not isinstance(entry, dict):
         raise MemoryError("dispatch entry must be a dict")
     enriched = dict(entry)
-    enriched.setdefault("at", _utc_now_iso())
+    enriched.setdefault("at", utc_now_iso())
     path = _l1_dir(project_root, feature_slug) / _DISPATCH_FILE
     _append_jsonl(path, enriched)
 
@@ -462,7 +457,7 @@ def archive_feature(
     enriched = dict(summary)
     enriched.setdefault("schema-version", 1)
     enriched.setdefault("feature-slug", feature_slug)
-    enriched.setdefault("archived-at", _utc_now_iso())
+    enriched.setdefault("archived-at", utc_now_iso())
     write_yaml(target, enriched, atomic=True, backup=False)
 
     shutil.rmtree(src)
@@ -602,7 +597,7 @@ def _mirror_phase_lock_to_status(
         state = L1State(
             feature_slug=feature_slug,
             status="planning",
-            last_action_at=_utc_now_iso(),
+            last_action_at=utc_now_iso(),
             last_action_kind=(
                 "phase-lock-acquired" if lock_id else "phase-lock-released"
             ),
@@ -615,7 +610,7 @@ def _mirror_phase_lock_to_status(
     state.last_action_kind = (
         "phase-lock-acquired" if lock_id else "phase-lock-released"
     )
-    state.last_action_at = _utc_now_iso()
+    state.last_action_at = utc_now_iso()
     write_l1_status(state, project_root)
 
 
@@ -683,7 +678,7 @@ def release_phase_lock(feature_slug: str, project_root: Path) -> None:
         return
     state.phase_lock = None
     state.last_action_kind = "phase-lock-released"
-    state.last_action_at = _utc_now_iso()
+    state.last_action_at = utc_now_iso()
     write_l1_status(state, project_root)
 
 
@@ -872,14 +867,14 @@ def set_subtype(feature_slug: str, project_root: Path, subtype: str) -> None:
         state = L1State(
             feature_slug=feature_slug,
             status="planning",
-            last_action_at=_utc_now_iso(),
+            last_action_at=utc_now_iso(),
             last_action_kind="subtype-set",
             subtype=subtype,
         )
     else:
         state.subtype = subtype
         state.last_action_kind = "subtype-set"
-        state.last_action_at = _utc_now_iso()
+        state.last_action_at = utc_now_iso()
     write_l1_status(state, project_root)
 
 
@@ -963,7 +958,7 @@ def append_verify_log(
         raise MemoryError("verify entry must be a dict (MEM-L1-VL-001)")
 
     enriched = dict(entry)
-    enriched.setdefault("timestamp", _utc_now_iso())
+    enriched.setdefault("timestamp", utc_now_iso())
     enriched.setdefault("schema-version", 1)
     enriched.setdefault("at", enriched.get("timestamp"))
 

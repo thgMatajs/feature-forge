@@ -17,6 +17,10 @@ from pathlib import Path
 import pytest
 
 # Make the engine importable from tests without `pip install -e .`.
+#
+# L-06 (REVIEW.md 2026-06-11): the preferred long-term solution is
+# `pip install -e .` in CI, removing this sys.path mutation. Deferred
+# until CI pipeline lands (gap tracked in docs/design/04-pending.md).
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))

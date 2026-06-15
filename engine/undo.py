@@ -29,6 +29,7 @@ from typing import Any, Optional
 from engine.memory.l1 import (
     L1State,
     append_history,
+    current_subtype,
     list_active_features,
     read_history,
     read_l1_status,
@@ -41,12 +42,12 @@ from engine.utils.paths import (
     ProjectRootNotFoundError,
     claude_dir,
     ensure_dir,
-    feature_dir,
+    feature_path,
     find_project_root,
     memory_l2_path,
     workflow_config_path,
 )
-from engine.utils.yaml_io import read_yaml_or_default, write_yaml
+from engine.utils.yaml_io import YamlIOError, read_yaml_or_default, write_yaml
 from engine.utils.checkpoint_io import (
     clear_checkpoint as _clear_checkpoint_io,
     load_yaml_checkpoint as _load_yaml_checkpoint_io,
@@ -56,6 +57,31 @@ from engine.utils.iso import utc_now_iso as _utc_now_iso_shared
 
 _HISTORY_FILE_NAME = "workflow-config-history.jsonl"
 _UNDO_SLUG = "_undo"
+
+
+def _delete_feature_artifacts_guard(project_root: Path, target: Path) -> None:
+    """H-06: refuse rmtree on paths outside the project tree.
+
+    Resolves both `project_root` and `target` then verifies containment.
+    Raises `ValueError` if `target` is not inside `project_root` after
+    resolution — protects against `../../etc`-style slugs that survive
+    `feature_dir()`.
+    """
+    project_resolved = project_root.resolve()
+    target_resolved = target.resolve()
+    try:
+        target_resolved.relative_to(project_resolved)
+    except ValueError as exc:
+        raise ValueError(
+            f"Refusing to delete path outside project: {target_resolved}"
+        ) from exc
+    # A-001 (master review PR #15): `Path.relative_to` returns `Path('.')`
+    # when target == project — i.e. it does NOT raise ValueError on equality.
+    # A malicious slug like `../../..` could resolve to the project root and
+    # slip past the containment check above, then `shutil.rmtree(project_root)`
+    # would obliterate the entire project after the 2 confirms. Reject equality.
+    if target_resolved == project_resolved:
+        raise ValueError("Refusing to delete project root")
 
 
 def _utc_now_iso() -> str:
@@ -341,7 +367,12 @@ def _undo_evolve(project_root: Path, proposal_id: str) -> bool:
     target_id = proposal_id.replace("P-", "L2-") if proposal_id.startswith("P-") else proposal_id
     try:
         l2_remove_entry(project_root, target_id)
-    except Exception as exc:
+    except (KeyError, OSError, YamlIOError, MemoryError) as exc:
+        # A-012 (master review PR #15): narrow do broad-except residual no scrub
+        # H-03. `l2_remove_entry` chama `read_l2`/`write_l2` (raise YamlIOError
+        # via yaml_io, MemoryError via schema check, OSError via filesystem).
+        # KeyError defensivo se entry layout mudar; bugs reais de schema agora
+        # propagam em vez de virarem warning amarelo.
         renderer.write(renderer.colored(
             f"  remoção da entrada falhou — {exc}", "yellow"
         ))
@@ -425,7 +456,21 @@ def _abort_feature(project_root: Path, feature_slug: str, reason: str) -> bool:
 
 
 def _delete_feature_artifacts(project_root: Path, feature_slug: str) -> bool:
-    fpath = feature_dir(project_root, feature_slug)
+    # A-002 (master review PR #15): use `feature_path` honoring subtype so
+    # non-product features (refactor/spike/chore/bugfix) — which live under
+    # `non-product/{slug}/` per filesystem-layout §3.5 — are actually
+    # deletable. The old `feature_dir(...)` always pointed to the product
+    # folder, leaving non-product artifacts orphaned after `forge undo`.
+    subtype = current_subtype(feature_slug, project_root)
+    fpath = feature_path(project_root, feature_slug, subtype=subtype)
+
+    # MD-02 (final review 2026-06-15): path-traversal guard runs FIRST,
+    # before any branch that could leak the resolved path to the user
+    # (existence message, "Vai apagar {fpath}" warning, confirm prompts).
+    # If `fpath` escapes `project_root`, the guard raises and we never
+    # disclose the resolved path in error messages.
+    _delete_feature_artifacts_guard(project_root, fpath)
+
     if not fpath.exists():
         renderer.write(renderer.colored(
             f"  Nada em {fpath} pra apagar.", "yellow"
@@ -474,8 +519,15 @@ def _append_undo_log(
         event.update(extras)
     try:
         append_history(slug, project_root, event)
-    except Exception:
-        pass
+    except (OSError, ValueError) as exc:
+        # A-011 (master review PR #15): narrow do broad-except residual no scrub
+        # H-03. `append_history` faz JSONL append — OSError (filesystem, lock,
+        # permissions); ValueError defensivo se payload virar não-serializável.
+        # History append failure agora é visível ao usuário em vez de silenciosa
+        # (auditabilidade do undo). Não propaga: undo principal já sucedeu.
+        renderer.write(renderer.dim(
+            f"  (aviso) append undo-log falhou — {exc}"
+        ))
 
 
 # ── Menu plumbing ───────────────────────────────────────────────────────────

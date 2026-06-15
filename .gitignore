@@ -44,6 +44,7 @@ dist/
 # Claude Code — runtime state (per-session, não versionado)
 .claude/state/*.json
 .claude/state/*.jsonl
+.claude/state/*.lock
 !.claude/state/.gitkeep
 
 # Claude Code — worktrees (git linked-worktrees criadas por subagentes)

@@ -34,6 +34,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+import yaml  # B-003 (master review PR #15): write_yaml pode levantar yaml.YAMLError
+
+from engine.cards import CardError  # B-002 (master review PR #15)
 from engine.cards.snapshotter import compute_directory_sha256
 from engine.memory.l1 import list_active_features, list_archived_features
 from engine.memory.l2 import l2_size_bytes
@@ -338,8 +341,12 @@ def _stamp_last_doctor_run(
     doctor_block["last-status"] = overall_status
     try:
         write_yaml(config_path, config, atomic=True)
-    except Exception:  # pragma: no cover - defensive
-        # Doctor must never crash the user's session because of a stamp write.
+    except (yaml.YAMLError, OSError):  # pragma: no cover - defensive
+        # B-003 (master review PR #15): `write_yaml` NÃO levanta `YamlIOError`
+        # (só `read_yaml` levanta). O tipo real escapando aqui é
+        # `yaml.YAMLError` (de `safe_dump` em dados não-serializáveis) ou
+        # `OSError` (write). Doctor must never crash by stamp write.
+        # noqa: BLE001 — narrowed: stamp write is best-effort, observability-only.
         pass
 
 
@@ -434,7 +441,15 @@ def _check_cards(project_root: Path, config: dict) -> _CategoryReport:
             continue
         try:
             actual = compute_directory_sha256(snapshot)
-        except Exception as exc:  # pragma: no cover - defensive
+        except (OSError, ValueError, CardError) as exc:  # pragma: no cover - defensive
+            # noqa: BLE001 — broad catch: defensive at category-check boundary —
+            # filesystem walk + sha256 can raise OSError (permissions, race);
+            # ValueError covers malformed paths.
+            # B-002 (master review PR #15): `compute_directory_sha256` levanta
+            # `CardError` quando o snapshot vira não-dir entre o guard `is_dir()`
+            # e a chamada (race). Sem incluir CardError, race condition
+            # escalava e crashava o doctor inteiro — o oposto do isolamento
+            # por categoria que o comentário defende.
             checks.append(_Check(name, _STATUS_FAIL, f"hash error: {exc}"))
             continue
         if actual == expected:
@@ -1300,5 +1315,5 @@ def _config_get_path(config: dict, keys: list[str], default):
 
 # Keep imports referenced (forge_home is reserved for future absolute-path
 # remediation hints; do not drop the import).
-_ = forge_home
-_: Callable = _safe_read_yaml  # type: ignore[assignment]
+_ = forge_home                              # reserved for future absolute-path remediation hints
+_safe_read_yaml_ref: Callable = _safe_read_yaml  # noqa: F841 — keep reference

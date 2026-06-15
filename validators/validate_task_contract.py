@@ -32,7 +32,7 @@ from _common import (
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from engine.utils.paths import feature_dir, workflow_config_path  # noqa: E402
-from engine.utils.yaml_io import read_yaml_or_default  # noqa: E402
+from engine.utils.yaml_io import YamlIOError, read_yaml_or_default  # noqa: E402
 
 _TASK_ID_RE = re.compile(r"^TASK-\d{4}$")
 
@@ -102,7 +102,7 @@ def _validate_one(task_path: Path, hard_gates: list[str]) -> list[str]:
     violations: list[str] = []
     try:
         data = read_yaml_or_default(task_path, {}) or {}
-    except Exception as exc:  # noqa: BLE001
+    except (YamlIOError, OSError, UnicodeDecodeError) as exc:
         return [f"YAML parse error: {exc}"]
     if not isinstance(data, dict):
         return ["top-level must be a mapping"]

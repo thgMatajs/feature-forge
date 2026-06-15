@@ -11,7 +11,6 @@ import hashlib
 import struct
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
@@ -53,11 +52,11 @@ class ScreenshotMetadata:
     file_size_bytes: int
     format: str
     has_alpha: bool
-    inferred_platform: Optional[str]
-    platform_inference: Optional[PlatformInference] = None
+    inferred_platform: str | None
+    platform_inference: PlatformInference | None = None
 
 
-def _detect_format(head: bytes) -> Optional[str]:
+def _detect_format(head: bytes) -> str | None:
     if head.startswith(_PNG_MAGIC):
         return "png"
     if head.startswith(_JPEG_SOI):
@@ -271,7 +270,7 @@ def infer_platform_inference(width: int, height: int) -> PlatformInference:
     return PlatformInference("unknown", 0.0, "Aspect ratio fora dos buckets conhecidos")
 
 
-def infer_platform_from_aspect(width: int, height: int) -> Optional[str]:
+def infer_platform_from_aspect(width: int, height: int) -> str | None:
     """Compat shim que retorna apenas a string da plataforma.
 
     Mantido para callers existentes — novos callers devem preferir

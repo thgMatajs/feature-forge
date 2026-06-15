@@ -7,6 +7,19 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **chore(gitignore)** — Adicionadas entradas faltantes pra runtime
+  artifacts: `.claude/state/*.lock`, `.claude/worktrees/`, `.gsd-tmp/`,
+  `.planning/*-review/` (generic), `.ultra-review/`, `docs/design/outputs/`.
+  Reduz noise em `git status` pós-bootstrap.
+- **chore(gitignore PR #14)** — `.planning/*` agora catch-all com whitelist
+  explícita pra `det-3/`, `det-6/`, `drift-1/`. Scratch de review/audit/fix
+  não polui mais o working tree.
+- **`.claude/rules/orchestrator-persona.md`** — nova seção §Cleanup de
+  `.planning/` ao final do trabalho — disciplina manual paralela aos `.bak`
+  retention.
+
 ### Added (User-facing docs, 2026-06-12)
 
 - **`docs/guides/getting-started.md`** — Guia de primeiros passos: onboarding completo para devs mobile, incluindo instalação, init, e adoção em time.
@@ -18,11 +31,6 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 - **`docs/diagrams/command-decision-tree.mermaid`** — Diagrama de decisão: qual comando usar em cada situação.
 - **`docs/diagrams/graph-query-flow.mermaid`** — Diagrama de fluxo de consulta do graph.
 - **`docs/diagrams/files-versioned-vs-local.mermaid`** — Diagrama de arquivos versionados vs locais.
-
-### Changed (Housekeeping, 2026-06-15)
-
-- `.gitignore`: `.planning/*` agora catch-all (whitelist explícita pra `det-3/`, `det-6/`, `drift-1/`). Scratch de review/audit/fix não polui mais o working tree.
-- `.claude/rules/orchestrator-persona.md`: nova seção §Cleanup de `.planning/` ao final do trabalho — disciplina manual paralela aos `.bak` retention.
 
 ### Fixed (PR #14 docs review — 2026-06-15)
 
@@ -67,6 +75,190 @@ ground truth do `main`.
 - **`README.md`** — Adicionada seção "Quick Start" com instalação e first steps + tabela "Guias do usuário" com links para os 4 guias.
 - **`docs/design/08-session-handoff.md`** — Última atualização e seção de User-facing docs registrada.
 
+### Fixed (master review PR #15 remediation — 2026-06-15)
+
+Aplica todos os 22 findings do master review PR #15 (14 do Group A —
+security/correctness + 8 do Group B — broad-except scrub + validators).
+Test baseline 1350 → 1353 (3 testes novos de A-013 cobrindo o vetor de
+path-traversal do guard de undo).
+
+**Alto (A-001, A-002, A-003, B-001):**
+- **A-001** (`engine/undo.py`) — `_delete_feature_artifacts_guard` agora
+  rejeita também `target_resolved == project_resolved`. Sem isso, um slug
+  malicioso `../../..` resolveria pra raiz e `shutil.rmtree` apagaria o
+  projeto inteiro após os 2 confirms (`Path.relative_to` retorna
+  `Path('.')` em equality, sem `ValueError`).
+- **A-002** (`engine/undo.py`) — `_delete_feature_artifacts` agora usa
+  `feature_path(..., subtype=current_subtype(...))` em vez de `feature_dir`,
+  honrando o subtype enum. Features non-product (refactor/spike/chore/
+  bugfix) — que vivem em `non-product/{slug}/` — voltam a ser delete-able
+  via `forge undo`.
+- **A-003** (`docs/design/04-pending.md`) — entrada H-02/MD-01 reforçada
+  com referência explícita a A-003 e detalhamento do vetor YAML anchor
+  bomb (`yaml.safe_load` sem flag nativa pra limitar aliases).
+- **B-001** (`engine/status.py`) — `_render_recent_activity` agora pega
+  `(MemoryError, OSError, UnicodeDecodeError)` em vez de
+  `(JSONDecodeError, OSError, UnicodeDecodeError)`. `read_history` empacota
+  `JSONDecodeError` em `MemoryError`, então a tupla antiga era no-op e
+  JSONL corrompido crashava o status render.
+
+**Médio (A-004, A-005, A-006, B-002, B-003):**
+- **A-004** (`validators/check_secrets.py`) — detecção de colisão no
+  `_rel_map` quando dois staged paths viram a mesma relativização (caso
+  de projetos com symlinks). Modo conservador filtra com paths originais
+  em vez de descartar silenciosamente.
+- **A-005** (`validators/check_secrets.py`) — fail-loud em regex inválida
+  na config `secrets-gate.ignore-paths` via `_collect_invalid_patterns` +
+  `result_warn`. Antes era skip silencioso.
+- **A-006** (`engine/utils/paths.py`, `engine/plan.py`) — promovido
+  `_resolve_features_root` de plan.py pra paths.py (leaf real, sem dep
+  de `engine.plan`). Elimina lazy import circular dentro de `feature_path`.
+  Shim retrocompatível em plan.py.
+- **B-002** (`engine/doctor.py`) — adiciona `CardError` à tupla de except
+  em `_check_card_snapshots` + import. Race condition no
+  `compute_directory_sha256` agora vira `_STATUS_FAIL` por categoria
+  em vez de explodir o doctor inteiro.
+- **B-003** (`engine/doctor.py`) — troca `(YamlIOError, OSError)` por
+  `(yaml.YAMLError, OSError)` em `_stamp_last_doctor_run` + import yaml.
+  `write_yaml` NÃO levanta `YamlIOError` (só `read_yaml` levanta) — o
+  tipo real era `YAMLError` de `safe_dump`, que escapava silenciosamente.
+
+**Baixo (A-007, A-008, A-009, A-010, B-004, B-005, B-008):**
+- **A-007** (`engine/graph/builder.py`) — comment estendido do `finally`
+  pra cobrir `ValueError` do guard de allowlist (sem mudança funcional).
+- **A-008** (`engine/implement.py` + test) — `_topo_sort` troca
+  `raise SystemExit` por nova `TaskGraphError(RuntimeError)`. SystemExit
+  é `BaseException` e não era pego por `except Exception` de chamadores
+  defensivos. CLI `run()` mapeia para exit code 1.
+- **A-009** (`engine/verify.py`) — `run_scope` agora retorna `1` quando
+  `project_root` não é diretório, espelhando o guard de `_run_validator`.
+- **A-010** (`engine/persona/mentor_calmo.py`) — docstring de `set_seed`
+  documenta thread-safety explicitamente.
+- **B-004** (`engine/graph/builder.py`) — comments por-tipo justificando
+  cada exception da tupla em `_populate_ds_components_from_inventory`.
+- **B-005** (`validators/validate_workflow_config.py`) — comment
+  justificando exaustividade do `OSError` em torno de `file_sha256`.
+- **B-008** (`validators/validate_feature_package.py`) — `_check_cross_refs`
+  reporta parse error como warn em vez de silenciar.
+
+**Sugestão (A-011, A-012, A-013, A-014, B-006, B-007):**
+- **A-011** (`engine/undo.py`) — narrow do broad-except em
+  `_append_undo_log` pra `(OSError, ValueError)`, com aviso ao usuário.
+- **A-012** (`engine/undo.py`) — narrow do broad-except em `_undo_evolve`
+  pra `(KeyError, OSError, YamlIOError, MemoryError)`.
+- **A-013** (`tests/engine/test_undo_delete_traversal.py`) — adiciona 3
+  testes (target == project_root, symlink escaping project, slug literal
+  `../../..`), cobrindo o vetor de A-001.
+- **A-014** (`validators/check_no_invented_behavior.py`) — comment
+  explícito + `noqa: E402` cobrindo `sys.path.insert` antes dos imports
+  de `engine.`.
+- **B-006** (`docs/design/04-pending.md`) — nota retrospectiva sobre
+  scope hygiene do M-02 (parcialmente endereçado por A-008).
+- **B-007** (`tests/unit/test_commands_{implement,plan,verify}.py`) —
+  pin exit code in `{1, 2}` em vez de `!= 0` amplo.
+
+### Fixed (master review remediation — final review, 2026-06-15)
+
+- **Master review H-1** — Fix `engine/doctor.py:1308-1309` `_` redefinition
+  (mypy no-redef): renomeou segundo binding para `_safe_read_yaml_ref` +
+  corrigiu noqa code.
+- **Master review M-1** — Atualizou `engine/graph/builder.py` para usar
+  `GitIgnoreSpecPattern` (de `pathspec.patterns.gitignore.spec`) no lugar
+  de `GitWildMatchPattern` (deprecated). Elimina ~1500 DeprecationWarnings
+  em test runs.
+- **Master review M-3** — Consolidou 3 cópias adicionais de `_utc_now_iso`
+  em `engine/memory/{l1,l2,distiller}.py` para import direto de
+  `engine.utils.iso.utc_now_iso`. Fecha LO-01 parcialmente (7 módulos
+  restantes documentados em `04-pending.md`).
+- **Master review L-1** — Atualizado campo `**Última atualização:**` do
+  handoff para 2026-06-15 (refletindo final review remediation).
+
+### Fixed (REVIEW.md remediation — Bloco 5: medium/low polish, 2026-06-12)
+
+- **M-01** — Substituído over-mock em `tests/unit/test_commands_*.py`
+  por assertions sobre exit code real.
+- **M-05** — Removido `import json` interno em `_readiness_from_handoff`
+  (side-effect Task 4.1 / H-03 narrow).
+- **L-01 + L-04** — Removido parâmetro `project_root` dead em
+  `_print_blocked_refusal` (`engine/implement.py`).
+- **L-03** — Consolidado `_utc_now_iso_implement/_plan/_verify` em
+  import direto de `engine.utils.iso.utc_now_iso` em `engine/implement.py`,
+  `engine/plan.py`, `engine/verify.py` (5 shims, 12 callers). Shims
+  similares em outros módulos (`engine/undo.py`, `engine/evolve.py`,
+  `engine/reconfigure.py`, `engine/memory_cli.py`, `engine/graph_cli.py`,
+  `engine/init.py`, `engine/doctor.py`) ficam fora de scope desta entrega
+  — gap registrado em `04-pending.md` (LO-01 follow-up).
+- **L-06** — `sys.path.insert` em `tests/conftest.py` mantido com
+  comment justificando + gap aberto em `04-pending.md` pra revisitar
+  quando CI pipeline oficial vier.
+- **L-07** — Marker `meobonsai` registrado em `pyproject.toml`; 11 tests
+  dependentes da fixture `meobonsai_root` agora carregam o marker.
+
+### Added (REVIEW.md remediation — Bloco 3: mypy advisory, 2026-06-12)
+
+- **H-09** — `mypy >= 1.8` adicionado em `[project.optional-dependencies]
+  dev` + seção `[tool.mypy]` em advisory mode. Baseline de 17 errors
+  registrado em `docs/design/04-pending.md`. CI gate não ativo nesta
+  sessão (rollout incremental planejado).
+
+### Changed (REVIEW.md remediation — Bloco 3: mypy advisory, 2026-06-12)
+
+- **M-10** — Removido import unused `Optional` em `engine/implement.py`,
+  `engine/verify.py`, `engine/status.py`, `engine/vision/screenshot.py`.
+  19 usos remanescentes padronizados pra `X | None` intra-arquivo.
+
+### Changed (REVIEW.md remediation — Bloco 2: functional bugs, 2026-06-12)
+
+- **M-07 (dep nova)** — Adicionado `pathspec >= 0.12` em
+  `[project.dependencies]` runtime. Lib pura Python implementando
+  `.gitignore` semantics canonicas. Decision 19 (Python stack) e
+  Decision 22 (no skill runtime deps) não afetadas — pathspec é PyPI
+  lib genérica.
+
+### Fixed (REVIEW.md remediation — Bloco 4: broad-except scrub, 2026-06-12)
+
+- **H-03** — Narrow `except Exception` em 24 sites críticos:
+  - `engine/implement.py`: 1 site (JSON read) narrowed; 3 sites preservados broad
+    com `# noqa: BLE001` em validator/QA dispatch boundaries
+  - `engine/verify.py`: 2 sites narrowed `(MemoryError, OSError)` em
+    L1 status write/restore
+  - `engine/graph/builder.py`: 1 site narrowed em inventory load
+  - `engine/init.py`: 2 narrowed (overlay, FS copy) + 4 preservados em
+    discovery-step heuristic scanners
+  - `engine/status.py`: 1 site narrowed (L1 history JSON read)
+  - `engine/doctor.py`: 2 sites narrowed (stamp write + category snapshot)
+  - `validators/validate_*.py`: 18 sites narrowed em 10 validators
+    (YAML reads + 1 file_sha256), `YamlIOError` adicionado aos imports
+
+### Fixed (REVIEW.md remediation — Bloco 1: security quick wins, 2026-06-12)
+
+- **H-01** — SQL allowlist em `_reset_domain_tables` previne wipe de tabela
+  fora do conjunto canônico (`engine/graph/builder.py`).
+- **H-02** — Cap de 10MB em `read_yaml` evita YAML bomb / anchor explosion
+  (`engine/utils/yaml_io.py`).
+- **H-04** — PRAGMA `foreign_keys = ON` em `finally` tolera erro de SQLite
+  sem mascarar a exception original (`engine/graph/builder.py`).
+- **H-06** — Path-traversal guard em `forge undo` delete-feature recusa
+  rmtree fora do project_root (`engine/undo.py`).
+- **H-07** — RNG de `mentor_calmo` isolado por call quando seed unset;
+  contrato determinístico de tests preservado (`engine/persona/mentor_calmo.py`).
+- **H-10 (parcial)** — Validação `project_root.is_dir()` antes do
+  subprocess de validators retorna `degraded` em vez de crashar
+  (`engine/verify.py`). Batch git-diff optimization fica deferred — ver
+  `docs/design/04-pending.md`.
+- **M-02** — Unknown task dep agora levanta `SystemExit` em
+  `_topo_sort` em vez de tratar silenciosamente como satisfeita
+  (`engine/implement.py`).
+- **M-04** — `feature_path` consolidado em `engine/utils/paths.py`;
+  `implement.py` agora encontra non-product features (refactor/spike/chore).
+- **M-07 + M-08** — `pathspec` substitui parser custom de `.gitignore`;
+  bracket classes, escapes, trailing space e `a/**/b` agora cobertos
+  corretamente (`engine/graph/builder.py`).
+- **M-09** — `validators/check_no_invented_behavior.py` reusa
+  `git_staged_files` de `validators/_diff.py` (rename detection -M80%
+  agora disponível).
+- **M-12** — Ignore patterns em `check_secrets` âncoram em `^` —
+  `src/tests/fixtures/secrets/...` não é mais false-positive ignored.
 
 ### Added (Phase B — DET-6 multi-axis backend, 2026-06-11)
 
