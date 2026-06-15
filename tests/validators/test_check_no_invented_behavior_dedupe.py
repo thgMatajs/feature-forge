@@ -2,30 +2,32 @@
 
 The local `_git_staged_files` in `validators/check_no_invented_behavior.py`
 was a near-duplicate of `_diff.git_staged_files` without rename detection.
-This test pins the dedupe: the validator must NOT redefine its own private
-helper, and must expose `git_staged_files` imported from `_diff`.
+This test pins the dedupe: the validator must expose `git_staged_files`
+that is the same object as `_diff.git_staged_files` (identity check).
+
+LO-04 (final review 2026-06-15): the previous version also asserted
+`not hasattr(mod, "_git_staged_files")`. That guard was brittle (a
+re-export `from _diff import _git_staged_files as _git_staged_files`
+would defeat it) AND redundant — the identity check below is sufficient
+and stronger.
 """
 
 from __future__ import annotations
 
 
 def test_check_no_invented_behavior_imports_from_diff() -> None:
-    """The validator must import git_staged_files from _diff, not redefine it."""
+    """The validator must import git_staged_files from _diff (identity check)."""
     import importlib
 
     mod = importlib.import_module("check_no_invented_behavior")
-    assert not hasattr(mod, "_git_staged_files"), (
-        "validators/check_no_invented_behavior.py still defines a local "
-        "_git_staged_files; should import from _diff."
-    )
-    assert hasattr(mod, "git_staged_files"), (
-        "validators/check_no_invented_behavior.py must expose "
-        "git_staged_files (imported from _diff) after M-09 dedupe."
-    )
 
     # Source identity: ensure the symbol *is* the shared _diff implementation.
     from _diff import git_staged_files as shared
 
+    assert hasattr(mod, "git_staged_files"), (
+        "validators/check_no_invented_behavior.py must expose "
+        "git_staged_files (imported from _diff) after M-09 dedupe."
+    )
     assert mod.git_staged_files is shared, (
         "git_staged_files in check_no_invented_behavior must be the same "
         "object as _diff.git_staged_files (shared, with -M80% rename detect)."
