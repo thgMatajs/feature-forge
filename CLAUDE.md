@@ -102,11 +102,14 @@ emoji decorativo.
 ### 6. Doc-sync na mesma mudança
 
 Mexeu em `engine/`, `validators/`, `hooks/`, `templates/`, `cards/`,
-`presets/`, `docs/schemas/` → atualizou no MESMO commit:
+`presets/`, `docs/schemas/`, `docs/guides/`, `docs/diagrams/` → atualizou
+no MESMO commit:
 - `CHANGELOG.md` (Unreleased)
 - `docs/design/08-session-handoff.md` (Última atualização + Conhecidos
   limites se aplicável)
 - `README.md` (se stats mudaram)
+- `docs/guides/` e `docs/diagrams/` (se a mudança afeta comportamento
+  documentado — ver matriz em `.claude/rules/doc-sync.md`)
 
 Matriz código→docs: `.claude/rules/doc-sync.md`.
 
