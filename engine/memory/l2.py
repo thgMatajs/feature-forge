@@ -14,11 +14,11 @@ schema validator and human readers stay happy.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
 from engine.memory import MemoryError
+from engine.utils.iso import utc_now_iso
 from engine.utils.paths import ensure_dir, memory_dir, memory_l2_path
 from engine.utils.yaml_io import read_yaml_or_default, write_yaml
 
@@ -80,15 +80,11 @@ class L2Entry:
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
 def _empty_l2(project_root: Path) -> dict[str, Any]:
     return {
         "schema-version": 1,
         "project-slug": project_root.name,
-        "last-updated": _utc_now_iso(),
+        "last-updated": utc_now_iso(),
         "last-distillation": None,
         "patterns": [],
         "findings": [],
@@ -219,7 +215,7 @@ def _entry_to_payload(entry: L2Entry) -> dict[str, Any]:
                 "feature": entry.promoted_from or (
                     entry.provenance[0] if entry.provenance else ""
                 ),
-                "timestamp": entry.promoted_at or _utc_now_iso(),
+                "timestamp": entry.promoted_at or utc_now_iso(),
             }
         )
         return payload
@@ -248,7 +244,7 @@ def _entry_to_payload(entry: L2Entry) -> dict[str, Any]:
             {
                 "id": entry.id,
                 "decision": entry.title or entry.body,
-                "locked-since": entry.promoted_at or _utc_now_iso(),
+                "locked-since": entry.promoted_at or utc_now_iso(),
                 "by": entry.promoted_from or "memory-distiller",
             }
         )
@@ -263,7 +259,7 @@ def _entry_to_payload(entry: L2Entry) -> dict[str, Any]:
                 "description": entry.body,
                 "detected-in": list(entry.provenance),
                 "confidence": entry.confidence,
-                "promoted-at": entry.promoted_at or _utc_now_iso(),
+                "promoted-at": entry.promoted_at or utc_now_iso(),
                 "promoted-from": entry.promoted_from,
             }
         )
@@ -280,7 +276,7 @@ def _entry_to_payload(entry: L2Entry) -> dict[str, Any]:
             "description": entry.body,
             "detected-in": list(entry.provenance),
             "confidence": entry.confidence,
-            "promoted-at": entry.promoted_at or _utc_now_iso(),
+            "promoted-at": entry.promoted_at or utc_now_iso(),
             "promoted-from": entry.promoted_from,
         }
     )
@@ -417,7 +413,7 @@ def write_l2(
     doc: dict[str, Any] = dict(existing)
     doc["schema-version"] = 1
     doc.setdefault("project-slug", project_root.name)
-    doc["last-updated"] = _utc_now_iso()
+    doc["last-updated"] = utc_now_iso()
     doc["patterns"] = buckets["patterns"]
     doc["findings"] = buckets["findings"]
     doc["decisions-frozen"] = buckets["decisions-frozen"]

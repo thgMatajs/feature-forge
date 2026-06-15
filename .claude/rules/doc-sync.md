@@ -19,6 +19,12 @@ Mandamento #6. Ao tocar código vivo, atualize docs no MESMO commit.
 | `agents/*.md` (prompts) | CHANGELOG, handoff | — |
 | `docs/ux/*.md` (roteiros) | CHANGELOG | `08-session-handoff.md` se UX muda |
 | Release tag | CHANGELOG seção `## [vX.Y.Z]`, `README versão` | handoff `§Estado` |
+| Novo comando `forge <cmd>` ou mudança de comportamento | CHANGELOG, handoff | `docs/guides/daily-workflow.md` §<cmd>, `docs/diagrams/command-decision-tree.mermaid` |
+| Mudança em contagem de `forge doctor` (categorias) | CHANGELOG, handoff | `docs/guides/` (toda menção a "N categorias"), `docs/diagrams/command-decision-tree.mermaid` |
+| Mudança em contagem de `forge verify` (validators) | CHANGELOG, handoff | `docs/guides/` (toda menção a "N validators"), `docs/diagrams/command-decision-tree.mermaid` |
+| Mudança na estrutura de memória (L1/L2 paths) | CHANGELOG, handoff | `docs/guides/getting-started.md`, `docs/diagrams/bootstrap-flow.mermaid`, `docs/diagrams/files-versioned-vs-local.mermaid` |
+| Mudança em Apply Mode ou fases do ciclo de feature | CHANGELOG, handoff | `docs/guides/feature-lifecycle.md`, `docs/diagrams/feature-lifecycle.mermaid` |
+| `docs/guides/*.md` ou `docs/diagrams/*.mermaid` editados | CHANGELOG, handoff | — |
 
 ## Checklist pré-commit
 
@@ -33,6 +39,9 @@ Antes de `git commit`, confirme:
        validator → mention em `testing.md`; novo subagent_type → mention
        em `subagent-workflow.md`)?
 5. [ ] Gap em `04-pending.md` fechado/atualizado se aplicável?
+6. [ ] `docs/guides/` e `docs/diagrams/` atualizados se mudança afeta
+       comportamento documentado (comandos, counts, estrutura de memória,
+       fases)?
 
 Se algum check falhar, dispatch `gsd-doc-writer` (ou `gsd-executor` com
 prompt focado em docs) ANTES do commit final.

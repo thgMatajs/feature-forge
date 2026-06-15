@@ -16,6 +16,8 @@ import pytest
 from engine.inventory import conventions, design_system, i18n
 from engine.utils import paths
 
+pytestmark = pytest.mark.meobonsai
+
 
 @pytest.mark.integration
 def test_meobonsai_has_workflow_config(meobonsai_root):

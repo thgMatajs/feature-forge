@@ -65,4 +65,14 @@ if git ls-files --error-unmatch .claude/settings.local.json >/dev/null 2>&1; the
     echo ""
 fi
 
+# 5. Install runtime deps + project em editable mode.
+# pathspec (M-07) + pyyaml + project itself. Idempotente — se já instalado, no-op.
+# Sem isto, `pytest --collect-only` quebra com ModuleNotFoundError em 38 arquivos.
+if command -v pip >/dev/null 2>&1; then
+    pip install -e . >/dev/null 2>&1 \
+        || python3 -m pip install -e . >/dev/null 2>&1 \
+        || echo "  ⚠️  'pip install -e .' falhou — rode manualmente pra habilitar pathspec/mypy"
+    echo "  ✓ runtime deps instaladas (pip install -e .)"
+fi
+
 echo "✅ Bootstrap completo. Próxima sessão Claude Code carrega hooks + rules automaticamente."

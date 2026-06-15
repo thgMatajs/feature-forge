@@ -31,7 +31,7 @@ from _common import (
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from engine.utils.paths import feature_dir, workflow_config_path  # noqa: E402
-from engine.utils.yaml_io import read_yaml_or_default  # noqa: E402
+from engine.utils.yaml_io import YamlIOError, read_yaml_or_default  # noqa: E402
 
 
 _PROVIDER_TO_CARD: dict[str, set[str]] = {
@@ -111,7 +111,7 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
     try:
         data_contract = read_yaml_or_default(data_path, {}) or {}
         test_strategy = read_yaml_or_default(strat_path, {}) or {}
-    except Exception as exc:  # noqa: BLE001
+    except (YamlIOError, OSError, UnicodeDecodeError) as exc:
         return result_fail(
             "YAML parse error em data-contract ou test-strategy",
             what_failed=str(exc),

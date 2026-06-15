@@ -19,13 +19,37 @@ from __future__ import annotations
 import random
 from typing import Mapping, Sequence
 
-# Local RNG so importers of `random` aren't affected by our seed.
-_rng = random.Random()
+# H-07: seeded RNG is module-scoped (deterministic-test contract preserved);
+# unseeded path returns a fresh `random.Random()` per call to avoid leaking
+# state into security-adjacent extensions of this module.
+_rng_seeded = random.Random()
+_seed: int | None = None
 
 
 def set_seed(seed: int | None) -> None:
-    """Pin the persona's RNG for deterministic tests."""
-    _rng.seed(seed)
+    """Pin the persona's RNG for deterministic tests.
+
+    `seed=None` clears the pin; subsequent calls use a fresh
+    `random.Random()` per call (no module-global state).
+
+    A-010 (master review PR #15): **not thread-safe**. `set_seed` and
+    `_get_rng` operam sobre `_seed` / `_rng_seeded` module-global sem lock.
+    Em testes multi-threaded (pytest-xdist usando threading, não processos)
+    duas threads que setam seed em paralelo podem ver `_rng_seeded`
+    parcialmente reseedado. Pinning é só para fixtures sequenciais —
+    se thread isolation for ambicionada, trocar `_seed`/`_rng_seeded` por
+    `threading.local()`. Hoje o projeto não usa threading (xdist roda
+    processos), então o risco é teórico.
+    """
+    global _seed
+    _seed = seed
+    if seed is not None:
+        _rng_seeded.seed(seed)
+
+
+def _get_rng() -> random.Random:
+    """Return seeded RNG when pinned; fresh RNG otherwise."""
+    return _rng_seeded if _seed is not None else random.Random()
 
 
 # ---------------------------------------------------------------------------
@@ -80,12 +104,12 @@ PHRASES_PROGRESS_IMPLEMENT: tuple[str, ...] = (
 
 def greeting() -> str:
     """Neutral session opener. Never starts with 'olá!' or exclamation."""
-    return _rng.choice(PHRASES_GREETING)
+    return _get_rng().choice(PHRASES_GREETING)
 
 
 def acknowledgment() -> str:
     """Short ack between steps. Used after user input, before the next move."""
-    return _rng.choice(PHRASES_ACK)
+    return _get_rng().choice(PHRASES_ACK)
 
 
 def pause_message(slug: str | None = None, resume_command: str | None = None) -> str:
@@ -121,11 +145,11 @@ def progress_phrase(stage: str) -> str:
     Known stages: init, plan, implement. Unknown stage → generic ack.
     """
     if stage == "init":
-        return _rng.choice(PHRASES_PROGRESS_INIT)
+        return _get_rng().choice(PHRASES_PROGRESS_INIT)
     if stage == "plan":
-        return _rng.choice(PHRASES_PROGRESS_PLAN)
+        return _get_rng().choice(PHRASES_PROGRESS_PLAN)
     if stage == "implement":
-        return _rng.choice(PHRASES_PROGRESS_IMPLEMENT)
+        return _get_rng().choice(PHRASES_PROGRESS_IMPLEMENT)
     return acknowledgment()
 
 

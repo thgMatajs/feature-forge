@@ -35,7 +35,7 @@ from _common import (
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from engine.utils.paths import cards_canonical_dir, cards_dir  # noqa: E402
-from engine.utils.yaml_io import read_yaml_or_default  # noqa: E402
+from engine.utils.yaml_io import YamlIOError, read_yaml_or_default  # noqa: E402
 
 
 def _collect_cards(project_root: Path) -> list[Path]:
@@ -109,7 +109,7 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
         cards_checked += 1
         try:
             data = read_yaml_or_default(card_yaml, {}) or {}
-        except Exception as exc:  # noqa: BLE001
+        except (YamlIOError, OSError, UnicodeDecodeError) as exc:
             failures.append(f"{card_yaml.parent.name}: YAML parse error ({exc})")
             continue
         if not isinstance(data, dict):

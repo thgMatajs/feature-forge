@@ -15,7 +15,6 @@ from __future__ import annotations
 import sys
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
@@ -28,6 +27,7 @@ from engine.memory.l2 import (
     remove_entry,
     write_l2,
 )
+from engine.utils.iso import utc_now_iso
 from engine.utils.paths import claude_dir, ensure_dir
 from engine.utils.sha256 import canonical_form_fingerprint
 from engine.utils.yaml_io import read_yaml_or_default, write_yaml
@@ -116,10 +116,6 @@ class DistillationProposal:
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
 def _proposed_path(project_root: Path) -> Path:
     return claude_dir(project_root) / _PROPOSED_FILE
 
@@ -131,7 +127,7 @@ def _rejected_path(project_root: Path) -> Path:
 def _empty_proposed() -> dict[str, Any]:
     return {
         "schema-version": 1,
-        "last-updated": _utc_now_iso(),
+        "last-updated": utc_now_iso(),
         "last-source": "memory-distiller",
         "proposals": [],
     }
@@ -140,7 +136,7 @@ def _empty_proposed() -> dict[str, Any]:
 def _empty_rejected() -> dict[str, Any]:
     return {
         "schema-version": 1,
-        "last-updated": _utc_now_iso(),
+        "last-updated": utc_now_iso(),
         "rejections": [],
     }
 
@@ -157,7 +153,7 @@ def _proposal_to_payload(p: DistillationProposal) -> dict[str, Any]:
         "id": p.id,
         "type": p.kind,
         "confidence": p.confidence,
-        "created-at": _utc_now_iso(),
+        "created-at": utc_now_iso(),
         "source": {
             "features": list(p.provenance),
             "trigger": "distillation",
@@ -266,7 +262,7 @@ def queue_proposal(project_root: Path, proposal: DistillationProposal) -> None:
 
         proposals.append(_proposal_to_payload(proposal))
         data["proposals"] = proposals
-        data["last-updated"] = _utc_now_iso()
+        data["last-updated"] = utc_now_iso()
         data["last-source"] = "memory-distiller"
 
         ensure_dir(_proposed_path(project_root).parent)
@@ -293,7 +289,7 @@ def remove_from_queue(project_root: Path, proposal_id: str) -> None:
             if isinstance(p, dict) and p.get("id") != proposal_id
         ]
         data["proposals"] = proposals
-        data["last-updated"] = _utc_now_iso()
+        data["last-updated"] = utc_now_iso()
         write_yaml(_proposed_path(project_root), data, atomic=True, backup=True)
 
 
@@ -431,7 +427,7 @@ def _record_rejection_locked(
     entry: dict[str, Any] = {
         "id": _next_rejection_id(rejections),
         "fingerprint": fingerprint,
-        "rejected-at": _utc_now_iso(),
+        "rejected-at": utc_now_iso(),
         "rejected-by": rejected_by,
         "reason": final_reason,
         "original-proposal-snapshot": snapshot,
@@ -439,7 +435,7 @@ def _record_rejection_locked(
 
     rejections.append(entry)
     data["rejections"] = rejections
-    data["last-updated"] = _utc_now_iso()
+    data["last-updated"] = utc_now_iso()
 
     ensure_dir(_rejected_path(project_root).parent)
     write_yaml(_rejected_path(project_root), data, atomic=True, backup=True)
@@ -491,7 +487,7 @@ def apply_proposal_to_l2(
             title=proposal.title,
             body=proposal.description,
             provenance=list(proposal.provenance),
-            promoted_at=_utc_now_iso(),
+            promoted_at=utc_now_iso(),
             promoted_from=proposal.provenance[0] if proposal.provenance else "",
             confidence=proposal.confidence,
         )
@@ -586,7 +582,7 @@ def _apply_consolidate_l2(
         title=proposal.title,
         body=proposal.description,
         provenance=new_provenance,
-        promoted_at=_utc_now_iso(),
+        promoted_at=utc_now_iso(),
         promoted_from=(
             new_provenance[0] if new_provenance else proposal.provenance[0]
             if proposal.provenance
@@ -620,7 +616,7 @@ def _apply_forget_l1(
     summary = {
         "schema-version": 1,
         "feature-slug": str(target),
-        "archived-at": _utc_now_iso(),
+        "archived-at": utc_now_iso(),
         "archived-by": "memory-distiller",
         "rationale": proposal.description or "forget-l1 proposal accepted",
         "proposal-id": proposal.id,

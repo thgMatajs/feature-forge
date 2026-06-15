@@ -886,7 +886,7 @@ def _run_pipeline(project_root: Path) -> int:
 
         try:
             ds_inv = extract_design_system(project_root)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — broad catch: defensive at discovery-step boundary — heuristic scanner walks project tree parsing XML/Kotlin/Swift; init must not fail for any extract hiccup
             renderer.write(
                 renderer.colored(
                     f"design-system extract skipped: {exc}", "dim_grey"
@@ -896,13 +896,13 @@ def _run_pipeline(project_root: Path) -> int:
 
         try:
             i18n_inv = extract_i18n(project_root)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — broad catch: defensive at discovery-step boundary — heuristic i18n scanner; init must not fail for any extract hiccup
             renderer.write(renderer.colored(f"i18n extract skipped: {exc}", "dim_grey"))
         bar.update(1)
 
         try:
             conv_inv = extract_conventions(project_root)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — broad catch: defensive at discovery-step boundary — heuristic conventions scanner; init must not fail for any extract hiccup
             renderer.write(
                 renderer.colored(f"conventions extract skipped: {exc}", "dim_grey")
             )
@@ -1105,11 +1105,14 @@ def _run_pipeline(project_root: Path) -> int:
     _save_checkpoint(checkpoint)
 
     # ── Step 7.5 — Orphan signal handling (Gap 5) ───────────────────────────
-    from validators._common import load_catalog as _load_overlay_catalog  # noqa: PLC0415
+    from validators._common import (  # noqa: PLC0415
+        CatalogOverlayError,
+        load_catalog as _load_overlay_catalog,
+    )
 
     try:
         overlay_catalog = _load_overlay_catalog(project_root)
-    except Exception as exc:  # noqa: BLE001
+    except (CatalogOverlayError, OSError) as exc:
         renderer.write(
             renderer.colored(
                 f"warn: catálogo overlay inválido ({exc}); seguindo com canon-only",
@@ -1297,7 +1300,7 @@ def _run_pipeline(project_root: Path) -> int:
         from engine.graph.duplicates import queue_proposals_from_table
 
         n_queued = queue_proposals_from_table(project_root)
-    except Exception as exc:  # never fail init for a scan hiccup
+    except Exception as exc:  # noqa: BLE001 — broad catch: defensive at discovery-step boundary — never fail init for a scan hiccup
         renderer.write(
             f"  ⚠ reuse scan errored: {type(exc).__name__}: {exc}"
         )
@@ -1419,7 +1422,12 @@ def _run_pipeline(project_root: Path) -> int:
         _install_git_hooks(project_root)
         if n_hooks:
             renderer.write(f"  └─ {n_hooks} hooks instalados em .claude/hooks/")
-    except Exception as exc:  # pragma: no cover - hooks must not block init
+    except (OSError, shutil.Error) as exc:  # pragma: no cover - hooks must not block init
+        # MD-03 (final review 2026-06-15): narrow scope is intentional —
+        # `_install_hooks` + `_install_git_hooks` only use shutil.copy*/chmod/
+        # symlink today, so (OSError, shutil.Error) is exhaustive. If hooks
+        # ever adopt tar/zip extraction, expand to include `tarfile.TarError`
+        # / `zipfile.BadZipFile`, or re-broaden with `BLE001` noqa + comment.
         renderer.write(
             renderer.colored(f"hooks install warn: {exc}", "yellow")
         )

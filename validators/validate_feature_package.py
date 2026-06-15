@@ -33,7 +33,7 @@ from _common import (
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from engine.utils.paths import feature_dir, workflow_config_path  # noqa: E402
-from engine.utils.yaml_io import read_yaml_or_default  # noqa: E402
+from engine.utils.yaml_io import YamlIOError, read_yaml_or_default  # noqa: E402
 
 
 _STRICTNESS_DEFAULT_MATRIX: dict[str, list[str]] = {
@@ -207,12 +207,12 @@ def _validate_yaml_parses(feature_root: Path) -> list[str]:
     for yaml_file in feature_root.glob("*.yaml"):
         try:
             read_yaml_or_default(yaml_file, None)
-        except Exception as exc:  # noqa: BLE001 — surface any parse error
+        except (YamlIOError, OSError, UnicodeDecodeError) as exc:
             errors.append(f"{yaml_file.name}: {exc}")
     for task_file in (feature_root / "tasks").glob("*.yaml") if (feature_root / "tasks").is_dir() else []:
         try:
             read_yaml_or_default(task_file, None)
-        except Exception as exc:  # noqa: BLE001
+        except (YamlIOError, OSError, UnicodeDecodeError) as exc:
             errors.append(f"tasks/{task_file.name}: {exc}")
     return errors
 
@@ -224,8 +224,14 @@ def _check_cross_refs(feature_root: Path) -> list[str]:
     if data_contract.is_file():
         try:
             data = read_yaml_or_default(data_contract, {}) or {}
-        except Exception:
-            return warns
+        except (YamlIOError, OSError, UnicodeDecodeError) as exc:
+            # B-008 (master review PR #15): reporta como warn em vez de
+            # silenciar. Antes a função devolvia `warns` vazio em parse error,
+            # escondendo cross-refs não verificados; agora pelo menos o
+            # usuário vê que houve falha de parse.
+            return [
+                f"data-contract-spec.yaml: parse error ({exc}); cross-refs not checked"
+            ]
         for key in ("prd_ref", "intake_ref", "screen_analysis_ref", "ui_state_spec_ref"):
             val = data.get(key)
             if not val or not isinstance(val, str):

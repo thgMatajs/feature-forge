@@ -7,8 +7,8 @@ escape hatch. For per-edit deltas use `engine.graph.incremental`.
 
 from __future__ import annotations
 
-import fnmatch
 import hashlib
+import os
 import re
 import sqlite3
 import time
@@ -16,6 +16,9 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
+
+from pathspec import PathSpec
+from pathspec.patterns.gitignore.spec import GitIgnoreSpecPattern
 
 from engine.graph.gradle_deps import (
     parse_module_dependencies,
@@ -31,6 +34,7 @@ from engine.graph.parser_typescript import TypeScriptFileInfo, parse_typescript_
 from engine.inventory.design_system import read_design_system_inventory
 from engine.utils.paths import graph_db_path
 from engine.utils.sqlite_io import open_db, set_meta, transaction
+from engine.utils.yaml_io import YamlIOError
 
 _EXCLUDED_DIRS = frozenset(
     {
@@ -178,31 +182,74 @@ def _iter_files(root: Path, gitignore_rules: Optional[list[tuple[str, bool, bool
                 yield entry
 
 
+def _find_gitignore_files(project_root: Path) -> list[Path]:
+    """Return absolute paths of every `.gitignore` reachable from `project_root`.
+
+    Uses `os.scandir` recursively and skips `_EXCLUDED_DIRS` + symlinks ANTES
+    da descida — `Path.rglob` desce em `node_modules`/`build`/`.gradle` antes
+    de qualquer filtro, o que trava em monorepos mobile grandes. Tolerante a
+    `PermissionError`/`OSError` por subárvore. Ordem do retorno é irrelevante.
+    """
+    found: list[Path] = []
+    # Tracking visited real-paths previne loop infinito em symlink cycles
+    # (raros mas devastadores). Mesmo com `follow_symlinks=False`, cobrimos
+    # hard links e bind mounts esquisitos com baixo custo (set lookup).
+    visited: set[str] = set()
+    stack: list[Path] = [project_root]
+    while stack:
+        current = stack.pop()
+        try:
+            real = os.path.realpath(current)
+        except OSError:
+            continue
+        if real in visited:
+            continue
+        visited.add(real)
+        try:
+            it = os.scandir(current)
+        except (PermissionError, OSError, FileNotFoundError):
+            continue
+        with it:
+            for entry in it:
+                name = entry.name
+                try:
+                    is_symlink = entry.is_symlink()
+                except OSError:
+                    is_symlink = False
+                if is_symlink:
+                    # Nunca segue symlinks — evita loops e prevents
+                    # escapar do project_root via link aleatório.
+                    continue
+                try:
+                    is_dir = entry.is_dir(follow_symlinks=False)
+                except OSError:
+                    continue
+                if is_dir:
+                    if name in _EXCLUDED_DIRS:
+                        continue
+                    stack.append(Path(entry.path))
+                elif name == ".gitignore":
+                    found.append(Path(entry.path))
+    return found
+
+
+# M-07 + M-08: replaced custom parser with `pathspec` (canonical gitignore
+# semantics). The old parser missed bracket classes, escapes, trailing
+# spaces, and `a/**/b` middle-double-star; the custom regex over-matched
+# directories ending in the pattern's suffix.
 def _parse_gitignore(project_root: Path) -> list[tuple[str, bool, bool]]:
     """Parse `.gitignore` (best-effort) — supports nested files in subdirs.
 
-    Returns a list of `(pattern, is_negation, dir_only)` where `pattern` is
-    rooted at `project_root` (i.e., already prefixed with the relative dir of
-    the `.gitignore` file when applicable). Tolerant to missing files.
+    Returns a list of `(pattern, is_negation, dir_only)`. Pattern rooted at
+    `project_root`. Tolerant to missing files.
 
-    Supports: `*`, `**`, leading `/` (root-anchored), trailing `/` (dir-only),
-    leading `!` (negation), comments (`#`), blank lines.
-
-    Bracket character classes `[abc]` and brace expansion `{a,b}` are not
-    supported — patterns containing them fall back to literal matching.
+    Backed by `pathspec` (M-07): supports bracket classes `[abc]`,
+    escaped chars `\\#`, trailing spaces, and `a/**/b` middle-double-star.
     """
     rules: list[tuple[str, bool, bool]] = []
-    try:
-        gitignores = list(project_root.rglob(".gitignore"))
-    except (PermissionError, OSError):
-        return rules
+    gitignores = _find_gitignore_files(project_root)
 
     for gi_path in gitignores:
-        try:
-            if any(part in _EXCLUDED_DIRS for part in gi_path.relative_to(project_root).parts):
-                continue
-        except ValueError:
-            continue
         try:
             lines = gi_path.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
@@ -215,10 +262,9 @@ def _parse_gitignore(project_root: Path) -> list[tuple[str, bool, bool]]:
             rel_dir = ""
 
         for raw_line in lines:
-            line = raw_line.rstrip()
-            if not line or line.lstrip().startswith("#"):
+            line = raw_line.rstrip("\n")
+            if not line.strip() or line.lstrip().startswith("#"):
                 continue
-            line = line.strip()
             negation = line.startswith("!")
             if negation:
                 line = line[1:]
@@ -245,7 +291,7 @@ def _matches_gitignore(
     *,
     is_dir: bool,
 ) -> bool:
-    """Return True if `path` is ignored. Last matching rule wins (gitignore semantics)."""
+    """Return True if `path` is ignored. Last matching rule wins."""
     try:
         rel = path.resolve().relative_to(project_root).as_posix()
     except ValueError:
@@ -262,52 +308,77 @@ def _matches_gitignore(
     return ignored
 
 
-_GLOB_TRANSLATE_CACHE: dict[str, re.Pattern[str]] = {}
-
-
-def _glob_translate(pattern: str) -> re.Pattern[str]:
-    cached = _GLOB_TRANSLATE_CACHE.get(pattern)
-    if cached is not None:
-        return cached
-    out: list[str] = []
-    i = 0
-    while i < len(pattern):
-        ch = pattern[i]
-        if ch == "*":
-            if i + 1 < len(pattern) and pattern[i + 1] == "*":
-                if i + 2 < len(pattern) and pattern[i + 2] == "/":
-                    out.append("(?:.*/)?")
-                    i += 3
-                    continue
-                out.append(".*")
-                i += 2
-                continue
-            out.append("[^/]*")
-            i += 1
-            continue
-        if ch == "?":
-            out.append("[^/]")
-            i += 1
-            continue
-        out.append(re.escape(ch))
-        i += 1
-    regex = re.compile("^" + "".join(out) + "(?:/.*)?$")
-    _GLOB_TRANSLATE_CACHE[pattern] = regex
-    return regex
+_PATHSPEC_CACHE: dict[str, PathSpec] = {}
 
 
 def _glob_match(rel_path: str, pattern: str) -> bool:
-    if "[" in pattern or "{" in pattern:
-        return fnmatch.fnmatch(rel_path, pattern)
-    return _glob_translate(pattern).match(rel_path) is not None
+    """pathspec-backed match. Encodes canonical gitignore semantics."""
+    spec = _PATHSPEC_CACHE.get(pattern)
+    if spec is None:
+        spec = PathSpec.from_lines(GitIgnoreSpecPattern, [pattern])
+        _PATHSPEC_CACHE[pattern] = spec
+    return spec.match_file(rel_path)
 
 
-def _reset_domain_tables(conn: sqlite3.Connection) -> None:
+# H-01 (security): defensive allowlist. Any new domain table added to
+# `tables_to_clear` must also land here, or _reset_domain_tables refuses
+# to wipe it. Prevents SQL-injection-like surface if a future refactor
+# ever sources table names from external config.
+_ALLOWED_TABLES: frozenset[str] = frozenset({
+    "reuse_finding_locations",
+    "reuse_findings",
+    "module_deps",
+    "ds_usage",
+    "ds_components",
+    "i18n_usage",
+    "i18n_keys",
+    "imports",
+    "tests",
+    "screens",
+    "routes",
+    "di_graph",
+    "symbols",
+    "files",
+})
+
+
+# Canonical default order (FK-children first) used by _reset_domain_tables.
+# Extracted as module-level constant so tests can verify the allowlist guard
+# fires by passing in a tampered list — without re-inlining the validation
+# logic into the test itself (WR-01 / final review 2026-06-15).
+_DEFAULT_TABLES_TO_CLEAR: list[str] = [
+    "reuse_finding_locations",
+    "reuse_findings",
+    "module_deps",
+    "ds_usage",
+    "ds_components",
+    "i18n_usage",
+    "i18n_keys",
+    "imports",
+    "tests",
+    "screens",
+    "routes",
+    "di_graph",
+    "symbols",
+    "files",
+]
+
+
+def _reset_domain_tables(
+    conn: sqlite3.Connection,
+    *,
+    tables: list[str] | None = None,
+) -> None:
     """Wipe all domain tables (keep schema + meta intact).
 
     Reuse-intelligence tables (`module_deps`, `reuse_findings`,
     `reuse_finding_locations`) are also cleared — they're re-derived during the
     post-passes from settings.gradle, build.gradle and symbol contents.
+
+    The ``tables`` kw-only parameter exists ONLY for regression-test injection
+    (WR-01): tests pass a tampered list to assert the allowlist guard fires
+    on unknown table names. Production callers MUST NOT pass it — leave it
+    as ``None`` to use ``_DEFAULT_TABLES_TO_CLEAR``.
     """
     # HG-01 (review): refuse to run inside an outer transaction. Two reasons:
     #   1. ``PRAGMA foreign_keys`` is silently ignored mid-transaction
@@ -326,22 +397,7 @@ def _reset_domain_tables(conn: sqlite3.Connection) -> None:
         "transaction, corrupting state)."
     )
 
-    tables_to_clear = [
-        "reuse_finding_locations",
-        "reuse_findings",
-        "module_deps",
-        "ds_usage",
-        "ds_components",
-        "i18n_usage",
-        "i18n_keys",
-        "imports",
-        "tests",
-        "screens",
-        "routes",
-        "di_graph",
-        "symbols",
-        "files",
-    ]
+    tables_to_clear = tables if tables is not None else _DEFAULT_TABLES_TO_CLEAR
     # PRAGMA foreign_keys must run outside a transaction (SQLite ignores it
     # mid-transaction). The DELETEs themselves go inside an implicit
     # transaction (`with conn:`) so a mid-stream failure rolls back the
@@ -353,9 +409,25 @@ def _reset_domain_tables(conn: sqlite3.Connection) -> None:
     try:
         with conn:
             for table in tables_to_clear:
-                conn.execute(f"DELETE FROM {table}")
+                if table not in _ALLOWED_TABLES:
+                    raise ValueError(
+                        f"Blocked unauthorized table wipe: {table}"
+                    )
+                conn.execute(f"DELETE FROM {table}")  # noqa: S608 — allowlist-validated
     finally:
-        conn.execute("PRAGMA foreign_keys = ON")
+        # H-04: PRAGMA restore is best-effort. If the connection is closing
+        # (or the DELETE above already raised), we still try to flip FK back
+        # on; failure here must NOT mask the original exception.
+        #
+        # A-007 (master review PR #15): explicit — `ValueError` do guard de
+        # allowlist (linhas 368-371) também passa por este `finally`. PRAGMA
+        # é restaurado mesmo quando o erro foi de validação (allowlist miss),
+        # não apenas de I/O do DELETE. Sem este finally, validation-error
+        # deixaria FKs desabilitadas pra resto da vida da conexão.
+        try:
+            conn.execute("PRAGMA foreign_keys = ON")
+        except sqlite3.Error:
+            pass
 
 
 def _ingest_file(
@@ -594,7 +666,16 @@ def _populate_ds_components_from_inventory(conn: sqlite3.Connection, project_roo
     """Seed ds_components from `.claude/inventory/design-system.yaml` if present."""
     try:
         inv = read_design_system_inventory(project_root)
-    except Exception:
+    except (OSError, UnicodeDecodeError, YamlIOError, KeyError, TypeError, AttributeError):
+        # B-004 (master review PR #15): cada tipo é esperado, não shotgun.
+        # - OSError: filesystem read em inventory_dir
+        # - UnicodeDecodeError: design-system.yaml com encoding inválido
+        # - YamlIOError: parser do read_yaml em YAML malformado
+        # - KeyError: `c["name"]` em entry de components sem o campo
+        # - TypeError: `dict(c.get("paths") or {})` quando `paths` não é mapping
+        # - AttributeError: `tokens_raw.get(...)` quando o nó é list em vez de dict
+        # Seed é best-effort; inventory inválido vira ds_components vazio (cascade
+        # segue com graph parcial em vez de explodir o builder inteiro).
         inv = None
     if inv is None:
         return

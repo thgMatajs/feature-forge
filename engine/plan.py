@@ -31,7 +31,6 @@ from __future__ import annotations
 import re
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -58,6 +57,7 @@ from engine.utils.paths import (
     claude_dir,
     ensure_dir,
     feature_dir,
+    feature_path as _feature_path,
     find_project_root,
     workflow_config_path,
 )
@@ -67,7 +67,7 @@ from engine.utils.checkpoint_io import (
     load_yaml_checkpoint as _load_yaml_checkpoint_io,
     save_yaml_checkpoint as _save_yaml_checkpoint_io,
 )
-from engine.utils.iso import utc_now_iso as _utc_now_iso_shared
+from engine.utils.iso import utc_now_iso
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -327,12 +327,13 @@ def _plan_checkpoint_path(project_root: Path) -> Path:
     return claude_dir(project_root) / ".plan-checkpoint.yaml"
 
 
-# Os 4 helpers abaixo são thin shims sobre ``engine.utils.checkpoint_io`` +
-# ``engine.utils.iso`` — consolidação dos 30 duplicates + 10 cópias de
-# ``_utc_now_iso_*`` apontada pelos findings #5 e #21 do master review do
-# PR #11. Os nomes ``_save_plan_checkpoint`` etc. permanecem como API
-# privada do módulo para preservar os contracts dos testes em
+# Os helpers abaixo são thin shims sobre ``engine.utils.checkpoint_io`` —
+# consolidação dos 30 duplicates apontada pelos findings #5 e #21 do master
+# review do PR #11. Os nomes ``_save_plan_checkpoint`` etc. permanecem como
+# API privada do módulo para preservar os contracts dos testes em
 # ``tests/unit/test_engine_plan_resume.py`` (Mandamento #2 — verde).
+# L-03 (PR #remediation): ``_utc_now_iso_*`` shims removidos; callers
+# usam ``utc_now_iso`` direto de ``engine.utils.iso``.
 
 
 def _save_plan_checkpoint(cp: _PlanCheckpoint) -> None:
@@ -360,11 +361,6 @@ def _load_plan_checkpoint(project_root: Path) -> dict[str, Any] | None:
 def _clear_plan_checkpoint(project_root: Path) -> None:
     """Remove the checkpoint — best-effort; silent on OSError (idempotent)."""
     _clear_checkpoint_io(_plan_checkpoint_path(project_root))
-
-
-def _utc_now_iso_plan() -> str:
-    """ISO-8601 UTC timestamp — thin shim sobre ``engine.utils.iso``."""
-    return _utc_now_iso_shared()
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -407,58 +403,11 @@ def _render_template(template_name: str, target: Path, slug: str) -> bool:
     return True
 
 
-def _resolve_features_root(project_root: Path, *, subtype: str = "product") -> Path:
-    """Read workflow-config.paths.feature-roots if present, else default.
-
-    When `subtype != "product"`, the path is rerooted under `non-product/`
-    per `docs/design/05-filesystem-layout.md §3.5` — keeps refactor/spike/
-    chore feature packages out of the product feature folder and out of
-    the similarity-graph by convention.
-    """
-    cfg = read_yaml_or_default(workflow_config_path(project_root), {})
-    custom_root: Path | None = None
-    if isinstance(cfg, dict):
-        paths = cfg.get("paths") or {}
-        roots = paths.get("feature-roots") if isinstance(paths, dict) else None
-        if isinstance(roots, list) and roots:
-            head = roots[0]
-            if isinstance(head, str):
-                custom_root = (project_root / head).resolve()
-        elif isinstance(roots, str):
-            custom_root = (project_root / roots).resolve()
-
-    if custom_root is not None:
-        if subtype != "product":
-            # Custom root is the *product* folder; non-product lives as
-            # a sibling under the same parent.
-            return (custom_root.parent / "non-product").resolve()
-        return custom_root
-
-    # Default per docs/design/05-filesystem-layout.md.
-    base = project_root / "docs" / "feature-implementation-workflow"
-    if subtype != "product":
-        return (base / "non-product").resolve()
-    return (base / "features").resolve()
-
-
-def _feature_path(project_root: Path, slug: str, *, subtype: str = "product") -> Path:
-    """Compute feature directory, honouring workflow-config override + subtype.
-
-    For `subtype="product"` the layout is identical to the legacy v1.0
-    path (`docs/feature-implementation-workflow/features/{slug}/`). For
-    refactor/spike/chore the directory lives under `non-product/{slug}/`
-    — see discipline §8 + filesystem-layout §3.5.
-    """
-    root = _resolve_features_root(project_root, subtype=subtype)
-    # When subtype=product and override matches the default we still want
-    # feature_dir's canonical layout.
-    if subtype == "product":
-        default = (
-            project_root / "docs" / "feature-implementation-workflow" / "features"
-        ).resolve()
-        if root == default:
-            return feature_dir(project_root, slug)
-    return root / slug
+# A-006 (master review PR #15): `_resolve_features_root` foi promovido pra
+# `engine/utils/paths.py` (leaf real, sem dep de plan.py). Mantemos shim aqui
+# pra preservar callsites internos que faziam `from engine.plan import
+# _resolve_features_root` antes da consolidação.
+from engine.utils.paths import _resolve_features_root  # noqa: E402,F401
 
 
 def _initialize_status(slug: str, project_root: Path) -> L1State:
@@ -1147,7 +1096,7 @@ def _elicit_slug(argv_slug: Optional[str], project_root: Optional[Path] = None) 
         _save_plan_checkpoint(
             _PlanCheckpoint(
                 step="step-elicit-slug",
-                at=_utc_now_iso_plan(),
+                at=utc_now_iso(),
                 project_root=str(project_root),
                 intent_id=question.stable_intent_id(
                     "ask_text",
@@ -1459,7 +1408,7 @@ def run(argv: list[str]) -> int:
     _save_plan_checkpoint(
         _PlanCheckpoint(
             step="step-post-slug",
-            at=_utc_now_iso_plan(),
+            at=utc_now_iso(),
             project_root=str(project_root),
             intent_id=None,
             feature_slug=slug,
@@ -1675,7 +1624,7 @@ def record_external_dep(
         "integration": integration,
         "description": description,
         "blocking": bool(blocking),
-        "captured-at": _utc_now_iso(),
+        "captured-at": utc_now_iso(),
     }
 
     existing = read_elicitation(slug, project_root) or {}
@@ -1706,11 +1655,6 @@ def record_external_dep(
         },
     )
     return cast(dict[str, Any], entry)
-
-
-def _utc_now_iso() -> str:
-    """ISO 8601 UTC with second precision and trailing Z — thin shim sobre ``engine.utils.iso``."""
-    return _utc_now_iso_shared()
 
 
 # Re-export for cli dispatcher + test surface.

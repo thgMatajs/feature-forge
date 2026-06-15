@@ -35,7 +35,7 @@ from engine.utils.paths import (  # noqa: E402
     memory_l2_path,
     workflow_config_path,
 )
-from engine.utils.yaml_io import read_yaml_or_default  # noqa: E402
+from engine.utils.yaml_io import YamlIOError, read_yaml_or_default  # noqa: E402
 
 
 _VALID_L1_STATES = {"planning", "implementing", "verifying", "done", "aborted", "paused"}
@@ -121,7 +121,7 @@ def _check_l2(project_root: Path, config: dict[str, Any]) -> list[str]:
     out: list[str] = []
     try:
         data = read_yaml_or_default(l2, {}) or {}
-    except Exception as exc:  # noqa: BLE001
+    except (YamlIOError, OSError, UnicodeDecodeError) as exc:
         return [f"L2-project.yaml YAML error: {exc}"]
     if isinstance(data, dict) and data.get("schema-version") != 1:
         out.append(f"L2-project.yaml: schema-version must be 1, got {data.get('schema-version')!r}")
@@ -163,7 +163,7 @@ def _check_rationale_trace(project_root: Path, slug_dir: Path) -> list[str]:
         return []
     try:
         data = read_yaml_or_default(path, {}) or {}
-    except Exception:  # noqa: BLE001
+    except (YamlIOError, OSError, UnicodeDecodeError):
         return []
     if not isinstance(data, dict):
         return []
@@ -227,7 +227,7 @@ def _check_l2_kinds_and_provenance(project_root: Path, config: dict[str, Any]) -
     out: list[str] = []
     try:
         data = read_yaml_or_default(l2_path, {}) or {}
-    except Exception:  # noqa: BLE001
+    except (YamlIOError, OSError, UnicodeDecodeError):
         return []
     if not isinstance(data, dict):
         return []
@@ -291,7 +291,7 @@ def _check_archived(project_root: Path) -> list[str]:
             continue
         try:
             read_yaml_or_default(summary, {})
-        except Exception as exc:  # noqa: BLE001
+        except (YamlIOError, OSError, UnicodeDecodeError) as exc:
             out.append(f"archived/{slug_dir.name}/summary.yaml YAML error: {exc}")
     return out
 

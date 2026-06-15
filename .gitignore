@@ -44,7 +44,29 @@ dist/
 # Claude Code — runtime state (per-session, não versionado)
 .claude/state/*.json
 .claude/state/*.jsonl
+.claude/state/*.lock
 !.claude/state/.gitkeep
 
-# Plan auditor — review outputs (per-rodada, não versionado)
+# Claude Code — worktrees (git linked-worktrees criadas por subagentes)
+.claude/worktrees/
+
+# GSD / superpowers — temporary scratch
+.gsd-tmp/
+
+# Plan auditor + review subagents — review outputs (per-rodada, não versionado)
 .planning/plan-reviews/
+.planning/code-reviews/
+.planning/final-review/
+.planning/master-review/
+
+# Per-phase planning artifacts (per-session, não versionado)
+# Manter .planning/ root track, ignorar subdirs por padrão exceto specs/plans canônicos
+.planning/*-review/
+.planning/rebase-*/
+.planning/*-fixes-review/
+
+# Ultra-review skill outputs
+.ultra-review/
+
+# Design outputs (generated artifacts)
+docs/design/outputs/
