@@ -36,7 +36,7 @@ Pense como um **maestro de features**: você continua escrevendo código, mas
 nunca mais vai começar uma tarefa sem saber exatamente o que precisa ser feito,
 quais arquivos tocar, e como validar que ficou pronto.
 
-Fora da caixa ele atende qualquer stack mobile: KMP, Android nativo (Compose),
+Por padrão ele atende qualquer stack mobile: KMP, Android nativo (Compose),
 iOS nativo (SwiftUI), Web (React). Backend-agnóstico — Firebase, REST, GraphQL,
 local-only.
 
@@ -118,8 +118,10 @@ Mostra um board com:
 forge doctor
 ```
 
-Varre 14 categorias de saúde da instalação: config, cards, inventory, memória,
-graph, hooks, conectividade. Mostra o que está verde e o que precisa atenção.
+Varre 16 categorias de saúde da instalação: config, cards, inventory, memória
+L1/L2, graph, reuse findings, hooks, MCPs, i18n, `.bak` overdue, versão do
+forge, ferramentas de secrets, coerência de QA, ferramentas de cc-gate e
+catálogos Gradle. Mostra o que está verde e o que precisa atenção.
 
 > ⏱ Os 3 passos levam menos de 5 minutos. Do zero a um projeto instrumentado.
 
