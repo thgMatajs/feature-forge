@@ -58,20 +58,14 @@ não é o alvo principal.
 
 ## Instalação
 
-### Via pip (recomendado)
-
-```bash
-pip install feature-forge
-forge --version
-# → forge 1.2.0
-```
-
-### Via clone do repositório
+### Via clone do repositório (recomendado)
 
 ```bash
 git clone <repo-url> ~/Documents/feature-forge
 export FORGE_HOME=~/Documents/feature-forge
 export PATH="$FORGE_HOME/bin:$PATH"
+cd ~/Documents/feature-forge
+pip install -e .   # instala em modo editável — dependências locais (pyyaml, pathspec)
 forge --version
 # → forge 1.2.0
 ```
@@ -80,7 +74,7 @@ Para persistir no shell, adicione as duas linhas de `export` ao seu `~/.zshrc`
 ou `~/.bashrc`.
 
 A única dependência externa do Python é `pyyaml>=6.0` e `pathspec>=0.12` —
-instaladas automaticamente pelo pip.
+instaladas automaticamente pelo `pip install -e .`.
 
 ---
 
@@ -153,9 +147,10 @@ Depois do `forge init`, seu projeto ganha uma estrutura nova dentro de
     ├── graph.db                  ← GITIGNADO. Banco SQLite com o grafo do
     │                               codebase (Q1-Q17). Cada dev tem o seu.
     ├── memory/
-    │   ├── L1/                   ← GITIGNADO (por enquanto). Memória por
-    │   │                           feature em andamento (working state).
-    │   └── L2/                   ← VERSIONADO. Memória do time: decisões,
+    │   ├── L1/                   ← GITIGNADO. Memória por feature em
+    │   │   └── archived/           andamento (WIP). Apenas archived/
+    │   │                           é versionado (histórico de features).
+    │   └── L2-project.yaml       ← VERSIONADO. Memória do time: decisões,
     │                               aprendizados, padrões consolidados.
     ├── hooks/                    ← VERSIONADO. Git hooks que o forge instala
     │   └── post-edit-detect-duplications.sh  (opt-in)
@@ -170,9 +165,10 @@ Depois do `forge init`, seu projeto ganha uma estrutura nova dentro de
 | `workflow-config.yaml` | Sim | Fonte da verdade da configuração |
 | `cards/` | Sim | Reprodutibilidade — todo dev tem os mesmos cards |
 | `inventory/` | Sim | Time compartilha o mesmo catálogo de DS/i18n |
-| `memory/L2/` | Sim | Conhecimento acumulado do time |
+| `memory/L2-project.yaml` | Sim | Conhecimento acumulado do time |
 | `graph.db` | **Não** | Rebuildável, muda por dev, causaria conflito |
-| `memory/L1/` | Sim | Histórico de features (working state) |
+| `memory/L1/` | **Não** | WIP de features ativas — gitignored |
+| `memory/L1/archived/` | Sim | Histórico de features concluídas |
 
 ---
 
@@ -185,7 +181,7 @@ cd ~/code/seu-app
 forge init
 # → responde as perguntas interativas
 # → .claude/ é criado com tudo
-git add .claude/workflow-config.yaml .claude/cards/ .claude/inventory/ .claude/memory/L2/
+git add .claude/workflow-config.yaml .claude/cards/ .claude/inventory/ .claude/memory/L2-project.yaml
 git commit -m "chore: init feature-forge workflow"
 git push
 ```
@@ -240,15 +236,25 @@ um mapa rápido do codebase sem precisar ler arquivo por arquivo.
 
 O graph responde a 17 queries canônicas (Q1–Q17):
 
-| Query | O que responde |
-|---|---|
-| Q1 | Estrutura de diretórios |
-| Q2–Q4 | Similaridade entre arquivos, blast-radius de um arquivo |
-| Q5 | Funções públicas exportadas |
-| Q6 | Testes por arquivo de produção |
-| Q7–Q10 | Dependências entre módulos, arquivos órfãos |
-| Q11 | Helpers reutilizáveis candidatos |
-| Q12–Q17 | **Reuse intelligence**: duplicatas dentro-do-módulo, entre módulos, candidatos a KMP, near-duplicates, plataforma-redundante, helpers TypeScript |
+| Query | Label | O que responde |
+|---|---|---|
+| Q1 | `similar-features` | Features com estrutura similar à atual |
+| Q2 | `blast-radius` | Arquivos impactados por uma mudança |
+| Q3 | `orphan-files` | Arquivos sem referência no grafo |
+| Q4 | `symbols` | Símbolos definidos em arquivos |
+| Q5 | `ds-used-in` | Componentes de Design System em uso |
+| Q6 | `i18n-used-in` | Chaves i18n em uso |
+| Q7 | `routes` | Rotas e navegação do projeto |
+| Q8 | `di-deps` | Dependências de injeção |
+| Q9 | `tests-for` | Testes associados a um arquivo de produção |
+| Q10 | `commits` | Histórico de commits de um arquivo |
+| Q11 | `reusable-helpers` | Helpers reutilizáveis candidatos |
+| Q12 | `dup-within-module` | **Reuse intelligence**: duplicatas dentro do módulo |
+| Q13 | `dup-cross-module` | Duplicatas entre módulos |
+| Q14 | `kmp-migration` | Candidatos a migração KMP |
+| Q15 | `near-duplicates` | Near-duplicates |
+| Q16 | `redundant-platform` | Plataforma-redundante (Android vs iOS) |
+| Q17 | `dup-ts-helpers` | Helpers TypeScript duplicados |
 
 O build do graph é **determinístico** — mesmo código sempre produz o mesmo
 graph. Ele usa parsers baseados em regex (não AST real — decisão consciente
