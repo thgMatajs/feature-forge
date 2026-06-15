@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # feature-forge — post-edit hook (Claude Code)
 # Fires after Edit/Write/NotebookEdit tools. Updates the SQLite graph
-# incrementally for code files (.kt, .swift, .ts, .tsx, .kts, .js, .jsx).
+# incrementally for code files (.kt, .kts, .swift, .ts, .tsx, .js, .jsx,
+# .java, .xml, .m, .mm).
 #
 # Contract:
 #   - Never blocks the editor (always exits 0)
@@ -20,7 +21,7 @@ if [[ -z "$FILE" ]]; then
 fi
 
 case "$FILE" in
-    *.kt|*.kts|*.swift|*.ts|*.tsx|*.js|*.jsx) ;;
+    *.kt|*.kts|*.swift|*.ts|*.tsx|*.js|*.jsx|*.java|*.xml|*.m|*.mm) ;;
     *) exit 0 ;;
 esac
 

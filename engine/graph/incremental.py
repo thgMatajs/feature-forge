@@ -21,9 +21,12 @@ from engine.graph.builder import (
     _infer_feature_slug,
     _infer_test_framework,
     _infer_test_target_file_id,
+    _persist_java,
     _persist_kotlin,
+    _persist_objc,
     _persist_swift,
     _persist_typescript,
+    _persist_xml,
     _relpath,
     _resolve_import_targets,
     _screen_name_from_path,
@@ -32,9 +35,12 @@ from engine.graph.gradle_modules import (
     infer_module_and_source_set,
     load_gradle_modules,
 )
+from engine.graph.parser_java import parse_java_file
 from engine.graph.parser_kotlin import parse_kotlin_file
+from engine.graph.parser_objc import parse_objc_file
 from engine.graph.parser_swift import parse_swift_file
 from engine.graph.parser_typescript import parse_typescript_file
+from engine.graph.parser_xml import parse_xml_file
 from engine.utils.paths import graph_db_path
 from engine.utils.sqlite_io import open_db, transaction
 
@@ -267,6 +273,15 @@ def _refresh_file(
     elif language in {"typescript", "javascript"}:
         info_ts = parse_typescript_file(file_path)
         stats = _persist_typescript(conn, file_id, info_ts)
+    elif language == "java":
+        info_java = parse_java_file(file_path)
+        stats = _persist_java(conn, file_id, info_java)
+    elif language == "xml":
+        info_xml = parse_xml_file(file_path)
+        stats = _persist_xml(conn, file_id, info_xml)
+    elif language == "objc":
+        info_objc = parse_objc_file(file_path)
+        stats = _persist_objc(conn, file_id, info_objc)
     else:
         return {"symbols": 0, "edges": 0}
 

@@ -19,7 +19,9 @@ from typing import Optional
 
 # Languages that go through this helper. Used only to pick comment / string
 # rules; everything else is shared.
-_SUPPORTED_LANGS = frozenset({"kotlin", "swift", "typescript", "javascript"})
+_SUPPORTED_LANGS = frozenset(
+    {"kotlin", "swift", "typescript", "javascript", "java", "objc"}
+)
 
 
 def extract_function_body(
@@ -225,6 +227,36 @@ _NOISE_TOKENS_PER_LANG: dict[str, frozenset[str]] = {
         {
             "let", "var", "const", "function", "this", "return", "if", "else",
             "switch", "null", "undefined", "true", "false", "of", "in",
+        }
+    ),
+    "java": frozenset(
+        {
+            "public", "private", "protected", "class", "interface", "enum",
+            "return", "if", "else", "for", "while", "do", "switch", "case",
+            "break", "continue", "new", "this", "super", "null", "true",
+            "false", "void", "int", "long", "double", "float", "boolean",
+            "char", "byte", "short", "final", "static", "abstract", "extends",
+            "implements", "import", "package", "try", "catch", "finally",
+            "throw", "throws", "synchronized", "volatile", "transient",
+            "instanceof", "assert", "record", "sealed", "non-sealed", "var",
+        }
+    ),
+    "objc": frozenset(
+        {
+            "self", "super", "return", "if", "else", "for", "while", "do",
+            "switch", "case", "break", "continue", "nil", "null", "yes", "no",
+            "true", "false", "id", "instancetype", "void", "int", "bool",
+            "nsinteger", "nsuinteger", "cgfloat", "nsstring", "nsarray",
+            "nsdictionary", "nsset", "nsobject", "strong", "weak", "copy",
+            "assign", "retain", "nonatomic", "atomic", "readwrite", "readonly",
+            "in", "out", "inout", "byref", "bycopy", "oneway", "typedef",
+            "struct", "union", "enum", "const", "static", "extern",
+            "@public", "@protected", "@private", "@package", "@class",
+            "@selector", "@protocol", "@required", "@optional", "@end",
+            "@synthesize", "@dynamic", "@synchronized", "@try", "@catch",
+            "@finally", "@throw", "@autoreleasepool", "@encode",
+            "@compatibility_alias", "@defs", "@property", "@implementation",
+            "@interface",
         }
     ),
 }

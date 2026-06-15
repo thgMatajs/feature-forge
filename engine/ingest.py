@@ -42,7 +42,10 @@ from engine.utils.paths import (
 from engine.utils.sqlite_io import open_db, transaction
 from engine.utils.yaml_io import read_yaml
 
-_GRAPH_EXTENSIONS = {".kt", ".kts", ".swift", ".ts", ".tsx", ".js", ".jsx"}
+_GRAPH_EXTENSIONS = {
+    ".kt", ".kts", ".swift", ".ts", ".tsx", ".js", ".jsx",
+    ".java", ".xml", ".m", ".mm",
+}
 
 
 def run(argv: list[str]) -> int:

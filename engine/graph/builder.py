@@ -28,9 +28,12 @@ from engine.graph.gradle_modules import (
     infer_module_and_source_set,
     load_gradle_modules,
 )
+from engine.graph.parser_java import JavaFileInfo, parse_java_file
 from engine.graph.parser_kotlin import KotlinFileInfo, parse_kotlin_file
+from engine.graph.parser_objc import ObjcFileInfo, parse_objc_file
 from engine.graph.parser_swift import SwiftFileInfo, parse_swift_file
 from engine.graph.parser_typescript import TypeScriptFileInfo, parse_typescript_file
+from engine.graph.parser_xml import XmlFileInfo, parse_xml_file
 from engine.inventory.design_system import read_design_system_inventory
 from engine.utils.paths import graph_db_path
 from engine.utils.sqlite_io import open_db, set_meta, transaction
@@ -68,6 +71,10 @@ _LANGUAGE_EXTENSIONS = {
     ".tsx": "typescript",
     ".js": "javascript",
     ".jsx": "javascript",
+    ".java": "java",
+    ".xml": "xml",
+    ".m": "objc",
+    ".mm": "objc",
 }
 
 ProgressCb = Callable[[str, int, int], None]
@@ -475,6 +482,15 @@ def _ingest_file(
     if language in {"typescript", "javascript"}:
         info_ts = parse_typescript_file(file_path)
         return _persist_typescript(conn, file_id, info_ts)
+    if language == "java":
+        info_java = parse_java_file(file_path)
+        return _persist_java(conn, file_id, info_java)
+    if language == "xml":
+        info_xml = parse_xml_file(file_path)
+        return _persist_xml(conn, file_id, info_xml)
+    if language == "objc":
+        info_objc = parse_objc_file(file_path)
+        return _persist_objc(conn, file_id, info_objc)
     return {"symbols": 0, "edges": 0}
 
 
@@ -638,6 +654,147 @@ def _persist_typescript(conn: sqlite3.Connection, file_id: int, info: TypeScript
     _record_i18n_usage(conn, file_id, info.i18n_keys_used)
     symbol_total = len(info.symbols) + len(info.components)
     return {"symbols": symbol_total, "edges": edges}
+
+
+def _persist_java(conn: sqlite3.Connection, file_id: int, info: JavaFileInfo) -> dict:
+    """Persist Java parse results.
+
+    Mesma shape de coluna do ``_persist_kotlin`` — Java é C-style e o parser
+    já entrega body / body_hash / body_tokens preenchidos via
+    ``engine.graph._body_text``. ``modifiers`` é serializado como string
+    space-separated igual aos demais parsers.
+    """
+    edges = 0
+    symbol_rows = [
+        (
+            file_id,
+            s.name,
+            s.kind,
+            s.signature,
+            s.line,
+            s.line,
+            s.visibility,
+            s.receiver_type,
+            s.body_hash,
+            s.body_tokens,
+            " ".join(s.modifiers) if s.modifiers else None,
+            s.body,
+        )
+        for s in info.symbols
+    ]
+    if symbol_rows:
+        conn.executemany(
+            "INSERT INTO symbols("
+            "  file_id, name, kind, signature, line_start, line_end, visibility, "
+            "  receiver_type, body_hash, body_tokens, modifiers, body"
+            ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            symbol_rows,
+        )
+
+    import_rows = [(file_id, imp) for imp in info.imports]
+    if import_rows:
+        conn.executemany(
+            "INSERT INTO imports(from_file_id, to_symbol, kind) VALUES(?, ?, 'import')",
+            import_rows,
+        )
+        edges += len(import_rows)
+
+    return {"symbols": len(info.symbols), "edges": edges}
+
+
+def _persist_xml(conn: sqlite3.Connection, file_id: int, info: XmlFileInfo) -> dict:
+    """Persist XML parse results.
+
+    XML não tem body (sem `{}`-block) — ``body``/``body_hash``/``body_tokens``
+    ficam NULL pra todos os símbolos. Class refs viram imports com kind
+    ``xml_class_ref``; resource keys (`@string/foo`) viram imports com kind
+    ``resource_ref`` pra diferenciar de imports de código.
+    """
+    edges = 0
+
+    symbol_rows = [
+        (
+            file_id,
+            sym.name,
+            sym.kind,
+            sym.context or sym.kind,
+            sym.line,
+            sym.line,
+        )
+        for sym in info.symbols
+    ]
+    if symbol_rows:
+        conn.executemany(
+            "INSERT INTO symbols("
+            "  file_id, name, kind, signature, line_start, line_end"
+            ") VALUES(?, ?, ?, ?, ?, ?)",
+            symbol_rows,
+        )
+
+    class_ref_rows = [(file_id, cls_ref) for cls_ref in info.imports]
+    if class_ref_rows:
+        conn.executemany(
+            "INSERT INTO imports(from_file_id, to_symbol, kind) "
+            "VALUES(?, ?, 'xml_class_ref')",
+            class_ref_rows,
+        )
+        edges += len(class_ref_rows)
+
+    resource_rows = [(file_id, res_key) for res_key in info.resource_keys]
+    if resource_rows:
+        conn.executemany(
+            "INSERT INTO imports(from_file_id, to_symbol, kind) "
+            "VALUES(?, ?, 'resource_ref')",
+            resource_rows,
+        )
+        edges += len(resource_rows)
+
+    return {"symbols": len(info.symbols), "edges": edges}
+
+
+def _persist_objc(conn: sqlite3.Connection, file_id: int, info: ObjcFileInfo) -> dict:
+    """Persist Objective-C parse results.
+
+    ``kind`` recebe prefixo ``objc_`` (``objc_class``, ``objc_method``,
+    ``objc_property``, etc.) pra diferenciar de Kotlin/Swift no graph e
+    permitir queries language-agnostic seguirem matching simples por kind
+    prefix. Imports são gravados com kind ``import`` igual aos demais
+    parsers — ``#import`` e ``@import`` já vêm normalizados pelo parser.
+    """
+    edges = 0
+    symbol_rows = [
+        (
+            file_id,
+            s.name,
+            f"objc_{s.kind}",
+            s.signature,
+            s.line,
+            s.line,
+            "public",
+            s.body_hash,
+            s.body_tokens,
+            s.body,
+        )
+        for s in info.symbols
+    ]
+    if symbol_rows:
+        conn.executemany(
+            "INSERT INTO symbols("
+            "  file_id, name, kind, signature, line_start, line_end, visibility, "
+            "  body_hash, body_tokens, body"
+            ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            symbol_rows,
+        )
+
+    import_rows = [(file_id, imp) for imp in info.imports]
+    if import_rows:
+        conn.executemany(
+            "INSERT INTO imports(from_file_id, to_symbol, kind) VALUES(?, ?, 'import')",
+            import_rows,
+        )
+        edges += len(import_rows)
+
+    return {"symbols": len(info.symbols), "edges": edges}
 
 
 def _record_i18n_usage(conn: sqlite3.Connection, file_id: int, keys: list[str]) -> None:

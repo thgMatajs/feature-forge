@@ -6,13 +6,16 @@ and body text. Mirrors the Kotlin parser pattern (KotlinFileInfo → JavaFileInf
 Not an AST — best-effort, downstream consumers tolerate Optional fields.
 Switch to tree-sitter for v2 if accuracy bites.
 
-Body extraction reuses ``engine.graph._body_text`` with ``language="kotlin"``:
-Java syntax is C-style and shares Kotlin's comment/string handling rules
-(``//``, ``/* */``, ``"..."``, ``'...'``). Java has no triple-quoted strings
-or backtick templates, so the Kotlin branch of the scanner covers Java
-files correctly. Documented deviation from plan snippet (which passed
-``language="java"``, returning ``None`` silently because ``_body_text``
-does not declare Java in ``_SUPPORTED_LANGS``).
+Body extraction reuses ``engine.graph._body_text`` with ``language="java"``.
+Java syntax is C-style and shares the same comment/string lexical rules
+covered by the shared scanner (``//``, ``/* */``, double-quoted strings,
+single-quoted char literals). Java has no triple-quoted strings or
+backtick templates — the language-specific branches in
+``extract_function_body`` only activate for kotlin/swift (triple-quote
+raw strings) and typescript/javascript (backtick templates), so the Java
+path is exactly the C-style baseline. Onda 6 moved ``java`` into
+``_SUPPORTED_LANGS`` + ``_NOISE_TOKENS_PER_LANG``, so this parser passes
+the canonical language label end-to-end.
 """
 
 from __future__ import annotations
@@ -30,10 +33,11 @@ from engine.graph._body_text import (
     tokens_to_json,
 )
 
-# Language passed to shared body helpers. Java is C-style and matches
-# Kotlin's lexical rules closely enough for the brace-scanner + tokenizer
-# to behave correctly; see module docstring for rationale.
-_BODY_LANG = "kotlin"
+# Language passed to shared body helpers. Onda 6 registrou ``java`` em
+# ``_SUPPORTED_LANGS`` + ``_NOISE_TOKENS_PER_LANG`` (engine/graph/_body_text.py),
+# então o scanner agora trata Java como C-style baseline (sem triple-quote
+# Kotlin nem backtick TS) corretamente.
+_BODY_LANG = "java"
 
 _RE_PACKAGE = re.compile(r"^\s*package\s+([\w\.]+)\s*;", re.MULTILINE)
 _RE_IMPORT = re.compile(r"^\s*import\s+(?:static\s+)?([\w\.\*]+)\s*;", re.MULTILINE)
