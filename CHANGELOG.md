@@ -14,6 +14,88 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   `.planning/*-review/` (generic), `.ultra-review/`, `docs/design/outputs/`.
   Reduz noise em `git status` pós-bootstrap.
 
+### Fixed (master review PR #15 remediation — 2026-06-15)
+
+Aplica todos os 22 findings do master review PR #15 (14 do Group A —
+security/correctness + 8 do Group B — broad-except scrub + validators).
+Test baseline 1350 → 1353 (3 testes novos de A-013 cobrindo o vetor de
+path-traversal do guard de undo).
+
+**Alto (A-001, A-002, A-003, B-001):**
+- **A-001** (`engine/undo.py`) — `_delete_feature_artifacts_guard` agora
+  rejeita também `target_resolved == project_resolved`. Sem isso, um slug
+  malicioso `../../..` resolveria pra raiz e `shutil.rmtree` apagaria o
+  projeto inteiro após os 2 confirms (`Path.relative_to` retorna
+  `Path('.')` em equality, sem `ValueError`).
+- **A-002** (`engine/undo.py`) — `_delete_feature_artifacts` agora usa
+  `feature_path(..., subtype=current_subtype(...))` em vez de `feature_dir`,
+  honrando o subtype enum. Features non-product (refactor/spike/chore/
+  bugfix) — que vivem em `non-product/{slug}/` — voltam a ser delete-able
+  via `forge undo`.
+- **A-003** (`docs/design/04-pending.md`) — entrada H-02/MD-01 reforçada
+  com referência explícita a A-003 e detalhamento do vetor YAML anchor
+  bomb (`yaml.safe_load` sem flag nativa pra limitar aliases).
+- **B-001** (`engine/status.py`) — `_render_recent_activity` agora pega
+  `(MemoryError, OSError, UnicodeDecodeError)` em vez de
+  `(JSONDecodeError, OSError, UnicodeDecodeError)`. `read_history` empacota
+  `JSONDecodeError` em `MemoryError`, então a tupla antiga era no-op e
+  JSONL corrompido crashava o status render.
+
+**Médio (A-004, A-005, A-006, B-002, B-003):**
+- **A-004** (`validators/check_secrets.py`) — detecção de colisão no
+  `_rel_map` quando dois staged paths viram a mesma relativização (caso
+  de projetos com symlinks). Modo conservador filtra com paths originais
+  em vez de descartar silenciosamente.
+- **A-005** (`validators/check_secrets.py`) — fail-loud em regex inválida
+  na config `secrets-gate.ignore-paths` via `_collect_invalid_patterns` +
+  `result_warn`. Antes era skip silencioso.
+- **A-006** (`engine/utils/paths.py`, `engine/plan.py`) — promovido
+  `_resolve_features_root` de plan.py pra paths.py (leaf real, sem dep
+  de `engine.plan`). Elimina lazy import circular dentro de `feature_path`.
+  Shim retrocompatível em plan.py.
+- **B-002** (`engine/doctor.py`) — adiciona `CardError` à tupla de except
+  em `_check_card_snapshots` + import. Race condition no
+  `compute_directory_sha256` agora vira `_STATUS_FAIL` por categoria
+  em vez de explodir o doctor inteiro.
+- **B-003** (`engine/doctor.py`) — troca `(YamlIOError, OSError)` por
+  `(yaml.YAMLError, OSError)` em `_stamp_last_doctor_run` + import yaml.
+  `write_yaml` NÃO levanta `YamlIOError` (só `read_yaml` levanta) — o
+  tipo real era `YAMLError` de `safe_dump`, que escapava silenciosamente.
+
+**Baixo (A-007, A-008, A-009, A-010, B-004, B-005, B-008):**
+- **A-007** (`engine/graph/builder.py`) — comment estendido do `finally`
+  pra cobrir `ValueError` do guard de allowlist (sem mudança funcional).
+- **A-008** (`engine/implement.py` + test) — `_topo_sort` troca
+  `raise SystemExit` por nova `TaskGraphError(RuntimeError)`. SystemExit
+  é `BaseException` e não era pego por `except Exception` de chamadores
+  defensivos. CLI `run()` mapeia para exit code 1.
+- **A-009** (`engine/verify.py`) — `run_scope` agora retorna `1` quando
+  `project_root` não é diretório, espelhando o guard de `_run_validator`.
+- **A-010** (`engine/persona/mentor_calmo.py`) — docstring de `set_seed`
+  documenta thread-safety explicitamente.
+- **B-004** (`engine/graph/builder.py`) — comments por-tipo justificando
+  cada exception da tupla em `_populate_ds_components_from_inventory`.
+- **B-005** (`validators/validate_workflow_config.py`) — comment
+  justificando exaustividade do `OSError` em torno de `file_sha256`.
+- **B-008** (`validators/validate_feature_package.py`) — `_check_cross_refs`
+  reporta parse error como warn em vez de silenciar.
+
+**Sugestão (A-011, A-012, A-013, A-014, B-006, B-007):**
+- **A-011** (`engine/undo.py`) — narrow do broad-except em
+  `_append_undo_log` pra `(OSError, ValueError)`, com aviso ao usuário.
+- **A-012** (`engine/undo.py`) — narrow do broad-except em `_undo_evolve`
+  pra `(KeyError, OSError, YamlIOError, MemoryError)`.
+- **A-013** (`tests/engine/test_undo_delete_traversal.py`) — adiciona 3
+  testes (target == project_root, symlink escaping project, slug literal
+  `../../..`), cobrindo o vetor de A-001.
+- **A-014** (`validators/check_no_invented_behavior.py`) — comment
+  explícito + `noqa: E402` cobrindo `sys.path.insert` antes dos imports
+  de `engine.`.
+- **B-006** (`docs/design/04-pending.md`) — nota retrospectiva sobre
+  scope hygiene do M-02 (parcialmente endereçado por A-008).
+- **B-007** (`tests/unit/test_commands_{implement,plan,verify}.py`) —
+  pin exit code in `{1, 2}` em vez de `!= 0` amplo.
+
 ### Fixed (master review remediation — final review, 2026-06-15)
 
 - **Master review H-1** — Fix `engine/doctor.py:1308-1309` `_` redefinition
