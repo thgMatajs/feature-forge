@@ -121,6 +121,53 @@ def feature_dir(project_root: Path, feature_slug: str) -> Path:
     return feature_workflow_root(project_root) / "features" / feature_slug
 
 
+def _resolve_features_root(project_root: Path, *, subtype: str = "product") -> Path:
+    """Read workflow-config.paths.feature-roots if present, else default.
+
+    When `subtype != "product"`, the path is rerooted under `non-product/`
+    per `docs/design/05-filesystem-layout.md §3.5` — keeps refactor/spike/
+    chore feature packages out of the product feature folder and out of
+    the similarity-graph by convention.
+
+    A-006 (master review PR #15): movido de `engine/plan.py` pra cá. A
+    função só lê `workflow_config_path` + monta paths — não tem dep de
+    `engine.plan`. Mantê-la em paths.py quebra o ciclo `paths.py ↔ plan.py`
+    que `feature_path` precisava resolver com lazy import.
+
+    Backwards-compat: `engine/plan.py` re-exporta como shim.
+    """
+    # Lazy import: `yaml_io` é leaf, mas importá-lo no topo de paths.py
+    # criaria dep desnecessária em `paths` (consumido por toda a engine).
+    # O custo do lazy import é amortizado: callsites tipicos invocam
+    # `_resolve_features_root` poucas vezes por execução.
+    from engine.utils.yaml_io import read_yaml_or_default  # noqa: PLC0415
+
+    cfg = read_yaml_or_default(workflow_config_path(project_root), {})
+    custom_root: Path | None = None
+    if isinstance(cfg, dict):
+        paths = cfg.get("paths") or {}
+        roots = paths.get("feature-roots") if isinstance(paths, dict) else None
+        if isinstance(roots, list) and roots:
+            head = roots[0]
+            if isinstance(head, str):
+                custom_root = (project_root / head).resolve()
+        elif isinstance(roots, str):
+            custom_root = (project_root / roots).resolve()
+
+    if custom_root is not None:
+        if subtype != "product":
+            # Custom root is the *product* folder; non-product lives as
+            # a sibling under the same parent.
+            return (custom_root.parent / "non-product").resolve()
+        return custom_root
+
+    # Default per docs/design/05-filesystem-layout.md.
+    base = project_root / "docs" / "feature-implementation-workflow"
+    if subtype != "product":
+        return (base / "non-product").resolve()
+    return (base / "features").resolve()
+
+
 def feature_path(project_root: Path, slug: str, *, subtype: str = "product") -> Path:
     """Resolve feature directory honouring workflow-config override + subtype.
 
@@ -132,12 +179,11 @@ def feature_path(project_root: Path, slug: str, *, subtype: str = "product") -> 
     (`docs/feature-implementation-workflow/features/{slug}/`). For
     refactor/spike/chore/bugfix the directory lives under
     `non-product/{slug}/` — see filesystem-layout §3.5.
-    """
-    # Lazy imports break circular deps with engine.plan (which historically
-    # owns _resolve_features_root). Re-locate it here when the consolidation
-    # of _resolve_features_root happens — out of scope for M-04.
-    from engine.plan import _resolve_features_root  # noqa: PLC0415
 
+    A-006 (master review PR #15): `_resolve_features_root` agora vive
+    neste mesmo módulo (consolidação requerida pelo SRP — `paths.py` não
+    deve depender de `engine.plan`). Lazy import de plan.py eliminado.
+    """
     root = _resolve_features_root(project_root, subtype=subtype)
     if subtype == "product":
         default = (

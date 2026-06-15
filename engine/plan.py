@@ -403,38 +403,11 @@ def _render_template(template_name: str, target: Path, slug: str) -> bool:
     return True
 
 
-def _resolve_features_root(project_root: Path, *, subtype: str = "product") -> Path:
-    """Read workflow-config.paths.feature-roots if present, else default.
-
-    When `subtype != "product"`, the path is rerooted under `non-product/`
-    per `docs/design/05-filesystem-layout.md §3.5` — keeps refactor/spike/
-    chore feature packages out of the product feature folder and out of
-    the similarity-graph by convention.
-    """
-    cfg = read_yaml_or_default(workflow_config_path(project_root), {})
-    custom_root: Path | None = None
-    if isinstance(cfg, dict):
-        paths = cfg.get("paths") or {}
-        roots = paths.get("feature-roots") if isinstance(paths, dict) else None
-        if isinstance(roots, list) and roots:
-            head = roots[0]
-            if isinstance(head, str):
-                custom_root = (project_root / head).resolve()
-        elif isinstance(roots, str):
-            custom_root = (project_root / roots).resolve()
-
-    if custom_root is not None:
-        if subtype != "product":
-            # Custom root is the *product* folder; non-product lives as
-            # a sibling under the same parent.
-            return (custom_root.parent / "non-product").resolve()
-        return custom_root
-
-    # Default per docs/design/05-filesystem-layout.md.
-    base = project_root / "docs" / "feature-implementation-workflow"
-    if subtype != "product":
-        return (base / "non-product").resolve()
-    return (base / "features").resolve()
+# A-006 (master review PR #15): `_resolve_features_root` foi promovido pra
+# `engine/utils/paths.py` (leaf real, sem dep de plan.py). Mantemos shim aqui
+# pra preservar callsites internos que faziam `from engine.plan import
+# _resolve_features_root` antes da consolidação.
+from engine.utils.paths import _resolve_features_root  # noqa: E402,F401
 
 
 def _initialize_status(slug: str, project_root: Path) -> L1State:

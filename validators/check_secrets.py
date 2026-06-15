@@ -121,12 +121,30 @@ def _filter_ignored(files: list[Path], patterns: list[str]) -> list[Path]:
                     dropped = True
                     break
             except re.error:
-                # Regex inválida — ignora esta entry, segue avaliando o
-                # resto. Caller de alto nível (Task 4) emite warning.
+                # A-005 (master review PR #15): regex inválida é skip
+                # silencioso aqui; `_collect_invalid_patterns` abaixo é
+                # quem coleta + reporta ao caller de alto nível
+                # (`validate()`) para warning fail-loud.
                 continue
         if not dropped:
             out.append(f)
     return out
+
+
+def _collect_invalid_patterns(patterns: list[str]) -> list[str]:
+    """A-005 (master review PR #15): retorna patterns que `re.compile` rejeita.
+
+    `_filter_ignored` engole `re.error` por design (best-effort match),
+    mas a config inválida do usuário NÃO pode ser silenciosa em `validate()`
+    — sem feedback, a entrada malformada some sem rastro.
+    """
+    invalid: list[str] = []
+    for pat in patterns:
+        try:
+            re.compile(pat)
+        except re.error:
+            invalid.append(pat)
+    return invalid
 
 
 # ── Parsers per-tool (Task 2) ────────────────────────────────────────────────
@@ -635,21 +653,57 @@ def validate(
     )
     if isinstance(extra_ignore, list):
         ignore_patterns.extend(str(p) for p in extra_ignore)
+
+    # A-005 (master review PR #15): fail-loud em regex inválida na config
+    # `secrets-gate.ignore-paths`. Antes, `_filter_ignored` engolia silentemente,
+    # entrada quebrada do usuário sumia sem rastro. Agora coletamos via
+    # `re.compile` e devolvemos `result_warn` para o validator cascade.
+    _invalid_patterns = _collect_invalid_patterns(ignore_patterns)
+    if _invalid_patterns:
+        return result_warn(
+            "secrets-gate: ignore-paths contém regex inválida — entradas ignoradas",
+            what_failed="invalid-regex-in-config",
+            where="workflow-config.yaml::secrets-gate.ignore-paths",
+            why=[f"regex inválida: {pat!r}" for pat in _invalid_patterns],
+        )
+
     # M-12: match patterns against paths RELATIVE to project_root so that
     # the anchored default ``^tests/fixtures/secrets/`` correctly targets
     # only the repo's tests root (not nested ``src/tests/...`` or absolute
     # path prefixes). Preserve original Path objects for downstream tools.
-    _rel_map: dict[str, Path] = {}
-    _rel_paths: list[Path] = []
+    #
+    # A-004 (master review PR #15): chave do `_rel_map` precisa ser o Path
+    # original (não a string relativa), porque em projetos com symlinks dois
+    # staged paths distintos podem reduzir pra mesma string relativa e o
+    # último vencer descartava silenciosamente o primeiro. Detectamos colisão
+    # e caímos em modo conservador (skip relativization, deixa o `_filter_ignored`
+    # rodar direto sobre os Path originais).
+    _rel_pairs: list[tuple[Path, Path]] = []  # (relativized, original)
+    _seen_rel: dict[str, Path] = {}
+    _collision = False
     for _p in staged:
         try:
             _rel = _p.relative_to(project_root)
         except ValueError:
             _rel = _p
-        _rel_paths.append(_rel)
-        _rel_map[str(_rel)] = _p
-    _rel_kept = _filter_ignored(_rel_paths, ignore_patterns)
-    staged = [_rel_map[str(r)] for r in _rel_kept]
+        _rel_str = str(_rel)
+        prior = _seen_rel.get(_rel_str)
+        if prior is not None and prior != _p:
+            _collision = True
+            break
+        _seen_rel[_rel_str] = _p
+        _rel_pairs.append((_rel, _p))
+
+    if _collision:
+        # Modo conservador: filtra com paths originais (string absoluta).
+        # Patterns anchored em rel-path podem falhar — aceito frente a perder
+        # arquivo do scan silenciosamente. M-12 é otimização de match accuracy,
+        # não pode regredir cobertura.
+        staged = _filter_ignored(staged, ignore_patterns)
+    else:
+        _rel_kept = _filter_ignored([rel for rel, _ in _rel_pairs], ignore_patterns)
+        _rel_kept_set = {str(r) for r in _rel_kept}
+        staged = [orig for rel, orig in _rel_pairs if str(rel) in _rel_kept_set]
     if not staged:
         return result_pass(
             "ignore-paths filtrou todos os staged files — nada a scanear"
