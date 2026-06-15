@@ -2954,6 +2954,17 @@ manual disponível: `mypy engine/ validators/`.
 além dos 22 findings do REVIEW.md. Setup baseline em advisory destrava o
 pipeline pra abordar em phases dedicadas.
 
+### L-06 — `sys.path.insert` em `tests/conftest.py`
+
+**Origem:** REVIEW.md 2026-06-11.
+**Estado atual:** mantém `sys.path.insert(0, _ROOT)` em `tests/conftest.py`
+e em `validators/_common.py:20-21`. Comment inline aponta pra esta entrada.
+**Caminho preferido:** substituir por `pip install -e .` quando CI pipeline
+oficial vier (sem CI hoje, mudança seria churn sem ganho).
+**Quando revisitar:** ao landing do primeiro CI workflow (GitHub Actions /
+similar) ou quando o primeiro projeto piloto adotar feature-forge fora
+deste repo.
+
 ---
 
 **For a fresh session retomando o projeto, use o handoff:**
