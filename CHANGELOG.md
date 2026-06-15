@@ -7,6 +7,22 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed (master review remediation — final review, 2026-06-15)
+
+- **Master review H-1** — Fix `engine/doctor.py:1308-1309` `_` redefinition
+  (mypy no-redef): renomeou segundo binding para `_safe_read_yaml_ref` +
+  corrigiu noqa code.
+- **Master review M-1** — Atualizou `engine/graph/builder.py` para usar
+  `GitIgnoreSpecPattern` (de `pathspec.patterns.gitignore.spec`) no lugar
+  de `GitWildMatchPattern` (deprecated). Elimina ~1500 DeprecationWarnings
+  em test runs.
+- **Master review M-3** — Consolidou 3 cópias adicionais de `_utc_now_iso`
+  em `engine/memory/{l1,l2,distiller}.py` para import direto de
+  `engine.utils.iso.utc_now_iso`. Fecha LO-01 parcialmente (7 módulos
+  restantes documentados em `04-pending.md`).
+- **Master review L-1** — Atualizado campo `**Última atualização:**` do
+  handoff para 2026-06-15 (refletindo final review remediation).
+
 ### Fixed (REVIEW.md remediation — Bloco 5: medium/low polish, 2026-06-12)
 
 - **M-01** — Substituído over-mock em `tests/unit/test_commands_*.py`

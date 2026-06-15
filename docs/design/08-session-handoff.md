@@ -3,7 +3,7 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-12 (REVIEW.md remediation — Bloco 5 + final gates)
+**Última atualização:** 2026-06-15 (REVIEW.md remediation — final review remediado)
 **Estado REVIEW.md remediation:** 22 findings VÁLIDOS do REVIEW.md endereçados; 8 anti-goals anotados em `04-pending.md`; mypy advisory + pathspec dep adicionados.
 **Wave A (PR #13 review, 2026-06-12):** 6 fixes contidos remediados em 5 commits sobre `96a0896` (cli paused_exc refactor + intent-state flush + validate_presets imports + RULE-020 cascade guard + doc-sync). Fix 4 (clear_intent_log_only delegation) skipped — semantics divergem, anotado pra Wave B. Rapid lane verde (1306 passing, 6 falhas pré-existentes inalteradas em test_cards_resolver/test_commands_init/test_validators_card_yaml). +2 regression tests.
 **Wave B (PR #13 review, 2026-06-12):** 5 fixes cross-module remediados em 5 commits sobre `b8731f7` (commits `37084c0` → `4b6eada`): (1) ciclo composer↔init quebrado via `engine/detection/_eval.py` novo + shape guard no composer; (2) `isinstance(Cell/Conflict)` em vez de `hasattr` em 5 sites de init.py; (3) `BACKEND_AXES` shared em `engine/detection/_axes.py` (init + reconfigure consomem); (4) cache process-level pra `_read_intent_log` (O(1) cache hit vs O(n) re-parse); (5) `VALID_BACKEND_AXES`/`VALID_BUNDLE_PLATFORM_KEYS`/`VALID_PROJECT_PLATFORMS` consolidados em `validators/_common.py`. Rapid lane sobe pra 1321 passed (+15 vs Wave A baseline). Mesmas 6 falhas pré-existentes herdadas, não tocadas (out of scope).

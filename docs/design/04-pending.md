@@ -3033,11 +3033,13 @@ considerar `yaml.CSafeLoader` com limits explícitos pra anchor depth.
 ### Consolidação completa de `_utc_now_iso` shims (L-03 / LO-01 follow-up)
 
 **Origem:** Final review 2026-06-15 (LO-01).
-**Estado:** 5 shims removidos em implement/plan/verify (Bloco 5 / L-03).
-Shims similares permanecem em `engine/undo.py:79-81`, `engine/evolve.py`,
-`engine/reconfigure.py`, `engine/memory_cli.py`, `engine/graph_cli.py`,
-`engine/init.py`, `engine/doctor.py` (alias `_utc_now_iso_shared` ou
-wrappers locais). CHANGELOG entry corrigida pra refletir scope verdadeiro.
+**Estado:** 5 shims removidos em implement/plan/verify (Bloco 5 / L-03);
+3 shims adicionais removidos em `engine/memory/{l1,l2,distiller}.py`
+(master review M-3, commit `112244a` 2026-06-15). Shims similares
+permanecem em `engine/undo.py`, `engine/evolve.py`, `engine/reconfigure.py`,
+`engine/memory_cli.py`, `engine/graph_cli.py`, `engine/init.py`,
+`engine/doctor.py` (7 módulos restantes — alias `_utc_now_iso_shared` ou
+wrappers locais).
 **Caminho preferido:** mesma cirurgia (import direto de `utc_now_iso`)
 nos 7 módulos restantes.
 **Quando revisitar:** próxima sessão de cleanup técnico.
