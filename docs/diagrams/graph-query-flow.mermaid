@@ -1,0 +1,48 @@
+flowchart TD
+    USER["Dev faz pergunta sobre o código"]
+    FORGE_GRAPH["forge graph"]
+    MENU["Menu interativo<br/>com 17 queries + cancelar"]
+
+    USER --> FORGE_GRAPH
+    FORGE_GRAPH --> MENU
+
+    subgraph ESTRUTURA["Q1–Q10 · Estrutura do código"]
+        Q1["Q1 · similar-features {slug}<br/>Features parecidas com a slug"]
+        Q2["Q2 · blast-radius {file...}<br/>Impacto de mudar arquivos"]
+        Q3["Q3 · orphan-files<br/>Arquivos não referenciados"]
+        Q4["Q4 · symbols {module}<br/>Símbolos exportados por módulo"]
+        Q5["Q5 · ds-used-in {slug}<br/>Componentes de design usados"]
+        Q6["Q6 · i18n-used-in {slug}<br/>Chaves de tradução usadas"]
+        Q7["Q7 · routes {slug}<br/>Rotas de navegação da feature"]
+        Q8["Q8 · di-deps {class}<br/>Dependências de injeção"]
+        Q9["Q9 · tests-for {file}<br/>Testes que cobrem um arquivo"]
+        Q10["Q10 · commits {slug}<br/>Commits que tocam a feature"]
+    end
+
+    subgraph REUSO["Q11 · Helpers reutilizáveis"]
+        Q11["Q11 · reusable-helpers {types}<br/>Helpers em util/extensions/core"]
+    end
+
+    subgraph INTELIGENCIA["Q12–Q17 · Inteligência de reuso"]
+        Q12["Q12 · dup-within-module<br/>Duplicatas intra-módulo"]
+        Q13["Q13 · dup-cross-module<br/>Duplicatas entre módulos"]
+        Q14["Q14 · kmp-migration<br/>Candidatos a KMP"]
+        Q15["Q15 · near-duplicates<br/>Quase-duplicatas"]
+        Q16["Q16 · redundant-platform<br/>Código platform-specific<br/>redundante"]
+        Q17["Q17 · dup-ts-helpers<br/>Helpers TypeScript duplicados"]
+    end
+
+    MENU --> ESTRUTURA
+    MENU --> REUSO
+    MENU --> INTELIGENCIA
+
+    ESTRUTURA --> SQLITE["Consulta SQLite graph.db"]
+    REUSO --> SQLITE
+    INTELIGENCIA --> SQLITE
+
+    SQLITE --> RESULTADO["Resultado formatado<br/>(árvore ou tabela)"]
+
+    RESULTADO --> DECISAO["Dev decide próximo passo"]
+
+    style SQLITE fill:#fff3e0,stroke:#e65100
+    style RESULTADO fill:#e8f5e9,stroke:#2e7d32
