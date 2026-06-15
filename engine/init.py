@@ -1423,6 +1423,11 @@ def _run_pipeline(project_root: Path) -> int:
         if n_hooks:
             renderer.write(f"  └─ {n_hooks} hooks instalados em .claude/hooks/")
     except (OSError, shutil.Error) as exc:  # pragma: no cover - hooks must not block init
+        # MD-03 (final review 2026-06-15): narrow scope is intentional —
+        # `_install_hooks` + `_install_git_hooks` only use shutil.copy*/chmod/
+        # symlink today, so (OSError, shutil.Error) is exhaustive. If hooks
+        # ever adopt tar/zip extraction, expand to include `tarfile.TarError`
+        # / `zipfile.BadZipFile`, or re-broaden with `BLE001` noqa + comment.
         renderer.write(
             renderer.colored(f"hooks install warn: {exc}", "yellow")
         )

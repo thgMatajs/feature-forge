@@ -54,7 +54,7 @@ def test_reset_domain_tables_pragma_finally_swallows_pragma_error():
 
     def break_on_pragma_on():
         pragma_calls["n"] += 1
-        raise sqlite3.OperationalError("connection closed")
+        raise sqlite3.OperationalError("pragma failed")
 
     conn = _ConnWrapper(real, break_on_pragma_on)
 
