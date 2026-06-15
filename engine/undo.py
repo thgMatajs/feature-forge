@@ -444,6 +444,14 @@ def _abort_feature(project_root: Path, feature_slug: str, reason: str) -> bool:
 
 def _delete_feature_artifacts(project_root: Path, feature_slug: str) -> bool:
     fpath = feature_dir(project_root, feature_slug)
+
+    # MD-02 (final review 2026-06-15): path-traversal guard runs FIRST,
+    # before any branch that could leak the resolved path to the user
+    # (existence message, "Vai apagar {fpath}" warning, confirm prompts).
+    # If `fpath` escapes `project_root`, the guard raises and we never
+    # disclose the resolved path in error messages.
+    _delete_feature_artifacts_guard(project_root, fpath)
+
     if not fpath.exists():
         renderer.write(renderer.colored(
             f"  Nada em {fpath} pra apagar.", "yellow"
@@ -458,7 +466,6 @@ def _delete_feature_artifacts(project_root: Path, feature_slug: str) -> bool:
     if not question.confirm("Confirma — perde tudo. (2ª)", default=False):
         return False
 
-    _delete_feature_artifacts_guard(project_root, fpath)
     shutil.rmtree(fpath)
     renderer.write(renderer.colored("  ✓ artefatos apagados.", "green"))
     _append_undo_log(
