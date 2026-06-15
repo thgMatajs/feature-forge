@@ -1305,5 +1305,5 @@ def _config_get_path(config: dict, keys: list[str], default):
 
 # Keep imports referenced (forge_home is reserved for future absolute-path
 # remediation hints; do not drop the import).
-_ = forge_home
-_: Callable = _safe_read_yaml  # type: ignore[assignment]
+_ = forge_home                              # reserved for future absolute-path remediation hints
+_safe_read_yaml_ref: Callable = _safe_read_yaml  # noqa: F841 — keep reference
