@@ -7,6 +7,99 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+(Itens das remediations PR #15 + chore gitignore listados abaixo
+ficam fora de v1.3.0 — eles foram acumulados em `main` paralelo ao
+branch de graph-ia-evolution e seguem release lifecycle separado.)
+
+## [1.3.0] — 2026-06-15
+
+### Added (graph-ia-evolution — body column + multi-language parsers + --json + onboarding UX)
+
+Expansão do codebase graph pra consumo direto por IA: símbolos agora
+carregam `body` text, novos parsers cobrem Java/XML/ObjC, flag `--json`
+habilita queries non-interactive, e onboarding UX detecta bootstrap state
+ausente. 8 ondas de implementação acumuladas em `feat/graph-ia-evolution`.
+
+- **`symbols.body` column** — `engine/utils/sqlite_io.py` ganha
+  `_ensure_graph_body_column` (ALTER TABLE idempotente). DBs novos
+  contêm `body TEXT` na criação; DBs existentes migram em-place sem
+  rebuild + sem bump de `SCHEMA_VERSION`. Populado por todos os parsers
+  com corpo delimitado por chaves (Kotlin/Swift/TS/Java/ObjC); NULL pra
+  XML symbols. Habilita assistentes IA a inspecionar implementação direto
+  do graph sem abrir o arquivo-fonte.
+- **`forge graph --json <query> [args...]`** — flag non-interactive emite
+  JSON parseável em stdout, sem prompts. Aceita aliases (`q1..q17`/`r`),
+  numeric keys (`1..17`), ou labels textuais (`where-is-used`,
+  `blast-radius`, …). Modo interactivo (`forge graph` sem `--json`)
+  continua inalterado. Stderr reservado pra erros.
+- **Java parser** — `engine/graph/parser_java.py` expõe
+  `parse_java_file(text, path) -> JavaFileInfo`: package declaration,
+  imports (incl. wildcards), classes/interfaces/enums/records (top-level
+  e nested), methods/constructors com body text e reuse-intelligence
+  metadata. Constructor distinguido de method via match de nome contra
+  classe enclosing (heurística regex).
+- **XML parser** — `engine/graph/parser_xml.py` expõe
+  `parse_xml_file(text, path) -> XmlFileInfo`: view IDs (`@+id/...`),
+  classes referenciadas (tag fully-qualified + atributos
+  `android:name`/`class=`), data binding variables, resource keys
+  (`string`/`dimen`/`color`/etc.), e expressões de binding action
+  (`@{...}` com método invocado).
+- **Objective-C parser** — `engine/graph/parser_objc.py` expõe
+  `parse_objc_file(text, path) -> ObjcFileInfo`: `#import` e `@import`,
+  `@interface`/`@protocol`/`@implementation`, methods (instance `-` e
+  class `+`), properties com attributes (`nonatomic`, `strong`, …).
+  Mensagens enviadas (`[obj selector]`) explicitamente NÃO geram call
+  edges (non-goal v1.3).
+- **Extensões `.java` / `.xml` / `.m` / `.mm` registradas** — em
+  `_LANGUAGE_EXTENSIONS` (`engine/graph/builder.py`), `_GRAPH_EXTENSIONS`
+  (`engine/ingest.py`), `_SUPPORTED_LANGS` (`engine/graph/_body_text.py`,
+  exceto `xml` que não tem body extraction), e no `case` match de
+  `hooks/post-edit-codebase-graph.sh`. Build full e incremental
+  dispatcham os novos parsers via `_persist_java`/`_persist_xml`/
+  `_persist_objc`.
+- **CLAUDE.md AI consumption instructions** — seção `## Codebase Graph
+  — IA-ready` instrui o modelo a consultar `forge graph --json <q>` antes
+  de ler arquivos-fonte quando a pergunta cabe em Q1–Q17. Inclui
+  exemplos canônicos por query + lista de linguagens cobertas.
+- **Bootstrap state detection** — `engine/cli.py::_check_bootstrap_state`
+  detecta `.git/hooks/pre-commit` symlink ausente/broken e emite friendly
+  error instruindo o user a rodar `bash .claude/bootstrap.sh`. Onboarding
+  UX pra novos devs num projeto que já tem forge.
+- **Lazy graph auto-build** — `engine/graph_cli.py::_maybe_auto_build`
+  detecta `.claude/graph.db` ausente/empty e dispara build inicial
+  silenciosamente na primeira invocação de `forge graph` (~30s-2min,
+  one-shot). Bootstrap script (`bash .claude/bootstrap.sh`) faz o mesmo
+  build idempotentemente no setup inicial.
+- **Flag `--no-auto-build`** — em `forge graph` desativa o lazy rebuild
+  pra uso em CI/scripts determinísticos (espera que o DB já exista).
+  Combina com `--json` pro pattern não-interativo completo.
+
+### Changed (graph-ia-evolution)
+
+- **`.claude/bootstrap.sh` Step 6** — após install de deps via
+  `pip install -e .`, dispara build inicial do graph + inventory
+  (idempotente). Sem isso, a primeira invocação de `forge graph`
+  triggera lazy rebuild. Ambos caminhos convergem no mesmo state.
+
+### Documentation (graph-ia-evolution)
+
+- **`docs/schemas/graph.md`** — documenta a coluna `symbols.body`
+  (semântica + populated-for + NULL-for + ALTER TABLE migration) e a
+  flag `--json` (non-interactive JSON queries) com exemplos canônicos.
+- **`docs/design/08-session-handoff.md`** — Estado v1.3.0 entregue;
+  Última atualização 2026-06-15.
+- **`README.md`** — §Stats bump (parser count 3 → 6, test count
+  baseline + 26 cobertura nova) + §Command surface menciona
+  `forge graph --json` como entrypoint non-interactive.
+- **`docs/design/04-pending.md`** — registra v1.3.0 shipped + 6
+  non-goals como follow-ups v1.4+ (tree-sitter, MCP server, ObjC call
+  graph, call graph preciso, SCHEMA_VERSION bump, visualização
+  gráfica). Critério explícito pra reentrada de cada um.
+- **`docs/superpowers/plans/2026-06-12-graph-ia-evolution.md`** —
+  extensão Task 9.5 (onboarding UX) + Step 9.6/9.7 (pending + README).
+
+## [Unreleased — pre-1.3 carry-over]
+
 ### Changed
 
 - **chore(gitignore)** — Adicionadas entradas faltantes pra runtime

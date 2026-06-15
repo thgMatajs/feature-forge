@@ -3,6 +3,59 @@
 What still needs to be drafted, in dependency order. Use this as the
 checklist for next sessions.
 
+## Fechado em [1.3.0] — graph-ia-evolution (2026-06-15)
+
+- **Expansão de cobertura de linguagem** — Java / XML / ObjC ganharam
+  parsers dedicados (`engine/graph/parser_{java,xml,objc}.py`) +
+  extensões registradas em todos os pontos de discovery. Closes gap
+  histórico de cobertura legada.
+- **`symbols.body` column** — graph passa a armazenar texto-fonte cru
+  com comentários preservados pra Kotlin/Swift/TS/Java/ObjC. ALTER TABLE
+  idempotente em `_ensure_graph_body_column` migra DBs existentes.
+  Closes gap de "IA tem que abrir o arquivo-fonte".
+- **`forge graph --json`** — flag non-interactive emite JSON
+  estruturado em stdout. Closes gap de "graph só consumível via menu
+  interativo".
+- **Onboarding UX (Task 9.5 / AC-11)** — `engine/cli.py` detecta
+  bootstrap ausente e emite friendly error; `engine/graph_cli.py`
+  lazy-auto-builda o graph na primeira invocação; flag
+  `--no-auto-build` opt-out pra CI. Bootstrap script (`bash
+  .claude/bootstrap.sh`) Step 6 faz o build idempotente. Closes gap de
+  "novo dev clona o repo e o graph não existe".
+
+### Follow-ups graph-ia-evolution v1.4+
+
+Os 6 non-goals declarados na spec
+`docs/superpowers/specs/2026-06-12-graph-ia-evolution.md §Non-goals`
+ficam registrados aqui pra reentrada futura. Cada um com critério
+concreto pra revisitar — não esperamos endereçar especulativamente.
+
+- **(a) Tree-sitter parsers** — *Reentrar* quando regex insuficiente
+  em projeto real (false positives críticos ou misses observados
+  in-vivo, NÃO inferidos). v1.3 cobertura regex é pragmática; tree-sitter
+  troca-se quando custo de precision exceder custo de runtime dep.
+- **(b) MCP server** — *Reentrar* quando IA com runtime stateful (não
+  apenas Claude Code via CLI emitindo `forge graph --json`) precisar de
+  protocol-level integration. v1.3 ship é stdout JSON suficiente pro
+  cenário Claude Code atual.
+- **(c) ObjC call graph completo** — *Reentrar* quando legacy iOS
+  estiver ativo em projeto adotante e o parsing de `[obj selector]`
+  trouxer ganho concreto (tipos rastreáveis disponíveis). v1.3 entrega
+  símbolos + imports + protocols; mensagens enviadas explicitamente
+  NÃO geram call edges.
+- **(d) Call graph preciso (qualquer linguagem)** — *Reentrar* quando
+  demanda concreta justificar refactor cross-cutting de Q1–Q17.
+  Precision atual (regex-based) mantida intencionalmente; tentativa de
+  aprimoramento seria escopo amplo sem caso de uso bloqueador.
+- **(e) SCHEMA_VERSION bump** — *Reentrar* quando schema delta exigir
+  migrator não-aditivo (ALTER TABLE não cobre). v1.3 adicionou `body`
+  por ALTER incremental; SCHEMA_VERSION fica reservado pra mudanças
+  estruturais.
+- **(f) Visualização gráfica do graph (D3.js / mermaid / etc.)** —
+  *Reentrar* quando demanda real surgir (humano pedindo, não inferida).
+  Consumo v1.3 é CLI + JSON; renderização gráfica fica fora até alguém
+  precisar.
+
 ## Fechado em [Unreleased]
 
 - **Auditoria pós-plano** — gap identificado em 2026-06-04 (não estava

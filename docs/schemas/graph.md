@@ -71,12 +71,33 @@ CREATE TABLE symbols (
   signature       TEXT,                           -- e.g., "fun login(email: String, password: String): Flow<StateUI<LoginUI>>"
   line_start      INTEGER,
   line_end        INTEGER,
-  visibility      TEXT                           -- public | internal | private | protected
+  visibility      TEXT,                          -- public | internal | private | protected
+  body            TEXT                           -- raw source text com comentários preservados (v1.3+); ver §body column
 );
 CREATE INDEX idx_symbols_name ON symbols(name);
 CREATE INDEX idx_symbols_file ON symbols(file_id);
 CREATE INDEX idx_symbols_kind ON symbols(kind);
 ```
+
+#### `symbols.body` column (v1.3+)
+
+Texto-fonte cru do corpo do símbolo (entre `{` e `}` matched), com
+comentários e whitespace preservados. Populado pra Kotlin, Swift,
+TypeScript, Java e Objective-C — linguagens com corpo delimitado por
+chaves. Para XML symbols, o campo é `NULL` (XML não tem corpo textual
+com a mesma semântica). Body extraction reusa `_body_text._SUPPORTED_LANGS`
+registry em `engine/graph/_body_text.py`.
+
+Habilita assistentes IA a inspecionar implementação direto do graph,
+sem precisar abrir o arquivo-fonte — reduz tokens de contexto e acelera
+compreensão de codebases grandes.
+
+DBs criados antes do v1.3 são migrados em-place via `ALTER TABLE symbols
+ADD COLUMN body TEXT` executado idempotentemente por
+`_ensure_graph_body_column` em `engine/utils/sqlite_io.py`. Re-execução
+do helper em DB já migrado é no-op. SCHEMA_VERSION não é bumpado — a
+migração é aditiva e backwards-compatible (queries antigas continuam
+funcionando, ignorando a coluna nova).
 
 ### `imports`
 
@@ -251,9 +272,44 @@ CREATE TABLE meta (
 The planning-conductor and sub-agents use these queries via a stable
 interface. End users reach them via `forge graph` (interactive menu of named
 queries); ad-hoc SQL access is intentionally available only through the
-`forge raw` escape hatch — there are no flags on `forge graph`. The
-`CLI form` shown under each query below is the **named-query slug** the user
-picks from the interactive menu, not a flag-bearing CLI call.
+`forge raw` escape hatch — there are no flags on `forge graph` exceto
+`--json` (non-interactive JSON) e `--no-auto-build` (opt-out lazy
+rebuild). O `CLI form` shown under each query below is the **named-query
+slug** the user picks from the interactive menu — também aceito como
+identificador via `forge graph --json`.
+
+### forge graph --json (v1.3+)
+
+Flag non-interactive pra consumo por IA/automação. Aceita o mesmo
+conjunto de queries do menu interativo (Q1–Q17) mas emite JSON
+estruturado em stdout, sem prompts. Útil pra assistentes IA consultarem
+o graph antes de ler arquivos-fonte (reduz tokens de contexto).
+
+```
+forge graph --json <query> [args...]
+```
+
+Onde `<query>` é um dos formatos:
+- Alias curto: `q1`, `q2`, …, `q17`, `r` (combined reuse view).
+- Numeric key: `1`, `2`, …, `17`.
+- Label textual do handler: `where-is-used`, `blast-radius`,
+  `screens-using`, `similar-features`, etc.
+
+Output é JSON parseável (`json.loads`-válido) em stdout; stderr
+reservado pra erros. Modo interactivo (`forge graph` sem `--json`)
+continua disponível e inalterado.
+
+Exemplos:
+
+```
+forge graph --json q3                                         # orphan i18n keys
+forge graph --json q4 MeoCard                                 # screens using MeoCard
+forge graph --json q2 lembrete-rega                           # features similar to lembrete-rega
+forge graph --json blast-radius LoginViewModel                # blast radius por label
+```
+
+Para CI/scripts determinísticos, combinar com `--no-auto-build` desativa
+o lazy rebuild do graph (espera que `.claude/graph.db` já exista).
 
 ### Q1 — Where is X used?
 
