@@ -182,6 +182,8 @@ completo de Plan Mode → Apply → gates → commit.
 
 **Comando:** `forge implement feature-slug`
 
+> **Apply Mode — v1 (atual):** O forge exibe o contrato da task e instrui o desenvolvedor; a escrita de código é manual. Apply Mode automatizado (engine escrevendo código via Claude Code) está planejado para Phase 6 e ainda não foi shipado.
+
 **O ciclo de cada task:**
 
 1. **Resolução**: forge descobre qual é a próxima task via ordenação
@@ -189,10 +191,11 @@ completo de Plan Mode → Apply → gates → commit.
 2. **Plan Mode**: exibe o contrato da task — descrição, arquivos permitidos,
    BDD coberto, validações, gates
 3. **Confirmação**: você confirma que entendeu o escopo ("sim")
-4. **Apply Mode**: o código é implementado, editando **apenas** os arquivos
-   em `allowed_files` — qualquer edição fora disso vira um **Finding**
-   (com 3 caminhos: atualizar contrato, reverter, ou split em nova task)
-5. **Gates**: o forge roda automaticamente:
+4. **Apply Mode**: o dev implementa os arquivos listados em `allowed_files`
+   conforme o contrato gerado pelo forge — qualquer edição fora dos arquivos
+   permitidos vira um **Finding** (com 3 caminhos: atualizar contrato,
+   reverter, ou split em nova task)
+5. **Gates**: o forge roda automaticamente após a implementação:
    - `check_cyclomatic_complexity` — gate de complexidade ciclomática
    - `check_secrets` — gate de detecção de segredos (gitleaks)
 6. **Handoff**: instruções pra commit + `forge verify` + passar pra
