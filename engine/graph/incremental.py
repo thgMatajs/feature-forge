@@ -15,6 +15,7 @@ from typing import Optional
 
 from engine.graph.builder import (
     _LANGUAGE_EXTENSIONS,
+    _ensure_graph_body_column,
     _ensure_imports_to_file_id_column,
     _ensure_reuse_intelligence_columns,
     _infer_feature_slug,
@@ -51,6 +52,7 @@ def update_file(
         gradle_modules = load_gradle_modules(project_root)
         _ensure_imports_to_file_id_column(conn)
         _ensure_reuse_intelligence_columns(conn)
+        _ensure_graph_body_column(conn)
         with transaction(conn):
             stats = _refresh_file(conn, project_root, file_path, gradle_modules)
             _resolve_import_targets(conn)
@@ -71,6 +73,7 @@ def remove_file(
     try:
         _ensure_imports_to_file_id_column(conn)
         _ensure_reuse_intelligence_columns(conn)
+        _ensure_graph_body_column(conn)
         rel = _relpath(project_root, file_path)
         with transaction(conn):
             file_id = _file_id(conn, rel)
@@ -96,6 +99,7 @@ def update_batch(
         gradle_modules = load_gradle_modules(project_root)
         _ensure_imports_to_file_id_column(conn)
         _ensure_reuse_intelligence_columns(conn)
+        _ensure_graph_body_column(conn)
         files_updated = 0
         symbols_total = 0
         edges_total = 0

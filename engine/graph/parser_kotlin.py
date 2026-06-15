@@ -201,6 +201,7 @@ class KotlinSymbol:
     body_hash: Optional[str] = None
     body_tokens: Optional[str] = None
     modifiers: tuple[str, ...] = field(default_factory=tuple)
+    body: Optional[str] = None
 
 
 @dataclass
@@ -254,6 +255,7 @@ def parse_kotlin_file(path: Path) -> KotlinFileInfo:
         signature: Optional[str] = None
         body_hash: Optional[str] = None
         body_tokens_json: Optional[str] = None
+        body_text: Optional[str] = None
 
         if kind == "fun":
             signature, body_text = _parse_function_tail(text, match.end(), receiver)
@@ -277,6 +279,7 @@ def parse_kotlin_file(path: Path) -> KotlinFileInfo:
                 body_hash=body_hash,
                 body_tokens=body_tokens_json,
                 modifiers=modifiers,
+                body=body_text,
             )
         )
 

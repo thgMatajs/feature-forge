@@ -89,6 +89,7 @@ def build_full(
     try:
         _ensure_imports_to_file_id_column(conn)
         _ensure_reuse_intelligence_columns(conn)
+        _ensure_graph_body_column(conn)
         _reset_domain_tables(conn)
         files_by_ext = discover_source_files(project_root)
         total_files = sum(len(paths) for paths in files_by_ext.values())
@@ -497,8 +498,8 @@ def _persist_kotlin(conn: sqlite3.Connection, file_id: int, info: KotlinFileInfo
         cur = conn.execute(
             "INSERT INTO symbols("
             "  file_id, name, kind, signature, line_start, line_end, visibility, "
-            "  receiver_type, body_hash, body_tokens, modifiers"
-            ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "  receiver_type, body_hash, body_tokens, modifiers, body"
+            ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 file_id,
                 symbol.name,
@@ -511,6 +512,7 @@ def _persist_kotlin(conn: sqlite3.Connection, file_id: int, info: KotlinFileInfo
                 symbol.body_hash,
                 symbol.body_tokens,
                 " ".join(symbol.modifiers) if symbol.modifiers else None,
+                symbol.body,
             ),
         )
         if cur.lastrowid is not None:
@@ -566,6 +568,7 @@ def _persist_swift(conn: sqlite3.Connection, file_id: int, info: SwiftFileInfo) 
             s.body_hash,
             s.body_tokens,
             " ".join(s.modifiers) if s.modifiers else None,
+            s.body,
         )
         for s in info.symbols
     ]
@@ -573,8 +576,8 @@ def _persist_swift(conn: sqlite3.Connection, file_id: int, info: SwiftFileInfo) 
         conn.executemany(
             "INSERT INTO symbols("
             "  file_id, name, kind, signature, line_start, line_end, visibility, "
-            "  receiver_type, body_hash, body_tokens, modifiers"
-            ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "  receiver_type, body_hash, body_tokens, modifiers, body"
+            ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             symbol_rows,
         )
 
@@ -606,11 +609,12 @@ def _persist_typescript(conn: sqlite3.Connection, file_id: int, info: TypeScript
             s.body_hash,
             s.body_tokens,
             " ".join(s.modifiers) if s.modifiers else None,
+            s.body,
         )
         for s in info.symbols
     ]
     component_rows = [
-        (file_id, comp, "react_component", None, 0, 0, "public", None, None, None, None)
+        (file_id, comp, "react_component", None, 0, 0, "public", None, None, None, None, None)
         for comp in info.components
     ]
     all_symbol_rows = symbol_rows + component_rows
@@ -618,8 +622,8 @@ def _persist_typescript(conn: sqlite3.Connection, file_id: int, info: TypeScript
         conn.executemany(
             "INSERT INTO symbols("
             "  file_id, name, kind, signature, line_start, line_end, visibility, "
-            "  receiver_type, body_hash, body_tokens, modifiers"
-            ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "  receiver_type, body_hash, body_tokens, modifiers, body"
+            ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             all_symbol_rows,
         )
 
@@ -824,6 +828,20 @@ def _ensure_imports_to_file_id_column(conn: sqlite3.Connection) -> None:
     if "to_file_id" not in names:
         conn.execute("ALTER TABLE imports ADD COLUMN to_file_id INTEGER REFERENCES files(id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_imports_to_file ON imports(to_file_id)")
+
+
+def _ensure_graph_body_column(conn: sqlite3.Connection) -> None:
+    """Migration: add ``symbols.body TEXT`` for IA-ready source text.
+
+    Stores raw source text (with comments preserved) for symbol bodies, so
+    downstream IA consumers can read the source without re-opening the file.
+    Added as ALTER TABLE so legacy DBs (schema v2 without body) gain the
+    column without a full rebuild; new DBs already get it from the canonical
+    DDL in ``engine/utils/sqlite_io.py``.
+    """
+    cols = {c["name"] for c in conn.execute("PRAGMA table_info(symbols)").fetchall()}
+    if "body" not in cols:
+        conn.execute("ALTER TABLE symbols ADD COLUMN body TEXT")
 
 
 def _ensure_reuse_intelligence_columns(conn: sqlite3.Connection) -> None:

@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS symbols (
   receiver_type   TEXT,
   body_hash       TEXT,
   body_tokens     TEXT,
-  modifiers       TEXT
+  modifiers       TEXT,
+  body            TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_symbols_name          ON symbols(name);
 CREATE INDEX IF NOT EXISTS idx_symbols_file          ON symbols(file_id);

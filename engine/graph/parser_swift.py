@@ -108,6 +108,7 @@ class SwiftSymbol:
     body_hash: Optional[str] = None
     body_tokens: Optional[str] = None
     modifiers: tuple[str, ...] = field(default_factory=tuple)
+    body: Optional[str] = None
 
 
 @dataclass
@@ -186,6 +187,7 @@ def parse_swift_file(path: Path) -> SwiftFileInfo:
                 body_hash=body_hash,
                 body_tokens=tokens_json,
                 modifiers=modifiers,
+                body=body_text,
             )
         )
 

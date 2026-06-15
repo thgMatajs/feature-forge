@@ -116,6 +116,7 @@ class TypeScriptSymbol:
     body_hash: Optional[str] = None
     body_tokens: Optional[str] = None
     modifiers: tuple[str, ...] = field(default_factory=tuple)
+    body: Optional[str] = None
 
 
 @dataclass
@@ -174,6 +175,7 @@ def parse_typescript_file(path: Path) -> TypeScriptFileInfo:
                 body_hash=body_hash,
                 body_tokens=tokens_json,
                 modifiers=tuple(modifiers_list),
+                body=body_text,
             )
         )
         seen_names.add(("function", name))
@@ -208,6 +210,7 @@ def parse_typescript_file(path: Path) -> TypeScriptFileInfo:
                 body_hash=body_hash,
                 body_tokens=tokens_json2,
                 modifiers=tuple(modifiers_list),
+                body=body_text,
             )
         )
         seen_names.add(("function", name))
