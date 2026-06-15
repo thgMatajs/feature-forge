@@ -18,19 +18,29 @@ flowchart TD
 
     FILES_CREATED --> GIT
 
-    subgraph TIME["Os outros 9 devs"]
+    subgraph TIME["Os outros 9 devs (v1.3+)"]
         PULL["git pull"]
         CONFIG_OK["Recebem versionados:<br/>cards, inventory,<br/>workflow-config, hooks"]
-        RECONFIGURE["forge reconfigure"]
-        GRAPH_DB["Cada um constrói<br/>graph.db local"]
+        BOOTSTRAP["bash .claude/bootstrap.sh<br/>(idempotente)"]
+        BOOT_STEPS["Step 1-5: linka git hooks,<br/>chmod +x scripts,<br/>pip install -e ."]
+        BOOT_STEP6["Step 6: probe<br/>forge graph --json q3<br/>→ dispara lazy auto-build<br/>(_maybe_auto_build)"]
+        GRAPH_DB["graph.db local pronto<br/>(~30s-2min)"]
     end
 
     PULL --> CONFIG_OK
-    CONFIG_OK --> RECONFIGURE
-    RECONFIGURE --> GRAPH_DB
+    CONFIG_OK --> BOOTSTRAP
+    BOOTSTRAP --> BOOT_STEPS
+    BOOT_STEPS --> BOOT_STEP6
+    BOOT_STEP6 --> GRAPH_DB
 
     GIT -->|"commit + push"| PULL
+
+    LAZY["Pulou bootstrap?<br/>Primeira forge graph<br/>dispara o mesmo<br/>lazy auto-build"]
+    BOOTSTRAP -.->|"alternativa"| LAZY
+    LAZY --> GRAPH_DB
 
     style VERSIONADO fill:#e3fce3,stroke:#2e7d32
     style LOCAL fill:#ffe3e3,stroke:#c62828
     style GRAPH_DB fill:#fff3e0,stroke:#e65100
+    style BOOT_STEP6 fill:#e8eaf6,stroke:#3f51b5
+    style LAZY fill:#fff8e1,stroke:#f9a825

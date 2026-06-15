@@ -167,6 +167,12 @@ critérios de aceite, validações e gates.
 - `dependencies`: tarefas que precisam estar prontas antes
 - `bdd_scenarios_covered`: quais cenários BDD esta task implementa
 
+> **IA-assist durante planejamento:** o `forge plan` (e o próprio
+> assistente) consulta o codebase graph via `forge graph --json <q>`
+> (v1.3+) pra mapear similar-features, blast-radius e reuse intelligence
+> antes de propor tasks. Vide `CLAUDE.md §Codebase Graph — IA-ready` e
+> `daily-workflow.md §forge graph` pra detalhes do modo non-interactive.
+
 **Wave E — Readiness review:** Antes de liberar pra implementação, o forge
 gera um `implementation-readiness-review.md` + `plan-feature-handoff.json`.
 O status precisa estar `ready` (ou `ready-with-blocks`) para que

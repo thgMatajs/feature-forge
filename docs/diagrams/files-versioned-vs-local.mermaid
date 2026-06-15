@@ -18,10 +18,11 @@ flowchart LR
 
     subgraph LOCAL["❌ Local / Não versionado (.gitignore)"]
         direction TB
-        L1["graph.db<br/>→ .claude/graph.db<br/>SQLite do grafo da base<br/>(reconstruído localmente)"]
+        L1["graph.db<br/>→ .claude/graph.db<br/>SQLite do grafo da base<br/>(WAL mode + symbols.body v1.3+;<br/>reconstruído via bootstrap<br/>ou lazy auto-build)"]
         L2["memory/L1/ (WIP)<br/>→ .claude/memory/L1/<br/>Features ativas em WIP<br/>(exceto archived/ — versionado)"]
         L3["*.bak<br/>Backups de segurança<br/>pré-mutação"]
         L4["Checkpoints .yaml<br/>→ .init-checkpoint.yaml<br/>→ .reconfigure-draft.yaml<br/>Estado de pause/resume"]
+        L5["git hooks symlinks<br/>→ .git/hooks/pre-commit<br/>→ .git/hooks/pre-push<br/>(criados pelo bootstrap;<br/>per-machine, não versionados)"]
     end
 
     VERSIONADO -->|"git push comparte<br/>com o time"| TIME["Time todo"]

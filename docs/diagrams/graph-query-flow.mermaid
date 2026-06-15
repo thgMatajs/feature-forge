@@ -1,10 +1,25 @@
 flowchart TD
-    USER["Dev faz pergunta sobre o código"]
+    USER["Dev (ou IA) faz pergunta sobre o código"]
     FORGE_GRAPH["forge graph"]
-    MENU["Menu interativo<br/>com 17 queries + cancelar"]
 
     USER --> FORGE_GRAPH
-    FORGE_GRAPH --> MENU
+
+    AUTOBUILD{"graph.db existe<br/>e não-vazio?"}
+    LAZY["_maybe_auto_build<br/>roda build inicial<br/>(~30s-2min)"]
+    BYPASS["--no-auto-build:<br/>falha rápido se DB<br/>ausente (CI/scripts)"]
+
+    FORGE_GRAPH --> AUTOBUILD
+    AUTOBUILD -->|"não"| LAZY
+    AUTOBUILD -->|"sim"| MODE
+    LAZY --> MODE
+    FORGE_GRAPH -.->|"--no-auto-build"| BYPASS
+
+    MODE{"--json?"}
+    MENU["Menu interativo<br/>com 17 queries + cancelar"]
+    JSON_MODE["Non-interactive (v1.3+)<br/>aliases: q1..q17, r,<br/>numeric 1..17, ou label<br/>(orphan-files, blast-radius…)<br/>JSON em stdout"]
+
+    MODE -->|"não"| MENU
+    MODE -->|"sim"| JSON_MODE
 
     subgraph ESTRUTURA["Q1–Q10 · Estrutura do código"]
         Q1["Q1 · similar-features {slug}<br/>Features parecidas com a slug"]
@@ -35,14 +50,26 @@ flowchart TD
     MENU --> ESTRUTURA
     MENU --> REUSO
     MENU --> INTELIGENCIA
+    JSON_MODE --> ESTRUTURA
+    JSON_MODE --> REUSO
+    JSON_MODE --> INTELIGENCIA
 
-    ESTRUTURA --> SQLITE["Consulta SQLite graph.db"]
+    ESTRUTURA --> SQLITE["Consulta SQLite graph.db<br/>(WAL mode, symbols.body v1.3+)"]
     REUSO --> SQLITE
     INTELIGENCIA --> SQLITE
 
-    SQLITE --> RESULTADO["Resultado formatado<br/>(árvore ou tabela)"]
+    SQLITE --> RESULTADO_INT["Resultado formatado<br/>(árvore ou tabela)"]
+    SQLITE --> RESULTADO_JSON["JSON em stdout<br/>(parseável por IA/CI)"]
 
-    RESULTADO --> DECISAO["Dev decide próximo passo"]
+    MENU -.- RESULTADO_INT
+    JSON_MODE -.- RESULTADO_JSON
+
+    RESULTADO_INT --> DECISAO["Dev decide próximo passo"]
+    RESULTADO_JSON --> DECISAO
 
     style SQLITE fill:#fff3e0,stroke:#e65100
-    style RESULTADO fill:#e8f5e9,stroke:#2e7d32
+    style RESULTADO_INT fill:#e8f5e9,stroke:#2e7d32
+    style RESULTADO_JSON fill:#e8f5e9,stroke:#2e7d32
+    style JSON_MODE fill:#e8eaf6,stroke:#3f51b5
+    style LAZY fill:#fff8e1,stroke:#f9a825
+    style BYPASS fill:#ffe3e3,stroke:#c62828
