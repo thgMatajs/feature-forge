@@ -150,6 +150,30 @@ Antes de aceitar diff de subagent como "feito":
 4. Se desvio detectado: dispatch fix ou revert + nova task com instrução
    mais explícita
 
+## Cleanup de `.planning/` ao final do trabalho
+
+`.planning/` é scratch dir per-session. Reviewers, fixers e auditores
+escrevem ali (REVIEW.md, findings, audit logs, fixes-applied.md). Por
+gitignore default, nada de `.planning/` é versionado — exceto whitelist
+explícita de artefatos canônicos persistentes (`det-3/`, `det-6/`,
+`drift-1/`).
+
+**Ao final de cada ciclo de trabalho** (após commit/push final, ou
+fechamento de PR), revise `.planning/` e descarte scratch que não tem
+valor histórico:
+
+```bash
+ls .planning/                                  # listar subdirs
+git status --short .planning/                  # confirmar untracked
+rm -rf .planning/<scratch-subdir>              # descartar com cuidado
+```
+
+Critério: se o subdir foi consumido (findings já viraram replies/commits,
+audit já está no PR body, plan-review já guiou execução), pode ir. Se
+contém decisão ainda não traduzida pra código/PR, MANTÉM até traduzir.
+
+Não auto-deleta — humano (você) decide. Mesma disciplina dos `.bak` files.
+
 ## Reset operacional
 
 Se você se pegar prestes a usar `Write/Edit/NotebookEdit` em arquivo do

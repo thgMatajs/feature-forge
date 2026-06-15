@@ -46,5 +46,24 @@ dist/
 .claude/state/*.jsonl
 !.claude/state/.gitkeep
 
-# Plan auditor — review outputs (per-rodada, não versionado)
-.planning/plan-reviews/
+# Claude Code — worktrees (git linked-worktrees criadas por subagentes)
+.claude/worktrees/
+
+# GSD / superpowers — temporary scratch
+.gsd-tmp/
+
+# .planning/ — per-session scratch (review outputs, audit dirs, fix workspaces)
+# Default: tudo ignorado. Whitelist explícita pra artefatos persistentes
+# que são deliberadamente versionados (audit JSONs + verification md de
+# phases canônicas).
+.planning/*
+!.planning/.gitkeep
+!.planning/det-3/
+!.planning/det-6/
+!.planning/drift-1/
+
+# Ultra-review skill outputs
+.ultra-review/
+
+# Design outputs (generated artifacts)
+docs/design/outputs/

@@ -19,6 +19,11 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 - **`docs/diagrams/graph-query-flow.mermaid`** — Diagrama de fluxo de consulta do graph.
 - **`docs/diagrams/files-versioned-vs-local.mermaid`** — Diagrama de arquivos versionados vs locais.
 
+### Changed (Housekeeping, 2026-06-15)
+
+- `.gitignore`: `.planning/*` agora catch-all (whitelist explícita pra `det-3/`, `det-6/`, `drift-1/`). Scratch de review/audit/fix não polui mais o working tree.
+- `.claude/rules/orchestrator-persona.md`: nova seção §Cleanup de `.planning/` ao final do trabalho — disciplina manual paralela aos `.bak` retention.
+
 ### Changed (User-facing docs, 2026-06-12)
 
 - **`README.md`** — Adicionada seção "Quick Start" com instalação e first steps + tabela "Guias do usuário" com links para os 4 guias.
