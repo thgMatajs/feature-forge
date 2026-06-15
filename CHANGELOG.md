@@ -13,6 +13,8 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   artifacts: `.claude/state/*.lock`, `.claude/worktrees/`, `.gsd-tmp/`,
   `.planning/*-review/` (generic), `.ultra-review/`, `docs/design/outputs/`.
   Reduz noise em `git status` pós-bootstrap.
+- `.gitignore`: `.planning/*` agora catch-all (whitelist explícita pra `det-3/`, `det-6/`, `drift-1/`). Scratch de review/audit/fix não polui mais o working tree.
+- `.claude/rules/orchestrator-persona.md`: nova seção §Cleanup de `.planning/` ao final do trabalho — disciplina manual paralela aos `.bak` retention.
 
 ### Fixed (master review PR #15 remediation — 2026-06-15)
 

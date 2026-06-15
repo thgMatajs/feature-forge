@@ -3,7 +3,7 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-15 (master review PR #15 — todos os 22 findings aplicados)
+**Última atualização:** 2026-06-15 (housekeeping — `.planning/` catch-all gitignore + cleanup discipline)
 **Estado master review PR #15:** todos os 22 findings (14 Group A + 8 Group B) aplicados em 5 commits atomicos sobre `fix/review-md-remediation`. Test baseline 1350 → 1353 (3 novos testes de A-013 cobrindo path-traversal do guard de undo). Detalhes em CHANGELOG `## [Unreleased] > ### Fixed (master review PR #15 remediation)`.
 **Estado REVIEW.md remediation (anterior):** 22 findings VÁLIDOS do REVIEW.md endereçados; 8 anti-goals anotados em `04-pending.md`; mypy advisory + pathspec dep adicionados.
 **Wave A (PR #13 review, 2026-06-12):** 6 fixes contidos remediados em 5 commits sobre `96a0896` (cli paused_exc refactor + intent-state flush + validate_presets imports + RULE-020 cascade guard + doc-sync). Fix 4 (clear_intent_log_only delegation) skipped — semantics divergem, anotado pra Wave B. Rapid lane verde (1306 passing, 6 falhas pré-existentes inalteradas em test_cards_resolver/test_commands_init/test_validators_card_yaml). +2 regression tests.
