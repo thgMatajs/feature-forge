@@ -184,7 +184,7 @@ Decisões de reuso:
 | Modificar | `docs/schemas/graph.md` | Doc `symbols.body` column + `--json` flag |
 | Modificar | `AGENTS.md` ou `CLAUDE.md` | Instrução pro modelo: consulte graph antes de ler arquivos |
 | Modificar | `CHANGELOG.md` | `### Added` — body column, --json, Java/XML/ObjC parsers |
-| Modificar | `README.md` | Stats refletindo +18 tests, 3 parsers Java/XML/ObjC, `--json` flag |
+| Modificar | `README.md` | Stats refletindo +26 tests (Java 7 + XML 5 + ObjC 6 + UX 8), 3 parsers Java/XML/ObjC, `--json` flag |
 | Modificar | `docs/design/08-session-handoff.md` | "Última atualização" + estado: v1.3.0 graph-ia-evolution |
 | Modificar | `docs/design/04-pending.md` | Marca item relacionado se houver |
 
@@ -216,7 +216,7 @@ Registrar count baseline:
 ```bash
 pytest --collect-only -q | tail -1
 ```
-Anotar o valor numérico (ex.: `1113 tests collected`) pra comparar em Step 10.1 — `count_final ≥ count_baseline + 18` (18 tests novos esperados: 7 Java + 5 XML + 6 ObjC).
+Anotar o valor numérico (ex.: `1113 tests collected`) pra comparar em Step 10.1 — `count_final ≥ count_baseline + 26 (Java 7 + XML 5 + ObjC 6 + onboarding UX 8 — Java/XML/ObjC nas Tasks 4/5/6, UX nas Tasks 9.5.4/9.5.6 com 4+4 tests respectivamente)`.
 
 Se vermelho, abort — não inicia plano em árvore verde-quebrada.
 
@@ -1997,6 +1997,10 @@ Adicionar em `## [Unreleased]`:
 - Objective-C parser (`engine/graph/parser_objc.py`) — simplified symbol+import parser covering `@interface`, `@protocol`, `@implementation`, methods, properties, `#import`/`@import`. NO call graph.
 - Language extension registration: `.java` → java, `.xml` → xml, `.m`/`.mm` → objc in `_LANGUAGE_EXTENSIONS`, `_GRAPH_EXTENSIONS`, `_SUPPORTED_LANGS`, and `post-edit-codebase-graph.sh`.
 - AGENTS.md/CLAUDE.md section instructing AI models to query graph (`forge graph --json`) before reading source files.
+- `bash .claude/bootstrap.sh` Step 6: build inicial do graph + inventory pós-clone (idempotente).
+- `engine/cli.py` detecta bootstrap state ausente (`.git/hooks/pre-commit` symlink missing) e emite friendly error com instrução pra rodar bootstrap.
+- `engine/graph_cli.py` auto-builda `graph.db` quando ausente/empty (lazy rebuild na primeira invocação).
+- Flag `--no-auto-build` em `forge graph` desativa lazy rebuild (uso CI/scripts determinísticos).
 
 ### Documentation
 
@@ -2055,7 +2059,7 @@ grep -n -i "tests\|parsers\|graph" README.md | head -20
 
 Sub-atualizações:
 
-(a) **§Stats** — bump de test count (de baseline pra baseline+18 — 18 tests novos: 7 Java + 5 XML + 6 ObjC) + parser count (de 3 pra 6: kotlin/swift/typescript + java/xml/objc).
+(a) **§Stats** — bump de test count (de baseline pra baseline+26 — 26 tests novos: Java 7 + XML 5 + ObjC 6 + onboarding UX 8) + parser count (de 3 pra 6: kotlin/swift/typescript + java/xml/objc).
 
 (b) **§Command surface** (ou equivalente) — mencionar `forge graph --json <query>` como entrypoint não-interativo pra consumo por IA/automação.
 
@@ -2098,6 +2102,17 @@ função `_check_bootstrap_state()` em `engine/cli.py`) — sem near-duplicate.
 
 - [ ] **Step 9.5.1: Adicionar build de graph + inventory em `.claude/bootstrap.sh`**
 
+**Pré-requisito de subcommand:** Este Step assume que `forge graph build`
+e `forge reconfigure --inventory-only` existem como subcommands non-interactive
+e idempotentes. Se a impl detectar que NÃO existem (deviation), abrir
+handoff ao orchestrator pra decidir: (a) criar os subcommands como parte
+da Task 9.5; (b) usar `forge graph` (interactive sem args; aceita
+redirect de stdin pra simular não-interactive) + `forge reconfigure`
+(que faz inventory + graph juntos); ou (c) ship Task 9.5 sem o Step 6
+do bootstrap (apenas detection + lazy build) e abrir gap em
+`04-pending.md`. Recomendação se ambiguidade persistir: caminho (b)
+é o mais reuse-first.
+
 Após o bloco "5. Install runtime deps" já existente (que faz `pip install -e .`),
 adicionar bloco 6:
 
@@ -2125,9 +2140,7 @@ Adicionar função `_check_bootstrap_state()` chamada no início de
 def _check_bootstrap_state(project_root: Path) -> Optional[str]:
     """Detect if bootstrap was run. Returns error message if missing, None if OK.
 
-    Checks:
-      - `.git/hooks/pre-commit` symlink existe e aponta pra `hooks/git-pre-commit`
-      - `.claude/state/` diretório existe (criado por bootstrap)
+    Check: `.git/hooks/pre-commit` symlink existe (criado por bootstrap.sh).
 
     NÃO bloqueia comandos read-only (`--version`, `--help`, `doctor`).
     """
@@ -2254,7 +2267,7 @@ Comparar count contra baseline registrado em Step 0.2:
 pytest --collect-only -q | tail -1
 ```
 
-Expected: `count_final ≥ count_baseline + 18` (18 tests novos esperados: 7 Java + 5 XML + 6 ObjC). Se count diverge pra baixo, identificar quais tests sumiram antes de declarar concluído.
+Expected: `count_final ≥ count_baseline + 26 (Java 7 + XML 5 + ObjC 6 + onboarding UX 8 — Java/XML/ObjC nas Tasks 4/5/6, UX nas Tasks 9.5.4/9.5.6 com 4+4 tests respectivamente)`. Se count diverge pra baixo, identificar quais tests sumiram antes de declarar concluído.
 
 - [ ] **Step 10.2: forge verify**
 

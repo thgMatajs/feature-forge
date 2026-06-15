@@ -124,9 +124,10 @@ ACs com as tasks do plano.
   exemplos canônicos de uso.
 
 - **AC-9 — pytest baseline mantida com cobertura nova.** Suite completa
-  passa com count `≥ baseline pré-impl + ~18 tests novos`
-  (~7 Java + ~5 XML + ~6 ObjC). Nenhum test pré-existente é removido sem
-  justificativa explícita no commit body.
+  passa com count `≥ baseline pré-impl + 26 tests novos`
+  (Java 7 + XML 5 + ObjC 6 + onboarding UX 8 — sendo 4 detection e 4
+  lazy build). Nenhum test pré-existente é removido sem justificativa
+  explícita no commit body.
 
 - **AC-10 — `forge verify` passa cascade sem hard fails.** Validators
   canônicos rodam contra o repositório modificado e a cascade sai green.
@@ -201,6 +202,6 @@ para detalhe dos steps):
 | AC-6 (ObjC parser, sem call graph) | Task 6 (parser + tests) |
 | AC-7 (extensões registradas) | Task 7.1–7.9 (builder, incremental, ingest, _body_text, hook) |
 | AC-8 (instrução pro modelo) | Task 8 (AGENTS.md/CLAUDE.md) |
-| AC-9 (pytest baseline + ~18 tests novos) | Task 10.1 |
+| AC-9 (pytest baseline + 26 tests novos: Java 7 + XML 5 + ObjC 6 + UX 8) | Task 10.1 |
 | AC-10 (forge verify cascade green) | Task 10 (full verification + doc-sync gates) |
 | AC-11 (onboarding UX — bootstrap detection + lazy graph build) | Task 9.5 |
