@@ -2965,6 +2965,43 @@ oficial vier (sem CI hoje, mudança seria churn sem ganho).
 similar) ou quando o primeiro projeto piloto adotar feature-forge fora
 deste repo.
 
+## REVIEW.md 2026-06-11 — itens verificados sem ação
+
+Findings do REVIEW.md auditados contra o estado pós-PR #13 e classificados
+como `verified-not-needed` ou `policy-decision`. Documentados aqui pra
+prevenir reabertura em review futura.
+
+- **H-05** — `verified-not-needed`. Sandbox env já endereçado em PR #9
+  ultra-review; `engine/_sandbox/env.py` contém `SENSITIVE_PATTERN` +
+  flag `allow_sensitive`. Reviewer não viu o estado atual.
+- **H-08** — `verified-not-needed`. `_qa_run` é wrapper thin; lógica
+  não-trivial em `run_qa` já coberta em `tests/engine/test_qa.py`.
+- **L-02** — `policy-decision`. Comentários PR-reference são history
+  trace documental (Decision 7 / `01-decisions.md`), não metanarrativa
+  removível.
+- **L-05** — `policy-decision`. Log "seguindo pro retrospective sem
+  findings" refere ciclo QA atual, comportamento intencional.
+- **L-08** — `monitor-only`. PEP 649 é debt distante; pyproject pinned
+  em Python 3.11, revisitar quando 3.14 ship (pin bump). Sem ação útil
+  agora.
+- **M-03** — `verified-not-needed`. `_infer_active_feature` já preenche
+  target quando slug vem vazio; reviewer leu fluxo parcial.
+- **M-06** — `verified-not-needed`. `safe_dump` schema validation é
+  YAGNI; dados gravados são internally-generated.
+- **M-11** — `verified-not-needed`. Lógica defensiva em `_resolve_slug`
+  já trata o cenário; finding interpretou ambiguamente a interação
+  com `_infer_active_feature`.
+
+## REVIEW.md 2026-06-11 — gaps deferred (próxima sessão)
+
+- **Batch git-diff optimization em `validators/_diff.py`** —
+  H-10 finding parcial. `extract_diff_hunks` roda git por arquivo;
+  batch (N→1 git invocations) é optimization, não correctness. Revisitar
+  em sessão dedicada de performance.
+- **Mypy strict rollout per module** — H-09 sub-phase 2+ (ver subseção
+  "Mypy rollout — advisory mode" acima).
+- **PEP 649 monitor** — L-08, ver entrada acima.
+
 ---
 
 **For a fresh session retomando o projeto, use o handoff:**

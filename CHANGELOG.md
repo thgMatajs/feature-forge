@@ -7,6 +7,23 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed (REVIEW.md remediation — Bloco 5: medium/low polish, 2026-06-12)
+
+- **M-01** — Substituído over-mock em `tests/unit/test_commands_*.py`
+  por assertions sobre exit code real.
+- **M-05** — Removido `import json` interno em `_readiness_from_handoff`
+  (side-effect Task 4.1 / H-03 narrow).
+- **L-01 + L-04** — Removido parâmetro `project_root` dead em
+  `_print_blocked_refusal` (`engine/implement.py`).
+- **L-03** — Consolidado `_utc_now_iso_implement/_plan/_verify` em
+  import direto de `engine.utils.iso.utc_now_iso` (5 shims removidos,
+  12 callers substituídos em 3 arquivos).
+- **L-06** — `sys.path.insert` em `tests/conftest.py` mantido com
+  comment justificando + gap aberto em `04-pending.md` pra revisitar
+  quando CI pipeline oficial vier.
+- **L-07** — Marker `meobonsai` registrado em `pyproject.toml`; 11 tests
+  dependentes da fixture `meobonsai_root` agora carregam o marker.
+
 ### Added (REVIEW.md remediation — Bloco 3: mypy advisory, 2026-06-12)
 
 - **H-09** — `mypy >= 1.8` adicionado em `[project.optional-dependencies]
