@@ -3142,6 +3142,31 @@ esperado por comando.
 **Quando revisitar:** próxima sessão que mexer em `engine/cli.py` ou nos
 handlers `engine/{implement,plan,verify}.py`.
 
+## Performance — Graph parsers (v1.3.0 debt)
+
+**Origem:** Final review v1.3.0 graph-ia-evolution (M-003, 2026-06-15).
+**Estado:** `engine/graph/parser_java.py`, `engine/graph/parser_xml.py`
+e `engine/graph/parser_objc.py` usam o padrão
+`source[:m.start()].count("\n")` em loops grandes pra recuperar o número
+da linha de cada match (`_RE_*.finditer(source)`). Cada match faz uma
+substring + count, gerando comportamento O(N²) por arquivo onde N é o
+tamanho do source. Aceitável pra arquivos < 5k linhas (típico em mobile
+nativo), mas vira gargalo em codebases legacy com arquivos monolíticos.
+
+**Mitigação prevista:** pre-computar a lista de posições de `\n` uma única
+vez por arquivo e usar `bisect.bisect_right(newlines, m.start())` pra
+obter o line number em O(log N) por match. Refator local em cada parser
+— não muda contract público, só corpo das funções `parse_*`.
+
+**Quando revisitar:**
+- v1.3.1 OR
+- primeiro projeto consumer reporta `forge graph` build lento em arquivo
+  específico (>5k linhas) OR
+- ambos.
+
+Anti-padrão a evitar: NÃO substituir só num parser e deixar os outros —
+o ganho some no agregado e o read-pattern fica inconsistente.
+
 ---
 
 **For a fresh session retomando o projeto, use o handoff:**

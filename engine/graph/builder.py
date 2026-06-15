@@ -712,6 +712,11 @@ def _persist_xml(conn: sqlite3.Connection, file_id: int, info: XmlFileInfo) -> d
     """
     edges = 0
 
+    # XML não tem body/visibility/modifiers — passamos NULL explícito em cada
+    # coluna pra manter a mesma shape de INSERT dos demais `_persist_*` (Java,
+    # Kotlin, Swift, ObjC). Defesa contra `NOT NULL` constraint futuro: se
+    # alguma coluna virar required, o erro estoura aqui, não num executemany
+    # com colunas implícitas que mascarava o gap.
     symbol_rows = [
         (
             file_id,
@@ -720,14 +725,21 @@ def _persist_xml(conn: sqlite3.Connection, file_id: int, info: XmlFileInfo) -> d
             sym.context or sym.kind,
             sym.line,
             sym.line,
+            None,  # visibility
+            None,  # receiver_type
+            None,  # body_hash
+            None,  # body_tokens
+            None,  # modifiers
+            None,  # body
         )
         for sym in info.symbols
     ]
     if symbol_rows:
         conn.executemany(
             "INSERT INTO symbols("
-            "  file_id, name, kind, signature, line_start, line_end"
-            ") VALUES(?, ?, ?, ?, ?, ?)",
+            "  file_id, name, kind, signature, line_start, line_end, visibility, "
+            "  receiver_type, body_hash, body_tokens, modifiers, body"
+            ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             symbol_rows,
         )
 

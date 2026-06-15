@@ -124,11 +124,17 @@ def test_lazy_build_triggers_when_db_missing(
     assert calls[0].resolve() == tmp_forge_project.resolve()
 
 
-def test_lazy_build_triggers_when_db_empty(
+def test_lazy_build_triggers_when_db_never_built(
     tmp_forge_project: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """DB existe mas ``files`` table vazia → build dispatched."""
+    """DB existe mas ``meta.last_full_rebuild_at`` está NULL → build dispatched.
+
+    O helper ``_seed_empty_graph_db`` cria schema mínimo (``files``, ``meta``)
+    sem inserir o marker ``last_full_rebuild_at`` — o trigger canônico do
+    lazy auto-build (spec AC-11) é exatamente esse: DB inicializado mas
+    nunca buildado.
+    """
     _seed_empty_graph_db(tmp_forge_project)
     monkeypatch.chdir(tmp_forge_project)
 

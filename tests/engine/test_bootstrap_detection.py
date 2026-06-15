@@ -109,6 +109,21 @@ def test_check_bootstrap_state_returns_error_on_broken_symlink(
     assert "Rode" in result or "rode" in result
 
 
+def test_check_bootstrap_state_skips_when_claude_missing(tmp_path: Path) -> None:
+    """Consumer project sem ``.claude/`` → silent skip (não é projeto forge).
+
+    Cenário canônico: usuário rodou ``forge`` num diretório qualquer ou em
+    repo legado. O check de bootstrap só faz sentido quando o repo carrega
+    a marca de projeto forge (existência de ``.claude/``). Sem isso, retorna
+    ``None`` pra deixar o handler dar a mensagem canônica de "não é projeto
+    forge" — não somos invasivos sugerindo bootstrap em repo aleatório.
+    """
+    (tmp_path / ".git" / "hooks").mkdir(parents=True)
+    # Deliberadamente NÃO criar ``.claude/``
+    result = cli._check_bootstrap_state(tmp_path)
+    assert result is None  # silent skip
+
+
 # ── Integration: main() skipping logic ─────────────────────────────────────
 
 
