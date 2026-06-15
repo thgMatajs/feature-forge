@@ -104,6 +104,8 @@ forge plan <slug>
 **Quando usar:** Você tem um plano com `readiness=ready` e quer começar a
 codar a primeira (ou próxima) tarefa.
 
+> **Nota:** `forge implement` (v1) exibe o contrato da tarefa e instrui o dev sobre o que implementar; a escrita de código é manual. Automação completa via Claude Code está planejada para Phase 6 e ainda não foi shipada.
+
 **Exemplo:**
 
 ```bash
@@ -119,8 +121,7 @@ $ forge implement login-screen
 └──────────────────────────────────────────────────────┘
 
 Plano aprovado? (sim/nao/pular): sim
-  ✔ Implementação concluída
-  ✔ Review automático passou
+  ✔ Contrato exibido — implemente os arquivos listados
   ✔ Commit: feat(login): implementa LoginScreen composable
   ✔ TASK-0003 marcada como done ✅
 
@@ -268,7 +269,7 @@ $ forge doctor
 │  ✅ secrets-tools     gitleaks + trufflehog OK       │
 │  ✅ forge version     1.2.0 (compatível)             │
 │                                                       │
-│  Resumo: 11/11 verde · 0 hard fails                  │
+│  Resumo: 14/14 verde · 0 hard fails                  │
 │  ⏱  3.2s                                             │
 └──────────────────────────────────────────────────────┘
 ```
@@ -306,16 +307,16 @@ importado?", "Tem código duplicado entre módulos?".
 $ forge graph
 
 ┌─ forge graph ───────────────────────────────────────┐
-│ Q1   Árvore de diretórios                            │
-│ Q2   Similaridade entre arquivos                     │
-│ Q3   Blast-radius de um arquivo                      │
-│ Q4   Dependências entre módulos                      │
-│ Q5   Funções públicas exportadas                     │
-│ Q6   Testes por arquivo de produção                  │
-│ Q7   Dependências externas (bibliotecas)             │
-│ Q8   Arquivos órfãos                                 │
-│ Q9   Cobertura de testes por módulo                  │
-│ Q10  Dependências entre módulos (gráfico)            │
+│ Q1   similar-features                                │
+│ Q2   blast-radius                                    │
+│ Q3   orphan-files                                    │
+│ Q4   symbols                                         │
+│ Q5   ds-used-in                                      │
+│ Q6   i18n-used-in                                    │
+│ Q7   routes                                          │
+│ Q8   di-deps                                         │
+│ Q9   tests-for                                       │
+│ Q10  commits                                         │
 │ Q11  Helpers reutilizáveis candidatos                │
 │ Q12  Duplicatas dentro do módulo                     │
 │ Q13  Duplicatas entre módulos                        │
@@ -326,7 +327,7 @@ $ forge graph
 │ r    Combined view (todas as reuse queries)          │
 └──────────────────────────────────────────────────────┘
 
-Escolha: Q3
+Escolha: Q2
 Arquivo: src/common/LoginViewModel.kt
 Blast-radius: 8 arquivos → 3 módulos
   app/  → MainActivity.kt, LoginScreen.kt
