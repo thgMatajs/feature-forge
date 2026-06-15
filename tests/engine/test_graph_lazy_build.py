@@ -166,6 +166,55 @@ def test_lazy_build_skipped_with_no_auto_build_flag(
     assert "graph.db" in err.lower()
 
 
+def test_json_usage_error_does_not_trigger_auto_build(
+    tmp_forge_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """H-005: ``forge graph --json`` (sem query) NÃO dispara build_full.
+
+    Antes do fix v1.3, ``_maybe_auto_build`` rodava ANTES da validação de
+    argv — usuário que digitava `forge graph --json` por engano pagava
+    ~30s-2min de build pra receber exit 1 + usage. Agora a validação roda
+    primeiro, e o build só acontece se o argv for legítimo.
+    """
+    _ensure_workflow_config(tmp_forge_project)
+    monkeypatch.chdir(tmp_forge_project)
+
+    calls: list[Path] = []
+    _patch_build_full(monkeypatch, calls)
+
+    rc = graph_cli.run(["--json"])
+
+    assert rc == 1, "usage error deve sair com exit 1"
+    assert len(calls) == 0, "build_full NÃO deve rodar quando argv é inválido"
+    # Usage message presente em stderr ou stdout
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+    assert "forge graph --json" in combined.lower() or "uso" in combined.lower()
+
+
+def test_json_unknown_query_does_not_trigger_auto_build(
+    tmp_forge_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """H-005: ``forge graph --json badquerykey`` NÃO dispara build_full.
+
+    Query desconhecida vai sair com exit 1 antes de pagar o custo do build.
+    """
+    _ensure_workflow_config(tmp_forge_project)
+    monkeypatch.chdir(tmp_forge_project)
+
+    calls: list[Path] = []
+    _patch_build_full(monkeypatch, calls)
+
+    rc = graph_cli.run(["--json", "badquerykey"])
+
+    assert rc == 1
+    assert len(calls) == 0, "build_full NÃO deve rodar quando query é desconhecida"
+
+
 def test_lazy_build_quiet_in_json_mode(
     tmp_forge_project: Path,
     monkeypatch: pytest.MonkeyPatch,

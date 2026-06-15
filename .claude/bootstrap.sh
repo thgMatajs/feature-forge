@@ -30,15 +30,15 @@ for h in pre-commit pre-push; do
                 continue
             elif [[ "$current" == "$expected" && ! -e "$target" ]]; then
                 # Symlink aponta pro lugar certo mas o alvo sumiu — relinka.
-                echo "  ⚙️  $target era symlink quebrado — recriando"
+                echo "  [bootstrap] $target era symlink quebrado — recriando"
                 rm -f "$target"
                 # fall through to ln -s below
             elif [[ -n "$current" && "$current" != "$expected" ]]; then
-                echo "  ⚠️  $target já existe e aponta pra outro lugar — pulando (revisão manual)"
+                echo "  [aviso] $target já existe e aponta pra outro lugar — pulando (revisão manual)"
                 continue
             else
                 # Arquivo regular existente, não symlink — pula com aviso
-                echo "  ⚠️  $target é arquivo regular — pulando (mova manualmente se quiser usar nosso delegator)"
+                echo "  [aviso] $target é arquivo regular — pulando (mova manualmente se quiser usar nosso delegator)"
                 continue
             fi
         fi
@@ -46,7 +46,7 @@ for h in pre-commit pre-push; do
         chmod +x "$source_file" 2>/dev/null || true
         echo "  ✓ $target → $source_file (novo symlink)"
     else
-        echo "  ⊘ $source_file não existe — pulando (sem delegator pra linkar)"
+        echo "  [skip] $source_file não existe — pulando (sem delegator pra linkar)"
     fi
 done
 
@@ -59,7 +59,7 @@ fi
 # 4. Aviso sobre settings.local.json tracked
 if git ls-files --error-unmatch .claude/settings.local.json >/dev/null 2>&1; then
     echo ""
-    echo "  ⚠️  .claude/settings.local.json está tracked. Recomendado untrack:"
+    echo "  [aviso] .claude/settings.local.json está tracked. Recomendado untrack:"
     echo "       git rm --cached .claude/settings.local.json"
     echo "       (mantém o arquivo localmente, remove do git)"
     echo ""
@@ -71,7 +71,7 @@ fi
 if command -v pip >/dev/null 2>&1; then
     pip install -e . >/dev/null 2>&1 \
         || python3 -m pip install -e . >/dev/null 2>&1 \
-        || echo "  ⚠️  'pip install -e .' falhou — rode manualmente pra habilitar pathspec/mypy"
+        || echo "  [aviso] 'pip install -e .' falhou — rode manualmente pra habilitar pathspec/mypy"
     echo "  ✓ runtime deps instaladas (pip install -e .)"
 fi
 
@@ -86,11 +86,11 @@ fi
 # canônico de build inicial é o lazy auto-build no próprio `forge graph`
 # — bootstrap apenas avisa o usuário e disparara o lazy build via probe.
 if command -v forge >/dev/null 2>&1; then
-    echo "  ⏳ Preparando graph inicial (lazy build na primeira query, ~30s-2min)..."
-    # Probe que dispara o auto-build silenciosamente. Em projetos sem
-    # forge init aplicado, sai limpo sem ruído.
-    forge graph --json q3 >/dev/null 2>&1 && echo "  ✓ graph.db pronto" \
-        || echo "  ⊘ graph não pôde ser construído (rode 'forge init' primeiro se ainda não rodou)"
+    echo "  [build] Preparando graph inicial (lazy build na primeira query, ~30s-2min)..."
+    # Probe que dispara o auto-build. stderr deixado borbulhar pro usuário ver
+    # progresso do build inicial (M-010); stdout suprimido pra não vazar JSON.
+    forge graph --json q3 >/dev/null && echo "  ✓ graph.db pronto" \
+        || echo "  [skip] graph não pôde ser construído (rode 'forge init' primeiro se ainda não rodou)"
 fi
 
 echo "✅ Bootstrap completo. Próxima sessão Claude Code carrega hooks + rules automaticamente."

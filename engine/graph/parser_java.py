@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Optional
 
 from engine.graph._body_text import (
+    _SUPPORTED_LANGS,
     extract_body_tokens,
     extract_function_body,
     find_opening_brace,
@@ -38,6 +39,15 @@ from engine.graph._body_text import (
 # então o scanner agora trata Java como C-style baseline (sem triple-quote
 # Kotlin nem backtick TS) corretamente.
 _BODY_LANG = "java"
+
+# H-010 coupling guard: ``_BODY_LANG`` precisa estar registrado em
+# ``_SUPPORTED_LANGS`` — senão ``extract_function_body`` retorna None
+# silenciosamente e parser_java perde body extraction. Assertion garante
+# detect-at-import: se alguém remover "java" do set, ImportError quebra
+# cedo em vez de pasinho silencioso em produção.
+assert "java" in _SUPPORTED_LANGS, (
+    "_BODY_LANG='java' must be registered in engine.graph._body_text._SUPPORTED_LANGS"
+)
 
 _RE_PACKAGE = re.compile(r"^\s*package\s+([\w\.]+)\s*;", re.MULTILINE)
 _RE_IMPORT = re.compile(r"^\s*import\s+(?:static\s+)?([\w\.\*]+)\s*;", re.MULTILINE)

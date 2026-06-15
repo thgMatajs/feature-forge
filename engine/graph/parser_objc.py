@@ -15,11 +15,20 @@ from pathlib import Path
 from typing import Optional
 
 from engine.graph._body_text import (
+    _SUPPORTED_LANGS,
     extract_body_tokens,
     extract_function_body,
     find_opening_brace,
     hash_body,
     tokens_to_json,
+)
+
+# H-010 coupling guard: ``"objc"`` precisa estar registrado em
+# ``_SUPPORTED_LANGS`` — senão ``extract_function_body(..., language="objc")``
+# retorna None silenciosamente e parser_objc perde body extraction. Assertion
+# detect-at-import previne pasinho silencioso em produção.
+assert "objc" in _SUPPORTED_LANGS, (
+    "language='objc' must be registered in engine.graph._body_text._SUPPORTED_LANGS"
 )
 
 _RE_IMPORT = re.compile(r'^#import\s+[<"]([^>"]+)[>"]', re.MULTILINE)

@@ -186,14 +186,15 @@ def _check_bootstrap_state(project_root: Path) -> Optional[str]:
         return None
 
     hooks_target = project_root / ".git" / "hooks" / "pre-commit"
-    # Symlink válido: ``is_symlink()`` cobre symlink presente + apontando
-    # pra alvo existente OU broken. ``exists()`` adicional pega o caso onde
-    # o arquivo é regular (não symlink) — também aceito como state OK
-    # (alguém pode ter copiado em vez de linkar).
-    if hooks_target.is_symlink() or hooks_target.exists():
+    # Symlink válido (aponta pra target real) OU arquivo regular copiado
+    # contam como state OK. Symlink quebrado (aponta pra path inexistente)
+    # cai pra mensagem canônica — `is_symlink() and exists()` filtra esse
+    # caso porque `exists()` resolve o link e retorna False em broken.
+    is_valid = (hooks_target.is_symlink() and hooks_target.exists()) or hooks_target.is_file()
+    if is_valid:
         return None
     return (
-        "⚠️  forge não foi inicializado nesta máquina.\n"
+        "Atenção: forge não foi inicializado nesta máquina.\n"
         "   Rode: bash .claude/bootstrap.sh\n"
         "   (necessário uma vez após clone; idempotente)"
     )

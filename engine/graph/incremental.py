@@ -45,6 +45,56 @@ from engine.utils.paths import graph_db_path
 from engine.utils.sqlite_io import open_db, transaction
 
 
+# M-008: caching marker pra evitar re-rodar os 3 ``_ensure_*`` em todo
+# entrypoint do hook. Os ``_ensure_*`` são idempotentes mas executam
+# múltiplas queries de introspecção (PRAGMA table_info) por chamada —
+# isso virava overhead linear em batches grandes. Marker fica em ``meta``
+# (canonical key/value table), persistido entre invocações.
+_MIGRATIONS_KEY = "migrations_applied_v1_3"
+
+
+def _migrations_applied(conn: sqlite3.Connection) -> bool:
+    """Check if ``_ensure_*`` migrations já rodaram nesta DB."""
+    try:
+        row = conn.execute(
+            "SELECT value FROM meta WHERE key = ?", (_MIGRATIONS_KEY,)
+        ).fetchone()
+    except sqlite3.OperationalError:
+        # ``meta`` table ainda não existe (DB pré-init_schema). Fall-through
+        # pra rodar _ensure_* — quem chama é open_db(create=True), então
+        # meta vai existir após. Conservador: retorna False.
+        return False
+    return row is not None and row["value"] == "1"
+
+
+def _mark_migrations_applied(conn: sqlite3.Connection) -> None:
+    """Persiste marker pra próxima invocação pular os ``_ensure_*``.
+
+    Usa ``INSERT OR REPLACE`` (UPSERT) pra ser idempotente sob race:
+    se 2 hooks rodam concorrente e ambos chegam aqui, ambos escrevem
+    o mesmo valor sem conflito.
+    """
+    conn.execute(
+        "INSERT OR REPLACE INTO meta(key, value) VALUES(?, '1')",
+        (_MIGRATIONS_KEY,),
+    )
+
+
+def _apply_ensure_migrations(conn: sqlite3.Connection) -> None:
+    """Run the 3 ``_ensure_*`` calls once, then stamp the marker.
+
+    Helper consolidando o padrão repetido em update_file/remove_file/
+    update_batch. Idempotente por design — cada ``_ensure_*`` é safe
+    pra chamar várias vezes, e o marker apenas pula o overhead.
+    """
+    if _migrations_applied(conn):
+        return
+    _ensure_imports_to_file_id_column(conn)
+    _ensure_reuse_intelligence_columns(conn)
+    _ensure_graph_body_column(conn)
+    _mark_migrations_applied(conn)
+
+
 def update_file(
     project_root: Path,
     file_path: Path,
@@ -56,9 +106,7 @@ def update_file(
     conn = open_db(target_db, create=True)
     try:
         gradle_modules = load_gradle_modules(project_root)
-        _ensure_imports_to_file_id_column(conn)
-        _ensure_reuse_intelligence_columns(conn)
-        _ensure_graph_body_column(conn)
+        _apply_ensure_migrations(conn)
         with transaction(conn):
             stats = _refresh_file(conn, project_root, file_path, gradle_modules)
             _resolve_import_targets(conn)
@@ -77,9 +125,7 @@ def remove_file(
     target_db = db_path or graph_db_path(project_root)
     conn = open_db(target_db, create=True)
     try:
-        _ensure_imports_to_file_id_column(conn)
-        _ensure_reuse_intelligence_columns(conn)
-        _ensure_graph_body_column(conn)
+        _apply_ensure_migrations(conn)
         rel = _relpath(project_root, file_path)
         with transaction(conn):
             file_id = _file_id(conn, rel)
@@ -103,9 +149,7 @@ def update_batch(
     conn = open_db(target_db, create=True)
     try:
         gradle_modules = load_gradle_modules(project_root)
-        _ensure_imports_to_file_id_column(conn)
-        _ensure_reuse_intelligence_columns(conn)
-        _ensure_graph_body_column(conn)
+        _apply_ensure_migrations(conn)
         files_updated = 0
         symbols_total = 0
         edges_total = 0

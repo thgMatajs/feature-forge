@@ -86,6 +86,29 @@ def test_check_bootstrap_state_returns_error_when_symlink_missing(
     assert "Rode" in result or "rode" in result
 
 
+def test_check_bootstrap_state_returns_error_on_broken_symlink(
+    tmp_forge_project: Path,
+) -> None:
+    """Broken symlink (target inexistente) → state NOK (C-004).
+
+    Antes do fix v1.3, ``is_symlink() or exists()`` aceitava symlinks
+    quebrados como state OK porque ``is_symlink()`` retorna True em
+    broken links. Cenário real: usuário re-clona o repo, ``.git/hooks/``
+    ainda referencia path antigo, e o link aponta pra lugar nenhum.
+    """
+    _seed_hook_source(tmp_forge_project)
+    (tmp_forge_project / ".git" / "hooks").mkdir(parents=True, exist_ok=True)
+    link = tmp_forge_project / ".git" / "hooks" / "pre-commit"
+    # Aponta deliberadamente pra path que NÃO existe — broken link.
+    link.symlink_to(tmp_forge_project / "nonexistent" / "target")
+
+    result = cli._check_bootstrap_state(tmp_forge_project)
+
+    assert result is not None
+    assert "bootstrap.sh" in result
+    assert "Rode" in result or "rode" in result
+
+
 # ── Integration: main() skipping logic ─────────────────────────────────────
 
 

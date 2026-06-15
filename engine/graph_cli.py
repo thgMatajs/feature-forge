@@ -317,11 +317,14 @@ def _resolve_json_query_key(query_or_key: str) -> str | None:
     """
     key = query_or_key.strip().lower()
 
-    # Strip optional ``q`` prefix on numeric/r keys: q1..q17, qr → 1..17, r
+    # Strip optional ``q`` prefix on numeric/r keys: q1..q17, qr → 1..17, r.
+    # Whitelist explícita (numeric OR "r") evita engolir labels que comecem
+    # com "q" (e.g., uma futura label "q-something" não seria mascarada).
     if key.startswith("q") and len(key) > 1:
         candidate = key[1:]
-        if candidate in _HANDLERS:
-            return candidate
+        if candidate.isdigit() or candidate == "r":
+            if candidate in _HANDLERS:
+                return candidate
 
     # Direct numeric or ``r``
     if key in _HANDLERS:
@@ -471,7 +474,7 @@ def _run_detect_incremental(project_root: Path, file_args: list[str]) -> int:
 
     renderer.write("")
     renderer.write(renderer.bold(
-        f"⚠ {len(findings)} reuse-intelligence finding(s) touching edited files:"
+        f"Aviso: {len(findings)} reuse-intelligence finding(s) touching edited files:"
     ))
     for f in findings:
         receiver = f["receiver_type"] or "(top-level)"
@@ -481,7 +484,7 @@ def _run_detect_incremental(project_root: Path, file_args: list[str]) -> int:
         )
         for loc in f["locations"][:3]:
             renderer.write(f"      {loc['path']}:{loc['line_start']}")
-    renderer.write(renderer.dim("  Run `forge evolve` to review proposals."))
+    renderer.write(renderer.dim("  Rode `forge evolve` pra revisar propostas."))
     renderer.write("")
     return 0
 
@@ -495,7 +498,7 @@ def _maybe_auto_build(
     json_mode: bool,
     no_auto_build: bool,
 ) -> None:
-    """Auto-build ``graph.db`` if missing or empty. Skip se ``--no-auto-build``.
+    """Auto-build ``graph.db`` if missing or empty. Skip em ``--no-auto-build``.
 
     Trigger:
     - DB ausente.
@@ -508,9 +511,11 @@ def _maybe_auto_build(
       em testes (caminho legítimo, não bloquear). Auto-build seria
       destrutivo nesse cenário.
 
-    Em ``json_mode`` (``forge graph --json ...``), a mensagem de "buildando..."
-    sai pra stderr (stdout fica limpo pra JSON consumers). Em modo interativo,
-    sai pra stderr também — não polui o renderer da menu UI.
+    Em ``json_mode`` (``forge graph --json ...``) a mensagem de "buildando..."
+    vai pra stderr (stdout fica limpo pra JSON consumers). Em modo interativo,
+    sai pra stderr também — não polui o renderer da menu UI. O parâmetro
+    ``json_mode`` está reservado pra diferenciação futura de wording (sem
+    afetar canal — stderr é o destino em ambos os modos por contrato).
 
     Lazy import de ``engine.graph.builder`` evita ciclos: ``graph_cli`` é
     carregado cedo via ``engine.cli.COMMANDS``; ``builder`` puxa parsers
@@ -530,13 +535,20 @@ def _maybe_auto_build(
         # → DB seedado por outro caminho (fixture, partial init); cuidamos
         # de tratar "nunca buildado" como needs_build sem confundir com
         # DB legitimamente seedado por testes.
+        #
+        # Usa ``sqlite_io.open_db(create=False)`` — aplica WAL + busy_timeout
+        # + foreign_keys consistentes com o resto do projeto (M-004).
         try:
-            with sqlite3.connect(str(db_path)) as conn:
+            from engine.utils.sqlite_io import open_db as _open_db
+            conn = _open_db(db_path, create=False)
+            try:
                 row = conn.execute(
                     "SELECT value FROM meta WHERE key='last_full_rebuild_at'"
                 ).fetchone()
                 if row is None:
                     needs_build = True
+            finally:
+                conn.close()
         except sqlite3.OperationalError:
             # ``meta`` table ausente — DB seedado por outro caminho
             # (fixture de teste, partial init manual). Não auto-buildar:
@@ -547,9 +559,18 @@ def _maybe_auto_build(
     if not needs_build:
         return
 
-    sys.stderr.write(
-        "⏳ graph.db ausente/empty — buildando (one-shot, ~30s-2min)...\n"
-    )
+    # json_mode é usado pra deixar explícito no log que o stdout JSON
+    # vai ficar limpo (build message só em stderr). Mantém canal único
+    # mas registra intenção pro consumer entender o silêncio em stdout.
+    if json_mode:
+        sys.stderr.write(
+            "graph.db ausente/empty — buildando (one-shot, ~30s-2min). "
+            "stdout reservado pra JSON.\n"
+        )
+    else:
+        sys.stderr.write(
+            "graph.db ausente/empty — buildando (one-shot, ~30s-2min)...\n"
+        )
     # Lazy import — evita carregar parsers pesados quando o DB já existe
     # e está populado (caminho quente de ``forge graph``).
     from engine.graph.builder import build_full
@@ -588,24 +609,14 @@ def run(argv: list[str]) -> int:
     if argv and argv[0] == "detect-incremental":
         return _run_detect_incremental(project_root, argv[1:])
 
-    # Lazy auto-build ANTES dos guards de DB ausente. Em modo --no-auto-build
-    # a função é no-op e o comportamento legado (erro canônico de DB ausente)
-    # prevalece.
+    # --json non-interactive path (AC-3). Validamos argv ANTES do lazy
+    # auto-build (H-005): user que invoca `forge graph --json` sem query
+    # deve receber usage e exit 1 imediatamente, sem pagar ~30s-2min de
+    # build_full. Mesma lógica pra query desconhecida.
     json_mode = bool(argv and argv[0] == "--json")
-    _maybe_auto_build(project_root, json_mode=json_mode, no_auto_build=no_auto_build)
-
-    # --json non-interactive path (AC-3). Parsed BEFORE the interactive
-    # guards so that a missing graph.db still fails with the canonical
-    # message — keeps UX consistent between the two modes.
-    if argv and argv[0] == "--json":
+    if json_mode:
         if len(argv) < 2:
             sys.stderr.write(_JSON_USAGE)
-            return 1
-        if not graph_db_path(project_root).exists():
-            sys.stderr.write(
-                "forge graph --json: graph.db nao encontrado. Rode "
-                "`forge reconfigure` → 'rebuild graph' antes.\n"
-            )
             return 1
         key = _resolve_json_query_key(argv[1])
         if key is None:
@@ -614,6 +625,23 @@ def run(argv: list[str]) -> int:
                 f"Use q1..q17, r, ou label (e.g. symbols, orphan-files).\n"
             )
             return 1
+
+    # Lazy auto-build SÓ depois de validar argv. Em modo --no-auto-build
+    # a função é no-op e o comportamento legado (erro canônico de DB ausente)
+    # prevalece.
+    _maybe_auto_build(project_root, json_mode=json_mode, no_auto_build=no_auto_build)
+
+    if json_mode:
+        if not graph_db_path(project_root).exists():
+            sys.stderr.write(
+                "forge graph --json: graph.db nao encontrado. Rode "
+                "`forge reconfigure` → 'rebuild graph' antes.\n"
+            )
+            return 1
+        # key já resolvido acima — re-resolve aqui pra manter tipo claro
+        # (mypy: argv[1] já foi validado, key é não-None).
+        key = _resolve_json_query_key(argv[1])
+        assert key is not None  # validado acima
         return _run_json_query(project_root, key, argv[2:])
 
     if not graph_db_path(project_root).exists():
