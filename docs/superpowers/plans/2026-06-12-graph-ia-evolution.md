@@ -2069,6 +2069,176 @@ grep -c "java\|xml\|objc" README.md  # >= 1 após edit (case-insensitive ok)
 
 ---
 
+## Task 9.5: Onboarding UX — bootstrap detection + lazy graph build (Onda 7.5)
+
+**Justificativa load-bearing (Mandamento #4):** `.claude/bootstrap.sh`
+está em whitelist load-bearing per `.claude/rules/scope.md` (`.claude/**`).
+Edit é necessário pra fechar o gap UX de onboarding de novos devs num
+projeto que já tem forge — alinhado com Mandamento #6 doc-sync e com a
+visão de Decision 18 (skill standalone instalável per-project).
+
+**Files:**
+- Modify: `.claude/bootstrap.sh` (adicionar graph + inventory build após install deps)
+- Modify: `engine/cli.py` (detection: `.git/hooks/pre-commit` symlink missing/broken → friendly error)
+- Modify: `engine/graph_cli.py` (lazy auto-build de graph.db quando ausente/empty + flag `--no-auto-build` pra opt-out CI)
+- Create: `tests/engine/test_bootstrap_detection.py` (testes da detection logic)
+- Create: `tests/engine/test_graph_lazy_build.py` (testes do lazy build + --no-auto-build)
+
+**Reuse-first via graph (Mandamento #3):**
+
+```bash
+forge graph --json q11 bootstrap   # já existe helper de bootstrap detection?
+forge graph --json q11 cli         # já existe pattern de CLI startup check?
+forge graph --json q15             # near-duplicate scan
+```
+
+Esperado: Q11/Q15 confirmam ausência de helper compartilhado pra "detectar
+estado de inicialização do projeto". Caminho C consciente (criar nova
+função `_check_bootstrap_state()` em `engine/cli.py`) — sem near-duplicate.
+
+- [ ] **Step 9.5.1: Adicionar build de graph + inventory em `.claude/bootstrap.sh`**
+
+Após o bloco "5. Install runtime deps" já existente (que faz `pip install -e .`),
+adicionar bloco 6:
+
+```bash
+# 6. Build inicial do graph + inventory (one-shot pós-clone).
+# Idempotente — se DB já existe e está fresh, no-op rápido.
+# Sem isto, primeira invocação `forge plan` triggera lazy rebuild (~30s-2min).
+if command -v forge >/dev/null 2>&1; then
+    echo "  ⏳ Building initial codebase graph (one-shot, ~30s-2min)..."
+    forge graph build --quiet 2>/dev/null && echo "  ✓ graph.db built" || echo "  ⚠️  graph build falhou — primeira invocação 'forge graph' fará lazy rebuild"
+    echo "  ⏳ Building inventory cache..."
+    forge reconfigure --inventory-only --quiet 2>/dev/null && echo "  ✓ inventory cache built" || echo "  ⚠️  inventory falhou — execute 'forge reconfigure' manualmente"
+fi
+```
+
+(Nota: subcommands `forge graph build --quiet` e `forge reconfigure --inventory-only` PODEM não existir ainda; se Step descobrir que precisam ser criados, ABRE deviation report ao orchestrator.)
+
+- [ ] **Step 9.5.2: Detection no `engine/cli.py` — bootstrap state check**
+
+Adicionar função `_check_bootstrap_state()` chamada no início de
+`main()` (antes do dispatch pros handlers), exceto pra subcomando
+`bootstrap` ou `--help`:
+
+```python
+def _check_bootstrap_state(project_root: Path) -> Optional[str]:
+    """Detect if bootstrap was run. Returns error message if missing, None if OK.
+
+    Checks:
+      - `.git/hooks/pre-commit` symlink existe e aponta pra `hooks/git-pre-commit`
+      - `.claude/state/` diretório existe (criado por bootstrap)
+
+    NÃO bloqueia comandos read-only (`--version`, `--help`, `doctor`).
+    """
+    hooks_target = project_root / ".git" / "hooks" / "pre-commit"
+    if not hooks_target.is_symlink() and not hooks_target.exists():
+        return (
+            "⚠️  forge não foi inicializado nesta máquina.\n"
+            "   Rode: bash .claude/bootstrap.sh\n"
+            "   (necessário uma vez após clone; idempotente)"
+        )
+    return None
+```
+
+Integração em `main()`:
+```python
+if subcommand not in {"bootstrap", "--version", "doctor", "--help"}:
+    err = _check_bootstrap_state(project_root)
+    if err:
+        print(err, file=sys.stderr)
+        sys.exit(1)
+```
+
+- [ ] **Step 9.5.3: Lazy auto-build em `engine/graph_cli.py`**
+
+Antes de qualquer query handler em `run(argv)`, adicionar verificação:
+
+```python
+def _maybe_auto_build(project_root: Path, json_mode: bool, no_auto_build: bool) -> None:
+    """Auto-build graph.db if missing or empty. Skip if --no-auto-build."""
+    if no_auto_build:
+        return
+
+    db_path = project_root / ".claude" / "graph.db"
+    needs_build = False
+    if not db_path.exists():
+        needs_build = True
+    else:
+        # Sanity check: DB exists but empty? (zero files indexed)
+        with sqlite3.connect(db_path) as conn:
+            count = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+            if count == 0:
+                needs_build = True
+
+    if needs_build:
+        if not json_mode:
+            print("⏳ graph.db ausente/empty — buildando...", file=sys.stderr)
+        from engine.graph.builder import build_full
+        build_full(project_root)
+```
+
+Parse `--no-auto-build` flag no início de `run(argv)`:
+```python
+no_auto_build = False
+if "--no-auto-build" in argv:
+    no_auto_build = True
+    argv = [a for a in argv if a != "--no-auto-build"]
+```
+
+Chamar `_maybe_auto_build` antes do dispatch.
+
+- [ ] **Step 9.5.4: Escrever tests FALHANDO primeiro pra detection**
+
+`tests/engine/test_bootstrap_detection.py`:
+- `test_check_bootstrap_state_returns_none_when_symlink_exists` (tmpdir + symlink fixture)
+- `test_check_bootstrap_state_returns_error_when_symlink_missing`
+- `test_check_bootstrap_state_skips_for_bootstrap_subcommand` (integration smoke)
+- `test_check_bootstrap_state_skips_for_version_help`
+
+Run: `pytest tests/engine/test_bootstrap_detection.py -xvs` → confirmar FAIL (função não existe ainda).
+
+- [ ] **Step 9.5.5: Implementar detection (Step 9.5.2) + rodar test**
+
+Run: `pytest tests/engine/test_bootstrap_detection.py -xvs` → PASS.
+
+- [ ] **Step 9.5.6: Escrever tests FALHANDO primeiro pra lazy auto-build**
+
+`tests/engine/test_graph_lazy_build.py`:
+- `test_lazy_build_triggers_when_db_missing` (tmpdir, no DB, run query → DB criado)
+- `test_lazy_build_triggers_when_db_empty` (DB existe mas zero files indexed)
+- `test_lazy_build_skipped_with_no_auto_build_flag`
+- `test_lazy_build_quiet_in_json_mode` (não printa pra stderr em --json)
+
+Run: `pytest tests/engine/test_graph_lazy_build.py -xvs` → confirmar FAIL.
+
+- [ ] **Step 9.5.7: Implementar lazy build (Step 9.5.3) + rodar test**
+
+Run: `pytest tests/engine/test_graph_lazy_build.py -xvs` → PASS.
+
+- [ ] **Step 9.5.8: README + handoff doc-sync**
+
+`README.md` §Bootstrap atualizar pra mencionar:
+- "Após clonar, rode `bash .claude/bootstrap.sh` (faz install deps + builds graph + inventory)"
+- "Para CI/scripts, use `forge graph --no-auto-build ...` pra desabilitar auto-rebuild"
+
+`docs/design/08-session-handoff.md` §Conhecidos limites adicionar:
+- "Graph é local per-dev (Decision 20). Primeira invocação `forge graph` em máquina sem bootstrap triggera lazy rebuild (~30s-2min). Bootstrap script `bash .claude/bootstrap.sh` faz o build inicial e setup de hooks."
+
+- [ ] **Step 9.5.9: Rodar pytest full + verify**
+
+Run: `pytest -q 2>&1 | tail -3` → 0 failures, count ≥ baseline + 8 tests novos (4 detection + 4 lazy build)
+Run: `forge verify 2>&1 | tail -10` → cascade sem hard fails
+
+**NÃO fazer:**
+- Não auto-fixar bootstrap state (instalar symlinks silenciosamente é invasivo)
+- Não mover `_check_bootstrap_state` pra fora de `engine/cli.py` (single entrypoint)
+- Não implementar inventory rebuild em si — `forge reconfigure --inventory-only` é dispatch separado SE não existir (deviation report)
+- Não bumpar versão pro v1.4 — esta Task entra em v1.3.0 acoplada às demais Ondas
+- Não tocar `_LANGUAGE_EXTENSIONS` etc. (Onda 6 cobre)
+
+---
+
 ## Task 10: Verification final (Mandamento #2)
 
 **Files:** none (read-only)

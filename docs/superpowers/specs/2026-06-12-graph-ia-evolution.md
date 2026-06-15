@@ -134,6 +134,14 @@ ACs com as tasks do plano.
   atualização, `docs/schemas/graph.md`) está completo antes do commit
   final de release.
 
+- **AC-11 — Onboarding UX (bootstrap detection + lazy graph build):**
+  - `bash .claude/bootstrap.sh` builda graph.db + inventory cache one-shot pós-clone (Step 6 do bootstrap)
+  - `engine/cli.py` detecta `.git/hooks/pre-commit` symlink ausente/quebrado E emite friendly error com instrução "Rode: bash .claude/bootstrap.sh" (exit 1)
+  - Detection skipada pra `--version`, `--help`, `doctor`, `bootstrap` subcommands (não bloqueia comandos read-only/help)
+  - `forge graph` (interactive ou `--json`) detecta `graph.db` ausente/empty E auto-builda antes de executar query
+  - Flag `--no-auto-build` desativa lazy build (uso CI/scripts determinísticos)
+  - 8 tests novos cobrindo: detection (4) + lazy build (4)
+
 ## Risks & Limitations
 
 - **Body column null-safety em consumers existentes.** A coluna `body`
@@ -169,6 +177,15 @@ ACs com as tasks do plano.
   SCHEMA_VERSION deve acontecer em release separada com rebuild
   document — fora do escopo de v1.3.
 
+- **Bootstrap setup é per-machine, não per-clone (AC-11):** symlinks
+  `.git/hooks/` não são versionados — cada dev precisa rodar
+  `bash .claude/bootstrap.sh` uma vez. Detection no CLI cobre
+  forgetfulness com friendly error.
+
+- **Lazy graph build na primeira invocação é lento (AC-11):** ~30s-2min em
+  projetos médios; bootstrap one-shot evita isso. CI usa `--no-auto-build`
+  pra desativar o auto-build e manter scripts determinísticos.
+
 ## Coverage
 
 Cruzamento AC × Tasks (ver `docs/superpowers/plans/2026-06-12-graph-ia-evolution.md`
@@ -186,3 +203,4 @@ para detalhe dos steps):
 | AC-8 (instrução pro modelo) | Task 8 (AGENTS.md/CLAUDE.md) |
 | AC-9 (pytest baseline + ~18 tests novos) | Task 10.1 |
 | AC-10 (forge verify cascade green) | Task 10 (full verification + doc-sync gates) |
+| AC-11 (onboarding UX — bootstrap detection + lazy graph build) | Task 9.5 |
