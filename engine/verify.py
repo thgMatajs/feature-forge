@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from engine._sandbox.env import build_safe_env
-from engine.memory import MemoryError
+from engine.memory import MemoryError as MemoryStoreError  # WR-02: avoid shadowing the CPython builtin OOM `MemoryError` (engine.memory.MemoryError is a domain subclass of Exception, NOT BaseException).
 from engine.memory.l1 import (
     L1State,
     list_active_features,
@@ -274,7 +274,7 @@ def run_scope(
             )
             try:
                 write_l1_status(transient, project_root)
-            except (MemoryError, OSError):  # pragma: no cover - defensive
+            except (MemoryStoreError, OSError):  # pragma: no cover - defensive
                 previous_state = None  # don't try to restore an inconsistent state
 
     validators = _discover_validators(project_root, config, scope_type)
@@ -476,7 +476,7 @@ def _restore_l1_status(
             raw=dict(previous_state.raw or {}),
         )
         write_l1_status(restored, project_root)
-    except (MemoryError, OSError):  # pragma: no cover - defensive
+    except (MemoryStoreError, OSError):  # pragma: no cover - defensive
         pass
 
 
