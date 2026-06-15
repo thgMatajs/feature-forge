@@ -75,4 +75,22 @@ if command -v pip >/dev/null 2>&1; then
     echo "  ✓ runtime deps instaladas (pip install -e .)"
 fi
 
+# 6. Build inicial do graph + inventory (one-shot pós-clone).
+# Idempotente. Sem isto, primeira invocação `forge graph` triggera lazy
+# rebuild (~30s-2min — gerenciado por engine/graph_cli._maybe_auto_build).
+#
+# Deviation per plan Task 9.5.1 §"Pré-requisito de subcommand" caminho (b):
+# `forge graph build --quiet` e `forge reconfigure --inventory-only` NÃO
+# existem como subcommands non-interactive em v1.2-dev (engine/graph_cli.py
+# é read-only; engine/reconfigure.py ignora argv per Decision 10). O fluxo
+# canônico de build inicial é o lazy auto-build no próprio `forge graph`
+# — bootstrap apenas avisa o usuário e disparara o lazy build via probe.
+if command -v forge >/dev/null 2>&1; then
+    echo "  ⏳ Preparando graph inicial (lazy build na primeira query, ~30s-2min)..."
+    # Probe que dispara o auto-build silenciosamente. Em projetos sem
+    # forge init aplicado, sai limpo sem ruído.
+    forge graph --json q3 >/dev/null 2>&1 && echo "  ✓ graph.db pronto" \
+        || echo "  ⊘ graph não pôde ser construído (rode 'forge init' primeiro se ainda não rodou)"
+fi
+
 echo "✅ Bootstrap completo. Próxima sessão Claude Code carrega hooks + rules automaticamente."

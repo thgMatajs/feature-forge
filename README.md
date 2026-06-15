@@ -107,6 +107,23 @@ Requer Python 3.11+ + PyYAML + pathspec (runtime). Dev: pytest + mypy.
 Install canônico: `pip install -e .` na raiz do repo (também rodado
 idempotentemente por `bash .claude/bootstrap.sh`).
 
+### Bootstrap
+
+Após clonar, rode uma vez:
+
+```bash
+bash .claude/bootstrap.sh
+```
+
+Idempotente. Liga git hooks, instala deps via `pip install -e .` e dispara
+o build inicial do graph + inventory (one-shot, ~30s-2min). Sem isso, a
+primeira invocação de `forge graph` triggera lazy rebuild silenciosamente
+na mesma janela de tempo.
+
+Para CI/scripts determinísticos, use `forge graph --no-auto-build <query>`
+para desabilitar o auto-rebuild — útil quando o graph deve ser controlado
+explicitamente.
+
 ## Where it lives
 
 ```

@@ -235,6 +235,16 @@ A v1.1 entregue inclui o pipeline completo de planning + verify + memory + graph
 + reuse-intelligence + non-product feature track (refactor/bugfix). Limites
 restantes ficam pra v1.2+ ou v2/Phase 6:
 
+**v1.3-dev (graph-ia-evolution Task 9.5):**
+
+- **Graph é local per-dev (Decision 20).** `.claude/graph.db` é construído
+  no clone via `bash .claude/bootstrap.sh` (uma vez, idempotente). Sem
+  bootstrap, a primeira invocação de `forge graph` triggera lazy rebuild
+  (~30s-2min, gerenciado por `engine/graph_cli._maybe_auto_build`).
+  Bootstrap script faz o build inicial e setup de hooks; para CI/scripts
+  determinísticos use `forge graph --no-auto-build <query>` pra desativar
+  o auto-rebuild.
+
 **v1.0 herdados (ainda válidos):**
 
 - **`forge implement` não automatiza Apply Mode** — em v1 é um **stub manual**:

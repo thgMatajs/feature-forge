@@ -36,7 +36,8 @@ from __future__ import annotations
 
 import importlib
 import sys
-from typing import Callable
+from pathlib import Path
+from typing import Callable, Optional
 
 from engine.ui.exit_codes import EXIT_CANCELLED, EXIT_PAUSED
 from engine.ui.question import (
@@ -140,6 +141,64 @@ def _resolve(cmd: str) -> Callable[[list[str]], int | None]:
     return handler
 
 
+# Subcommands que NÃO disparam bootstrap-state check — read-only/meta
+# que precisam funcionar antes do `bash .claude/bootstrap.sh` ter rodado
+# (ex.: usuário inspecionando versão ou pedindo ajuda pra descobrir como
+# inicializar).
+_BOOTSTRAP_SKIP_COMMANDS: frozenset[str] = frozenset({
+    "--version",
+    "-v",
+    "--help",
+    "-h",
+    "help",
+    "doctor",
+    "bootstrap",  # reservado caso vire subcommand explícito no futuro
+})
+
+
+def _check_bootstrap_state(project_root: Path) -> Optional[str]:
+    """Detect if bootstrap was run. Returns error message if missing, None if OK.
+
+    Check: ``.git/hooks/pre-commit`` symlink existe (criado por
+    ``.claude/bootstrap.sh``).
+
+    Task 9.5 (graph-ia-evolution AC-11): friendly error pra novos devs
+    que clonam o repo e tentam rodar comandos antes do bootstrap. NÃO
+    auto-fixar (instalar symlinks silenciosamente é invasivo).
+
+    Skip se:
+    - ``.claude/`` não existe — não é projeto forge ainda (ou é bare
+      repo de testes); deixar o handler dar a mensagem canônica.
+    - ``hooks/git-pre-commit`` (no repo source) não existe — não é o
+      repo da feature-forge em si; check de bootstrap só faz sentido
+      pra mantenedores do próprio forge. Consumer projects que usam
+      ``forge init`` recebem hooks por outra via.
+    - ``.git`` é arquivo (git worktree linked) — hooks vivem no main
+      repo, fora do path do worktree. Worktrees herdam o bootstrap
+      do parent, então não é gap de UX local.
+    """
+    if not (project_root / ".claude").is_dir():
+        return None
+    if not (project_root / "hooks" / "git-pre-commit").is_file():
+        return None
+    if (project_root / ".git").is_file():
+        # Linked worktree — hooks compartilhados com main repo.
+        return None
+
+    hooks_target = project_root / ".git" / "hooks" / "pre-commit"
+    # Symlink válido: ``is_symlink()`` cobre symlink presente + apontando
+    # pra alvo existente OU broken. ``exists()`` adicional pega o caso onde
+    # o arquivo é regular (não symlink) — também aceito como state OK
+    # (alguém pode ter copiado em vez de linkar).
+    if hooks_target.is_symlink() or hooks_target.exists():
+        return None
+    return (
+        "⚠️  forge não foi inicializado nesta máquina.\n"
+        "   Rode: bash .claude/bootstrap.sh\n"
+        "   (necessário uma vez após clone; idempotente)"
+    )
+
+
 def _print_help() -> None:
     """Render the top-level help. No flags listed — by design."""
     from engine import __version__
@@ -176,6 +235,22 @@ def main(argv: list[str] | None = None) -> int:
         from engine import __version__
         sys.stdout.write(f"forge {__version__}\n")
         return 0
+
+    # Task 9.5 (graph-ia-evolution AC-11) — bootstrap-state check antes do
+    # handler dispatch. Skip-list cobre comandos read-only/meta que
+    # precisam rodar pré-bootstrap. Demais subcommands recebem friendly
+    # error com instrução pra rodar `bash .claude/bootstrap.sh`.
+    if cmd not in _BOOTSTRAP_SKIP_COMMANDS:
+        try:
+            from engine.utils.paths import find_project_root
+            err = _check_bootstrap_state(find_project_root())
+        except Exception:  # noqa: BLE001
+            # Sem project root resolvível → não bloqueia; o handler dará a
+            # mensagem canônica de ProjectRootNotFoundError.
+            err = None
+        if err:
+            sys.stderr.write(err + "\n")
+            return 1
 
     handler = _resolve(cmd)
     # Lazy imports — keeps cli.main decoupled from foundation modules

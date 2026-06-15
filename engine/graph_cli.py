@@ -10,6 +10,7 @@ Strictly read-only. Graph rebuilds belong to `forge reconfigure`.
 
 from __future__ import annotations
 
+import sqlite3
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -485,6 +486,76 @@ def _run_detect_incremental(project_root: Path, file_args: list[str]) -> int:
     return 0
 
 
+# ── Lazy auto-build (Task 9.5, graph-ia-evolution AC-11) ────────────────────
+
+
+def _maybe_auto_build(
+    project_root: Path,
+    *,
+    json_mode: bool,
+    no_auto_build: bool,
+) -> None:
+    """Auto-build ``graph.db`` if missing or empty. Skip se ``--no-auto-build``.
+
+    Trigger:
+    - DB ausente.
+    - DB existe, tem ``meta`` table, mas ``last_full_rebuild_at`` está
+      vazio (i.e., DB foi criado por ``init_schema`` mas ``build_full``
+      nunca rodou — caso real pós-init).
+
+    Skip:
+    - DB existe mas ``meta`` table não existe → fixture seedado manualmente
+      em testes (caminho legítimo, não bloquear). Auto-build seria
+      destrutivo nesse cenário.
+
+    Em ``json_mode`` (``forge graph --json ...``), a mensagem de "buildando..."
+    sai pra stderr (stdout fica limpo pra JSON consumers). Em modo interativo,
+    sai pra stderr também — não polui o renderer da menu UI.
+
+    Lazy import de ``engine.graph.builder`` evita ciclos: ``graph_cli`` é
+    carregado cedo via ``engine.cli.COMMANDS``; ``builder`` puxa parsers
+    pesados (~6 linguagens).
+    """
+    if no_auto_build:
+        return
+
+    db_path = project_root / ".claude" / "graph.db"
+    needs_build = False
+
+    if not db_path.exists():
+        needs_build = True
+    else:
+        # DB existe — checa o marker canônico que ``build_full`` seta
+        # em ``set_meta(conn, "last_full_rebuild_at", ...)``. Sem marker
+        # → DB seedado por outro caminho (fixture, partial init); cuidamos
+        # de tratar "nunca buildado" como needs_build sem confundir com
+        # DB legitimamente seedado por testes.
+        try:
+            with sqlite3.connect(str(db_path)) as conn:
+                row = conn.execute(
+                    "SELECT value FROM meta WHERE key='last_full_rebuild_at'"
+                ).fetchone()
+                if row is None:
+                    needs_build = True
+        except sqlite3.OperationalError:
+            # ``meta`` table ausente — DB seedado por outro caminho
+            # (fixture de teste, partial init manual). Não auto-buildar:
+            # invocar ``build_full`` sobre schema inconsistente é
+            # destrutivo. Quem seedou conhece o estado.
+            needs_build = False
+
+    if not needs_build:
+        return
+
+    sys.stderr.write(
+        "⏳ graph.db ausente/empty — buildando (one-shot, ~30s-2min)...\n"
+    )
+    # Lazy import — evita carregar parsers pesados quando o DB já existe
+    # e está populado (caminho quente de ``forge graph``).
+    from engine.graph.builder import build_full
+    build_full(project_root)
+
+
 def run(argv: list[str]) -> int:
     """Interactive query menu — Q1..Q17, read-only.
 
@@ -495,7 +566,19 @@ def run(argv: list[str]) -> int:
       ``forge graph --json <query> [args...]`` — emit JSON to stdout without
       ever prompting. Aliases: ``q1``..``q17``, ``r``, numeric ``1``..``17``,
       or labels (``orphan-files``, ``symbols``, etc.).
+
+    Lazy auto-build flag (Task 9.5, graph-ia-evolution AC-11):
+      ``forge graph --no-auto-build ...`` — desativa auto-build quando o DB
+      está ausente/empty (uso CI/scripts determinísticos). Sem essa flag, a
+      primeira invocação após clone triggera build_full antes do dispatch.
     """
+    # Parse --no-auto-build flag antes de qualquer outro processing.
+    # Strip a flag de argv pra os checks downstream verem argv limpo.
+    no_auto_build = False
+    if "--no-auto-build" in argv:
+        no_auto_build = True
+        argv = [a for a in argv if a != "--no-auto-build"]
+
     try:
         project_root = find_project_root()
     except ProjectRootNotFoundError as exc:
@@ -504,6 +587,12 @@ def run(argv: list[str]) -> int:
 
     if argv and argv[0] == "detect-incremental":
         return _run_detect_incremental(project_root, argv[1:])
+
+    # Lazy auto-build ANTES dos guards de DB ausente. Em modo --no-auto-build
+    # a função é no-op e o comportamento legado (erro canônico de DB ausente)
+    # prevalece.
+    json_mode = bool(argv and argv[0] == "--json")
+    _maybe_auto_build(project_root, json_mode=json_mode, no_auto_build=no_auto_build)
 
     # --json non-interactive path (AC-3). Parsed BEFORE the interactive
     # guards so that a missing graph.db still fails with the canonical
