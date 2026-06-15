@@ -204,7 +204,7 @@ Nenhum dedicado. Cobertura indireta via:
 | `firestore-security-rules` | Paralelo: rules de `allow read` valem para listeners também (não há rule separada de "subscribe"). Cobertura é responsabilidade do card de rules. |
 | `koin-annotations` | `{Feature}Repository` permanece `@Single` (mesma instância expondo `get()` + `observe()`). |
 | `kmp-shared` | `callbackFlow` + `awaitClose` em `commonMain`; iOS consome via SKIE como `AsyncSequence`. |
-| `crashlytics` | Erros de listener mapeados para `FirestoreError` propagam para o handler comum de `firestore-persistence` — sem caminho dedicado. |
+| `firebase-crashlytics` | Erros de listener mapeados para `FirestoreError` propagam para o handler comum de `firestore-persistence` — sem caminho dedicado. |
 
 ---
 

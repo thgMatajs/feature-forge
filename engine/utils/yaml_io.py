@@ -26,12 +26,26 @@ class YamlIOError(RuntimeError):
     """Raised when a YAML file cannot be parsed, with file context attached."""
 
 
+_YAML_MAX_BYTES = 10 * 1024 * 1024  # 10 MB — H-02 cap against YAML bomb
+
+
 def read_yaml(path: Path) -> Any:
     """Safe-load a YAML file. Returns parsed object (dict/list/scalar).
 
     Raises YamlIOError with the file path attached on parse failure so
-    callers don't have to wrap.
+    callers don't have to wrap. Also raises YamlIOError when the file
+    exceeds `_YAML_MAX_BYTES` (H-02 — prevents anchor/recursion bomb on
+    pathologically large inputs).
     """
+    try:
+        size = path.stat().st_size
+    except OSError:
+        # Let the open() call below produce the canonical error.
+        size = 0
+    if size > _YAML_MAX_BYTES:
+        raise YamlIOError(
+            f"YAML file too large: {path} ({size} bytes, cap {_YAML_MAX_BYTES})"
+        )
     try:
         with path.open("r", encoding="utf-8") as fh:
             return yaml.safe_load(fh)

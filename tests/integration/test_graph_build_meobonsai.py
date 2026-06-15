@@ -17,6 +17,8 @@ from engine.graph import builder
 from engine.utils import sqlite_io
 from engine.utils.sqlite_io import open_db
 
+pytestmark = pytest.mark.meobonsai
+
 
 @pytest.mark.integration
 def test_build_full_meobonsai(meobonsai_root, tmp_path):

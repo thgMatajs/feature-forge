@@ -2,7 +2,7 @@
 
 A standalone CLI skill that orchestrates end-to-end planning + implementation of mobile features across Android, iOS, KMP, and Web. Backend-agnostic (Firebase, REST, GraphQL, local-only).
 
-> **State:** v1.2-dev · 2026-06-09 · 1113 tests · 20 validators · 13 comandos · ~400 arquivos · ~52.5K LOC
+> **State:** v1.2-dev · 2026-06-12 · 1523 tests collected (REVIEW.md remediation Blocos 1-5 ✅; Phase B DET-6 multi-axis backend SHIPPING-READY + REVIEWED + E2E COVERED em worktree `det-6-w1`; Phase A DRIFT-1 PR #11 master-review remediado integralmente; DET-3 gradle-dep signal type mergido de `main`) · 25 validators · 13 comandos · 29 cards · 4 bundles · ~400 arquivos · ~52.5K LOC
 
 ## What it is
 
@@ -67,17 +67,17 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 
 | Categoria | Conteúdo |
 |---|---|
-| Schemas | 9 schemas + capability-labels catalog + schema v2 (reuse_findings, module_deps) |
+| Schemas | 14 schemas (inclui `intent-protocol.md` novo em v1.2-dev / Phase A DRIFT-1 + `backend-axes.md` v1.2-dev Phase B) + capability-labels catalog + schema v2 (reuse_findings, module_deps) |
 | Agent prompts | 10 (planning-conductor + 9 sub-agents) |
 | UX roteiros | 7 (init, plan, implement, verify, doctor, reconfigure, evolve) — todos cobrem subtypes + reuse intelligence |
 | Templates canônicos | 18 (16 produto + feature-intake-bugfix + feature-intake-refactor) |
-| Cards canônicos | 22 (8 stack + 6 Firebase + 6 REST + retrofit-client + shared-preferences-prefs com `legacy-marker`); overlay local em `.claude/cards/local/<name>/` desde Gap 5 (2026-06-02) |
-| Preset | kmp-mobile (8 stack cards + 4 backend-candidates) |
-| Validators Python | 20 + 3 helpers (`_gate_infra`, `_diff`, `_common`) — inclui `check_cyclomatic_complexity` (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon), `check_secrets` (gitleaks + trufflehog), `check_no_behavior_change` (refactor), `validate_extension_feature` (extends-feature cross-cutting) |
+| Cards canônicos | 29 (8 stack + 5 Firebase + firebase-crashlytics + 4 REST + retrofit-client + room-database + sqldelight + datastore-prefs + shared-preferences-prefs com `legacy-marker` + firebase-analytics + posthog-analytics + fcm + onesignal + firebase-remote-config + posthog-flags); overlay local em `.claude/cards/local/<name>/` desde Gap 5 (2026-06-02). Phase B DET-6 acresceu 6 cards de analytics/notifications/flags + sqldelight (axis persistence/kmp) + rename `crashlytics → firebase-crashlytics`. |
+| Preset | kmp-mobile (8 stack cards + 4 bundles: firebase-full + rest-with-firebase-telemetry + local-only + custom-from-scratch sentinela) — substitui o bloco `backend-candidates` monolítico desde Phase B DET-6 |
+| Validators Python | 25 + 3 helpers (`_gate_infra`, `_diff`, `_common`) — inclui `check_cyclomatic_complexity` (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon), `check_secrets` (gitleaks + trufflehog), `check_no_behavior_change` (refactor), `validate_extension_feature` (extends-feature cross-cutting), `validate_presets` (Phase B DET-6 — bundle YAML schema) |
 | Hooks | 9 + 1 reuse incremental (`post-edit-detect-duplications.sh`) |
-| Tests | ~1113 (unit + integration + e2e · ~20 skipped · baseline histórico em CHANGELOG.md) |
+| Tests | 1523 collected (unit + integration + e2e · ~20 skipped · baseline histórico em CHANGELOG.md). Phase A DRIFT-1 acresceu +118 sobre o pré-W2 1046; Phase B DET-6 acresceu W4-W7 (~88 unit + 12 integration) + W8 polish (+23 rapid + 3 integration + 4 e2e); REVIEW.md remediation Blocos 1-5 (2026-06-12) acresceu +N regression tests chegando a 1523 collected (WR-01 fix-pack adicionou +1 regression test). |
 | LOC total | ~52.500 |
-| Engine LOC | ~22.000 (Python) |
+| Engine LOC | ~33.500 (Python; engine/ apenas — validators/ adicional ~7.300) |
 | Files total | ~400 |
 | Decisões locked | 27 + 7 direcionais (Fase 3.5) |
 | Subtypes feature | 5 (product / refactor / bugfix / spike / chore) |
@@ -103,14 +103,16 @@ forge evolve     # 6 kinds: consolidate / promote / kmp-migration / etc
 forge graph      # opções 12–17 ou "r" (combined view)
 ```
 
-Requer Python 3.11+ + PyYAML (única dep externa).
+Requer Python 3.11+ + PyYAML + pathspec (runtime). Dev: pytest + mypy.
+Install canônico: `pip install -e .` na raiz do repo (também rodado
+idempotentemente por `bash .claude/bootstrap.sh`).
 
 ## Where it lives
 
 ```
 ~/Documents/feature-forge/              canonical source (this repo)
   bin/forge                             Bash dispatcher
-  engine/                               Python engine (~21.900 LOC)
+  engine/                               Python engine (~33.500 LOC)
     graph/                              parsers (Kotlin/Swift/TS) + builder +
                                         gradle_modules + gradle_deps +
                                         _body_text + duplicates + reuse_apply +
@@ -124,7 +126,7 @@ Requer Python 3.11+ + PyYAML (única dep externa).
   presets/kmp-mobile/                   canonical preset v1
   validators/                           20 validators + helpers (inclui check_cyclomatic_complexity + check_secrets + validate_extension_feature)
   hooks/                                9 hooks + reuse incremental script
-  tests/                                ~1113 collected tests (unit + integration + e2e) + 20 skipped
+  tests/                                ~1125 collected tests (unit + integration + e2e) + 20 skipped
 
 [per project install via `forge init`]
 {project}/.claude/

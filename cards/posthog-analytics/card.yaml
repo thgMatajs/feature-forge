@@ -1,0 +1,74 @@
+# cards/posthog-analytics/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# PostHog Analytics — product analytics, funnels, session replay para
+# Android/iOS. Card backend-axis `analytics` (DET-6 W4.2); identidade
+# canônica vem do cell (analytics, platform) em workflow-config.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         posthog-analytics
+  version:      1.0.0
+  description:  "PostHog Analytics para product analytics + funnels + session replay em Android/iOS. Card backend-axis `analytics` — identidade vem do cell (analytics, platform) em workflow-config."
+  category:     analytics
+  platforms:    [android, ios]
+  maturity:     stable
+  maintainer:   feature-forge-core
+  created-at:   2026-06-10
+  last-updated: 2026-06-10
+  license:      MIT
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
+# CARD-006 relax (W3): backend-axis cards aceitam provides: [].
+provides: []
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+# PostHog roda standalone (vendor independente). Sem requires no catálogo.
+requires: []
+
+
+# ── CONFLICTS ─────────────────────────────────────────────────────────────
+# Cardinalidade per (analytics, platform) cell enforçada pelo workflow-config.
+conflicts-with: []
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+contributes:
+
+  templates:
+    - target:  tech-spec.md
+      section: "Analytics events (PostHog)"
+      file:    templates/posthog-analytics-tech-spec.md
+      merge:   append-section
+
+
+# ── DETECTION ─────────────────────────────────────────────────────────────
+detection:
+  signals:
+    - type:       gradle-dep
+      coordinate: "com.posthog:posthog-android"
+      confidence: 0.5
+
+    - type:       file-content
+      glob:       "**/build.gradle*"
+      contains:   "com.posthog:posthog-android"
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "com.posthog.android"
+      confidence: 0.3
+
+  threshold: 0.5
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "observability"

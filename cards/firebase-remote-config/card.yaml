@@ -1,0 +1,70 @@
+# cards/firebase-remote-config/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# Firebase Remote Config — feature flags + remote config + A/B test
+# rollouts em Android/iOS. Card backend-axis `flags` (DET-6 W4.5).
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         firebase-remote-config
+  version:      1.0.0
+  description:  "Firebase Remote Config para feature flags + remote config + A/B rollouts em Android/iOS. Card backend-axis `flags` — identidade vem do cell (flags, platform) em workflow-config."
+  category:     flags
+  platforms:    [android, ios]
+  maturity:     stable
+  maintainer:   feature-forge-core
+  created-at:   2026-06-10
+  last-updated: 2026-06-10
+  license:      MIT
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
+provides: []
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+requires: []
+
+
+# ── CONFLICTS ─────────────────────────────────────────────────────────────
+# Cardinalidade per (flags, platform) cell enforçada pelo workflow-config.
+conflicts-with: []
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+contributes:
+
+  templates:
+    - target:  tech-spec.md
+      section: "Feature flags (Firebase Remote Config)"
+      file:    templates/firebase-remote-config-tech-spec.md
+      merge:   append-section
+
+
+# ── DETECTION ─────────────────────────────────────────────────────────────
+detection:
+  signals:
+    - type:       gradle-dep
+      coordinate: "com.google.firebase:firebase-config"
+      confidence: 0.5
+
+    - type:       file-exists
+      glob:       "**/google-services.json"
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "com.google.firebase.remoteconfig"
+      confidence: 0.3
+
+  threshold: 0.5
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "observability"

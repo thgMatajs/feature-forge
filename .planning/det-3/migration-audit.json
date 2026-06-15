@@ -1,0 +1,170 @@
+[
+  {
+    "card": "compose-screens",
+    "path": "cards/compose-screens/detection/signals.yaml",
+    "action": "preserve",
+    "reason": "contains 'androidx.compose' é prefixo de grupo, não coordenada completa — múltiplos artefatos possíveis (compose-ui, compose-foundation, compose-material3). Por conservadorismo (SPEC: em dúvida não migrar)."
+  },
+  {
+    "card": "crashlytics",
+    "path": "cards/crashlytics/detection/signals.yaml",
+    "action": "migrate",
+    "signal_id": "gradle-dependency",
+    "coordinate": "com.google.firebase:firebase-crashlytics",
+    "preserved_confidence": 0.5,
+    "reason": "Rationale do signal declara explicitamente 'Dependência runtime do SDK Android'; coordenada completa `com.google.firebase:firebase-crashlytics` é inferível pela documentação do card. Caso canônico da política SPEC."
+  },
+  {
+    "card": "crashlytics",
+    "path": "cards/crashlytics/detection/signals.yaml",
+    "action": "preserve",
+    "signal_id": "gradle-plugin",
+    "reason": "contains 'com.google.firebase.crashlytics' é plugin id, não coordenada Maven (SPEC §edge case: plugin DSL coordinates NÃO contam como match)."
+  },
+  {
+    "card": "datastore-prefs",
+    "path": "cards/datastore-prefs/detection/signals.yaml",
+    "action": "preserve",
+    "reason": "contains 'androidx.datastore' é prefixo de grupo — match parcial cobre datastore-core, datastore-preferences, datastore-preferences-core. Por conservadorismo."
+  },
+  {
+    "card": "firebase-auth",
+    "path": "cards/firebase-auth/detection/signals.yaml",
+    "action": "migrate",
+    "signal_id": "android-gradle-firebase-auth",
+    "coordinate": "com.google.firebase:firebase-auth",
+    "preserved_confidence": 0.5,
+    "reason": "Rationale explicita 'firebase-auth (ou firebase-auth-ktx)'. Coordenada base canônica `com.google.firebase:firebase-auth` cobre o caso primário. SPEC autoriza grupo inferível."
+  },
+  {
+    "card": "firebase-auth",
+    "path": "cards/firebase-auth/detection/signals.yaml",
+    "action": "migrate",
+    "signal_id": "android-gradle-firebase-auth-ktx",
+    "coordinate": "com.google.firebase:firebase-auth-ktx",
+    "preserved_confidence": 0.2,
+    "reason": "Variante KTX explícita. Coordenada completa derivada pela doc do card; mantém confidence 0.2 idêntica."
+  },
+  {
+    "card": "firebase-storage",
+    "path": "cards/firebase-storage/detection/signals.yaml",
+    "action": "migrate",
+    "signal_id": "firebase-storage-gradle-dep",
+    "coordinate": "com.google.firebase:firebase-storage",
+    "preserved_confidence": 0.5,
+    "reason": "Rationale: 'com.google.firebase:firebase-storage(-ktx)'. Coordenada base `com.google.firebase:firebase-storage` é inferível e canônica."
+  },
+  {
+    "card": "firestore-persistence",
+    "path": "cards/firestore-persistence/detection/signals.yaml",
+    "action": "migrate",
+    "signal_id": null,
+    "coordinate": "com.google.firebase:firebase-firestore",
+    "preserved_confidence": 0.5,
+    "reason": "Rationale: 'Dependência explícita do SDK Firestore no Gradle'. Coordenada `com.google.firebase:firebase-firestore` é inferível. Signal sem id explícito — preservar shape sem id."
+  },
+  {
+    "card": "firestore-realtime",
+    "path": "cards/firestore-realtime/detection/signals.yaml",
+    "action": "migrate",
+    "signal_id": "gradle-firestore-dep",
+    "coordinate": "com.google.firebase:firebase-firestore",
+    "preserved_confidence": 0.2,
+    "reason": "Mesma coordenada do firestore-persistence, confidence baixo (0.2) — pré-requisito compartilhado."
+  },
+  {
+    "card": "firestore-security-rules",
+    "path": "cards/firestore-security-rules/detection/signals.yaml",
+    "action": "preserve",
+    "reason": "Card não tem signal tocando `**/build.gradle*` — todos os signals usam firestore.rules / firestore.indexes.json / dir firebase. Nenhuma migration aplicável. Entrada aqui só pra rastrear que foi avaliado e descartado."
+  },
+  {
+    "card": "kmp-shared",
+    "path": "cards/kmp-shared/detection/signals.yaml",
+    "action": "preserve",
+    "reason": "contains 'kotlin-multiplatform' e 'kotlin(\"multiplatform\")' são plugin id e DSL syntax, não Maven coordinates. SPEC §edge: plugin DSL não conta como match."
+  },
+  {
+    "card": "koin-annotations",
+    "path": "cards/koin-annotations/detection/signals.yaml",
+    "action": "migrate",
+    "signal_id": "koin-annotations-gradle-dep",
+    "coordinate": "io.insert-koin:koin-annotations",
+    "preserved_confidence": 0.5,
+    "reason": "Rationale declara 'io.insert-koin:koin-annotations' literal. Coordenada completa, caso canônico."
+  },
+  {
+    "card": "kotlin-language",
+    "path": "cards/kotlin-language/detection/signals.yaml",
+    "action": "preserve",
+    "reason": "contains 'kotlin(' é DSL syntax (kotlin(\"multiplatform\"), kotlin(\"jvm\")), não Maven coordinate. Preservar como file-content."
+  },
+  {
+    "card": "kotlinx-serialization-json",
+    "path": "cards/kotlinx-serialization-json/detection/signals.yaml",
+    "action": "migrate",
+    "signal_id": null,
+    "coordinate": "org.jetbrains.kotlinx:kotlinx-serialization-json",
+    "preserved_confidence": 0.5,
+    "reason": "Coordenada canônica do artefato. Signal primário (0.5) — migração direta. Signal sem id explícito."
+  },
+  {
+    "card": "kotlinx-serialization-json",
+    "path": "cards/kotlinx-serialization-json/detection/signals.yaml",
+    "action": "preserve",
+    "reason": "contains 'kotlinx-serialization' (sem -json) é prefixo de família — match parcial cobre kotlinx-serialization-core, -cbor, -protobuf, -hocon, etc. Preservar pra cobrir variantes."
+  },
+  {
+    "card": "ktor-client",
+    "path": "cards/ktor-client/detection/signals.yaml",
+    "action": "migrate",
+    "signal_id": null,
+    "coordinate": "io.ktor:ktor-client-core",
+    "preserved_confidence": 0.5,
+    "revision": 2,
+    "revisited_at": "2026-06-10",
+    "reason": "Revisita pós-master-review PR #11 (finding A-1): core artifact is canonical family anchor; substring family kept as complementary signal at 0.3 for legacy variants. Primary signal agora é gradle-dep `io.ktor:ktor-client-core` @0.5 — atinge threshold sozinho em projeto TOML-only (atende SPEC §AC-1). Substring `io.ktor:ktor-client-` permanece como file-content secundário @0.3 cobrindo variantes (-cio, -android, -darwin, -okhttp) em setups legacy/hybrid. Histórico: r1 mantinha substring de família como primário (0.5) — bloqueava AC-1 em TOML-only."
+  },
+  {
+    "card": "ktor-client",
+    "path": "cards/ktor-client/detection/signals.yaml",
+    "action": "preserve",
+    "signal_id": "ktor-client-family-substring",
+    "revision": 2,
+    "revisited_at": "2026-06-10",
+    "reason": "Signal file-content `io.ktor:ktor-client-` (com hífen final) preservado como complementar @0.3 — captura variantes de engine (-cio, -android, -darwin, -okhttp) declaradas como string Maven direta fora do TOML. Cobertura ampla de variantes via N gradle-dep adicionais fica como melhoria futura quando wildcard sufixado for decidido (SPEC §considerações futuras)."
+  },
+  {
+    "card": "nav3",
+    "path": "cards/nav3/detection/signals.yaml",
+    "action": "preserve",
+    "reason": "contains 'navigation3' é prefixo de família AndroidX nav3 (navigation3-compose, navigation3-runtime, navigation3-material). Match parcial intencional. Preservar."
+  },
+  {
+    "card": "retrofit-client",
+    "path": "cards/retrofit-client/detection/signals.yaml",
+    "action": "preserve",
+    "signal_id": "retrofit-gradle-dep",
+    "reason": "contains 'com.squareup.retrofit2:retrofit' embora seja coordenada válida (artefato principal), funciona hoje como substring match capturando também retrofit-converters-gson, retrofit-mock. Migrar pra exata mudaria semântica (perde converters). Preservar até decisão explícita."
+  },
+  {
+    "card": "room-database",
+    "path": "cards/room-database/detection/signals.yaml",
+    "action": "preserve",
+    "reason": "contains 'androidx.room' é prefixo de grupo — match parcial cobre room-runtime, room-ktx, room-compiler, room-paging. Preservar."
+  },
+  {
+    "card": "skie-bridge",
+    "path": "cards/skie-bridge/detection/signals.yaml",
+    "action": "preserve",
+    "signal_id": "skie-in-build-gradle",
+    "reason": "contains 'skie' é keyword bare, captura plugin alias OU referência ao artefato. Plugin DSL não é Maven coord (SPEC edge case)."
+  },
+  {
+    "card": "skie-bridge",
+    "path": "cards/skie-bridge/detection/signals.yaml",
+    "action": "preserve",
+    "signal_id": "skie-touchlab-dependency",
+    "reason": "contains 'co.touchlab:skie' é prefixo de família — match parcial cobre skie-runtime, skie-configuration-annotations. Preservar."
+  }
+]

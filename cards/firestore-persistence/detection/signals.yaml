@@ -17,11 +17,10 @@ signals:
     confidence: 0.2
     rationale:  "App Android conectado a um projeto Firebase. Não basta sozinho — outro produto Firebase poderia estar em uso."
 
-  - type:       file-content
-    glob:       "**/build.gradle*"
-    contains:   "firebase-firestore"
+  - type:       gradle-dep
+    coordinate: "com.google.firebase:firebase-firestore"
     confidence: 0.5
-    rationale:  "Dependência explícita do SDK Firestore no Gradle. Sinal mais forte para Android/KMP."
+    rationale:  "Dependência explícita do SDK Firestore (libs.versions.toml ou build.gradle). Sinal mais forte para Android/KMP. Migrado de file-content em DET-3."
 
   - type:       file-exists
     glob:       "**/firestore.indexes.json"

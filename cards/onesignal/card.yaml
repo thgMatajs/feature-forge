@@ -1,0 +1,76 @@
+# cards/onesignal/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# OneSignal — push notifications vendor-independente em Android/iOS.
+# Card backend-axis `notifications` (DET-6 W4.4).
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         onesignal
+  version:      1.0.0
+  description:  "OneSignal para push notifications em Android/iOS. Card backend-axis `notifications` — identidade vem do cell (notifications, platform) em workflow-config."
+  category:     notifications
+  platforms:    [android, ios]
+  maturity:     stable
+  maintainer:   feature-forge-core
+  created-at:   2026-06-10
+  last-updated: 2026-06-10
+  license:      MIT
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
+provides: []
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+requires: []
+
+
+# ── CONFLICTS ─────────────────────────────────────────────────────────────
+# Cardinalidade per (notifications, platform) cell enforçada pelo workflow-config.
+conflicts-with: []
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+contributes:
+
+  templates:
+    - target:  tech-spec.md
+      section: "Push notifications (OneSignal)"
+      file:    templates/onesignal-tech-spec.md
+      merge:   append-section
+
+
+# ── DETECTION ─────────────────────────────────────────────────────────────
+# Coordenadas Maven do SDK Android variam por era do SDK:
+#   - pré-v5: com.onesignal:OneSignal-Android-SDK
+#   - v5.x+:  com.onesignal:OneSignal
+# Declaramos a forma legada (mais comum em projetos atuais) e adicionamos
+# um file-content fallback que casa ambas via prefixo "com.onesignal:".
+detection:
+  signals:
+    - type:       gradle-dep
+      coordinate: "com.onesignal:OneSignal-Android-SDK"
+      confidence: 0.5
+
+    - type:       file-content
+      glob:       "**/build.gradle*"
+      contains:   "com.onesignal:OneSignal"
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "com.onesignal"
+      confidence: 0.3
+
+  threshold: 0.5
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "observability"

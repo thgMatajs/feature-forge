@@ -7,17 +7,730 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Documentation
+### Changed
 
-- v1.2-dev pilot 2026-06-10 capturado em `docs/design/04-pending.md` — 6 findings (DRIFT-1 conceitual primário, B1, B2, DET-3, DET-5, DET-6) + sequenciamento Phase 0 → Phase A (DRIFT-1) → Phase B (DET-6) decidido com user. UX/microcopy/persona findings do modo fallback CLI deferred até Phase A (engine emite intent estruturado pra Claude Code → strings deixam de ser responsabilidade do Python).
+- **chore(gitignore)** — Adicionadas entradas faltantes pra runtime
+  artifacts: `.claude/state/*.lock`, `.claude/worktrees/`, `.gsd-tmp/`,
+  `.planning/*-review/` (generic), `.ultra-review/`, `docs/design/outputs/`.
+  Reduz noise em `git status` pós-bootstrap.
+
+### Fixed (master review PR #15 remediation — 2026-06-15)
+
+Aplica todos os 22 findings do master review PR #15 (14 do Group A —
+security/correctness + 8 do Group B — broad-except scrub + validators).
+Test baseline 1350 → 1353 (3 testes novos de A-013 cobrindo o vetor de
+path-traversal do guard de undo).
+
+**Alto (A-001, A-002, A-003, B-001):**
+- **A-001** (`engine/undo.py`) — `_delete_feature_artifacts_guard` agora
+  rejeita também `target_resolved == project_resolved`. Sem isso, um slug
+  malicioso `../../..` resolveria pra raiz e `shutil.rmtree` apagaria o
+  projeto inteiro após os 2 confirms (`Path.relative_to` retorna
+  `Path('.')` em equality, sem `ValueError`).
+- **A-002** (`engine/undo.py`) — `_delete_feature_artifacts` agora usa
+  `feature_path(..., subtype=current_subtype(...))` em vez de `feature_dir`,
+  honrando o subtype enum. Features non-product (refactor/spike/chore/
+  bugfix) — que vivem em `non-product/{slug}/` — voltam a ser delete-able
+  via `forge undo`.
+- **A-003** (`docs/design/04-pending.md`) — entrada H-02/MD-01 reforçada
+  com referência explícita a A-003 e detalhamento do vetor YAML anchor
+  bomb (`yaml.safe_load` sem flag nativa pra limitar aliases).
+- **B-001** (`engine/status.py`) — `_render_recent_activity` agora pega
+  `(MemoryError, OSError, UnicodeDecodeError)` em vez de
+  `(JSONDecodeError, OSError, UnicodeDecodeError)`. `read_history` empacota
+  `JSONDecodeError` em `MemoryError`, então a tupla antiga era no-op e
+  JSONL corrompido crashava o status render.
+
+**Médio (A-004, A-005, A-006, B-002, B-003):**
+- **A-004** (`validators/check_secrets.py`) — detecção de colisão no
+  `_rel_map` quando dois staged paths viram a mesma relativização (caso
+  de projetos com symlinks). Modo conservador filtra com paths originais
+  em vez de descartar silenciosamente.
+- **A-005** (`validators/check_secrets.py`) — fail-loud em regex inválida
+  na config `secrets-gate.ignore-paths` via `_collect_invalid_patterns` +
+  `result_warn`. Antes era skip silencioso.
+- **A-006** (`engine/utils/paths.py`, `engine/plan.py`) — promovido
+  `_resolve_features_root` de plan.py pra paths.py (leaf real, sem dep
+  de `engine.plan`). Elimina lazy import circular dentro de `feature_path`.
+  Shim retrocompatível em plan.py.
+- **B-002** (`engine/doctor.py`) — adiciona `CardError` à tupla de except
+  em `_check_card_snapshots` + import. Race condition no
+  `compute_directory_sha256` agora vira `_STATUS_FAIL` por categoria
+  em vez de explodir o doctor inteiro.
+- **B-003** (`engine/doctor.py`) — troca `(YamlIOError, OSError)` por
+  `(yaml.YAMLError, OSError)` em `_stamp_last_doctor_run` + import yaml.
+  `write_yaml` NÃO levanta `YamlIOError` (só `read_yaml` levanta) — o
+  tipo real era `YAMLError` de `safe_dump`, que escapava silenciosamente.
+
+**Baixo (A-007, A-008, A-009, A-010, B-004, B-005, B-008):**
+- **A-007** (`engine/graph/builder.py`) — comment estendido do `finally`
+  pra cobrir `ValueError` do guard de allowlist (sem mudança funcional).
+- **A-008** (`engine/implement.py` + test) — `_topo_sort` troca
+  `raise SystemExit` por nova `TaskGraphError(RuntimeError)`. SystemExit
+  é `BaseException` e não era pego por `except Exception` de chamadores
+  defensivos. CLI `run()` mapeia para exit code 1.
+- **A-009** (`engine/verify.py`) — `run_scope` agora retorna `1` quando
+  `project_root` não é diretório, espelhando o guard de `_run_validator`.
+- **A-010** (`engine/persona/mentor_calmo.py`) — docstring de `set_seed`
+  documenta thread-safety explicitamente.
+- **B-004** (`engine/graph/builder.py`) — comments por-tipo justificando
+  cada exception da tupla em `_populate_ds_components_from_inventory`.
+- **B-005** (`validators/validate_workflow_config.py`) — comment
+  justificando exaustividade do `OSError` em torno de `file_sha256`.
+- **B-008** (`validators/validate_feature_package.py`) — `_check_cross_refs`
+  reporta parse error como warn em vez de silenciar.
+
+**Sugestão (A-011, A-012, A-013, A-014, B-006, B-007):**
+- **A-011** (`engine/undo.py`) — narrow do broad-except em
+  `_append_undo_log` pra `(OSError, ValueError)`, com aviso ao usuário.
+- **A-012** (`engine/undo.py`) — narrow do broad-except em `_undo_evolve`
+  pra `(KeyError, OSError, YamlIOError, MemoryError)`.
+- **A-013** (`tests/engine/test_undo_delete_traversal.py`) — adiciona 3
+  testes (target == project_root, symlink escaping project, slug literal
+  `../../..`), cobrindo o vetor de A-001.
+- **A-014** (`validators/check_no_invented_behavior.py`) — comment
+  explícito + `noqa: E402` cobrindo `sys.path.insert` antes dos imports
+  de `engine.`.
+- **B-006** (`docs/design/04-pending.md`) — nota retrospectiva sobre
+  scope hygiene do M-02 (parcialmente endereçado por A-008).
+- **B-007** (`tests/unit/test_commands_{implement,plan,verify}.py`) —
+  pin exit code in `{1, 2}` em vez de `!= 0` amplo.
+
+### Fixed (master review remediation — final review, 2026-06-15)
+
+- **Master review H-1** — Fix `engine/doctor.py:1308-1309` `_` redefinition
+  (mypy no-redef): renomeou segundo binding para `_safe_read_yaml_ref` +
+  corrigiu noqa code.
+- **Master review M-1** — Atualizou `engine/graph/builder.py` para usar
+  `GitIgnoreSpecPattern` (de `pathspec.patterns.gitignore.spec`) no lugar
+  de `GitWildMatchPattern` (deprecated). Elimina ~1500 DeprecationWarnings
+  em test runs.
+- **Master review M-3** — Consolidou 3 cópias adicionais de `_utc_now_iso`
+  em `engine/memory/{l1,l2,distiller}.py` para import direto de
+  `engine.utils.iso.utc_now_iso`. Fecha LO-01 parcialmente (7 módulos
+  restantes documentados em `04-pending.md`).
+- **Master review L-1** — Atualizado campo `**Última atualização:**` do
+  handoff para 2026-06-15 (refletindo final review remediation).
+
+### Fixed (REVIEW.md remediation — Bloco 5: medium/low polish, 2026-06-12)
+
+- **M-01** — Substituído over-mock em `tests/unit/test_commands_*.py`
+  por assertions sobre exit code real.
+- **M-05** — Removido `import json` interno em `_readiness_from_handoff`
+  (side-effect Task 4.1 / H-03 narrow).
+- **L-01 + L-04** — Removido parâmetro `project_root` dead em
+  `_print_blocked_refusal` (`engine/implement.py`).
+- **L-03** — Consolidado `_utc_now_iso_implement/_plan/_verify` em
+  import direto de `engine.utils.iso.utc_now_iso` em `engine/implement.py`,
+  `engine/plan.py`, `engine/verify.py` (5 shims, 12 callers). Shims
+  similares em outros módulos (`engine/undo.py`, `engine/evolve.py`,
+  `engine/reconfigure.py`, `engine/memory_cli.py`, `engine/graph_cli.py`,
+  `engine/init.py`, `engine/doctor.py`) ficam fora de scope desta entrega
+  — gap registrado em `04-pending.md` (LO-01 follow-up).
+- **L-06** — `sys.path.insert` em `tests/conftest.py` mantido com
+  comment justificando + gap aberto em `04-pending.md` pra revisitar
+  quando CI pipeline oficial vier.
+- **L-07** — Marker `meobonsai` registrado em `pyproject.toml`; 11 tests
+  dependentes da fixture `meobonsai_root` agora carregam o marker.
+
+### Added (REVIEW.md remediation — Bloco 3: mypy advisory, 2026-06-12)
+
+- **H-09** — `mypy >= 1.8` adicionado em `[project.optional-dependencies]
+  dev` + seção `[tool.mypy]` em advisory mode. Baseline de 17 errors
+  registrado em `docs/design/04-pending.md`. CI gate não ativo nesta
+  sessão (rollout incremental planejado).
+
+### Changed (REVIEW.md remediation — Bloco 3: mypy advisory, 2026-06-12)
+
+- **M-10** — Removido import unused `Optional` em `engine/implement.py`,
+  `engine/verify.py`, `engine/status.py`, `engine/vision/screenshot.py`.
+  19 usos remanescentes padronizados pra `X | None` intra-arquivo.
+
+### Changed (REVIEW.md remediation — Bloco 2: functional bugs, 2026-06-12)
+
+- **M-07 (dep nova)** — Adicionado `pathspec >= 0.12` em
+  `[project.dependencies]` runtime. Lib pura Python implementando
+  `.gitignore` semantics canonicas. Decision 19 (Python stack) e
+  Decision 22 (no skill runtime deps) não afetadas — pathspec é PyPI
+  lib genérica.
+
+### Fixed (REVIEW.md remediation — Bloco 4: broad-except scrub, 2026-06-12)
+
+- **H-03** — Narrow `except Exception` em 24 sites críticos:
+  - `engine/implement.py`: 1 site (JSON read) narrowed; 3 sites preservados broad
+    com `# noqa: BLE001` em validator/QA dispatch boundaries
+  - `engine/verify.py`: 2 sites narrowed `(MemoryError, OSError)` em
+    L1 status write/restore
+  - `engine/graph/builder.py`: 1 site narrowed em inventory load
+  - `engine/init.py`: 2 narrowed (overlay, FS copy) + 4 preservados em
+    discovery-step heuristic scanners
+  - `engine/status.py`: 1 site narrowed (L1 history JSON read)
+  - `engine/doctor.py`: 2 sites narrowed (stamp write + category snapshot)
+  - `validators/validate_*.py`: 18 sites narrowed em 10 validators
+    (YAML reads + 1 file_sha256), `YamlIOError` adicionado aos imports
+
+### Fixed (REVIEW.md remediation — Bloco 1: security quick wins, 2026-06-12)
+
+- **H-01** — SQL allowlist em `_reset_domain_tables` previne wipe de tabela
+  fora do conjunto canônico (`engine/graph/builder.py`).
+- **H-02** — Cap de 10MB em `read_yaml` evita YAML bomb / anchor explosion
+  (`engine/utils/yaml_io.py`).
+- **H-04** — PRAGMA `foreign_keys = ON` em `finally` tolera erro de SQLite
+  sem mascarar a exception original (`engine/graph/builder.py`).
+- **H-06** — Path-traversal guard em `forge undo` delete-feature recusa
+  rmtree fora do project_root (`engine/undo.py`).
+- **H-07** — RNG de `mentor_calmo` isolado por call quando seed unset;
+  contrato determinístico de tests preservado (`engine/persona/mentor_calmo.py`).
+- **H-10 (parcial)** — Validação `project_root.is_dir()` antes do
+  subprocess de validators retorna `degraded` em vez de crashar
+  (`engine/verify.py`). Batch git-diff optimization fica deferred — ver
+  `docs/design/04-pending.md`.
+- **M-02** — Unknown task dep agora levanta `SystemExit` em
+  `_topo_sort` em vez de tratar silenciosamente como satisfeita
+  (`engine/implement.py`).
+- **M-04** — `feature_path` consolidado em `engine/utils/paths.py`;
+  `implement.py` agora encontra non-product features (refactor/spike/chore).
+- **M-07 + M-08** — `pathspec` substitui parser custom de `.gitignore`;
+  bracket classes, escapes, trailing space e `a/**/b` agora cobertos
+  corretamente (`engine/graph/builder.py`).
+- **M-09** — `validators/check_no_invented_behavior.py` reusa
+  `git_staged_files` de `validators/_diff.py` (rename detection -M80%
+  agora disponível).
+- **M-12** — Ignore patterns em `check_secrets` âncoram em `^` —
+  `src/tests/fixtures/secrets/...` não é mais false-positive ignored.
+
+### Added (Phase B — DET-6 multi-axis backend, 2026-06-11)
+
+- **Schema canônico multi-axis** — `docs/schemas/backend-axes.md` define
+  8 axes (`data`, `auth`, `observability`, `analytics`, `storage`,
+  `persistence`, `notifications`, `flags`) cada um produzindo
+  `Map[axis][platform] → Cell | null`. Cell shape: `{card, status,
+  migrating-to?}`. Validação enforçada via RULE-019..024 em
+  `validate_workflow_config.py`. Refs: commits `c60eeb1` + `26c0822`
+  (W1 foundation) + waves W5-W7 que consomem o schema.
+- **6 cards novos** cobrindo 3 axes novos: `firebase-analytics`,
+  `posthog-analytics` (axis analytics); `fcm`, `onesignal` (axis
+  notifications); `firebase-remote-config`, `posthog-flags` (axis flags).
+  Cada card com `card.yaml` + `detection/signals.yaml` + README +
+  template stub. Refs: W4.1-W4.6.
+- **Card sqldelight** — KMP-native persistence axis pra kmp platform.
+  Pareia com `room-database` (android-only). Fecha gap W6 onde
+  `firebase-full.yaml` referenciava card ainda inexistente.
+- **4 starter bundles** em `presets/kmp-mobile/bundles/`:
+  `firebase-full`, `rest-with-firebase-telemetry`, `local-only`, +
+  sentinela `custom-from-scratch` (sem YAML — pula bundle, prompta cada
+  axis). Substituem o bloco `backend-candidates:` monolítico.
+- **Detection composer** — `engine/detection/composer.py` com
+  `compose_backend_axes(project_root, active_cards) ->
+  dict[axis][platform] -> Cell | Conflict | None`. Reusa
+  `_eval_detection_signals` + `_eval_gradle_dep` de `engine/init.py`.
+  Conflict.candidates ordenado determinísticamente por card_id. Refs:
+  W5.1 + W5.2 + W5-fix.
+- **AskUserQuestion-fronted init flow** (consumer da Phase A intent
+  protocol):
+  - `_handle_backend_multi_axis_brownfield` (`engine/init.py`):
+    composer-driven, 3-caminhos confirm/adjust/scratch.
+  - `_handle_backend_multi_axis_greenfield` (`engine/init.py`): bundle
+    picker (4 opções) → opt override → per-axis prompts.
+  - `_handle_backend_axes_submenu` (`engine/reconfigure.py`): tabela
+    current 8 axes × N platforms, multiSelect cells, per-cell prompts
+    (null/card/status/migrating-to) com validation enforçada.
+- **Validator novo** — `validate_presets.py` cobre schema dos bundle
+  YAMLs (axes válidos, platforms válidos, card references existentes).
+  16 tests TDD. Refs: W6.3.
+- **3 adapters em init.py** — `_composer_result_to_cells`,
+  `_bundle_to_cells`, `_summarize_backend_cells` convertem handler
+  returns pra workflow-config cell structure. Refs: W7.1+W7.2.
+
+### Changed (Phase B — DET-6, 2026-06-11)
+
+- **identity.category cleanup** — 9 cards migrados de `category: backend`
+  ou `category: network` pros 8 axes canônicos. `firebase-auth` →
+  `auth`; `auth-jwt-bearer` → `auth`; `firebase-storage` → `storage`;
+  `firestore-persistence` → `data`; `firestore-realtime` → `data` (sub-
+  axis "realtime" follow-up); `firestore-security-rules` → `data`
+  (sub-axis "rules" follow-up); `rest-api-contract` → `data` (sub-axis
+  "data-contract" follow-up); `retrofit-client` → `data`; `ktor-client`
+  → `data`. CARD-004 enum em `engine/cards/loader.py` ampliado.
+  Refs: W2.
+- **Label refactor** — labels singulares `auth-provider`, `http-client`,
+  `crash-reporting` removidos de `cards/*/card.yaml § provides`.
+  Cardinalidade enforçada pelo cell shape (1 card per cell). Refs: W3.
+- **Card rename** — `cards/crashlytics/` → `cards/firebase-crashlytics/`
+  (paridade com `firebase-auth`, `firebase-analytics`, etc.). 25
+  arquivos atualizados (incluindo 12 consumers cross-card via grep
+  canary). YAML field name `crashlytics:` em contratos analytics
+  mantém-se (concept independente).
+- **`docs/schemas/card.md`** — CARD-004 enum revisado: `+ analytics`,
+  `+ notifications`, `+ flags`; `- backend`, `- network` (granularidade
+  backend-axes substitui o blob monolítico). Novo campo opcional
+  `identity.platforms` + CARD-022 (platforms enum dentro do conjunto
+  canônico; ID alocado pós-rebase contra `main` que já consumia
+  CARD-020/021 pra DET-3). Adicionada seção "Backend axes — when
+  identity.category is an axis" cross-referenciando `backend-axes.md`.
+  Open-detail anchors preservados.
+- **`docs/schemas/workflow-config.md`** — bloco `backend:` reescrito
+  para shape multi-axis `backend.<axis>.<platform>` → cell|null.
+  Removidos `identity.backend-choice` (legacy single-pick) e
+  `backend.provider` string monolítico + sub-blocos provider-específicos.
+  Slots RULE-010 e RULE-011 ficam reservados como audit-trail dos
+  campos legacy + cross-ref pra RULE-019..024 (autoridade em
+  `backend-axes.md`); sub-IDs alfanuméricos eliminados. Top-level
+  table sincronizada.
+- **CARD-022 renumber** — schema rule pra `identity.platforms` (W1)
+  realocada de CARD-020 pra CARD-022 devido à colisão com DET-3
+  (CARD-020/021 já alocados pra gradle-dep). Audit-trail em
+  `docs/schemas/card.md`.
+
+### Removed (Phase B — DET-6, 2026-06-11)
+
+- `backend-candidates:` bloco completo em `presets/kmp-mobile/preset.yaml`
+  (substituído por `bundles-dir` + `bundle-options` sentinela). Refs:
+  W6.2.
+- `identity.backend-choice` field em workflow-config.yaml. ConfiguratorCheckpoint
+  `backend_choice` field idem. 15 referências removidas de
+  `engine/init.py`. Refs: W7.4.
+- `_build_backend` function legacy em `engine/init.py` (mapeava
+  `backend_choice → backend.provider` enum). Substituída por adapters.
+  Refs: W7.4.
+- `_handle_backend` legacy em `engine/reconfigure.py` (handler antigo do
+  submenu backend). Substituído por `_handle_backend_axes_submenu`.
+  Refs: W7.3.
+- Labels singulares `auth-provider`, `http-client`, `crash-reporting`
+  de `provides`. Cardinalidade enforçada pelo schema. Refs: W3.
+
+### Added (Phase B — DET-6 polish, 2026-06-12)
+
+- **Test discipline gap fechado** — `tests/unit/test_validators_workflow_config.py`
+  ganhou 8 tests positive/negative individuais cobrindo RULE-019..024
+  (axis enum, platform check, card.card existence, status enum,
+  migrating-to consistency, migrating-to card existence). Closes M-003
+  do W7 cluster review.
+- **Validator agora aceita local cards** — `validate_workflow_config.py`
+  RULE-021 e RULE-024 reconhecem `.claude/cards/local/<name>/card.yaml`
+  além do snapshot dir canônico. Alinha com behavior do reconfigure
+  (Caminho B do M-001 W7 cluster review).
+- **E2E coverage forge init/reconfigure** — 3 e2e tests novos
+  (`test_e2e_brownfield_init.py`, `test_e2e_greenfield_init.py`,
+  `test_e2e_reconfigure_backend.py`) substituem stubs pre-W7. Helpers
+  compartilhados em `tests/e2e/conftest.py` (`_scaffold_minimal_project`,
+  `_run_forge`, `_drive_intent_loop`). Cobertura AC-6/AC-7/AC-8 end-to-end
+  no CLI level via subprocess + file-based intent protocol.
+- **Consumed-intent log (Phase A protocol)** — `engine/ui/intent_state.py`
+  ganhou `_log_path` + `_read_intent_log` + `_append_intent_log`.
+  `read_response` agora checa log primeiro pra cached response do
+  intent-id; faz handler re-entry idempotente entre subprocess
+  invocations (resolve W7.2 multi-intent re-invocation pitfall).
+  Schema documentado em `docs/schemas/intent-protocol.md §4`.
+
+### Changed (Phase B — DET-6 polish, 2026-06-12)
+
+- **`_SKIP_DIRS` semântica** — `engine/inventory/_walk_cache.py` +
+  `engine/init.py` agora comparam `path.relative_to(project_root).parts`
+  em vez de `path.parts` absoluto. Top-level `.claude/` continua
+  filtrado em project_root; `.claude/` como PARENT do project_root
+  (caso worktree) deixa de filtrar descendentes. Regression test em
+  `tests/unit/test__walk_cache_worktree.py`.
+- **`clear_intent_files` ganhou parâmetro `also_log`** — default `False`
+  preserva log (re-entry idempotency). Caller terminal (engine/cli.py
+  exit lifecycle) passa `also_log=True` para reset. SPEC §3 forensic
+  preservation preservada via função separada `clear_intent_log_only`.
+- **Microcopy stale removido** — `engine/init.py` gate RESOLVER-ERRORS
+  label "voltar e escolher outro backend-candidate" → "voltar e ajustar
+  a configuração de backend (composer/bundle)". Module docstring linhas
+  1-15 atualizada pra refletir composer-driven flow (W7.4) em vez de
+  legacy backend-candidate picker (Cena 6.5).
+- **Test fixture categoria stale** — `tests/integration/test_e2e_local_card_pilot.py`
+  linha 80 `category: "network"` → `category: "data"` (alinhamento tardio
+  com DET-6 W2 migration de cards/network → cards/data).
+
+### Fixed (Phase B — DET-6 polish, 2026-06-12)
+
+- **W7 cluster review findings** — 1 High (stale microcopy) + 4 Medium
+  (cross-validator asymmetry, type guard inconsistency, test discipline
+  gap, module docstring stale) + 3 Low (comment stale, uniform-detection
+  consolidation deferida, crashlytics filenames anotados). Detalhe em
+  `.planning/det-6/W7-cluster-review-r1.md`.
+- **`_SKIP_DIRS` worktree bug** — 2 tests que falhavam do worktree
+  agora passam (`test_eval_gradle_dep::test_ac6_file_content_preserved`
+  + `test_gradle_dep_card_activation::test_ac6_file_content_signal_still_active_alongside_gradle_dep`).
+- **Phase A multi-intent re-invocation pitfall** — handlers que emit
+  2+ intents agora sobrevivem subprocess re-invocations sem
+  `IntentMismatchError`.
+- **DET-6 W2 fixture cleanup tardio** — 2 tests
+  (`test_pilot_local_card_added_appears_in_cascade`,
+  `test_pilot_local_cards_manifest_written`) verdes pós-categoria fix.
+
+### Changed (PR #13 review Wave B — 2026-06-12)
+
+Refactors cross-module do review de PR #13 (DET-6 multi-axis backend).
+Quebram ciclos de import, consolidam constantes duplicadas e
+substituem duck-typing por isinstance dispatch:
+
+- **Ciclo composer↔init quebrado** (review #3405252850 + #3405253600 +
+  #3405256623) — `_eval_detection_signals` + helpers (`_glob_any`,
+  `_eval_gradle_dep`, `_load_toml_catalog`, `_module_matches_coordinate`,
+  `_scan_build_gradle_for_coordinate`, `_SKIP_DIRS`) movidos de
+  `engine/init.py` para novo `engine/detection/_eval.py` (módulo neutro
+  sem deps em init). Composer agora importa de `_eval` em vez de
+  `engine.init` — os dois `# noqa: PLC0415` lazy imports em init.py
+  removidos. `_normalize_cards_for_composer` mantido (refactor maior
+  fora do escopo). 7 arquivos de test ajustados pra novos imports.
+- **Shape guard no composer** (review #3405256439) — quando
+  `card.detection.signals` não é list, composer agora pula o card com
+  `logging.warning` em vez de silenciar via score=0 (que mascarava o
+  card mal-formado no card_index).
+- **`isinstance` em vez de `hasattr` pra Cell/Conflict** (review
+  #3405253823) — 5 sites em init.py
+  (`_detect_axis_uniformity`, `_render_axes_table` × 2,
+  `_collect_confirm_selection`, `_composer_result_to_cells`) trocam
+  duck-typing sobre `cell.candidates` por `isinstance(cell, Conflict)`
+  / `isinstance(cell, Cell)`. Contrato explícito vinculado aos types
+  importados do composer. Regression test paramétrico cobre os 5
+  helpers com instâncias reais.
+- **`BACKEND_AXES` shared** (review #3405254057) — tuple de 8 axes
+  consolidado em `engine/detection/_axes.py`; init.py e reconfigure.py
+  importam de lá. Antes, duas tuplas idênticas
+  (`_BACKEND_AXES` em init, `_BACKEND_AXES_RECONFIGURE` em reconfigure)
+  documentadas como "deliberate pra evitar ciclo" — ciclo nunca
+  existiu, duplicação era defensiva por hábito.
+- **`VALID_AXES` / `VALID_PLATFORMS` shared** (review #3405255016) —
+  3 constantes consolidadas em `validators/_common.py`:
+  `VALID_BACKEND_AXES`, `VALID_BUNDLE_PLATFORM_KEYS`,
+  `VALID_PROJECT_PLATFORMS`. Os dois sets antes-homônimos de "platforms"
+  agora têm nomes desambiguados (bundle slot keys × workflow active
+  platforms — conteúdos semanticamente diferentes). Validators
+  preservam aliases locais pra compat de tests/callers.
+
+### Added (PR #13 review Wave B — 2026-06-12)
+
+- **`engine/detection/_eval.py`** — módulo neutro pra signal evaluation.
+- **`engine/detection/_axes.py`** — fonte canônica de `BACKEND_AXES`.
+- **Cache `_log_cache` em `engine/ui/intent_state.py`** (review
+  #3405256063) — process-level cache evita re-parse O(n) do JSONL em
+  multi-intent handlers. `_append_intent_log` atualiza incrementalmente;
+  `clear_intent_files(also_log=True)` + `clear_intent_log_only`
+  invalidam pareado com delete on-disk. `_reset_log_cache` exposto como
+  escape hatch pra testes.
+- **`tests/unit/test_init_isinstance_cell_conflict.py`** — 9 regression
+  tests cobrindo isinstance dispatch nos 5 sites afetados.
+- **`tests/unit/test_intent_state_log_cache.py`** — 6 regression tests
+  cobrindo cache hit, append incremental, invalidations, reset, mutation
+  protection.
+
+Rapid lane pós-Wave B: 1321 passed (+15 vs Wave A baseline 1306) / 11
+skipped / 6 failures pré-existentes herdadas (cards_resolver_w3 × 4,
+test_run_empty_args, test_no_cards_returns_pass_or_warn — não tocadas
+nesta wave).
+
+### Fixed (PR #13 review Wave A — 2026-06-12)
+
+Remediação dos 7 fixes contidos do review de PR #13 (DET-6 multi-axis
+backend). Single-file, baixo risco, sem cross-cutting:
+
+- **`engine/cli.py` exit-cleanup refactor + observability** — substitui
+  flag mutável `clear_log_on_exit` por sentinela `paused_exc:
+  PausedForInputError | None` (review #3405256255); substitui bare
+  `except Exception: pass` por logged best-effort no stderr (review
+  #3405253379 + #3404131724). Mesma semântica, observabilidade ganhada.
+- **`engine/ui/intent_state.py::_append_intent_log`** — adiciona
+  `f.flush()` explícito após write pra honrar a docstring "JSONL append
+  + flush is the durability contract" (review #3405254528). Regression
+  test spies em `Path.open` confirma flush precede close.
+- **`validators/validate_presets.py`** — unifica imports em
+  `from validators._common`, remove o dual-branch `if __package__`
+  hack (review #3405254868). Script mode + package mode ambos
+  preservados via insert idempotente do project root em `sys.path`.
+- **`validators/validate_workflow_config.py` RULE-020 cascade guard** —
+  quando `platforms.active` está ausente/vazia/malformada, emite uma
+  única mensagem de guidance em vez de cascatear 1 violação RULE-020
+  por cell (review #3405255318). RULE-021..024 seguem rodando no
+  mesmo pass. Regression test garante "platform desconhecida" não
+  vaza no what-failed.
+- **`docs/design/04-pending.md`** — anota gap RULE-023/024 ciclo
+  `migrating-to` (review #3405255904) — detecção DFS 2-hop deferida
+  pra hardening dedicated; feature menor, baixo impacto runtime.
+
+### Changed (PR #13 review Wave A — 2026-06-12)
+
+- **`tests/unit/test_ui_intent_state.py`** — +1 regression test
+  (`test_append_intent_log_flushes_after_write`).
+- **`tests/unit/test_validators_workflow_config.py`** — +1 regression
+  test (`test_empty_platforms_active_emits_single_guidance_not_cascade`).
+
+Fix 4 do review (delegação `clear_intent_log_only` →
+`clear_intent_files(also_log=True)`) skipped: as semânticas divergem —
+`clear_intent_log_only` preserva pending/response (SPEC §3 forensic),
+`clear_intent_files(also_log=True)` apaga os três. Delegar mudaria
+behavior do finally em `cli.py`. Anotado pra triage Wave B caso o
+cleanup seja revisitado.
+
+### Fixed (PR #11 master-review remediação — 2026-06-11)
+
+Remediação completa dos 28 findings do master-review de PR #11
+(`/tmp/master-review-pr-11-drift1-REVIEW.md`) em 10 commits sobre o
+W6 doc-sync (`e992e01`). Cobertura: 3 Críticos + 7 Altos + 10 Médios +
+5 Baixos + 3 Sugestões — todos endereçados em Wave 1 + Wave 2. Rapid
+lane: 1199 passed / 11 skipped (sobe de 1151 → 1199 com +32 testes
+novos cobrindo race-detection threading, schema-version mismatch,
+EOFError no tty_bridge, dir fsync, chmod 0600, intent-id stability sob
+mesmo prompt em comandos distintos, etc.).
+
+Crítico:
+
+- **#1** (`engine/cli.py main()`) — captura `RaceDetectedError`,
+  `IntentMismatchError` e `JsonIOError` antes do exit 1. Mensagem
+  mentor-calmo de `RaceDetectedError` agora chega ao usuário em vez de
+  vazar como traceback (SPEC §3/§9). Commit `ad49c40`.
+- **#2** (`engine/ui/question.py`) — `_stable_intent_id` agora inclui
+  `command` + `command-args` no payload do hash. Dois `ask()`
+  textualmente idênticos em comandos distintos não colidem mais. Combina
+  com fix #11 (paths-detail) e #18 (confirm signature). Commit `2c49d0f`.
+- **#3** (`bin/forge`) — implementa `FORGE_FORCE_TTY_MODE` (paridade com
+  CHANGELOG/SPEC §7). Drift CHANGELOG↔impl fechado. Commit `cd6d616`.
+
+Alto:
+
+- **#4** (`engine/ui/intent_state.py`) — `read_response` valida
+  `schema-version == 1` antes do intent-id check; nova exceção
+  `SchemaVersionMismatchError` raise quando diverge. Future v2 deixa de
+  consumir v1 silenciosamente. Commit `8eeff89`.
+- **#5** (`engine/utils/checkpoint_io.py` + `engine/utils/iso.py` novos)
+  — helper compartilhado consolida 30 funções (`_save_*_checkpoint`,
+  `_load_*_checkpoint`, `_clear_*_checkpoint` × 10 module handlers) +
+  10 cópias de `_utc_now_iso_<module>`. Shim de 1-linha por módulo
+  preserva API pública dos tests; alvo de remoção registrado em
+  FU-DRIFT-1-CHECKPOINT-CONSOLIDATE. Fecha Mandamento #3. Commit
+  `916a062`.
+- **#6** (`engine/ui/tty_bridge.py`) — `_prompt_user_via_stdin` captura
+  `EOFError` (Ctrl+D, pipe quebrado) e roteia para mesmo path de cancel
+  do `KeyboardInterrupt` (exit 130). Commit `6a00e1e`.
+- **#7** (`engine/utils/json_io.py`) — `write_json` aplica
+  `os.chmod(path, 0o600)` após `os.replace`. Pending/response files
+  deixam de ser world-readable em sistemas POSIX multi-tenant. Commit
+  `7d965c6`.
+- **#8** (`engine/ui/question.py`) — `_stable_intent_id` promovida a
+  `stable_intent_id` (símbolo público) com alias deprecated preservando
+  os 13 callsites de produção sem breakage. Alvo de remoção em
+  FU-DRIFT-1-DEPRECATE-INTENT-ID-ALIAS. Commit `916a062`.
+- **#9** (concurrency coverage) — teste threading (5 workers via
+  `threading.Barrier`) em `tests/integration/test_intent_state_concurrency.py`
+  documenta TOCTOU window declarada no SPEC §9 e valida que pelo menos
+  4 dos 5 saem com erro determinístico. Lock real via `fcntl.flock`
+  registrado em FU-DRIFT-1-LOCK. Commit `626a4f0`.
+- **#10** (`engine/utils/json_io.py`) — dir fsync POSIX após
+  `os.replace` (open `path.parent` com `O_RDONLY` + `os.fsync`, skip em
+  Windows). Atomic rename agora resiste a power-loss real. Commit
+  `7d965c6`.
+
+Médio:
+
+- **#11** (`engine/ui/question.py`) — `paths-detail` entra no `extra`
+  mapping do `_stable_intent_id` (ask_three_paths). Dois prompts com
+  mesmo gate_name + labels mas motives diferentes não trocam mais
+  responses. Commit `2c49d0f`.
+- **#12** (`engine/ui/question.py`) — `_command_context()` normaliza
+  fallback: quando `head` matches `r'.*\.py$'` ou `__main__`, retorna
+  `("unknown", [])` em vez de "cli.py"/"__main__.py" como nome de
+  comando. Commit `2c49d0f`.
+- **#13** (`engine/ui/tty_bridge.py`) — `_build_response_value` para
+  `kind=confirm` faz re-prompt loop (até 3 tentativas) em tokens
+  inválidos antes de propagar erro. Usuário que digita "talvez"
+  recebe orientação clara em vez de exit 1 críptico. Commit `6a00e1e`.
+- **#14** (`engine/ui/tty_bridge.py`) — env var dead `FORGE_INTERNAL_TTY_BRIDGE`
+  removida do subprocess env. Observability channel registrado em
+  FU-DRIFT-1-OBS pra emergir quando log infrastructure aparecer. Commit
+  `6a00e1e`.
+- **#15** (SPEC + plan) — search-replace `CLAUDE_CODE_HOST` →
+  `CLAUDECODE` em `docs/superpowers/specs/drift-1-intent-protocol.md`
+  + `docs/superpowers/plans/drift-1-intent-protocol.md` com nota de
+  rodapé "renomeado em W4-FU após verificação empírica vs Claude Code
+  2.1.153". Commit `d999ced`.
+- **#16** (`docs/schemas/intent-protocol.md`) — nova seção
+  `## Schema evolution policy` explicita (a) bump em breaking; (b)
+  reader rejeita versões desconhecidas; (c) engine + host co-bumpam;
+  (d) sem v0. Commit `d999ced`.
+- **#17** (`engine/ui/intent_state.py`) — `_parse_created_at` /
+  `detect_race` toleram clock skew até 60s. Negative `age_seconds` >
+  60s (clock inválido) trata como stale → sweep; <=60s trata como
+  recém-criado. Commit `8eeff89`.
+- **#18** (SPEC + question.py) — exemplo de `confirm` no SPEC §2.1
+  passa a `allow-pause: true` alinhando com impl real;
+  `tests/unit/test_ui_question_api_signatures.py` ganha regression test
+  travando a signature pra evitar drift futuro. Commits `d999ced` +
+  `2c49d0f`.
+- **#19** (concurrency test) — implementado em commit `626a4f0` (ver
+  finding #9 acima). Cobre o gap declarado no SPEC §9.
+- **#20** (`docs/design/06-command-surface.md`) — seção Exit codes ganha
+  nota explícita distinguindo as 2 rotas pra 130: (a) `KeyboardInterrupt`
+  em TTY mode; (b) host response `cancelled: true` em intent mode.
+  Caller pode tratar identicamente. Commit `d999ced`.
+
+Baixo:
+
+- **#21** — `_utc_now_iso_*` consolidado em `engine.utils.iso.utc_now_iso`
+  (10 cópias → 1 helper canônico). Commit `916a062`. Nota: `engine/verify.py`
+  mantém `_utc_now_iso` local com microseconds (semantically distinto
+  do shared helper que trunca pra seconds) — migração registrada em
+  FU-DRIFT-1-VERIFY-ISO.
+- **#22** (`engine/ui/intent_state.py`) — `RaceDetectedError` ganha
+  bloco 3-caminhos canônico (Mandamento #5 + Discipline §1): (a)
+  aguarda outro processo; (b) `rm .claude/state/forge-pending.json` se
+  sessão anterior travou; (c) `forge undo` se conflito de feature
+  paralela. Combina com fix #1 (mensagem agora chega ao usuário).
+  Commit `8eeff89`.
+- **#23** (`engine/ui/question.py`) — stub `_read_line` que raise
+  `NotImplementedError` removido. Substituído por comentário apontando
+  pra `engine.ui.tty_bridge` como home canônica de stdin reading.
+  Commit `2c49d0f`.
+- **#24** (`tests/integration/test_intent_protocol_e2e.py`) —
+  `test_race_detection_rejects_stale_concurrent` usa stale_id literal
+  determinístico (`"deadbeef-0000-0000-0000-000000000000"`) em vez de
+  `uuid.uuid4()`. Assertion adicional confirma que difere do engine
+  determinístico. Commit `626a4f0`.
+- **#25** (`tests/e2e/test_tty_bridge_e2e.py`) —
+  `pytest.skip(allow_module_level=True)` no topo quando
+  `sys.platform == "win32"`. Evita silently-passing-zero-assertions em
+  Windows CI. Commit `626a4f0`.
+
+Sugestão:
+
+- **#26** (`engine/ui/intent_state.py`) — `detect_race` catch genérico
+  trocado por `(JsonIOError, OSError)` específicos. Programming errors
+  propagam em vez de ficar escondidos. Commit `8eeff89`.
+- **#27** (`engine/ui/exit_codes.py` novo) — consolida constantes
+  `EXIT_OK=0`, `EXIT_ERROR=1`, `EXIT_PAUSED=2`, `EXIT_CANCELLED=130`
+  importadas por `engine/cli.py` e `engine/ui/tty_bridge.py`. Evita
+  drift de duplicação local. Commit `3071fe9`.
+- **#28** (`bin/forge`) — `FORGE_VERSION` dinâmico via
+  `engine.__version__` (custo +20-50ms cold start aceito). Drift do
+  hardcoded "1.0.0" fechado. Commit `cd6d616`.
+
+Follow-up pós-master-review (2026-06-11):
+
+- `engine/init.py`: `_load_checkpoint` agora valida `isinstance(data, dict)` e retorna `None` em YAML corrompido. Master-review threads #3396896063 + #3396903793 (`[Critico]`). Alinha com pattern dos 9 outros checkpoint-loaders. (commit `6dd40af`)
+
+### Changed (PR #11 master-review remediação)
+
+- State files (`.claude/state/forge-pending.json`,
+  `.claude/state/forge-response.json`) escritos com mode `0o600` por
+  default via `engine/utils/json_io.py::write_json`. Hardening de
+  permissões aplicado em sistemas POSIX (Windows ignora silenciosamente).
+- `engine.ui.question.stable_intent_id` agora é símbolo público; alias
+  deprecated `_stable_intent_id = stable_intent_id` preservado pra
+  compat dos 13 production callsites + 4 test modules. Remoção
+  registrada em FU-DRIFT-1-DEPRECATE-INTENT-ID-ALIAS, target v1.3.
+
+
+### Added (Phase A — DRIFT-1 intent protocol close, 2026-06-10)
+
+Fechamento da Phase A em 6 commits W3-W6 sobre a base W2 (range total
+`1b1d289..50203f3`, 21 commits). Engine deixa de ler stdin diretamente;
+intent JSON emitido em `.claude/state/forge-pending.json`, response
+consumida de `.claude/state/forge-response.json`, exit code 2 sinaliza
+pausa pro host (Claude Code OR `tty_bridge` em fallback). AC-1..AC-9
+verificados em integration + e2e pty.
+
+- `engine/ui/tty_bridge.py` (W3.T1) — loop subprocess pra fallback TTY
+  fora de contexto Claude Code. Lê pending, prompta no stdin com
+  helpers per `kind`, escreve response via `intent_state.write_response`
+  e re-invoca o subcomando até exit 0/1/130. Estende
+  `engine/ui/intent_state.py` com `read_pending` + `write_response`.
+- `bin/forge` dispatcher (W4.T1+W4-FU) — detecta TTY via `[[ -t 0 ]]`
+  e contexto Claude Code via env var `CLAUDECODE` (verificado
+  empiricamente vs Claude Code 2.1.153). Roteia entre intent mode
+  (host loop) e tty_bridge fallback; overrides `FORGE_FORCE_INTENT_MODE`
+  / `FORGE_FORCE_TTY_MODE` pra teste. Hooks audit (W4.T2) não exigiu
+  patches — invocações existentes continuam funcionando.
+- 15 integration tests
+  (`tests/integration/test_intent_protocol_e2e.py`,
+  `tests/integration/test_callsites_smoke.py`) + 3 e2e pty tests
+  (`tests/e2e/test_tty_bridge_e2e.py`) cobrindo AC-1..AC-9 (W5.T1+T3+T4
+  + W5.T2). Integration lane: 119 collected. E2E lane: 17 collected.
+- Exit code 2 (paused-for-input) documentado em
+  `docs/design/06-command-surface.md` (seção `## Exit codes` nova) —
+  ladder completa 0/1/2/130 vinculada ao SPEC §4.
+
+### Changed (Phase A — DRIFT-1 close)
+
+- `docs/design/06-command-surface.md` ganha seção `## Exit codes`
+  formalizando o contrato 0/1/2/130. Load-bearing edit justificado por
+  Mandamento #6 (doc-sync): exit code contract mudou (adicionado 2).
+- `.claude/rules/subagent-workflow.md` ganha subseção
+  `## Quando subagent invoca \`forge\`` esclarecendo que exit 2 é
+  contrato (não erro) e responsabilidade do orquestrador, não do
+  subagente sozinho. Load-bearing edit justificado por Mandamento #6
+  — protocolo afeta workflow de dispatch.
+- README + handoff atualizados pra refletir 21 commits de Phase A na
+  branch `feat/drift-1-intent-protocol`. Test count: rapid lane 1151
+  passed / 11 skipped preservada (1162 collected pós-W5);
+  integration 119; e2e 17; total 1298.
+
+### Added (Phase A W2 — DRIFT-1 intent protocol chokepoint refactor, 2026-06-10)
+
+Phase A W2 entrega o refactor do chokepoint (`engine/ui/question.py`) + integração de checkpoint em todos os 10 subcommands. 15 commits acumulados sobre o foundation W1 (commit `1b1d289`). Outcome C "init-pattern" locked em W2.T0: per-subcommand dataclass + 3 helpers + handler wiring; sem promoção a shared module enquanto pattern não se repetir 3+x.
+
+- Três sentinels exportadas de `engine/ui/question.py`: `PausedForInputError` (intent emitido, host deve sair com exit 2), `UserCancelledError` (response com `cancelled: true` mapeia exit 130 + Ctrl+C path) e `UserPausedError` (alias direcional pra futuro tty_bridge). `PromptAbortedError` legado preservado como re-export pra back-compat.
+- 10 per-subcommand checkpoint dataclasses, cada uma com 3 helpers (`_save_*`, `_load_*`, `_clear_*`) + `_*_checkpoint_path` resolver: `_InitCheckpoint`, `_PlanCheckpoint`, `_ImplementCheckpoint`, `_VerifyCheckpoint`, `_ReconfigureCheckpoint`, `_EvolveCheckpoint`, `_UndoCheckpoint`, `_MemoryCliCheckpoint`, `_GraphCliCheckpoint`, `_DoctorCheckpoint`. Cobertura per checkpoint-audit.json: 8 add-new + 2 extend (init e evolve já tinham checkpoints próprios; ganharam campo `intent_id` aditivo).
+- 10 novos arquivos de teste em `tests/unit/test_engine_*_resume.py` cobrindo save → exit 2 → re-invoke → consume → resume. Rapid lane: 1046 → 1114 passed (+68 tests; 11 skipped agregam migrações legadas do stdin).
+- Campo `paths-detail` no payload de `ask_three_paths` intent — host renderiza o bloco 3-caminhos completo (motive de cada caminho preservado na serialização). Fecha REVIEW CR-003.
+- Schema canônico `docs/schemas/intent-protocol.md` atualizado em W2.T1+T2 (paths-detail, hash de validator_hint, contextvar argv).
+- `.planning/drift-1/checkpoint-audit.json` (W2.T3a artifact) — classifica os 10 módulos antes da integração + serve de referência pros commits T3b PART A/B/C.
+
+### Changed (Phase A W2 — chokepoint refactor)
+
+- `engine/ui/question.py` migrado de stdin reader pra intent emitter. As 5 funções públicas (`ask`, `ask_three_paths`, `ask_yes_no`, `ask_text`, `ask_number`) preservam API surface bit-a-bit; internamente emitem intent via `intent_state` + `json_io` e levantam sentinel apropriada em vez de bloquear leitura. Hosts não-Claude-Code chamando essas funções recebem exceção em vez de prompt — comportamento documentado no SPEC §1.
+- `engine/cli.py::main()` ganhou ramos exit 2 (Paused*) + exit 130 (UserCancelledError) antes do `except KeyboardInterrupt`. Ladder de exit codes documentada em SPEC §4. Argv capturado via contextvar pra re-invocação determinística pelo host.
+- `engine/init.py` e `engine/evolve.py` — checkpoints existentes estendidos com campo `intent_id` aditivo (sem quebrar payloads em disco de sessões pré-W2; `intent_id=None` é fallback aceito).
+- Forensic preservation honrado: invalid responses (schema fail / value fora de options) NÃO chamam `_clear_state()` antes do raise — state files permanecem em disco como pista pro host (SPEC §3 + REVIEW CR-002 fix).
+- SPEC `docs/superpowers/specs/drift-1-intent-protocol.md` §2.1, §4, §5 (tabela final 10/10), §8 e AC-5 atualizados inline ao longo dos 15 commits — fonte de verdade do contrato.
+
+### Added (DET-3 gradle-dep signal type, 2026-06-10)
+
+- Signal type `gradle-dep` em `engine/init.py:_eval_detection_signals` — abstrai presença de coordenada Maven em catálogo `gradle/*.versions.toml` (TOML moderno, formato `module = "<group>:<artifact>"` e `group + name` split) OU em `**/build.gradle*` (legado). Card declara `type: gradle-dep` + `coordinate: <group>:<artifact>`; engine resolve onde procurar. Resolve DET-3 do pilot v1.2-dev 2026-06-10 (scanner cego pra libs.versions.toml). Helper privado `_eval_gradle_dep(project_root, coordinate)` ao lado de `_glob_any`, com curto-circuito no primeiro match e try/except silencioso pra TOML mal-formado. Plan: `docs/superpowers/plans/det-3-gradle-dep-signal.md`.
+- Regra de validação CARD-020 em `engine/cards/loader.py` — `detection.signals[*].coordinate` (quando `type=gradle-dep`) deve ser `<group>:<artifact>`, sem versão sufixada, sem espaços. (ID alocado como CARD-020 porque CARD-019 já é usado por `legacy-marker`; SPEC §AC-8 autorizou "CARD-019 ou next free".)
 
 ### Changed
 
+- 9 signals em 8 cards canônicos migrados de `file-content` em `**/build.gradle*` pra `gradle-dep` (mesma coordenada, semântica mais ampla cobrindo catálogos modernos): crashlytics, firebase-auth (base + ktx), firebase-storage, firestore-persistence, firestore-realtime, koin-annotations, kotlinx-serialization-json, ktor-client (variante ktor-client-core). Confidence preservada em cada signal — CARD-016 sanity intacta. Audit determinístico em `.planning/det-3/migration-audit.json`.
+- Signals em `**/*.kt`, `**/Podfile*`, `**/Package.swift`, e prefixos de família (`androidx.compose`, `androidx.datastore`, `androidx.room`, `navigation3`, `kotlinx-serialization` sem `-json`, `io.ktor:ktor-client` sem suffix, plugin DSL `kotlin("multiplatform")`) preservados como `file-content` per SPEC §Migration policy. Backward compat de `file-content` integralmente mantida.
+- `docs/schemas/card.md` §"Signal types" lista `gradle-dep` com schema completo; nota explícita sobre o vapor `dependency` (declared no schema mas nunca implementado no avaliador) — cleanup separado tracked em `04-pending.md`.
 - Apresentação (`docs/presentation/feature-forge.html`) atualizada para v1.2-dev: 22 → 24 slides — adicionados slides de subtypes/bugfix e forge qa, slide verify enriquecido com os gates fortes (CC + secrets + no-behavior-change), status e roadmap reescritos (todas as fases shipadas, timeline v1.0→v1.2→autopilot). DESIGN.md sincronizado.
+
+### Documentation
+
+- v1.2-dev pilot 2026-06-10 capturado em `docs/design/04-pending.md` — 6 findings (DRIFT-1 conceitual primário, B1, B2, DET-3, DET-5, DET-6) + sequenciamento Phase 0 → Phase A (DRIFT-1) → Phase B (DET-6) decidido com user. UX/microcopy/persona findings do modo fallback CLI deferred até Phase A (engine emite intent estruturado pra Claude Code → strings deixam de ser responsabilidade do Python).
+- DET-3 (Phase 0) marcado ✅ resolvido em `04-pending.md`. Follow-ups não-bloqueantes registrados na mesma página: (1) cleanup do vapor `dependency`, (2) `signals.yaml` schema-version bump nos cards migrados.
 
 ### Changed (load-bearing)
 
 - Revisita decisão 30: sandbox isolation guard via sitecustomize.py (não PYTHONSTARTUP) — texto da Decisão atualizado pra refletir mecanismo real implementado em engine/qa/sandbox.py. Comportamento de isolamento idêntico; só o mecanismo nomeado mudou.
+
+### Fixed
+
+- Tighten CARD-020 whitespace validation to reject tab/newline in gradle-dep coordinate (M-001 from DET-3 code review; commit 475f695).
+
+### Fixed (PR #11 master-review remediação — DET-3, 2026-06-10)
+
+Wave 1+2 cobrindo 9 findings do master-review do PR #11 sobre o signal type `gradle-dep` (DET-3 / Phase 0). Severities variam de Alto (2) a Baixo (4); todos endereçados em 7 commits atômicos antes do merge.
+
+- **A-1 [alto] — ktor-client primary signal migrado** — `cards/ktor-client/{card.yaml,detection/signals.yaml}`: signal primário (confidence 0.5) migrou de `file-content` substring família (`io.ktor:ktor-client`) para `gradle-dep` exato `io.ktor:ktor-client-core`. SPEC §AC-1 ("fixture TOML-only → ktor-client retorna auto-activate") agora é exercido na realidade do card, não apenas pelo helper isolado. Commit `7847e5a`.
+- **A-2 [alto] — integration test cobre cards reais** — `tests/integration/test_gradle_dep_card_activation.py` (novo): carrega `cards/ktor-client/card.yaml` real e roda detection contra as 5 fixtures (`gradle-dep-{toml-only,toml-split,legacy,hybrid,negative}`), assertando score vs threshold. Sem este teste, A-1 cria falsa segurança permanente. Commit `a7d0947`.
+- **M-2 [médio] — CARD-021 rejeita `type: dependency`** — `engine/cards/loader.py` ganha CARD-021 que rejeita o tipo descontinuado no load time, em vez de silenciosamente ignorá-lo. Tabela canônica de Signal types em `docs/schemas/card.md` purga `dependency` da listagem ativa e move para sub-seção "Tipos descontinuados" com referência ao sucessor (`gradle-dep`). Commit `3e4cc65`.
+- **M-3 [médio] — branch defensivo morto removido** — `engine/init.py`: removido `if tomllib is not None:` que contradizia o invariante `requires-python >=3.11` (tomllib é stdlib desde 3.11). Captura FU-4 (cosmética post-review). Commits `2e13e3a` + `680a59b`.
+- **M-4 [médio] — `forge doctor` warn pra catálogo fora de `gradle/`** — `engine/doctor.py` ganha check que avisa quando `**/libs.versions.toml` existe fora de `<root>/gradle/` (composite builds, `buildSrc/`). Scope preservado conforme SPEC §Non-Goals; warning ajuda diagnóstico sem expandir scanner. Commit `b2749dc`.
+- **M-5 [médio] — comments filtrados em build.gradle** — `engine/init.py`: substring match no fallback build.gradle agora strippa comments Groovy/KTS (`//` line-comments + `/* */` block-comments) antes do match. Falso-positivo `// io.ktor:ktor-client-core retirado em 2024` não retorna mais True. Commit `680a59b`.
+- **B-1 [baixo] — `_load_toml_catalog` cached** — `engine/init.py`: helper de parse decorado com `@functools.lru_cache(maxsize=None)` evita re-parse do mesmo `libs.versions.toml` quando N signals do mesmo card consultam. Cache key por `project_root` resolvido. Commit `680a59b`.
+- **B-2 [baixo] — TOML `module` com version-suffix** — `engine/init.py`: match tolera `module = "group:artifact:version"` no TOML batendo coordinate `group:artifact` (formato inválido mas observado no wild). Match exato preservado para shape canônico; prefix-aware só para o caso version-suffix. Commit `680a59b`.
+- **B-3 [baixo] — helper `parse_gradle_coordinate` extraído** — `engine/cards/_signal_shapes.py` (novo): `parse_gradle_coordinate(coord) -> tuple[group, artifact] | None` consolidado e reusado por CARD-020 (loader) + `_eval_gradle_dep` (init). Elimina drift de validação cross-módulo e prepara reuso pra futuros `pod-dep` / `npm-dep` / `swift-dep`. Commit `4a6a42d`.
+
+### Added (PR #11 master-review — DET-3 edge case coverage, 2026-06-10)
+
+- **S-1 cobertura de testes** — `tests/unit/test_eval_gradle_dep.py` ganha 5 edge cases: (1) BOM UTF-8 no `libs.versions.toml` silenciosamente pulado (tomllib stdlib rejeita BOM por aderir à TOML 1.0; helper engole `TOMLDecodeError` → catálogo invisível — comportamento documentado, surfaced como FU-MR-3); (2) block-table form (`[libraries.ktor-client-core]`) com chaves `module`/`group+name` split; (3) build.gradle com coordenada misturada em comentários + linha real (cobre M-5 fix); (4) variant `-ktx` em TOML-only com coordenada base — confirma assimetria documentada (FU-MR-1 trade-off); (5) catálogo customizado em path não-canônico (`dependencies.toml` fora de `gradle/`) — exercita SPEC §Non-Goals. Commit `e6305df`.
+
+### Changed (PR #11 master-review — DET-3 assimetria documentada, 2026-06-10)
+
+- **M-1 [médio] — Assimetria TOML-exact vs build.gradle-substring documentada** — Decisão deliberada do master-review (Caminho A): o signal `gradle-dep` faz match EXATO `group:artifact` no passo TOML (`libs.versions.toml`) e SUBSTRING no passo build.gradle (`**/build.gradle*`). Consequência observável: cards declarando coordenada base (ex.: `com.google.firebase:firebase-storage`) NÃO detectam variantes sufixadas (ex.: `-ktx`) em projetos TOML-only puros — variante seria invisível por igualdade exata. Cards devem declarar coordenadas explícitas pra cada variante quando relevante. Documentado em `docs/schemas/card.md` §Signal types nova nota de assimetria; follow-up FU-MR-1 captura trigger pro schema-version bump quando demanda do oposto (`match: prefix` opcional) emergir. Commit `c1db782`.
 
 ### Fixed (QA-11 ultra-review remediação — PR #9, 2026-06-09)
 

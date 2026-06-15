@@ -8,7 +8,7 @@ Preset base para projetos Android + iOS + KMP. **Apenas stack** — backend, per
 
 Em projetos reais, o backend varia: Firebase, REST com Retrofit/Ktor, GraphQL, ou mix híbrido. Forçar um backend canônico no preset enviesa a UX e exige fresh init pra mudar. Solução: preset base inclui só a stack universal (linguagem, KMP, UI, navegação, DI, bridge) e o usuário escolhe backend via cards independentes.
 
-A combinação Firebase ainda é suportada — basta ativar os cards `firebase-auth`, `firestore-persistence`, `firestore-realtime`, `firestore-security-rules`, `firebase-storage`, `crashlytics`. A diferença é que isso virou **escolha** em vez de **default**.
+A combinação Firebase ainda é suportada — basta ativar os cards `firebase-auth`, `firestore-persistence`, `firestore-realtime`, `firestore-security-rules`, `firebase-storage`, `firebase-crashlytics`. A diferença é que isso virou **escolha** em vez de **default**.
 
 ## Target stack
 
@@ -45,7 +45,7 @@ Cards do preset usam estas labels em `requires:`, mas elas vêm do ambiente, nã
 `forge init` detecta o stack real e oferece estes combos canônicos:
 
 ### Stack Firebase (`backend-candidates.firebase-stack`)
-- `firebase-auth` + `firestore-persistence` + `firestore-realtime` + `firestore-security-rules` + `firebase-storage` + `crashlytics`
+- `firebase-auth` + `firestore-persistence` + `firestore-realtime` + `firestore-security-rules` + `firebase-storage` + `firebase-crashlytics`
 - **Detection hint:** `google-services.json` + `GoogleService-Info.plist` presentes
 - Exemplo real: MeoBonsai
 
@@ -56,7 +56,7 @@ Cards do preset usam estas labels em `requires:`, mas elas vêm do ambiente, nã
 - Persistência local: Room (entidades) + DataStore (prefs)
 
 ### Stack híbrida (`backend-candidates.hybrid-firebase-auth-rest-data`)
-- `firebase-auth` (identity) + `ktor-client` + `rest-api-contract` + `kotlinx-serialization-json` + `room-database` + `crashlytics`
+- `firebase-auth` (identity) + `ktor-client` + `rest-api-contract` + `kotlinx-serialization-json` + `room-database` + `firebase-crashlytics`
 - **Detection hint:** `google-services.json` + `ktor-client` deps
 - Cenário comum: Firebase Auth pelo SDK enterprise + dados via API REST própria
 

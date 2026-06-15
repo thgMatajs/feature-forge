@@ -30,11 +30,11 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any
 
 from engine._sandbox.env import build_safe_env
+from engine.memory import MemoryError as MemoryStoreError  # WR-02: avoid shadowing the CPython builtin OOM `MemoryError` (engine.memory.MemoryError is a domain subclass of Exception, NOT BaseException).
 from engine.memory.l1 import (
     L1State,
     list_active_features,
@@ -47,12 +47,19 @@ from engine.ui.question import PromptAbortedError
 from engine.utils.paths import (
     ProjectRootNotFoundError,
     cards_dir,
+    claude_dir,
     ensure_dir,
     find_project_root,
     memory_dir,
     workflow_config_path,
 )
-from engine.utils.yaml_io import read_yaml_or_default
+from engine.utils.yaml_io import read_yaml_or_default, write_yaml
+from engine.utils.checkpoint_io import (
+    clear_checkpoint as _clear_checkpoint_io,
+    load_yaml_checkpoint as _load_yaml_checkpoint_io,
+    save_yaml_checkpoint as _save_yaml_checkpoint_io,
+)
+from engine.utils.iso import utc_now_iso
 
 _DEFAULT_RUNS_ON = "verify-task"
 
@@ -82,6 +89,82 @@ class _ValidatorResult:
     what_failed: str = ""
     where: str = ""
     why: list[str] = field(default_factory=list)
+
+
+# ── Checkpoint (DRIFT-1 W2.T3b — intent-resume, outcome C) ───────────────────
+#
+# Per the T3a audit (action="add-new", reuse_path="init-pattern"), verify
+# needs a minimal checkpoint so the host can pause at the scope
+# disambiguation ask and re-invoke cleanly. Mirrors ``_InitCheckpoint``
+# at ``engine/init.py:100-108`` — per-subcommand dataclass, no import
+# from ``engine.qa.checkpoint`` (Decision 22 + outcome C lock-in).
+#
+# Verify has 2 interactive callsites — both ``question.ask`` em
+# ``_infer_active_feature`` (interactive scope resolution) e
+# ``_scope_to_feature_slug`` (run_scope multi-feature disambiguation).
+# Ambas disparam apenas quando ha multiplas features ativas; intent-
+# resume garante que a escolha sobrevive a re-invocacao.
+#
+# Refs:
+#   - docs/superpowers/specs/drift-1-intent-protocol.md §3, §5, §8
+#   - engine/init.py:100-108 (canonical template)
+
+
+@dataclass
+class _VerifyCheckpoint:
+    """State serialized before each ``question.ask`` call in ``verify.run``.
+
+    Carrega ``scope_kind`` + ``scope_target`` adicionais (alem de step,
+    at, project_root, intent_id) porque verify resolve esses dois antes
+    de chegar nos prompts ambiguos — preservar evita re-resolucao na
+    invocacao seguinte (e mantem auditoria do que ja foi inferido).
+    """
+
+    step: str
+    at: str
+    project_root: str
+    intent_id: str | None = None
+    scope_kind: str | None = None
+    scope_target: str | None = None
+
+
+def _verify_checkpoint_path(project_root: Path) -> Path:
+    return claude_dir(project_root) / ".verify-checkpoint.yaml"
+
+
+# Os helpers abaixo são thin shims sobre ``engine.utils.checkpoint_io`` —
+# consolidação dos 30 duplicates apontada pelos findings #5 e #21 do master
+# review do PR #11. Os nomes ``_save_verify_checkpoint`` etc. permanecem
+# como API privada do módulo para preservar os contracts dos testes em
+# ``tests/unit/test_engine_verify_resume.py`` (Mandamento #2 — verde).
+# L-03 (PR #remediation): ``_utc_now_iso_*`` shims removidos; callers
+# usam ``utc_now_iso`` direto de ``engine.utils.iso``.
+
+
+def _save_verify_checkpoint(cp: _VerifyCheckpoint) -> None:
+    """Persist the verify checkpoint atomically."""
+    _save_yaml_checkpoint_io(
+        _verify_checkpoint_path(Path(cp.project_root)),
+        {
+            "schema-version": 1,
+            "step": cp.step,
+            "at": cp.at,
+            "project-root": cp.project_root,
+            "intent-id": cp.intent_id,
+            "scope-kind": cp.scope_kind,
+            "scope-target": cp.scope_target,
+        },
+    )
+
+
+def _load_verify_checkpoint(project_root: Path) -> dict[str, Any] | None:
+    """Read the verify checkpoint, returning ``None`` when absent."""
+    return _load_yaml_checkpoint_io(_verify_checkpoint_path(project_root))
+
+
+def _clear_verify_checkpoint(project_root: Path) -> None:
+    """Remove the checkpoint — best-effort; silent on OSError (idempotent)."""
+    _clear_checkpoint_io(_verify_checkpoint_path(project_root))
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -117,7 +200,7 @@ def run(argv: list[str]) -> int:
     )
 
 
-def _extract_feature_slug_hint(argv: list[str]) -> Optional[str]:
+def _extract_feature_slug_hint(argv: list[str]) -> str | None:
     """Lê `--feature-slug X` (ou `--feature-slug=X`) de argv, sem mutar."""
     if not argv:
         return None
@@ -136,7 +219,7 @@ def run_scope(
     project_root: Path,
     *,
     interactive: bool = False,
-    feature_slug_hint: Optional[str] = None,
+    feature_slug_hint: str | None = None,
 ) -> int:
     """Public API for hook-driven verify invocations.
 
@@ -155,6 +238,20 @@ def run_scope(
     if scope_type not in ("task", "feature"):
         scope_type = "feature"
     scope_target = scope_id or ""
+
+    # A-009 (master review PR #15): se `project_root` não existe, `read_yaml_or_default`
+    # devolve `{}` silenciosamente e o cascade roda com config vazia, reportando
+    # "0 validators registered" em vez de avisar que o caminho é inválido.
+    # Espelha o guard já existente em `_run_validator`.
+    if not project_root.is_dir():
+        if interactive:
+            renderer.write(
+                renderer.colored(
+                    f"forge verify: project_root inexistente — {project_root}",
+                    "red",
+                )
+            )
+        return 1
 
     config = read_yaml_or_default(workflow_config_path(project_root), {}) or {}
 
@@ -177,21 +274,21 @@ def run_scope(
         interactive=interactive,
         argv_hint=feature_slug_hint,
     )
-    previous_state: Optional[L1State] = None
+    previous_state: L1State | None = None
     if feature_slug:
         previous_state = read_l1_status(feature_slug, project_root)
         if previous_state is not None and previous_state.status != "verifying":
             transient = L1State(
                 feature_slug=previous_state.feature_slug,
                 status="verifying",
-                last_action_at=_utc_now_iso(),
+                last_action_at=utc_now_iso(),
                 last_action_kind="verify-started",
                 phase_lock=previous_state.phase_lock,
                 raw=dict(previous_state.raw or {}),
             )
             try:
                 write_l1_status(transient, project_root)
-            except Exception:  # pragma: no cover - defensive
+            except (MemoryStoreError, OSError):  # pragma: no cover - defensive
                 previous_state = None  # don't try to restore an inconsistent state
 
     validators = _discover_validators(project_root, config, scope_type)
@@ -213,6 +310,8 @@ def run_scope(
             warnings_list=[],
         )
         _restore_l1_status(project_root, previous_state, failed=False, note="")
+        # DRIFT-1 W2.T3b — clear intent-resume checkpoint on clean completion.
+        _clear_verify_checkpoint(project_root)
         return 0
 
     fail_fast = _resolve_fail_fast(config)
@@ -250,17 +349,20 @@ def run_scope(
             failed=True,
             note=f"verify-failed: {hard_fail.name}",
         )
+        # DRIFT-1 W2.T3b — hard fail is a normal verdict (not invalid response),
+        # so clear the intent-resume checkpoint per ``_clear_state`` contract.
+        # SPEC §3 forensic preservation applies to invalid-response branches,
+        # not to validator hard fails.
+        _clear_verify_checkpoint(project_root)
         return 1
 
     _restore_l1_status(project_root, previous_state, failed=False, note="")
+    # DRIFT-1 W2.T3b — clear intent-resume checkpoint on clean completion.
+    _clear_verify_checkpoint(project_root)
     return 0
 
 
 # ── L1 + verify-log plumbing ────────────────────────────────────────────────
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _scope_to_feature_slug(
@@ -269,7 +371,7 @@ def _scope_to_feature_slug(
     project_root: Path,
     *,
     interactive: bool = True,
-    argv_hint: Optional[str] = None,
+    argv_hint: str | None = None,
 ) -> str:
     """Resolve the feature slug owning a verify scope.
 
@@ -314,6 +416,27 @@ def _scope_to_feature_slug(
     if interactive:
         try:
             options = {slug: f"feature ativa ({slug})" for slug in active}
+            # DRIFT-1 W2.T3b — persist checkpoint with the deterministic
+            # intent-id for this ask BEFORE invoking ``question.ask``.
+            _save_verify_checkpoint(
+                _VerifyCheckpoint(
+                    step="step-scope-disambiguation",
+                    at=utc_now_iso(),
+                    project_root=str(project_root),
+                    intent_id=question.stable_intent_id(
+                        "ask",
+                        "Múltiplas features ativas — qual escopo da verificação?",
+                        options,
+                        extra={
+                            "default": active[0],
+                            "min-selected": None,
+                            "validator-hint": None,
+                        },
+                    ),
+                    scope_kind=scope_type,
+                    scope_target=scope_target,
+                )
+            )
             return question.ask(
                 "Múltiplas features ativas — qual escopo da verificação?",
                 options,
@@ -336,7 +459,7 @@ def _scope_to_feature_slug(
 
 def _restore_l1_status(
     project_root: Path,
-    previous_state: Optional[L1State],
+    previous_state: L1State | None,
     *,
     failed: bool,
     note: str,
@@ -351,7 +474,7 @@ def _restore_l1_status(
             failing = L1State(
                 feature_slug=previous_state.feature_slug,
                 status=previous_state.status,
-                last_action_at=_utc_now_iso(),
+                last_action_at=utc_now_iso(),
                 last_action_kind="verify-failed",
                 phase_lock=previous_state.phase_lock,
                 raw=raw,
@@ -361,13 +484,13 @@ def _restore_l1_status(
         restored = L1State(
             feature_slug=previous_state.feature_slug,
             status=previous_state.status,
-            last_action_at=_utc_now_iso(),
+            last_action_at=utc_now_iso(),
             last_action_kind="verify-passed",
             phase_lock=previous_state.phase_lock,
             raw=dict(previous_state.raw or {}),
         )
         write_l1_status(restored, project_root)
-    except Exception:  # pragma: no cover - defensive
+    except (MemoryStoreError, OSError):  # pragma: no cover - defensive
         pass
 
 
@@ -389,7 +512,7 @@ def _write_verify_log_entry(
     """
     if not feature_slug:
         return
-    ts = _utc_now_iso()
+    ts = utc_now_iso()
     compact = ts.replace(":", "").replace("-", "").replace(".", "")
     entry = {
         "schema-version": 1,
@@ -458,6 +581,29 @@ def _infer_active_feature(project_root: Path, *, allow_prompt: bool) -> str:
     if not allow_prompt:
         return candidates[0]
     options = {slug: f"feature {slug}" for slug in candidates}
+    # DRIFT-1 W2.T3b — persist checkpoint with the deterministic intent-id
+    # for this ask BEFORE invoking ``question.ask``. On exit-2 + re-invoke,
+    # ``question.ask`` finds the matching ``forge-response.json`` and
+    # returns the value without re-prompting.
+    _save_verify_checkpoint(
+        _VerifyCheckpoint(
+            step="step-infer-active-feature",
+            at=utc_now_iso(),
+            project_root=str(project_root),
+            intent_id=question.stable_intent_id(
+                "ask",
+                "Mais de um feature ativo. Qual?",
+                options,
+                extra={
+                    "default": None,
+                    "min-selected": None,
+                    "validator-hint": None,
+                },
+            ),
+            scope_kind="feature",
+            scope_target=None,
+        )
+    )
     return question.ask("Mais de um feature ativo. Qual?", options)
 
 
@@ -625,6 +771,18 @@ def _invoke_validator(spec: _ValidatorSpec, project_root: Path) -> _ValidatorRes
             message=f"script not found: {spec.script_path}",
         )
 
+    # H-10: project_root must be a real directory before we hand it to
+    # subprocess as cwd. Caller-controlled path apontando pra arquivo /
+    # caminho inexistente vira NotADirectoryError opaco em subprocess.run
+    # (OSError branch abaixo) — checagem explicita produz mensagem
+    # auditavel e fecha o vetor cedo.
+    if not project_root.is_dir():
+        return _ValidatorResult(
+            name=spec.name,
+            status="degraded",
+            message=f"project_root is not a directory: {project_root}",
+        )
+
     started = time.monotonic()
     try:
         proc = subprocess.run(
@@ -682,7 +840,7 @@ def _invoke_validator(spec: _ValidatorSpec, project_root: Path) -> _ValidatorRes
     )
 
 
-def _extract_json_tail(stdout: str) -> Optional[dict]:
+def _extract_json_tail(stdout: str) -> dict | None:
     """Pull the last JSON object printed by the validator, if any."""
     stripped = stdout.strip()
     if not stripped:

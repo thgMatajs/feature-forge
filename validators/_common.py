@@ -26,6 +26,52 @@ from engine.utils.paths import (  # noqa: E402  — path bootstrap above is inte
 )
 
 
+# ── Backend axes / platforms — shared validator constants ───────────────────
+#
+# PR #13 review #3405255016. Antes, `VALID_AXES` (validate_presets) e
+# `_VALID_BACKEND_AXES` (validate_workflow_config) coexistiam com o mesmo
+# conteúdo. Os dois sets de "platforms" eram homônimos mas semanticamente
+# distintos:
+#
+#   · bundle slot keys (presets): {android, ios, kmp, all-platforms}
+#   · workflow active platforms:   {android, ios, kmp, web}
+#
+# Consolidação aqui mantém os dois sets visíveis com nomes
+# desambiguados. Os 8 axes são fonte canônica via
+# `engine.detection._axes.BACKEND_AXES` mas re-exportar como `frozenset`
+# pros validators evita acoplamento direto da camada validators ao módulo
+# engine.detection (validators é layer superior na arquitetura).
+
+# 8 axes canônicos — espelha `engine.detection._axes.BACKEND_AXES` com
+# `frozenset` shape pra ergonomia de membership checks nos validators.
+# Fonte: docs/schemas/backend-axes.md §"Os 8 axes canônicos".
+VALID_BACKEND_AXES: frozenset[str] = frozenset(
+    {
+        "data",
+        "auth",
+        "observability",
+        "analytics",
+        "storage",
+        "persistence",
+        "notifications",
+        "flags",
+    }
+)
+
+# Bundle slot keys (validate_presets) — `all-platforms` é shorthand que
+# expande pras 3 plataformas declaradas no bundle (android+ios+kmp).
+VALID_BUNDLE_PLATFORM_KEYS: frozenset[str] = frozenset(
+    {"android", "ios", "kmp", "all-platforms"}
+)
+
+# Workflow active platforms (validate_workflow_config) — universo de
+# plataformas que um projeto declara em `platforms.active`. `web` entra
+# pra cobrir mono-plataforma sem mobile.
+VALID_PROJECT_PLATFORMS: frozenset[str] = frozenset(
+    {"android", "ios", "kmp", "web"}
+)
+
+
 def make_paths(
     fix_label: str,
     fix_motive: str,

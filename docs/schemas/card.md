@@ -106,6 +106,36 @@ Shape completo + regras de validação em
 
 Validator: `validators/validate_qa_extensions.py` (overlay-aware desde v1.2).
 
+## Backend axes — when `identity.category` is an axis (since Phase B / DET-6)
+
+Categorias `data`, `auth`, `observability`, `analytics`, `storage`,
+`persistence`, `notifications` e `flags` são os **8 backend axes**
+canônicos. Quando um card declara uma dessas categorias, ele é parte do
+modelo multi-axis platform-keyed do bloco `backend:` em `workflow-config.yaml`.
+
+Demais categorias (`language`, `kmp`, `ui`, `navigation`,
+`dependency-injection`, `testing`, `build`, `design-system`, `ticketing`)
+são **stack/tooling** — não viram cells em `backend:`.
+
+As categorias `backend` e `network` (v1.1) foram split nos 8 axes em Phase B:
+
+- `firebase-auth`, `auth-jwt-bearer` → `auth`
+- `firebase-storage` → `storage`
+- `firestore-persistence`, `firestore-realtime`, `firestore-security-rules`,
+  `rest-api-contract`, `retrofit-client`, `ktor-client` → `data`
+
+Cardinalidade por (axis, platform) é enforçada pelo schema (1 card por
+cell), então as labels singulares `auth-provider`, `http-client`,
+`crash-reporting` foram removidas em W3 (ver `capability-labels.md`).
+
+Schema completo dos cells (campos `card`, `status`, `migrating-to`),
+enum `active | migrating-to | deprecated`, detection composer, starter
+bundles: ver [`backend-axes.md`](backend-axes.md).
+
+<!-- open-detail #4: firestore-realtime fate — mantido em `category: data` em v1.0. Sub-axis "realtime" (separado de "data") fica como follow-up v1.1+ anotado em `04-pending.md`. -->
+
+<!-- open-detail #5: rest-api-contract + firestore-security-rules sub-cards — mantidos em `category: data` em v1.0. Sub-axis "data-contract" ou "rules" são follow-ups v1.1+ anotados em `04-pending.md`. -->
+
 ## The `card.yaml` schema (full annotated)
 
 ```yaml
@@ -132,10 +162,29 @@ identity:
   category:    dependency-injection           # grouping for menu listing inside `forge reconfigure`
                                               # one of: language, kmp, ui,
                                               # di OR dependency-injection,
-                                              # navigation, backend, persistence,
-                                              # network, observability, auth,
-                                              # storage, testing, build,
+                                              # navigation, persistence,
+                                              # observability, auth, storage,
+                                              # data, analytics, notifications,
+                                              # flags, testing, build,
                                               # design-system, ticketing
+                                              # See `backend-axes.md` for axes
+                                              # (data/auth/observability/
+                                              # analytics/storage/persistence/
+                                              # notifications/flags) and the
+                                              # stack/tooling preserved set
+                                              # (language/kmp/ui/navigation/
+                                              # dependency-injection/testing/
+                                              # build/design-system/ticketing).
+                                              # Categories `backend` and `network`
+                                              # were split into the 8 axes in
+                                              # Phase B (DET-6).
+  # ── PLATFORMS (optional, since Phase B / DET-6) ─────────────────────────
+  # `identity.platforms` enumera as plataformas em que este card pode ser
+  # ativado. Ausente = aplicável a todas as plataformas ativas do projeto
+  # (`platforms.active` em workflow-config). Consumido pelo detection
+  # composer (W5) pra rankear candidatos per-(axis, platform).
+  # Valores válidos: subset não-vazio de [android, ios, kmp].
+  platforms:   [android, kmp]                 # exemplo — opcional
   maturity:    stable                         # one of: experimental, beta, stable, deprecated
   maintainer:  feature-forge-core             # who owns this card
   created-at:  2026-05-15
@@ -242,9 +291,12 @@ detection:
       contains:   "@ComponentScan"
       confidence: 0.4
     
-    - type:       dependency
-      file:       "**/build.gradle*"
-      contains:   "koin-annotations"
+    - type:       gradle-dep
+      coordinate: "io.insert-koin:koin-annotations"
+      confidence: 0.5
+
+    - type:       gradle-dep
+      coordinate: "io.ktor:ktor-client-core"
       confidence: 0.5
   
   threshold: 0.6           # cumulative confidence ≥ 0.6 → auto-activate
@@ -384,9 +436,26 @@ else:
 |---|---|
 | `file-exists` | `glob: <pattern>` |
 | `file-content` | `glob: <pattern>` + `contains: <string>` or `matches: <regex>` |
-| `dependency` | `file: <pattern>` + `contains: <string>` (e.g., for gradle/package.json) |
+| `gradle-dep` | `coordinate: <group>:<artifact>` (sem versão, sem espaços). Match em `gradle/*.versions.toml` (TOML, formato `module = "<group>:<artifact>"` ou `group + name` split) E em `**/build.gradle*` (substring). Ordem: catálogo primeiro, build.gradle fallback. **Semântica de match (assimetria intencional):** o passo TOML
+(`gradle/libs.versions.toml`) compara `module == coordinate` por igualdade de
+`group:artifact` (tolerante a `group:artifact:version` em TOML — version-suffix
+match prefix). O passo build.gradle (`**/build.gradle*`) usa substring de
+`coordinate` no conteúdo do arquivo (com filtragem de comentários Groovy/KTS).
+Consequência: cards que declaram coordenada base (ex.:
+`com.google.firebase:firebase-storage`) NÃO detectam variantes sufixadas (ex.:
+`-ktx`) em projeto TOML-only puro. Declare coordenadas explícitas por variante
+quando relevante. Decisão deliberada do master-review PR #11 (Caminho A — aceitar
+tradeoff documentado). Follow-up FU-MR-1 em `docs/design/04-pending.md` captura
+o trigger pro schema-version bump quando demanda de `match: exact|prefix` opcional
+emergir.
 | `directory-exists` | `path: <relative>` |
 | `command-success` | `command: <string>` (rare, use sparingly) |
+
+#### Tipos descontinuados
+
+| Type | Status | Sucessor |
+|---|---|---|
+| `dependency` | Removido em v1.2-dev (DET-3 / M-2). Loader rejeita via **CARD-021**. Nunca foi implementado em `engine/init.py:_eval_detection_signals` — cards declarando este tipo eram silenciosamente ignorados antes do cleanup. | Use `gradle-dep` (deps Gradle). Para outras stacks (`npm`, `pod`, `swift-pm`), aguarde tipos dedicados — sem fallback genérico. |
 
 Detection runs in **parallel** across all cards. Timeout per card: 2s.
 Card that exceeds timeout = signal failure, not error.
@@ -496,7 +565,13 @@ Schema validators enforced when card is loaded:
 CARD-001  schema-version must be in [1]
 CARD-002  identity.name must match [a-z0-9-]+, max 40 chars
 CARD-003  identity.version must be valid semver
-CARD-004  identity.category must be in known categories
+CARD-004  identity.category must be in known categories:
+          {language, kmp, ui, navigation, dependency-injection,
+           testing, build, design-system, ticketing,
+           data, auth, observability, analytics, storage,
+           persistence, notifications, flags}
+          (categorias `backend` e `network` foram split em Phase B / DET-6
+           — ver `backend-axes.md`)
 CARD-005  identity.maturity must be one of allowed values
 CARD-006  provides must be non-empty list of capability labels
 CARD-007  requires must reference known capability labels
@@ -512,6 +587,11 @@ CARD-016  detection.signals confidence sum cannot exceed 2.0 (sanity check)
 CARD-017  no circular dependency in requires graph
 CARD-018  README.md must exist
 CARD-019  legacy-marker, if present, must be bool
+CARD-020  detection.signals[*].coordinate (when type=gradle-dep) must be `<group>:<artifact>`, no version sufixada, no spaces
+CARD-021  detection.signals[*].type must not be `dependency` (renamed to `gradle-dep` in v1.2-dev; legacy type silently ignored before DET-3 / M-2)
+CARD-022  identity.platforms, if present, must be non-empty subset of
+          {android, ios, kmp}. Ausente = aplicável a todas as plataformas
+          ativas. Consumido pelo detection composer (Phase B / DET-6).
 ```
 
 ## Examples

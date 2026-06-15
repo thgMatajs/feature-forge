@@ -1,7 +1,7 @@
 """Card loader + `card.yaml` validation.
 
 Loads a card directory into a `CardManifest` and runs schema validation
-(CARD-001..CARD-019 from `docs/schemas/card.md §Validation`).
+(CARD-001..CARD-020 from `docs/schemas/card.md §Validation`).
 
 The capability-label catalog (`docs/schemas/capability-labels.md`) is parsed
 lazily from the markdown source-of-truth via `_parse_capability_catalog`.
@@ -23,27 +23,61 @@ from .._sandbox.env import is_sensitive
 from ..utils.paths import forge_home
 from ..utils.yaml_io import YamlIOError, read_yaml
 from . import CardError, CardConflictError
+from ._signal_shapes import parse_gradle_coordinate
 
 # ── Canonical catalog (hardcoded, FOLLOWUP: parse capability-labels.md) ──────
 
+# Canonical category set (since Phase B / DET-6).
+# Stack/tooling (9): language, kmp, ui, navigation, dependency-injection,
+#                    testing, build, design-system, ticketing.
+# Backend axes (8):  data, auth, observability, analytics, storage,
+#                    persistence, notifications, flags.
+# `di` é alias histórico de `dependency-injection` (não usado, mantido sem
+# custo até depreciação formal). Categorias `backend` e `network` foram
+# split nos 8 axes em Phase B (ver docs/schemas/card.md §Backend axes e
+# .planning/det-6/category-migration-audit.json).
 _KNOWN_CATEGORIES: frozenset[str] = frozenset(
     {
+        # ── stack/tooling ────────────────────────────────────────────
         "language",
         "kmp",
         "ui",
         "di",
         "dependency-injection",
         "navigation",
-        "network",
-        "backend",
-        "persistence",
-        "observability",
-        "auth",
-        "storage",
         "testing",
         "build",
         "design-system",
         "ticketing",
+        # ── backend axes (DET-6) ─────────────────────────────────────
+        "data",
+        "auth",
+        "observability",
+        "analytics",
+        "storage",
+        "persistence",
+        "notifications",
+        "flags",
+    }
+)
+
+# Backend axes (subset de _KNOWN_CATEGORIES) — cards nesses axes podem ter
+# `provides: []` porque sua identidade vem do cell (axis, platform) no
+# workflow-config, não de label singular no catálogo. Phase B (DET-6) W3
+# removeu as labels singulares (`auth-provider`, `http-client`,
+# `crash-reporting`) — CARD-006 relax preserva a validade dos cards cuja
+# única singular label vivia nessas famílias (`ktor-client`, `retrofit-client`).
+# Ver docs/schemas/capability-labels.md §Migração v1.2 (DET-6).
+_BACKEND_AXIS_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "data",
+        "auth",
+        "observability",
+        "analytics",
+        "storage",
+        "persistence",
+        "notifications",
+        "flags",
     }
 )
 
@@ -522,13 +556,15 @@ def _validate_qa_extensions_overlay(
 
 
 def validate_card_yaml(manifest_dict: dict[str, Any], source_path: Path) -> list[str]:
-    """Validate a parsed `card.yaml` dict against CARD-001..CARD-019.
+    """Validate a parsed `card.yaml` dict against CARD-001..CARD-020.
 
     Returns a list of violation strings. Empty list = card is valid.
     Implements the static checks only — cross-card validation (CARD-007/008/017)
     lives in the resolver.
 
     CARD-019  legacy-marker, se presente, deve ser bool (opcional, default false).
+    CARD-020  detection.signals[*].coordinate (when type=gradle-dep) must be
+              `<group>:<artifact>`, no version sufixada, no spaces (DET-3).
     """
     violations: list[str] = []
 
@@ -569,10 +605,20 @@ def validate_card_yaml(manifest_dict: dict[str, Any], source_path: Path) -> list
             f"got {maturity!r}"
         )
 
+    # CARD-006: provides must be a list. Non-empty rule applies to stack/tooling
+    # cards; backend-axis cards (DET-6) may have `provides: []` because their
+    # identity is anchored by the (axis, platform) cell in workflow-config, not
+    # by a singular capability label in the catalog. Ver
+    # docs/schemas/capability-labels.md §Migração v1.2 (DET-6).
     provides = manifest_dict.get("provides")
-    if not isinstance(provides, list) or len(provides) == 0:
-        violations.append("CARD-006: provides must be a non-empty list")
+    if not isinstance(provides, list):
+        violations.append("CARD-006: provides must be a list")
     else:
+        if len(provides) == 0 and category not in _BACKEND_AXIS_CATEGORIES:
+            violations.append(
+                "CARD-006: provides must be non-empty for stack/tooling cards "
+                f"(category {category!r} is not a backend axis)"
+            )
         for label in provides:
             if not isinstance(label, str):
                 violations.append(f"CARD-006: provides entry must be string, got {label!r}")
@@ -646,7 +692,46 @@ def validate_card_yaml(manifest_dict: dict[str, Any], source_path: Path) -> list
                     continue
                 conf = sig.get("confidence")
                 if isinstance(conf, (int, float)):
-                    confidence_sum += float(conf)
+                    if conf < 0.0:
+                        violations.append(
+                            "CARD-016: detection.signal.confidence must be "
+                            f"non-negative, got {conf!r}"
+                        )
+                    else:
+                        confidence_sum += float(conf)
+                # CARD-021: o tipo legado `dependency` foi renomeado pra
+                # `gradle-dep` em v1.2-dev (DET-3 / M-2). Antes era
+                # silenciosamente ignorado pelo engine, mascarando cards
+                # mal-declarados. Rejeita explicitamente apontando o nome
+                # canônico atual + o schema doc onde o cleanup está descrito.
+                if sig.get("type", "").lower() == "dependency":
+                    violations.append(
+                        "CARD-021: signal type 'dependency' was renamed to "
+                        "'gradle-dep' in v1.2-dev (see docs/schemas/card.md "
+                        "§Signal types). Migrate the signal or remove it."
+                    )
+                    continue
+                # CARD-020: shape validation pra signal type `gradle-dep`.
+                # `coordinate` deve ser string `<group>:<artifact>` sem versão
+                # sufixada e sem espaços (introduzido em DET-3 / 2026-06-10).
+                # Note: ID alocado como CARD-020 porque CARD-019 já é usado
+                # por `legacy-marker` (Gap 5). Shape check delegado pro
+                # helper compartilhado `parse_gradle_coordinate`
+                # (B-3 from PR #11 review — reuse-first, deduplica lógica
+                # com `engine/init._eval_gradle_dep`).
+                if sig.get("type") == "gradle-dep":
+                    coord = sig.get("coordinate")
+                    if parse_gradle_coordinate(coord) is None:
+                        if not isinstance(coord, str) or not coord:
+                            violations.append(
+                                "CARD-020: gradle-dep signal requires `coordinate` (string)"
+                            )
+                        else:
+                            violations.append(
+                                f"CARD-020: gradle-dep coordinate must be "
+                                f"`<group>:<artifact>` without whitespace "
+                                f"(got {coord!r})"
+                            )
             # CARD-016 hard-fail: confidence_sum > 2.0 indica detection over-stacked.
             # Cards reais devem manter sinais ortogonais — somar > 2.0 sinaliza
             # heurísticas redundantes ou inflação de confiança.

@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from engine.cards.loader import validate_card_yaml as core_validate  # noqa: E402
 from engine.utils.paths import cards_canonical_dir, cards_dir  # noqa: E402
-from engine.utils.yaml_io import read_yaml_or_default  # noqa: E402
+from engine.utils.yaml_io import YamlIOError, read_yaml_or_default  # noqa: E402
 
 
 def _collect_cards(
@@ -114,7 +114,7 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
         # contexto dos demais. Wrap → coleta como failure por card.
         try:
             data = read_yaml_or_default(card_yaml, {}) or {}
-        except Exception as exc:  # noqa: BLE001
+        except (YamlIOError, OSError, UnicodeDecodeError) as exc:
             all_violations.append(
                 f"[{origin}] {card_yaml.parent.name}: "
                 f"failed to parse YAML ({exc})"

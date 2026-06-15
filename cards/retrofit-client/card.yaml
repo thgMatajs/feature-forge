@@ -1,10 +1,11 @@
 # cards/retrofit-client/card.yaml
 # ──────────────────────────────────────────────────────────────────────────
 # Schema version: 1
-# Retrofit2 HTTP client. Provider clássico de `http-client` em projetos
-# Android-only ou Android-side de KMP onde Ktor multiplatform não é
-# escolhido. Android-only é semântica derivada das signals (todas batem em
-# arquivos Android-side), não declaração de campo.
+# Retrofit2 HTTP client. Provider canônico de HTTP transport no axis `data`
+# (cell-cardinality enforçada per (data, platform) pelo schema do
+# workflow-config — DET-6) em projetos Android-only ou Android-side de KMP
+# onde Ktor multiplatform não é escolhido. Android-only é semântica derivada
+# das signals (todas batem em arquivos Android-side), não declaração de campo.
 # ──────────────────────────────────────────────────────────────────────────
 
 schema-version: 1
@@ -14,18 +15,22 @@ schema-version: 1
 identity:
   name:         retrofit-client
   version:      1.0.0
-  description:  "Retrofit2 HTTP client para Android / Android-side de KMP. Provider clássico de http-client quando Ktor multiplatform não é a escolha."
-  category:     network
+  description:  "Retrofit2 HTTP client para Android / Android-side de KMP. Provider canônico de HTTP transport (axis data) quando Ktor multiplatform não é a escolha."
+  category:     data
   maturity:     stable
   maintainer:   feature-forge-core
   created-at:   2026-06-02
-  last-updated: 2026-06-02
+  last-updated: 2026-06-10
   license:      MIT
 
 
 # ── CAPABILITIES ──────────────────────────────────────────────────────────
-provides:
-  - http-client
+# Singular legada da família network foi removida em W3 (DET-6) —
+# cardinalidade per (data, platform) cell é enforçada pelo schema do
+# workflow-config; ver capability-labels.md §Migração v1.2 (DET-6). Cards
+# de backend axis podem ter `provides: []` (CARD-006 relax —
+# engine/cards/loader.py).
+provides: []
 
 
 # ── DEPENDENCIES ──────────────────────────────────────────────────────────

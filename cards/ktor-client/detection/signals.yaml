@@ -5,28 +5,34 @@
 # (forge doctor, scripts auxiliares).
 #
 # Threshold cumulativo: 0.5
-#   - file-content build.gradle*  +io.ktor:ktor-client → 0.5
-#   - file-content build.gradle*  +ktor-client-core    → 0.3
-#   - file-content *.kt           +HttpClient(         → 0.3
-#   - file-content *.kt           +io.ktor.client      → 0.2
+#   - gradle-dep    io.ktor:ktor-client-core  → 0.5  (primário, TOML-aware)
+#   - file-content  build.gradle*  +io.ktor:ktor-client-  → 0.3  (legacy/variantes)
+#   - file-content  *.kt           +HttpClient(           → 0.3
+#   - file-content  *.kt           +io.ktor.client        → 0.2
 #
 # Soma máxima: 1.3 (sanity ≤ 2.0 — CARD-016).
 #
-# Projetos KMP com Ktor atingem o threshold facilmente: a dependency
-# `io.ktor:ktor-client-core` no Gradle já vale 0.5; qualquer instância de
-# `HttpClient(` ou import `io.ktor.client` confirma — soma 0.7 ≥ 0.5.
+# Em projeto TOML-only (libs.versions.toml + build.gradle.kts) a coordenada
+# `io.ktor:ktor-client-core` é detectada pelo signal gradle-dep (resolve
+# alias TOML) e atinge o threshold sozinha — atendendo SPEC §AC-1 do
+# DET-3 (gradle-dep signal). O signal file-content em build.gradle* cobre
+# variantes (-cio, -android, -darwin, -okhttp) em setups legacy ou hybrid
+# onde o módulo de engine é declarado como literal Maven string fora do
+# TOML. Cobertura ampla de variantes via gradle-dep adicionais fica como
+# melhoria futura (ver .planning/det-3/migration-audit.json).
 # ──────────────────────────────────────────────────────────────────────────
 
 signals:
-  - type:       file-content
-    glob:       "**/build.gradle*"
-    contains:   "io.ktor:ktor-client"
+  - type:       gradle-dep
+    coordinate: "io.ktor:ktor-client-core"
     confidence: 0.5
+    rationale:  "Artefato base do family ktor-client — dependency obrigatória de qualquer setup HttpClient. Coordenada canônica detectada via TOML alias ou Maven literal (SPEC DET-3 §AC-1). Promovido a primário em revisão pós-PR #11."
 
   - type:       file-content
     glob:       "**/build.gradle*"
-    contains:   "ktor-client-core"
+    contains:   "io.ktor:ktor-client-"
     confidence: 0.3
+    rationale:  "Prefixo de família mantido como signal complementar pra capturar variantes de engine (-cio, -android, -darwin, -okhttp) em projetos legacy ou hybrid onde a coordenada aparece como string Maven direta fora do TOML."
 
   - type:       file-content
     glob:       "**/*.kt"

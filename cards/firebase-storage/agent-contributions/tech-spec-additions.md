@@ -107,7 +107,7 @@ sealed class StorageError {
 
 `Misconfigured` e `Unknown` chamam
 `Firebase.crashlytics.recordException(FirebaseStorageAnalyticsException(...))`
-com `errorCode + causeType` (mesmo pattern do card `crashlytics`, se ativo).
+com `errorCode + causeType` (mesmo pattern do card `firebase-crashlytics`, se ativo).
 
 ### 6. Threading checklist
 

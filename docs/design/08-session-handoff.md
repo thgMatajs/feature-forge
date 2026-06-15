@@ -3,8 +3,43 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-10 (sessão triple-phase checkpoint — PR #10 aberto, Phase A W1 done, Phase B speced)
-**Estado:** v1.2-dev pilot findings capturados; Phase 0 em andamento (DET-3); DRIFT-1 (Phase A) próxima. v1.2.0 feito + Gap 9 cumulativo + CC gate v1 (PR #4) + PRD docs/product/ (PR #5) + plan-auditor (PR #6) tudo em `main`. `forge qa` shipado (PR #8). QA-11 sandbox env hardening fechado (impl + final review + closeout post-review remediação + post-ultra-review remediation 16 findings); pré-piloto restrito a QA-13 (paranoid state filter — `aborted`/`archived` corretamente excluídos do cross-feature scope). Ultra-review do PR #9 fechou deep-001 (crítico: PYTHONPATH não herda mais do parent), endureceu pattern regex contra false-positive (AUTHOR/CO_AUTHOR), adicionou defense-in-depth no `build_safe_env` (allow_sensitive opt-in), corrigiu UX do grant flow (EOF + re-prompt 3x), mascarou nomes em log (anti-disclosure), guardiou isinstance de shape em sensitive-env-grants e ampliou catch do alert layer pra RuntimeError. 5 findings deferidos a PRs separados (deep-010 warning channel cross-cutting; deep-011/012 scope.py refinements fora da whitelist; deep-014 verify.py plumbing; deep-021 loader.py warning). Branch `worktree-feat+gate-infra-extract` agora consolida (após merge de origin/main) Phase 0 do roadmap de quality-gates expansion — refactor estrito (no-behavior-change) extrai infra reusável do CC gate em `validators/_gate_infra.py` + `validators/_diff.py` + rename de helpers em `validators/_common.py`. CC validator caiu de ~1127 LOC para ~840 LOC compondo helpers públicos. Phase 0 suite verde (baseline 751 - 1 justificado em T4: removed test do lookup `_TOOL_BIN[lang]` interno que não existe pós-refactor). Wave R1.1 `check_secrets` shipping na mesma branch — primeiro consumer real do helper extraído valida a generalização e fechou Gap GATE-INFRA-1 (parametrização de `gate_threshold_lookup` + `format_three_paths_message`); Gap GATE-INFRA-2 (kw-only `cmd_builder` API) registrado pra próximo consumer.
+**Última atualização:** 2026-06-15 (master review PR #15 — todos os 22 findings aplicados)
+**Estado master review PR #15:** todos os 22 findings (14 Group A + 8 Group B) aplicados em 5 commits atomicos sobre `fix/review-md-remediation`. Test baseline 1350 → 1353 (3 novos testes de A-013 cobrindo path-traversal do guard de undo). Detalhes em CHANGELOG `## [Unreleased] > ### Fixed (master review PR #15 remediation)`.
+**Estado REVIEW.md remediation (anterior):** 22 findings VÁLIDOS do REVIEW.md endereçados; 8 anti-goals anotados em `04-pending.md`; mypy advisory + pathspec dep adicionados.
+**Wave A (PR #13 review, 2026-06-12):** 6 fixes contidos remediados em 5 commits sobre `96a0896` (cli paused_exc refactor + intent-state flush + validate_presets imports + RULE-020 cascade guard + doc-sync). Fix 4 (clear_intent_log_only delegation) skipped — semantics divergem, anotado pra Wave B. Rapid lane verde (1306 passing, 6 falhas pré-existentes inalteradas em test_cards_resolver/test_commands_init/test_validators_card_yaml). +2 regression tests.
+**Wave B (PR #13 review, 2026-06-12):** 5 fixes cross-module remediados em 5 commits sobre `b8731f7` (commits `37084c0` → `4b6eada`): (1) ciclo composer↔init quebrado via `engine/detection/_eval.py` novo + shape guard no composer; (2) `isinstance(Cell/Conflict)` em vez de `hasattr` em 5 sites de init.py; (3) `BACKEND_AXES` shared em `engine/detection/_axes.py` (init + reconfigure consomem); (4) cache process-level pra `_read_intent_log` (O(1) cache hit vs O(n) re-parse); (5) `VALID_BACKEND_AXES`/`VALID_BUNDLE_PLATFORM_KEYS`/`VALID_PROJECT_PLATFORMS` consolidados em `validators/_common.py`. Rapid lane sobe pra 1321 passed (+15 vs Wave A baseline). Mesmas 6 falhas pré-existentes herdadas, não tocadas (out of scope).
+**Estado:** v1.2-dev Phase B DET-6 ✅ COMPLETO + REVIEWED. W1-W8 + W7 cluster review fix + E2E coverage + 2 follow-up fixes (_SKIP_DIRS + Phase A pitfall) + DET-6 W2 fixture cleanup tardio. AC-1..AC-10 cobertos. Rapid lane 1310 passing; integration 133 passing (1 deferred: bootstrap.sh worktree edge case); validators 245+8 passing; e2e 21 passing (RUN_E2E=1). Mandamento 0 loop fechado (impl → review → fix → verify) com 2 reviews formais (W5 + W7 cluster). Branch ainda LOCAL — push + PR depois desta sessão. Fechamento absorve B1/B2/DET-5 naturalmente conforme spec. Phase 0 DET-3 ✅ shipped em `main`. Phase A (DRIFT-1) PR #11 master-review remediado integralmente; PR #12 carrega os 14 follow-ups pós-PR #11 (16 commits: `a7d0947..d1b95c5`) — A-1/A-2/M-2/M-3/M-4/M-5/B-1/B-2/B-3 + S-1 edge-case coverage + M-1 assimetria documentada + S-2/S-3 follow-ups capturados; +41 novos tests; rapid lane ~1054 passing, suite total ~1178 collected. v1.2.0 feito + Gap 9 cumulativo + CC gate v1 (PR #4) + PRD docs/product/ (PR #5) + plan-auditor (PR #6) tudo em `main`. `forge qa` shipado (PR #8). QA-11 sandbox env hardening fechado (impl + final review + closeout post-review remediação + post-ultra-review remediation 16 findings); pré-piloto restrito a QA-13 (paranoid state filter — `aborted`/`archived` corretamente excluídos do cross-feature scope). Ultra-review do PR #9 fechou deep-001 (crítico: PYTHONPATH não herda mais do parent), endureceu pattern regex contra false-positive (AUTHOR/CO_AUTHOR), adicionou defense-in-depth no `build_safe_env` (allow_sensitive opt-in), corrigiu UX do grant flow (EOF + re-prompt 3x), mascarou nomes em log (anti-disclosure), guardiou isinstance de shape em sensitive-env-grants e ampliou catch do alert layer pra RuntimeError. 5 findings deferidos a PRs separados (deep-010 warning channel cross-cutting; deep-011/012 scope.py refinements fora da whitelist; deep-014 verify.py plumbing; deep-021 loader.py warning). Branch `worktree-feat+gate-infra-extract` agora consolida (após merge de origin/main) Phase 0 do roadmap de quality-gates expansion — refactor estrito (no-behavior-change) extrai infra reusável do CC gate em `validators/_gate_infra.py` + `validators/_diff.py` + rename de helpers em `validators/_common.py`. CC validator caiu de ~1127 LOC para ~840 LOC compondo helpers públicos. Phase 0 suite verde (baseline 751 - 1 justificado em T4: removed test do lookup `_TOOL_BIN[lang]` interno que não existe pós-refactor). Wave R1.1 `check_secrets` shipping na mesma branch — primeiro consumer real do helper extraído valida a generalização e fechou Gap GATE-INFRA-1 (parametrização de `gate_threshold_lookup` + `format_three_paths_message`); Gap GATE-INFRA-2 (kw-only `cmd_builder` API) registrado pra próximo consumer.
+
+Linha paralela `feat/drift-1-intent-protocol` (worktree `.claude/worktrees/drift-1-w2`): Phase A SHIPPING-READY. 21 commits sobre `1b1d289` cobrindo W1 (foundation — `engine/utils/json_io.py` + `engine/ui/intent_state.py` + schema canônico `docs/schemas/intent-protocol.md`), W2 (chokepoint refactor + 10/10 intent-resume — T0 outcome C locked, T1 question.py emitter+sentinel, T2 cli.py exit 2/130, T1+T2 fix de 10 findings CR/HI/MD/LO, T3a checkpoint-audit.json, T3b PART A/B/C integração nos 10 subcommands), W3 (tty_bridge subprocess loop fallback), W4 (bin/forge dispatcher detectando TTY + env `CLAUDECODE`; hooks audit sem patches), W5 (15 integration + 3 e2e pty tests cobrindo AC-1..AC-9) e W6 (doc-sync — este commit). Rapid lane preservada: 1151 passed / 11 skipped (1162 collected pós-W5). Integration lane: 119. E2E lane: 17. Total coletado: 1298. Engine intent-only protocol + tty_bridge fallback + bin/forge dispatcher migration + 10/10 subcommand intent-resume; aguardando push + abertura de PR. Phase B DRIFT-1 (DET-6) W1 ✅ entregue em outro worktree (`det-6-w1`, também aguardando push). Phase 0b ainda aguarda merge do PR #10.
+
+**Update 2026-06-11 — master-review PR #11 remediado:** os 28 findings do
+master-review (`/tmp/master-review-pr-11-drift1-REVIEW.md`) endereçados em
+10 commits Wave 1+2 sobre `e992e01` (range `ad49c40..626a4f0`) — todos
+3 Críticos + 7 Altos + 10 Médios + 5 Baixos + 3 Sugestões. Rapid lane
+sobe de 1151 → 1199 passed / 11 skipped (+32 testes novos cobrindo
+race-detection threading, schema-version mismatch, EOFError no
+tty_bridge, dir fsync POSIX, chmod 0600, intent-id stability sob mesmo
+prompt em comandos distintos). Cinco follow-ups novos registrados em
+`04-pending.md §Follow-ups pós-master-review PR #11`:
+FU-DRIFT-1-LOCK (P3, fcntl.flock real), FU-DRIFT-1-DEPRECATE-INTENT-ID-ALIAS
+(P2, v1.3), FU-DRIFT-1-CHECKPOINT-CONSOLIDATE (P3, deletar shims
+pós-DRIFT-2), FU-DRIFT-1-OBS (P3, log infrastructure), FU-DRIFT-1-VERIFY-ISO
+(P3, microseconds vs seconds). PR #11 ready for merge.
+
+**Follow-up 2026-06-11 (commit `6dd40af`):** `engine/init.py::_load_checkpoint`
+ganhou guarda `isinstance(data, dict)` retornando `None` em YAML corrompido
+(threads master-review #3396896063 + #3396903793, `[Critico]`). Alinha com
+o pattern dos 9 outros checkpoint-loaders já refatorados via
+`engine/utils/checkpoint_io.py`. Sem mudança de behavior pra cases válidos;
+elimina crash silencioso em payload mal-formado.
+
+**Nota rebase Phase B (2026-06-11):** a entrada de doc-sync W1 deste
+commit foi colapsada no rebase contra `origin/main` — a versão mais
+nova do header (acima) já existe em `main`, e o conteúdo factual da
+Phase B W1 está preservado na "Linha paralela" logo abaixo. W8
+reescreverá a seção quando Phase B fechar.
+
+Linha paralela (2026-06-10): branch `feat/det-6-multi-axis-backend` (worktree `det-6-w1`) consolida **Phase B W1 — DET-6 multi-axis backend foundation**: novo schema doc `docs/schemas/backend-axes.md` formaliza o modelo platform-keyed (8 axes × N plataformas → cell-object com `provider`/`status`/`notes?`); `docs/schemas/card.md` atualiza CARD-004 enum (+analytics/notifications/flags; −backend/network) + adiciona campo opcional `identity.platforms` + CARD-020 + seção "Backend axes"; `docs/schemas/workflow-config.md` reescreve bloco `backend:` para shape multi-axis, remove `backend.provider` monolítico, canoniza RULE-019..024 como referenciados (autoridade em `backend-axes.md`). Sub-IDs alfanuméricos eliminados; RULE-010/011 ficam como audit-trail dos campos legacy. Doc-only — sem touch em engine/validators/cards/presets. Phase B é multi-wave (W1-W8): W1 done; W2-W6 paralelizáveis com Phase A pendentes; W7-W8 ainda blocked em Phase A merge. PR final só ao fim de W8. Refs commits `c60eeb1` (schema foundation) + `26c0822` (review-fix canonicalizando RULE-019..024). Findings deferidos do REVIEW registrados como W1-L-002 e W1-L-003 em `docs/design/04-pending.md`. Suite rapid lane na branch: **1015 passed** (baseline mantido).
 
 Linha paralela `worktree-forge-qa` (PR #8) consolidou pós-rebase contra
 `main`: CONF-001..008 entregues, Gap QA-12 fechado (pause/resume via
@@ -26,6 +61,11 @@ Spec: `docs/superpowers/specs/2026-06-05-forge-qa-design.md`. Plano
 executado: `docs/superpowers/plans/2026-06-05-forge-qa.md`.
 
 Próximo passo: PR #7 mergeable + Wave R1.1 verde + considerar Gap 14 (preset coverage) + itens deferred v1.2.x. Várias linhas de trabalho convivem no Unreleased:
+
+- Phase B aguarda push da branch `feat/det-6-multi-axis-backend` (29 commits
+  acumulados em worktree `det-6-w1`) + abertura de PR. W8 doc-sync neste
+  commit é a última wave; review da PR + merge fecham DET-6 em main.
+
 
 - **Phase 0 (gate-infra-extract) — esta branch** — refactor estrito: 7 commits de
   extração + 1 doc-sync + 4 robustness fixes pós-power-review (render_config,
@@ -124,75 +164,6 @@ abaixo na timeline.
 
 ---
 
-## 2026-06-10 — Triple-phase checkpoint (Phase 0b shipped, Phase A W1 done, Phase B speced)
-
-Sessão 2026-06-10 entregou: PR #10 (Phase 0b/DET-3 — gradle-dep signal type) + Phase A W1 foundation (DRIFT-1 intent protocol) + Phase B SPEC+PLAN+auditor PASS (DET-6 multi-axis backend redesign).
-
-### Phase 0b (DET-3) — ✅ shipped via PR
-
-- Branch `feat/gradle-dep-signal` @ `87ff96c`, pushed origin, **PR #10** aberto: https://github.com/thgMatajs/feature-forge/pull/10
-- Aguardando review humana + merge.
-- Test count: 1113 → 1129 (+16: 12 impl + 4 M-001 regression).
-- Follow-ups (FU-1 a FU-5) capturados em `04-pending.md` seção `### Phase 0b — Code review follow-ups (2026-06-10)`.
-- Não bloqueia outras phases — pode mergear independente.
-
-### Phase A (DRIFT-1) — 🟡 W1 done, W2-W6 pending
-
-- Branch `feat/drift-1-intent-protocol` @ `1b1d289`, local-only (não pushed).
-- W1 (foundation: json_io + intent_state + schema doc): ✅ 31 new tests green.
-- W2-W6 pendentes:
-  - **W2** Refactor `engine/ui/question.py` chokepoint (125 callsites, API unchanged) — alto risco, requer user OK antes de dispatch
-  - W3 `engine/ui/tty_bridge.py` (subprocess loop + reusa renderer/persona)
-  - W4 `bin/forge` dispatcher (TTY/Claude detection via env var)
-  - W5 Integration tests E2E nos 2 modos
-  - W6 Doc-sync + migração de test fixtures que mockam stdin
-- SPEC + PLAN existem na branch — `git show feat/drift-1-intent-protocol:docs/superpowers/{specs,plans}/drift-1-intent-protocol.md`.
-- Design contract locked (do brainstorm 2026-06-10): engine intent-only, file-based resume (`.claude/state/forge-pending.json` + `forge-response.json`), exit codes 0/1/2/130, API surface unchanged, tty_bridge = Python module.
-
-### Phase B (DET-6) — 🟢 SPEC+PLAN landed, impl pending
-
-- Branch `feat/det-6-multi-axis-backend` @ `e29d6ce`, local-only (não pushed).
-- SPEC + PLAN landed + plan-auditor r2 PASS (zero findings) — enforcement-ready.
-- 34 tasks em 8 waves (expected weeks de impl).
-- W1-W6 unblocked (não dependem de Phase A).
-- W7-W8 **BLOCKED** em Phase A merge to main (UX precisa intent protocol).
-- Design contract locked: 8 eixos backend (data/auth/observability/analytics/storage/persistence/notifications/flags); schema platform-keyed `backend.<axis>.<platform>` com object `{ card, status, migrating-to? }`; 4 starter bundles (firebase-full / rest-with-firebase-telemetry / local-only / custom-from-scratch); 6 cards novos a criar; 3 categorias novas; capability labels singular dos backend axes REMOVIDOS; UX init adaptive detection-first + bundle fallback; migration NENHUMA (pre-production).
-- 8 open implementation details documentados em W8.3 do PLAN.
-
-### Pilot v1.2-dev — parcial em outra sessão
-
-- Projeto: `inchurch-app-main` (KMP Android+iOS+shared).
-- Status PARCIAL: init Passo 4 + Voz/Verdict não finalizados.
-- ~8 findings UX/microcopy/persona deferred (em quarentena até Phase A shippar — desvanecem quando Claude-Code-fronted protocol existir).
-
-### Decisões pra próxima sessão
-
-1. Phase 0b PR #10: revisar + mergear quando user tiver feedback.
-2. **Phase A W2** dispatch: próximo passo natural — chokepoint refactor `engine/ui/question.py`. ALTO RISCO. User deve dar OK explícito antes do dispatch. Worktree isolation OBRIGATÓRIA.
-3. Phase A W3-W6: depois de W2. Pode ser batched ou wave-by-wave.
-4. Phase B W1 (schema docs): pode rodar em paralelo com Phase A — surfaces disjuntas. Doc-only, baixo risco.
-5. Phase B W2-W6: sequenciar conforme dependências (W2→W3 cleanup→labels; W4 cards independente; W5 detection depende W2+W3; W6 bundles independente).
-6. Phase B W7-W8: bloquear até Phase A merge.
-
-### Quick-start pra próxima sessão
-
-1. Ler memory entry `project_session_checkpoint_2026_06_10.md` (detalhe completo).
-2. Ler esta seção do handoff.
-3. `git log --oneline -5 main` confirmar este commit do handoff update.
-4. `git branch -a | grep "feat/"` confirmar 3 branches: gradle-dep-signal, drift-1-intent-protocol, det-6-multi-axis-backend.
-5. `git worktree list` confirmar limpeza pós-cleanup desta sessão.
-6. Decidir próximo dispatch baseado em prioridade do user (sugerido: Phase B W1 + Phase A W2 em paralelo se ambos branches OK).
-
-### Lições gravadas em memory nesta sessão
-
-- `feedback_precision_dispatch_protocol.md` — protocolo verboso pra dispatches sensíveis
-- `feedback_worktree_for_parallel_dispatch.md` — `isolation: worktree` em dispatches doc-only paralelos
-- `project_forge_exec_model.md` — design canonical é Claude-Code-fronted
-- `project_pre_production_status.md` — sem migration concerns
-- `project_session_checkpoint_2026_06_10.md` — checkpoint completo das 3 phases
-
----
-
 ## TL;DR pra nova sessão
 
 Cole este prompt no início da sessão nova:
@@ -246,6 +217,17 @@ v1.2-dev cumulativo (PR #4 CC gate + Phase 0 + R1.1 secrets + PR #8 forge qa CON
 | v1.2-dev — CC gate (PR #4) | ✅ merged main 2026-06-05 — `check_cyclomatic_complexity` multi-language (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon); threshold per card override > workflow-config > defaults; 3-caminhos on-fail (refactor / override-justify / split-task); doctor categoria 13ª `cc-gate-tools`. 13 commits + ~63 tests novos (suite 630 → 693 collected pré-merge; 682 passed + 17 skipped pós-refinements; 688 passed + 17 skipped pós PR #4 review fixes D-006/D-008/D-009/F-006). |
 | v1.2-dev — Phase 0 (gate-infra-extract) | ✅ extracted (`_gate_infra.py` + `_diff.py`) 2026-06-05 — refactor estrito sem behavior change: 7 commits extraem `DispatchResult`/`check_tool_available`/`dispatch_native_tool`/`render_config_with_placeholders`/`parse_overrides`/`apply_overrides` em `_gate_infra.py` + `DiffHunk`/`classify_range_against_hunks`/`extract_diff_hunks`/`git_staged_files`/`read_commit_body` em `_diff.py`; rename `cc_threshold_lookup` → `gate_threshold_lookup` e `cc_format_three_paths` → `format_three_paths_message` em `_common.py` (DEFAULTS_CC preservado). CC validator ~1127 → ~840 LOC compondo helpers. Suite 750 (baseline 751 - 1 justificado em T4). Destrava Wave R1+ (check_secrets/check_deps_cve/check_duplication/check_cognitive_complexity/check_dead_code/check_arch_rules/check_function_length_and_nesting). |
 | v1.2-dev — Secrets gate (R1.1) | ✅ merged main 2026-06-05 — `check_secrets` per-stage split: gitleaks no per-task hook de `forge implement`, trufflehog `--only-verified` na cascade de `forge verify`. Posicionado após `check_cyclomatic_complexity` (fail-fast Decision 23 preservado). Override via `SECRETS-OVERRIDE: <file>:<line> kind=<token-type> — <razão>` no commit body. Hard-fail sempre; tool missing → warn; bypass `NO_SECRETS_GATE=1` logado em `.claude/state/secrets-gate-bypass.jsonl`. Composto inteiro da infra Phase 0 (2º consumer, prova que a extração paga). Validators 15→16, doctor 13→14 categorias (`secrets-tools`). 6 commits + ~30 tests novos. |
+| v1.2-dev — Phase A DRIFT-1 intent protocol (branch `feat/drift-1-intent-protocol`) | ✅ shipping-ready 2026-06-10 — 21 commits sobre `1b1d289`. Engine deixa de ler stdin: emite intent em `.claude/state/forge-pending.json`, consome `.claude/state/forge-response.json`, exit code 2 = paused-for-input. Novos módulos: `engine/utils/json_io.py`, `engine/ui/intent_state.py`, `engine/ui/tty_bridge.py`. `bin/forge` dispatcher detecta TTY + `CLAUDECODE` env. 3 sentinels exportadas de `engine/ui/question.py` (`PausedForInputError` / `UserCancelledError` / `UserPausedError`); 10 per-subcommand checkpoint dataclasses (outcome C de W2.T0). Schema canônico em `docs/schemas/intent-protocol.md`. AC-1..AC-9 verificados em 15 integration + 3 e2e pty tests. Rapid lane 1151 passed / 11 skipped preservada. Aguardando push + PR. |
+
+## REVIEW.md remediation — baseline (2026-06-12)
+
+- **Branch:** `fix/review-md-remediation`
+- **Spec:** `docs/superpowers/specs/2026-06-12-review-md-remediation-design.md`
+- **Plan:** `docs/superpowers/plans/2026-06-12-review-md-remediation.md`
+- **Pytest baseline:** `1523` tests collected (capturado via `pytest --collect-only -q`; reconciliado com README §State no final review 2026-06-15 / WR-04 — depende de `pathspec` instalado, ver CR-01 fix)
+- **Lanes pra esta sessão:**
+  - Bloco 1, 2, 3, 5: rapid lane (`pytest -m "not integration and not e2e"`) verde
+  - Bloco 4: full lane (`pytest`) verde ao fim do bloco (cruza módulos críticos)
 
 ## Conhecidos limites v1.1 (atualizado)
 
@@ -272,6 +254,33 @@ restantes ficam pra v1.2+ ou v2/Phase 6:
 - **LLM/sub-agent hookup real** — `plan.py`/`implement.py` narram fluxo +
   renderam templates. Integração real com Anthropic API dentro do `forge`
   requer hooks + Claude integration (já documentado em §Out-of-scope abaixo).
+
+**DET-3 master-review PR #11 (2026-06-10) — surfaced, não bloqueia merge:**
+
+- **Assimetria TOML-exact vs build.gradle-substring** (consequência de M-1 do
+  master-review, decisão deliberada Caminho A): signal `gradle-dep` compara
+  `module == coordinate` por igualdade no passo TOML (`gradle/libs.versions.toml`)
+  e usa substring no passo build.gradle (`**/build.gradle*`). Cards com
+  coordenada base (ex.: `com.google.firebase:firebase-storage`) NÃO detectam
+  variantes sufixadas (ex.: `-ktx`) em projetos TOML-only puros. Declare
+  coordenadas explícitas por variante quando relevante. Documentado em
+  `docs/schemas/card.md` §Signal types; FU-MR-1 (P3) em `04-pending.md`
+  captura trigger pro schema-version bump quando demanda de `match: prefix`
+  opcional emergir.
+- **BOM em `libs.versions.toml` silenciosamente ignorado** (consequência
+  observada em S-1.1 do master-review): `tomllib` stdlib rejeita BOM por
+  aderir à TOML 1.0; helper `_load_toml_catalog` engole `TOMLDecodeError`,
+  catálogo com BOM vira invisível ao scanner. Editores Windows às vezes
+  salvam `.toml` com BOM. Sugestão futura: `forge doctor` warn pra catálogo
+  com BOM. Anotado em `04-pending.md` FU-MR-3 (P3). Test de regressão
+  `test_s1_toml_with_utf8_bom_silently_skipped` trava se helper algum dia
+  strippar BOM — forçando revisita consciente.
+- **retrofit-client family-match preservado**: `retrofit-client` continua com
+  `file-content` substring `io.squareup.retrofit2:retrofit-` (captura
+  `-converters-gson`, `-converter-moshi`, `-mock`). TOML-only puro ainda não
+  detecta retrofit-client. Decisão deferida em FU-MR-2 (P3) — aceitar
+  tradeoff vs adicionar wildcard sufixado quando 2+ cards de família-multipla
+  pedirem.
 
 **v1.1 novos (decisões deliberadas, não bugs):**
 
@@ -414,6 +423,24 @@ merge, target v1.2.x:**
   é desinstalado, grant permanece em `workflow-config.qa.sensitive-env-grants`.
   Revoke é manual (editar config) ou via gap opt-in
   `forge reconfigure --revoke-grants` (não implementado v1.2).
+
+**DRIFT-1 Phase A pós-master-review (2026-06-11) — não bloqueia merge, follow-ups registrados:**
+
+- **Race detection sem hard lock** — protocolo é single-writer por
+  design hoje; concurrency test em
+  `tests/integration/test_intent_state_concurrency.py` documenta a
+  TOCTOU window declarada no SPEC §9. Lock real via `fcntl.flock`
+  deferido em FU-DRIFT-1-LOCK até race genuíno surgir em produção.
+- **`_stable_intent_id` alias deprecated** — alias preserva 4 test
+  files referenciando o nome antigo; remoção em v1.3 via
+  FU-DRIFT-1-DEPRECATE-INTENT-ID-ALIAS.
+- **Checkpoint shims de 1-linha** — 10 module handlers ainda têm
+  wrappers preservando API pública dos tests. Deleção pós-DRIFT-2 OU
+  v1.3 via FU-DRIFT-1-CHECKPOINT-CONSOLIDATE.
+- **`engine/verify.py::_utc_now_iso()` microseconds** — não migrado
+  para o shared `engine.utils.iso.utc_now_iso` (seconds-truncated)
+  porque mudaria shape de checkpoint files do `forge verify`.
+  FU-DRIFT-1-VERIFY-ISO mantém o gap aberto.
 
 ## Fase 4 — completa (resumo)
 

@@ -18,10 +18,10 @@
 # ──────────────────────────────────────────────────────────────────────────
 
 signals:
-  - type:       file-content
-    glob:       "**/build.gradle*"
-    contains:   "kotlinx-serialization-json"
+  - type:       gradle-dep
+    coordinate: "org.jetbrains.kotlinx:kotlinx-serialization-json"
     confidence: 0.5
+    rationale:  "Coordenada canônica do artefato. Migrado de file-content em DET-3 (libs.versions.toml + build.gradle)."
 
   - type:       file-content
     glob:       "**/build.gradle*"

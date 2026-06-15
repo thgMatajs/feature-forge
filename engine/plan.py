@@ -54,12 +54,20 @@ from engine.ui import question, renderer
 from engine.ui.question import PromptAbortedError
 from engine.utils.paths import (
     ProjectRootNotFoundError,
+    claude_dir,
     ensure_dir,
     feature_dir,
+    feature_path as _feature_path,
     find_project_root,
     workflow_config_path,
 )
-from engine.utils.yaml_io import read_yaml_or_default
+from engine.utils.yaml_io import read_yaml_or_default, write_yaml
+from engine.utils.checkpoint_io import (
+    clear_checkpoint as _clear_checkpoint_io,
+    load_yaml_checkpoint as _load_yaml_checkpoint_io,
+    save_yaml_checkpoint as _save_yaml_checkpoint_io,
+)
+from engine.utils.iso import utc_now_iso
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -277,6 +285,84 @@ def detect_subtype_from_input(text: str) -> str:
     return "product"
 
 
+# ── Checkpoint (DRIFT-1 W2.T3b — intent-resume, outcome C) ───────────────────
+#
+# Per the T3a audit (.planning/drift-1/checkpoint-audit.json,
+# action="add-new", reuse_path="init-pattern"), plan ganha checkpoint pra
+# cobrir os 10 callsites interativos: ask_text de slug, ask em
+# done-feature 4-paths + extension slug elicitation, ask em
+# subtype-confirmation + bugfix-wave-b sub-question, ask de
+# continuar/pausar a cada wave (A-E), ask_text de task-count em wave D,
+# ask_three_paths em readiness-not-ready + subtype-stub. Mirrors
+# ``_InitCheckpoint`` (engine/init.py:100-108) — outcome C, sem import
+# de ``engine.qa.checkpoint`` (Decision 22).
+#
+# Refs:
+#   - docs/superpowers/specs/drift-1-intent-protocol.md §3, §5, §8
+#   - engine/init.py:100-108 (canonical template)
+
+
+@dataclass
+class _PlanCheckpoint:
+    """State serialized before each ``question.ask*`` call in ``plan.run``.
+
+    Carries ``feature_slug`` (quando ja resolvido), ``wave`` (label da
+    wave corrente — "A".."E"), e ``ambiguity_id`` (identificador do
+    sub-fluxo de ambiguidade quando aplicavel: ``"readiness-not-ready"``,
+    ``"subtype-confirmation"``, ``"bugfix-wave-b"``, ``"done-feature"``,
+    ``"subtype-stub-spike"`` etc.). Prompts antes da resolucao do slug
+    recebem ``feature_slug=None``.
+    """
+
+    step: str
+    at: str
+    project_root: str
+    intent_id: str | None = None
+    feature_slug: str | None = None
+    wave: str | None = None
+    ambiguity_id: str | None = None
+
+
+def _plan_checkpoint_path(project_root: Path) -> Path:
+    return claude_dir(project_root) / ".plan-checkpoint.yaml"
+
+
+# Os helpers abaixo são thin shims sobre ``engine.utils.checkpoint_io`` —
+# consolidação dos 30 duplicates apontada pelos findings #5 e #21 do master
+# review do PR #11. Os nomes ``_save_plan_checkpoint`` etc. permanecem como
+# API privada do módulo para preservar os contracts dos testes em
+# ``tests/unit/test_engine_plan_resume.py`` (Mandamento #2 — verde).
+# L-03 (PR #remediation): ``_utc_now_iso_*`` shims removidos; callers
+# usam ``utc_now_iso`` direto de ``engine.utils.iso``.
+
+
+def _save_plan_checkpoint(cp: _PlanCheckpoint) -> None:
+    """Persist the plan checkpoint atomically."""
+    _save_yaml_checkpoint_io(
+        _plan_checkpoint_path(Path(cp.project_root)),
+        {
+            "schema-version": 1,
+            "step": cp.step,
+            "at": cp.at,
+            "project-root": cp.project_root,
+            "intent-id": cp.intent_id,
+            "feature-slug": cp.feature_slug,
+            "wave": cp.wave,
+            "ambiguity-id": cp.ambiguity_id,
+        },
+    )
+
+
+def _load_plan_checkpoint(project_root: Path) -> dict[str, Any] | None:
+    """Read the plan checkpoint, returning ``None`` when absent."""
+    return _load_yaml_checkpoint_io(_plan_checkpoint_path(project_root))
+
+
+def _clear_plan_checkpoint(project_root: Path) -> None:
+    """Remove the checkpoint — best-effort; silent on OSError (idempotent)."""
+    _clear_checkpoint_io(_plan_checkpoint_path(project_root))
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
@@ -317,58 +403,11 @@ def _render_template(template_name: str, target: Path, slug: str) -> bool:
     return True
 
 
-def _resolve_features_root(project_root: Path, *, subtype: str = "product") -> Path:
-    """Read workflow-config.paths.feature-roots if present, else default.
-
-    When `subtype != "product"`, the path is rerooted under `non-product/`
-    per `docs/design/05-filesystem-layout.md §3.5` — keeps refactor/spike/
-    chore feature packages out of the product feature folder and out of
-    the similarity-graph by convention.
-    """
-    cfg = read_yaml_or_default(workflow_config_path(project_root), {})
-    custom_root: Path | None = None
-    if isinstance(cfg, dict):
-        paths = cfg.get("paths") or {}
-        roots = paths.get("feature-roots") if isinstance(paths, dict) else None
-        if isinstance(roots, list) and roots:
-            head = roots[0]
-            if isinstance(head, str):
-                custom_root = (project_root / head).resolve()
-        elif isinstance(roots, str):
-            custom_root = (project_root / roots).resolve()
-
-    if custom_root is not None:
-        if subtype != "product":
-            # Custom root is the *product* folder; non-product lives as
-            # a sibling under the same parent.
-            return (custom_root.parent / "non-product").resolve()
-        return custom_root
-
-    # Default per docs/design/05-filesystem-layout.md.
-    base = project_root / "docs" / "feature-implementation-workflow"
-    if subtype != "product":
-        return (base / "non-product").resolve()
-    return (base / "features").resolve()
-
-
-def _feature_path(project_root: Path, slug: str, *, subtype: str = "product") -> Path:
-    """Compute feature directory, honouring workflow-config override + subtype.
-
-    For `subtype="product"` the layout is identical to the legacy v1.0
-    path (`docs/feature-implementation-workflow/features/{slug}/`). For
-    refactor/spike/chore the directory lives under `non-product/{slug}/`
-    — see discipline §8 + filesystem-layout §3.5.
-    """
-    root = _resolve_features_root(project_root, subtype=subtype)
-    # When subtype=product and override matches the default we still want
-    # feature_dir's canonical layout.
-    if subtype == "product":
-        default = (
-            project_root / "docs" / "feature-implementation-workflow" / "features"
-        ).resolve()
-        if root == default:
-            return feature_dir(project_root, slug)
-    return root / slug
+# A-006 (master review PR #15): `_resolve_features_root` foi promovido pra
+# `engine/utils/paths.py` (leaf real, sem dep de plan.py). Mantemos shim aqui
+# pra preservar callsites internos que faziam `from engine.plan import
+# _resolve_features_root` antes da consolidação.
+from engine.utils.paths import _resolve_features_root  # noqa: E402,F401
 
 
 def _initialize_status(slug: str, project_root: Path) -> L1State:
@@ -1036,7 +1075,7 @@ def _handle_done_feature_branch(
 # ── Slug elicitation ─────────────────────────────────────────────────────────
 
 
-def _elicit_slug(argv_slug: Optional[str]) -> str:
+def _elicit_slug(argv_slug: Optional[str], project_root: Optional[Path] = None) -> str:
     if argv_slug:
         if not _is_valid_slug(argv_slug):
             raise SystemExit(
@@ -1044,6 +1083,36 @@ def _elicit_slug(argv_slug: Optional[str]) -> str:
                 "kebab-case lowercase, 2..50 chars, [a-z0-9-]."
             )
         return argv_slug
+
+    # DRIFT-1 W2.T3b — persist checkpoint com intent-id determinado da
+    # pergunta de slug ANTES de invocar ``question.ask_text``. On exit-2 +
+    # re-invoke, ``question.ask_text`` finds the matching forge-response
+    # and returns the value without re-prompting. Outcome C — per-subcommand
+    # dataclass, no import from ``engine.qa.checkpoint``. ``project_root``
+    # eh Optional pra preservar backward-compat com callers de teste que
+    # invocavam ``_elicit_slug(argv_slug)`` sem o segundo arg; quando None,
+    # o save eh pulado (smoke-call sem side-effect em disco).
+    if project_root is not None:
+        _save_plan_checkpoint(
+            _PlanCheckpoint(
+                step="step-elicit-slug",
+                at=utc_now_iso(),
+                project_root=str(project_root),
+                intent_id=question.stable_intent_id(
+                    "ask_text",
+                    "Qual o slug da feature? (kebab-case, ex.: lembrete-rega)",
+                    None,
+                    extra={
+                        "default": None,
+                        "min-selected": None,
+                        "validator-hint": (
+                            "kebab-case lowercase, 2..50 chars, deve começar com letra."
+                        ),
+                    },
+                ),
+                feature_slug=None,
+            )
+        )
     return question.ask_text(
         "Qual o slug da feature? (kebab-case, ex.: lembrete-rega)",
         validator=_is_valid_slug,
@@ -1328,10 +1397,23 @@ def run(argv: list[str]) -> int:
 
     argv_slug = argv[0] if argv else None
     try:
-        slug = _elicit_slug(argv_slug)
+        slug = _elicit_slug(argv_slug, project_root)
     except PromptAbortedError:
         sys.stderr.write("\n— interrompido antes do slug, nada salvo.\n")
         return 130
+
+    # DRIFT-1 W2.T3b — agora que temos slug, atualiza checkpoint com
+    # feature_slug; demais prompts deste handler herdam intent-resume via
+    # question.ask*. Outcome C — sem import de engine.qa.checkpoint.
+    _save_plan_checkpoint(
+        _PlanCheckpoint(
+            step="step-post-slug",
+            at=utc_now_iso(),
+            project_root=str(project_root),
+            intent_id=None,
+            feature_slug=slug,
+        )
+    )
 
     # Gap 9 — Cena 1 extension branch. When the requested slug exists in
     # L1 with state=done, offer the 4-caminhos (Retomar / Nova / Estender /
@@ -1490,6 +1572,10 @@ def run(argv: list[str]) -> int:
             width=72,
         )
     )
+    # DRIFT-1 W2.T3b — clean completion clears the intent-resume checkpoint
+    # (Outcome C). Paused/deferred branches DELIBERATELY preserve it for
+    # forensic resume; only the planned-and-ready path clears.
+    _clear_plan_checkpoint(project_root)
     return 0
 
 
@@ -1538,7 +1624,7 @@ def record_external_dep(
         "integration": integration,
         "description": description,
         "blocking": bool(blocking),
-        "captured-at": _utc_now_iso(),
+        "captured-at": utc_now_iso(),
     }
 
     existing = read_elicitation(slug, project_root) or {}
@@ -1569,13 +1655,6 @@ def record_external_dep(
         },
     )
     return cast(dict[str, Any], entry)
-
-
-def _utc_now_iso() -> str:
-    """ISO 8601 UTC with second precision and trailing Z (engine-local copy)."""
-    from datetime import datetime, timezone
-
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # Re-export for cli dispatcher + test surface.

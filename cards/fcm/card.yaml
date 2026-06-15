@@ -1,0 +1,71 @@
+# cards/fcm/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# Firebase Cloud Messaging — push notifications cross-platform via SDK
+# Firebase Messaging. Card backend-axis `notifications` (DET-6 W4.3).
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         fcm
+  version:      1.0.0
+  description:  "Firebase Cloud Messaging para push notifications em Android/iOS. Card backend-axis `notifications` — identidade vem do cell (notifications, platform) em workflow-config."
+  category:     notifications
+  platforms:    [android, ios]
+  maturity:     stable
+  maintainer:   feature-forge-core
+  created-at:   2026-06-10
+  last-updated: 2026-06-10
+  license:      MIT
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
+# CARD-006 relax (W3): backend-axis cards aceitam provides: [].
+provides: []
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+requires: []
+
+
+# ── CONFLICTS ─────────────────────────────────────────────────────────────
+# Cardinalidade per (notifications, platform) cell enforçada pelo workflow-config.
+conflicts-with: []
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+contributes:
+
+  templates:
+    - target:  tech-spec.md
+      section: "Push notifications (FCM)"
+      file:    templates/fcm-tech-spec.md
+      merge:   append-section
+
+
+# ── DETECTION ─────────────────────────────────────────────────────────────
+detection:
+  signals:
+    - type:       gradle-dep
+      coordinate: "com.google.firebase:firebase-messaging"
+      confidence: 0.5
+
+    - type:       file-exists
+      glob:       "**/google-services.json"
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "com.google.firebase.messaging"
+      confidence: 0.3
+
+  threshold: 0.5
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "observability"

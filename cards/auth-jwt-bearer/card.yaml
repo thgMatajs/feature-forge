@@ -16,38 +16,37 @@ identity:
   name:         auth-jwt-bearer
   version:      1.0.0
   description:  "Autenticação via JWT Bearer Token em REST APIs. Flow login → access-token + refresh-token, Ktor Auth plugin com loadTokens/refreshTokens, retry em 401, storage seguro do refresh-token (encrypted DataStore ou Android Keystore). Paridade Android↔iOS no shared."
-  category:     backend
+  category:     auth
   maturity:     stable
   maintainer:   feature-forge-core
   created-at:   2026-05-29
-  last-updated: 2026-05-29
+  last-updated: 2026-06-10
   license:      MIT
 
 
 # ── CAPABILITIES ──────────────────────────────────────────────────────────
-# auth-provider: singular — apenas 1 provedor de identidade por projeto.
 # auth-token-bearer: auxiliar — flow Bearer JWT (mesma label provida por
-#   firebase-auth, OAuth2 cards futuros).
+#   firebase-auth e por cards OAuth2 futuros). Singular legada da família
+#   auth foi removida em W3 (DET-6) — cardinalidade per (auth, platform)
+#   cell é enforçada pelo schema do workflow-config; ver capability-labels.md
+#   §Migração v1.2 (DET-6).
 provides:
-  - auth-provider
   - auth-token-bearer
 
 
 # ── DEPENDENCIES ──────────────────────────────────────────────────────────
-# Auth via REST exige HTTP client cross-platform. O refresh-token plugin do
-# Ktor (`io.ktor.client.plugins.auth`) é a peça canônica do flow — sem
-# `http-client` ativo o card não tem onde injetar o interceptor.
-requires:
-  - http-client
+# Sem `requires:` baseada em label HTTP — schema novo (DET-6) garante a
+# presença de HTTP card via cell (data, platform) no workflow-config; relação
+# JWT↔HTTP-client é cobertura per-projeto, não dependency cross-card.
+requires: []
 
 
 # ── CONFLICTS ─────────────────────────────────────────────────────────────
-# `auth-provider` é label singular — apenas um provedor de identidade pode
-# estar ativo num projeto. Conflita explicitamente com `firebase-auth` (e
-# com qualquer card futuro que provê `auth-provider`: auth0, supabase-auth,
-# clerk-auth).
-conflicts-with:
-  - auth-provider
+# Sem `conflicts-with` por label singular — schema enforça 1 card per
+# (auth, platform) cell no workflow-config. Cards futuros (auth0,
+# supabase-auth, clerk-auth) coabitam o catalog sem precisar declarar
+# conflito por label aqui.
+conflicts-with: []
 
 
 # ── CONTRIBUTIONS ─────────────────────────────────────────────────────────

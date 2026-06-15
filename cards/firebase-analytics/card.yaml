@@ -1,0 +1,86 @@
+# cards/firebase-analytics/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# Firebase Analytics — event tracking, screens views e user properties em
+# Android/iOS. Card backend-axis `analytics` (DET-6 W4.1); identidade
+# canônica vem do cell (analytics, platform) em workflow-config, não de
+# label singular do catálogo.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         firebase-analytics
+  version:      1.0.0
+  description:  "Firebase Analytics para event tracking + screen views + user properties em Android/iOS. Card backend-axis `analytics` — identidade vem do cell (analytics, platform) em workflow-config."
+  category:     analytics
+  platforms:    [android, ios]
+  maturity:     stable
+  maintainer:   feature-forge-core
+  created-at:   2026-06-10
+  last-updated: 2026-06-10
+  license:      MIT
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
+# CARD-006 relax (W3): backend-axis cards aceitam `provides: []` porque a
+# identidade é ancorada pelo cell (analytics, platform) no workflow-config,
+# não por label singular do catálogo. Label `analytics-pipeline` é reservada
+# v1.1+ (capability-labels.md §Labels reservadas) — cards v1 não usam.
+provides: []
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+# Firebase Analytics roda standalone — não declara dependência hard no
+# catálogo. Co-presença com outros cards Firebase (firebase-auth, firebase-crashlytics,
+# fcm) é resolvida pelo workflow-config, não por requires/conflicts.
+requires: []
+
+
+# ── CONFLICTS ─────────────────────────────────────────────────────────────
+# Cardinalidade per (analytics, platform) cell já é enforçada pelo schema do
+# workflow-config — não precisa declarar conflito por label aqui. Cards
+# alternativos (`posthog-analytics`) coabitam o catalog sem conflito.
+conflicts-with: []
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+contributes:
+
+  # Template fragments — appendados ao tech-spec.md da feature
+  templates:
+    - target:  tech-spec.md
+      section: "Analytics events (Firebase)"
+      file:    templates/firebase-analytics-tech-spec.md
+      merge:   append-section
+
+
+# ── DETECTION ─────────────────────────────────────────────────────────────
+# `gradle-dep` é declaração canônica da coordenada Maven; consumido pelo
+# composer (W5) e pela tooling de migração (DET-3). O evaluator runtime
+# em `engine.init` ainda casa via sinais `file-content` / `file-exists`
+# enquanto W5 não landa — soma desses dois últimos cobre o threshold.
+detection:
+  signals:
+    - type:       gradle-dep
+      coordinate: "com.google.firebase:firebase-analytics"
+      confidence: 0.5
+
+    - type:       file-exists
+      glob:       "**/google-services.json"
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/*.kt"
+      contains:   "com.google.firebase.analytics"
+      confidence: 0.3
+
+  threshold: 0.5
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "observability"

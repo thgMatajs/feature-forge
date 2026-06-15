@@ -20,7 +20,6 @@ Schema sources: templates/analytics-spec.template.yaml +
 from __future__ import annotations
 
 import re
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -32,8 +31,14 @@ from _common import (
     result_warn,
     run_cli,
 )
+from _diff import git_staged_files  # M-09 dedupe: reuse shared helper (with -M80% rename detection)
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# A-014 (master review PR #15): `sys.path.insert` precisa rodar ANTES de
+# qualquer `from engine....` — antes ficava entre os blocos, funcionava por
+# coincidência da ordem do interpretador mas violava PEP-8 e seria quebrado
+# silenciosamente por um futuro reorder de linter. Único `# noqa: E402` no
+# bloco abaixo cobre os imports que dependem do path patch.
+sys.path.insert(0, str(Path(__file__).parent.parent))  # noqa: E402
 
 from engine.utils.paths import feature_dir  # noqa: E402
 from engine.utils.yaml_io import read_yaml_or_default  # noqa: E402
@@ -43,30 +48,6 @@ _LOG_EVENT_RE = re.compile(r"""logEvent\s*\(\s*["']([a-z0-9_]+)["']""")
 _TEST_TAG_RE = re.compile(
     r"""(?:testTag|accessibilityIdentifier)\s*\(\s*["']([a-z0-9_]+)["']"""
 )
-
-
-def _git_staged_files(project_root: Path) -> list[Path]:
-    try:
-        out = subprocess.run(
-            ["git", "-C", str(project_root), "diff", "--cached", "--name-only"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except (subprocess.SubprocessError, OSError):
-        return []
-    if out.returncode != 0:
-        return []
-    files: list[Path] = []
-    for line in out.stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        p = project_root / line
-        if p.is_file() and p.suffix in {".kt", ".kts", ".swift", ".ts", ".tsx", ".js"}:
-            files.append(p)
-    return files
 
 
 def _resolve_slug(kwargs: dict[str, Any]) -> str | None:
@@ -119,7 +100,10 @@ def _collect_observability_constants(project_root: Path) -> set[str]:
 
 def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
     """Scan staged files for analytics events + test-tags not in contracts."""
-    staged = _git_staged_files(project_root)
+    staged = git_staged_files(
+        project_root,
+        extensions={".kt", ".kts", ".swift", ".ts", ".tsx", ".js"},
+    )
     if not staged:
         return result_pass("nenhum arquivo staged — nada a checar")
 

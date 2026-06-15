@@ -130,7 +130,7 @@ exemplo, projeto que insiste em offset-based define
 | `firestore-persistence` | Coexiste (projetos híbridos). REST + Firestore numa mesma feature: dois blocos no data-contract-spec, um Repository unifica DomainError. |
 | `firebase-auth` | Bearer token = Firebase ID token. Service recebe por parâmetro, não persiste. |
 | `auth-jwt-bearer` | Allowed-files do task-writer abre `AuthInterceptor.kt` + `TokenStore.kt` em `shared/core/auth/`. |
-| `crashlytics` | Eventos `*_error` REST disparam `recordException` com `status_code`, `endpoint_id`. |
+| `firebase-crashlytics` | Eventos `*_error` REST disparam `recordException` com `status_code`, `endpoint_id`. |
 
 ## Como usar localmente
 

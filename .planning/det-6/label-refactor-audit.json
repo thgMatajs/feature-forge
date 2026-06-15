@@ -1,0 +1,205 @@
+[
+  {
+    "file": "cards/auth-jwt-bearer/card.yaml",
+    "label": "auth-provider",
+    "context": "provides",
+    "action": "remove",
+    "reason": "singular label superseded by schema enforcement (W3) — auth axis cardinality enforced per (auth, platform) cell em workflow-config."
+  },
+  {
+    "file": "cards/auth-jwt-bearer/card.yaml",
+    "label": "auth-token-bearer",
+    "context": "provides",
+    "action": "keep",
+    "reason": "auxiliar (não-singular) — descreve mecanismo Bearer JWT, preservada per SPEC W3 §Labels singulares preservadas (auxiliar). Não removida."
+  },
+  {
+    "file": "cards/auth-jwt-bearer/card.yaml",
+    "label": "http-client",
+    "context": "requires",
+    "action": "remove",
+    "reason": "dependency em singular label removida — schema novo expressa essa relação via co-presença de cell (data, platform) no workflow-config (data axis must have HTTP card). Card-level requires ficaria órfão se http-client some de qualquer provides."
+  },
+  {
+    "file": "cards/auth-jwt-bearer/card.yaml",
+    "label": "auth-provider",
+    "context": "conflicts-with",
+    "action": "remove",
+    "reason": "conflito declarado pela label singular se torna redundante — schema enforça 1 card per (auth, platform) cell ao nível do workflow-config."
+  },
+  {
+    "file": "cards/auth-jwt-bearer/card.yaml",
+    "label": "auth-provider+auth-token-bearer",
+    "context": "comments",
+    "action": "rewrite-comment",
+    "reason": "comentários YAML referenciam labels deprecated — reescrever pra refletir schema novo (cell-cardinality enforcement) sem mention às labels removidas. auth-token-bearer permanece auxiliar."
+  },
+
+  {
+    "file": "cards/firebase-auth/card.yaml",
+    "label": "auth-provider",
+    "context": "provides",
+    "action": "remove",
+    "reason": "singular label superseded by schema enforcement (W3) — mesmo motivo de auth-jwt-bearer."
+  },
+  {
+    "file": "cards/firebase-auth/card.yaml",
+    "label": "auth-token-bearer",
+    "context": "provides",
+    "action": "keep",
+    "reason": "auxiliar — preservada."
+  },
+  {
+    "file": "cards/firebase-auth/card.yaml",
+    "label": "auth-firebase-managed",
+    "context": "provides",
+    "action": "keep",
+    "reason": "auxiliar — preservada (descreve gestão de sessão pelo SDK Firebase)."
+  },
+  {
+    "file": "cards/firebase-auth/card.yaml",
+    "label": "auth-provider",
+    "context": "conflicts-with",
+    "action": "remove",
+    "reason": "redundante — schema enforça 1 card per (auth, platform) cell."
+  },
+  {
+    "file": "cards/firebase-auth/card.yaml",
+    "label": "auth-provider",
+    "context": "comments",
+    "action": "rewrite-comment",
+    "reason": "comentários YAML referenciam label deprecated — reescrever pra refletir schema novo."
+  },
+
+  {
+    "file": "cards/ktor-client/card.yaml",
+    "label": "http-client",
+    "context": "provides",
+    "action": "remove",
+    "reason": "singular label superseded by schema enforcement (W3) — data axis cardinality enforced per (data, platform) cell em workflow-config."
+  },
+  {
+    "file": "cards/ktor-client/card.yaml",
+    "label": "http-client",
+    "context": "conflicts-with",
+    "action": "remove",
+    "reason": "redundante — schema enforça 1 card per (data, platform) cell."
+  },
+  {
+    "file": "cards/ktor-client/card.yaml",
+    "label": "http-client",
+    "context": "comments",
+    "action": "rewrite-comment",
+    "reason": "comentários YAML referenciam label deprecated — reescrever."
+  },
+  {
+    "file": "cards/ktor-client/card.yaml",
+    "label": "http-client",
+    "context": "config-defaults",
+    "action": "keep",
+    "reason": "`conventions.network.http-client: \"ktor-client\"` é chave de config-default (string namespace), NÃO label de capability — não tocada por W3."
+  },
+
+  {
+    "file": "cards/retrofit-client/card.yaml",
+    "label": "http-client",
+    "context": "provides",
+    "action": "remove",
+    "reason": "singular label superseded by schema enforcement (W3)."
+  },
+  {
+    "file": "cards/retrofit-client/card.yaml",
+    "label": "http-client",
+    "context": "config-defaults",
+    "action": "keep",
+    "reason": "`conventions.network.http-client: \"retrofit\"` é chave de config-default, NÃO label de capability."
+  },
+  {
+    "file": "cards/retrofit-client/card.yaml",
+    "label": "http-client",
+    "context": "comments",
+    "action": "rewrite-comment",
+    "reason": "comentários (description, header) referenciam http-client como label — reescrever."
+  },
+
+  {
+    "file": "cards/rest-api-contract/card.yaml",
+    "label": "http-client",
+    "context": "requires",
+    "action": "remove",
+    "reason": "dependency em singular label removida — workflow-config nível garante presença de HTTP card via cell (data, platform)."
+  },
+  {
+    "file": "cards/rest-api-contract/card.yaml",
+    "label": "http-client",
+    "context": "comments",
+    "action": "rewrite-comment",
+    "reason": "comentário sobre `http-client` provedor — reescrever pra apontar ao schema novo."
+  },
+
+  {
+    "file": "cards/crashlytics/card.yaml",
+    "label": "crash-reporting",
+    "context": "provides",
+    "action": "remove",
+    "reason": "singular label superseded by schema enforcement (W3) — observability axis cardinality enforced per (observability, platform) cell."
+  },
+  {
+    "file": "cards/crashlytics/card.yaml",
+    "label": "crash-reporting",
+    "context": "conflicts-with",
+    "action": "remove",
+    "reason": "redundante — schema enforça 1 card per (observability, platform) cell."
+  },
+  {
+    "file": "cards/crashlytics/card.yaml",
+    "label": "crash-reporting",
+    "context": "comments",
+    "action": "rewrite-comment",
+    "reason": "comentários YAML referenciam label deprecated — reescrever."
+  },
+  {
+    "file": "cards/crashlytics/card.yaml",
+    "label": "crash-reporting",
+    "context": "config-defaults",
+    "action": "keep",
+    "reason": "`conventions.observability.crash-reporting: \"crashlytics\"` é chave de config-default (string namespace), NÃO label de capability."
+  },
+
+  {
+    "file": "docs/schemas/capability-labels.md",
+    "label": "auth-provider",
+    "context": "catalog-singular-entry",
+    "action": "reclassify-removed",
+    "reason": "row na seção Auth — mover pra nova seção §Migração v1.2 (DET-6) — labels removidas com status `removed in v1.2 — superseded by schema enforcement`. Linha original preservada (audit-trail per Decision 22) mas reclassificada Type=Removed (não-singular), o que faz `known_singular_labels()` parar de incluir e resolver parar de enforçar."
+  },
+  {
+    "file": "docs/schemas/capability-labels.md",
+    "label": "http-client",
+    "context": "catalog-singular-entry",
+    "action": "reclassify-removed",
+    "reason": "row na seção Network — mover pra §Migração v1.2 (DET-6) — labels removidas."
+  },
+  {
+    "file": "docs/schemas/capability-labels.md",
+    "label": "crash-reporting",
+    "context": "catalog-singular-entry",
+    "action": "reclassify-removed",
+    "reason": "row na seção Observability — mover pra §Migração v1.2 (DET-6) — labels removidas."
+  },
+
+  {
+    "file": "engine/cards/loader.py",
+    "label": "auth-provider|http-client|crash-reporting|auth-token-bearer",
+    "context": "enforcement-code",
+    "action": "no-change",
+    "reason": "loader não enforça labels por nome — singular set é derivado dinamicamente do catalog markdown via `_parse_capability_catalog`. Reclassify no markdown propaga automaticamente. Decision 22 audit-trail preservado."
+  },
+  {
+    "file": "engine/cards/resolver.py",
+    "label": "auth-provider|http-client|crash-reporting",
+    "context": "enforcement-code",
+    "action": "no-change",
+    "reason": "resolver chama `known_singular_labels()` que devolve set do catalog parser. Sem referência hardcoded por nome — comportamento muda automaticamente quando markdown reclassifica."
+  }
+]

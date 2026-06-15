@@ -24,11 +24,11 @@ identity:
   name:         firestore-persistence
   version:      1.0.0
   description:  "Cloud Firestore como persistência server-side (CRUD documents, queries, batch writes). Realtime listeners ficam em `firestore-realtime` (card separado); security rules em `firestore-security-rules`."
-  category:     backend
+  category:     data
   maturity:     stable
   maintainer:   feature-forge-core
   created-at:   2026-05-29
-  last-updated: 2026-05-29
+  last-updated: 2026-06-10
   license:      MIT
 
 
@@ -104,9 +104,8 @@ detection:
       glob:       "**/google-services.json"
       confidence: 0.2
 
-    - type:       file-content
-      glob:       "**/build.gradle*"
-      contains:   "firebase-firestore"
+    - type:       gradle-dep
+      coordinate: "com.google.firebase:firebase-firestore"
       confidence: 0.5
 
     - type:       file-exists

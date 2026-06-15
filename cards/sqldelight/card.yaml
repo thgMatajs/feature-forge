@@ -1,0 +1,80 @@
+# cards/sqldelight/card.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Schema version: 1
+# SQLDelight — KMP-native SQL persistence. Pareia com `room-database`
+# cobrindo a cell `(persistence, kmp)` no workflow-config. Pode também
+# atender `(persistence, android)` e `(persistence, ios)` via shared
+# module quando o projeto opta por SQL único em commonMain.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+
+# ── IDENTITY ──────────────────────────────────────────────────────────────
+identity:
+  name:         sqldelight
+  version:      1.0.0
+  description:  "SQLDelight — KMP-native SQL persistence. Pareia com room-database (Android-first) cobrindo a cell (persistence, kmp). Também pode atender (persistence, android) e (persistence, ios) via shared module quando o projeto consolida SQL em commonMain."
+  category:     persistence
+  platforms:    [android, ios, kmp]
+  maturity:     stable
+  maintainer:   feature-forge-core
+  created-at:   2026-06-11
+  last-updated: 2026-06-11
+  license:      Apache-2.0
+
+
+# ── CAPABILITIES ──────────────────────────────────────────────────────────
+# CARD-006 relax (W3): backend-axis cards aceitam provides: [].
+provides: []
+
+
+# ── DEPENDENCIES ──────────────────────────────────────────────────────────
+requires: []
+
+
+# ── CONFLICTS ─────────────────────────────────────────────────────────────
+# Cardinalidade per (persistence, platform) cell enforçada pelo workflow-config.
+conflicts-with: []
+
+
+# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
+contributes:
+
+  templates:
+    - target:  tech-spec.md
+      section: "Local persistence (SQLDelight)"
+      file:    templates/sqldelight-tech-spec.md
+      merge:   append-section
+
+
+# ── DETECTION ─────────────────────────────────────────────────────────────
+# Threshold cumulativo 0.5:
+#   - runtime sozinho dispara (0.5)
+#   - OU 2+ secondary signals (drivers + import) compõem
+detection:
+  signals:
+    - type:       gradle-dep
+      coordinate: "app.cash.sqldelight:runtime"
+      confidence: 0.5
+
+    - type:       gradle-dep
+      coordinate: "app.cash.sqldelight:android-driver"
+      confidence: 0.3
+
+    - type:       gradle-dep
+      coordinate: "app.cash.sqldelight:native-driver"
+      confidence: 0.3
+
+    - type:       file-content
+      glob:       "**/*.gradle.kts"
+      contains:   "app.cash.sqldelight"
+      confidence: 0.3
+
+  threshold: 0.5
+
+
+# ── DOCUMENTATION ─────────────────────────────────────────────────────────
+documentation:
+  readme:     README.md
+  rules-link: "persistence"

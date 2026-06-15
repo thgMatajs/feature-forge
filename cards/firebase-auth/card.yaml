@@ -15,20 +15,21 @@ identity:
   name:         firebase-auth
   version:      1.0.0
   description:  "Firebase Authentication (Email/Password + provedores OAuth) para Android/iOS/Web. Inclui observability (test IDs + analytics events) e Crashlytics integration via FirebaseAuthAnalyticsException."
-  category:     backend
+  category:     auth
   maturity:     stable
   maintainer:   feature-forge-core
   created-at:   2026-05-29
-  last-updated: 2026-05-29
+  last-updated: 2026-06-10
   license:      MIT
 
 
 # ── CAPABILITIES ──────────────────────────────────────────────────────────
-# auth-provider: singular — apenas 1 provedor de identidade por projeto.
 # auth-token-bearer: auxiliar — Firebase Auth usa Bearer token (JWT/OAuth).
 # auth-firebase-managed: auxiliar — sessão gerenciada pelo SDK Firebase.
+# Singular legada da família auth foi removida em W3 (DET-6) — cardinalidade
+# per (auth, platform) cell é enforçada pelo schema do workflow-config; ver
+# capability-labels.md §Migração v1.2 (DET-6).
 provides:
-  - auth-provider
   - auth-token-bearer
   - auth-firebase-managed
 
@@ -36,19 +37,18 @@ provides:
 # ── DEPENDENCIES ──────────────────────────────────────────────────────────
 # Nenhum requires obrigatório no catálogo v1 — Firebase Auth funciona em
 # Android, iOS e Web independentemente da escolha de UI/DI. Crashlytics
-# integration é opcional: quando o card `crashlytics` está ativo, o
+# integration é opcional: quando o card `firebase-crashlytics` está ativo, o
 # fragmento de analytics ganha o bloco recordException; quando não, eventos
 # *_error apenas logam.
 requires: []
 
 
 # ── CONFLICTS ─────────────────────────────────────────────────────────────
-# Qualquer outro provedor de auth conflita pela label singular `auth-provider`
-# — apenas um pode prover identidade num projeto. Cards futuros (auth0,
-# supabase-auth, clerk-auth, auth-jwt-bearer) provêem `auth-provider` e caem
-# automaticamente neste conflito.
-conflicts-with:
-  - auth-provider
+# Sem `conflicts-with` por label singular — schema enforça 1 card per
+# (auth, platform) cell no workflow-config. Cards futuros (auth0,
+# supabase-auth, clerk-auth, auth-jwt-bearer) coabitam o catalog sem
+# precisar declarar conflito por label aqui.
+conflicts-with: []
 
 
 # ── CONTRIBUTIONS ─────────────────────────────────────────────────────────
@@ -105,9 +105,8 @@ detection:
       glob:       "**/GoogleService-Info.plist"
       confidence: 0.20
 
-    - type:       file-content
-      glob:       "**/build.gradle*"
-      contains:   "firebase-auth"
+    - type:       gradle-dep
+      coordinate: "com.google.firebase:firebase-auth"
       confidence: 0.35
 
     - type:       file-content
@@ -120,9 +119,8 @@ detection:
       contains:   "FirebaseAuth"
       confidence: 0.30
 
-    - type:       file-content
-      glob:       "**/build.gradle*"
-      contains:   "firebase-auth-ktx"
+    - type:       gradle-dep
+      coordinate: "com.google.firebase:firebase-auth-ktx"
       confidence: 0.15
 
   threshold: 0.50

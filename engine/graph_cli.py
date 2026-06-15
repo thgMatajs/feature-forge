@@ -11,6 +11,8 @@ Strictly read-only. Graph rebuilds belong to `forge reconfigure`.
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -20,9 +22,92 @@ from engine.ui.question import PromptAbortedError
 from engine.ui.tree import render_tree
 from engine.utils.paths import (
     ProjectRootNotFoundError,
+    claude_dir,
+    ensure_dir,
     find_project_root,
     graph_db_path,
 )
+from engine.utils.yaml_io import read_yaml_or_default, write_yaml
+from engine.utils.checkpoint_io import (
+    clear_checkpoint as _clear_checkpoint_io,
+    load_yaml_checkpoint as _load_yaml_checkpoint_io,
+    save_yaml_checkpoint as _save_yaml_checkpoint_io,
+)
+from engine.utils.iso import utc_now_iso as _utc_now_iso_shared
+
+
+# ── Checkpoint (DRIFT-1 W2.T3b — intent-resume, outcome C) ───────────────────
+#
+# Per the T3a audit (.planning/drift-1/checkpoint-audit.json,
+# action="add-new", reuse_path="init-pattern"), graph_cli needs a
+# checkpoint so the host can pause at any of the 7 interactive callsites
+# (menu ``ask`` + 6 handler-level ``ask_text``/``ask`` invocations) and
+# re-invoke cleanly. Mirrors ``_InitCheckpoint`` at
+# ``engine/init.py:100-108`` — per-subcommand dataclass, no import from
+# ``engine.qa.checkpoint`` (Decision 22 + outcome C lock-in).
+#
+# Refs:
+#   - docs/superpowers/specs/drift-1-intent-protocol.md §3, §5, §8
+#   - engine/init.py:100-108 (canonical template)
+
+
+@dataclass
+class _GraphCliCheckpoint:
+    """State serialized before each ``question.ask*`` call in ``graph_cli.run``.
+
+    Carries ``handler_key`` (a/b/c/.../17) so re-invocacao consegue
+    saltar direto pra branch correta sem re-perguntar o menu. ``step``
+    distingue entre o ``ask`` inicial do menu e o prompt do handler
+    selecionado (ex.: ``step-menu`` vs ``step-handler:similar``).
+    """
+
+    step: str
+    at: str
+    project_root: str
+    intent_id: str | None = None
+    handler_key: str | None = None
+
+
+def _graph_cli_checkpoint_path(project_root: Path) -> Path:
+    return claude_dir(project_root) / ".graph-cli-checkpoint.yaml"
+
+
+# Os 4 helpers abaixo são thin shims sobre ``engine.utils.checkpoint_io`` +
+# ``engine.utils.iso`` — consolidação dos 30 duplicates + 10 cópias de
+# ``_utc_now_iso_*`` apontada pelos findings #5 e #21 do master review do
+# PR #11. Os nomes ``_save_graph_cli_checkpoint`` etc. permanecem como API
+# privada do módulo para preservar os contracts dos testes em
+# ``tests/unit/test_engine_graph_cli_resume.py`` (Mandamento #2 — verde).
+
+
+def _save_graph_cli_checkpoint(cp: _GraphCliCheckpoint) -> None:
+    """Persist the graph_cli checkpoint atomically."""
+    _save_yaml_checkpoint_io(
+        _graph_cli_checkpoint_path(Path(cp.project_root)),
+        {
+            "schema-version": 1,
+            "step": cp.step,
+            "at": cp.at,
+            "project-root": cp.project_root,
+            "intent-id": cp.intent_id,
+            "handler-key": cp.handler_key,
+        },
+    )
+
+
+def _load_graph_cli_checkpoint(project_root: Path) -> dict[str, Any] | None:
+    """Read the graph_cli checkpoint, returning ``None`` when absent."""
+    return _load_yaml_checkpoint_io(_graph_cli_checkpoint_path(project_root))
+
+
+def _clear_graph_cli_checkpoint(project_root: Path) -> None:
+    """Remove the checkpoint — best-effort; silent on OSError (idempotent)."""
+    _clear_checkpoint_io(_graph_cli_checkpoint_path(project_root))
+
+
+def _utc_now_iso_graph_cli() -> str:
+    """ISO-8601 UTC timestamp — thin shim sobre ``engine.utils.iso``."""
+    return _utc_now_iso_shared()
 
 
 def _slug_validator(raw: str) -> bool:
@@ -294,6 +379,30 @@ def run(argv: list[str]) -> int:
         "c":  "cancelar",
     }
 
+    # DRIFT-1 W2.T3b — persist checkpoint with the deterministic intent-id
+    # for the menu ask BEFORE invoking ``question.ask``. On exit-2 +
+    # re-invoke, ``question.ask`` finds the matching forge-response.json
+    # and returns the value without re-prompting. Outcome C — per-subcommand
+    # dataclass, no import from ``engine.qa.checkpoint``.
+    _save_graph_cli_checkpoint(
+        _GraphCliCheckpoint(
+            step="step-menu",
+            at=_utc_now_iso_graph_cli(),
+            project_root=str(project_root),
+            intent_id=question.stable_intent_id(
+                "ask",
+                "Qual query?",
+                options,
+                extra={
+                    "default": "3",
+                    "min-selected": None,
+                    "validator-hint": None,
+                },
+            ),
+            handler_key=None,
+        )
+    )
+
     try:
         choice = question.ask(
             "Qual query?",
@@ -305,18 +414,45 @@ def run(argv: list[str]) -> int:
         return 130
 
     if choice == "c":
+        # DRIFT-1 W2.T3b — clear intent-resume checkpoint on clean completion.
+        _clear_graph_cli_checkpoint(project_root)
         return 0
 
-    _, handler = _HANDLERS[choice]
+    handler_label, handler = _HANDLERS[choice]
+    # DRIFT-1 W2.T3b — atualiza checkpoint pra cobrir o prompt do handler
+    # antes de invoca-lo. handler_key fica registrado pra audit/forensics
+    # quando o handler envolve ask_text/ask interno; o intent-id especifico
+    # do prompt fica dentro do handler (cada um tem prompt distinto e
+    # stable_intent_id e calculado pelo proprio question.ask*). Outcome C
+    # — sem refator dos handlers individuais (Mandamento #4 / scope).
+    _save_graph_cli_checkpoint(
+        _GraphCliCheckpoint(
+            step=f"step-handler:{handler_label}",
+            at=_utc_now_iso_graph_cli(),
+            project_root=str(project_root),
+            intent_id=None,
+            handler_key=choice,
+        )
+    )
     try:
         handler(project_root)
     except PromptAbortedError:
         renderer.write("  cancelado.")
+        # Pause na pergunta do handler — invalid response branches preservam
+        # checkpoint per SPEC §3, mas user pause e clean exit. Limpamos
+        # checkpoint pra nao confundir re-invocacao seguinte.
+        _clear_graph_cli_checkpoint(project_root)
         return 130
     except Exception as exc:
         sys.stderr.write(f"forge graph: query falhou — {exc}\n")
+        # Hard failure no handler — clean exit, libera checkpoint. SPEC §3
+        # forensic preservation aplica-se a invalid-response branches no
+        # question.ask* (ValueError), nao a falhas internas do handler.
+        _clear_graph_cli_checkpoint(project_root)
         return 1
 
+    # DRIFT-1 W2.T3b — clear intent-resume checkpoint on clean completion.
+    _clear_graph_cli_checkpoint(project_root)
     return 0
 
 

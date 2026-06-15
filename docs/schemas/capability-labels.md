@@ -2,6 +2,19 @@
 
 Este é o **source of truth** de capability labels para feature-forge v1. Cards declaram `provides:` / `requires:` / `conflicts-with:` em `card.yaml` usando apenas labels listadas aqui. O resolver de cards (engine) usa este catálogo como referência para validar dependências e detectar conflitos.
 
+> **Migração v1.2 (DET-6) — labels singulares removidas:** as labels
+> `auth-provider`, `http-client`, `crash-reporting` foram reclassificadas
+> como **Removed** em W3 (DET-6). A cardinalidade per (axis, platform) cell
+> agora é enforçada pelo schema do workflow-config (`backend.<axis>.<platform>:
+> { card: <name> }`), não mais via singular label no catálogo. As linhas
+> originais permanecem nas tabelas abaixo (audit-trail per Decision 22) com
+> Type=Removed; resolver para de enforçar singular-conflict pra elas. Cards
+> que perderam todos os labels (`ktor-client`, `retrofit-client`) ficam com
+> `provides: []` — CARD-006 foi relaxada pra aceitar provides vazio em cards
+> cuja `identity.category` é uma backend axis (data / auth / observability /
+> analytics / storage / persistence / notifications / flags). Ver
+> `engine/cards/loader.py` e §Migração v1.2 (DET-6) no rodapé.
+
 A validação automática (Phase 5) vai criar `validators/validate_capability_labels.py` para garantir conformidade — cada label usada em qualquer `card.yaml` deve constar deste arquivo.
 
 **Regras canônicas relevantes do schema:**
@@ -68,7 +81,7 @@ A validação automática (Phase 5) vai criar `validators/validate_capability_la
 
 | Label | Família | Provedor(es) v1 | Descrição | Tipo |
 |---|---|---|---|---|
-| `http-client` | Network | `ktor-client` | Cliente HTTP cross-platform (KMP) | Singular |
+| `http-client` | Network | (none — removed v1.2) | Cliente HTTP cross-platform (KMP). **Removed in v1.2 (DET-6)** — cardinalidade per (data, platform) cell enforçada pelo workflow-config; ver §Migração v1.2 (DET-6). | Removed (v1.2) |
 | `api-contract-rest` | Network | `rest-api-contract` | Convenções REST (endpoints, DTOs, error mapping) | Auxiliar |
 | `api-contract-firebase-sdk` | Network | `firestore-persistence` | Calls via SDK Firebase (não-REST) | Auxiliar |
 | `realtime-stream` | Network | `firestore-realtime` | Stream realtime (listeners, WebSocket, SSE) | Singular |
@@ -87,7 +100,7 @@ A validação automática (Phase 5) vai criar `validators/validate_capability_la
 
 | Label | Família | Provedor(es) v1 | Descrição | Tipo |
 |---|---|---|---|---|
-| `auth-provider` | Auth | `firebase-auth` **OU** `auth-jwt-bearer` | Provedor de identidade canônico (um por projeto) | Singular |
+| `auth-provider` | Auth | (none — removed v1.2) | Provedor de identidade canônico. **Removed in v1.2 (DET-6)** — cardinalidade per (auth, platform) cell enforçada pelo workflow-config; ver §Migração v1.2 (DET-6). | Removed (v1.2) |
 | `auth-token-bearer` | Auth | `firebase-auth` **E** `auth-jwt-bearer` | Auth flow baseado em token Bearer (JWT/OAuth) | Auxiliar |
 | `auth-firebase-managed` | Auth | `firebase-auth` | Sessão gerenciada pelo SDK Firebase | Auxiliar |
 
@@ -102,7 +115,7 @@ A validação automática (Phase 5) vai criar `validators/validate_capability_la
 
 | Label | Família | Provedor(es) v1 | Descrição | Tipo |
 |---|---|---|---|---|
-| `crash-reporting` | Observability | `crashlytics` | Reporte de crashes + non-fatal exceptions | Singular |
+| `crash-reporting` | Observability | (none — removed v1.2) | Reporte de crashes + non-fatal exceptions. **Removed in v1.2 (DET-6)** — cardinalidade per (observability, platform) cell enforçada pelo workflow-config; ver §Migração v1.2 (DET-6). | Removed (v1.2) |
 | `crashlytics` | Observability | `crashlytics` | Firebase Crashlytics especificamente | Auxiliar |
 
 ---
@@ -168,6 +181,44 @@ Durante a Fase 3 inicial, algumas labels foram usadas com nomes/escopo que mudar
 
 ---
 
+## Migração v1.2 (DET-6) — singular labels deprecated
+
+Phase B (DET-6) introduziu o modelo multi-axis backend com cardinalidade
+per (axis, platform) cell enforçada pelo schema do workflow-config
+(`backend.<axis>.<platform>: { card: <name> }`). Isso torna redundantes as
+labels singulares historicamente usadas pra enforçar "1 provedor por
+projeto" no catálogo.
+
+| Label v1.0/1.1 | Type final v1.2 | Cards afetados | Justificativa |
+|---|---|---|---|
+| `auth-provider` | **Removed (v1.2)** | `firebase-auth`, `auth-jwt-bearer` | cardinalidade per (auth, platform) cell é responsabilidade do workflow-config |
+| `http-client` | **Removed (v1.2)** | `ktor-client`, `retrofit-client` | cardinalidade per (data, platform) cell é responsabilidade do workflow-config |
+| `crash-reporting` | **Removed (v1.2)** | `crashlytics` | cardinalidade per (observability, platform) cell é responsabilidade do workflow-config |
+
+**Linhas originais preservadas** nas tabelas canônicas acima com Type=Removed
+(audit-trail per Decision 22 — append-only, não-destrutivo). O parser de
+labels do `engine/cards/loader.py` (`_parse_capability_catalog`) só insere
+no set Singular labels cujo Type começa com "singular" (lowercase ASCII),
+então labels marcadas como `Removed (v1.2)` ficam fora do set; resolver
+para automaticamente de enforçar singular-conflict pra elas.
+
+**Cards afetados — provides shape pós-W3:**
+
+- `firebase-auth` → `[auth-token-bearer, auth-firebase-managed]` (aux preservados)
+- `auth-jwt-bearer` → `[auth-token-bearer]` (aux preservado)
+- `crashlytics` → `[crashlytics]` (aux preservado — `crashlytics` é Auxiliar)
+- `ktor-client` → `[]` (cell-anchored — provides vazio aceito por CARD-006 relaxada)
+- `retrofit-client` → `[]` (idem)
+
+**CARD-006 relax:** `engine/cards/loader.py` aceita `provides: []` para
+cards cuja `identity.category` é uma backend axis (`data, auth, observability,
+analytics, storage, persistence, notifications, flags`). Cards stack/tooling
+continuam exigindo `provides:` não-vazio.
+
+Audit JSON completo: `.planning/det-6/label-refactor-audit.json`.
+
+---
+
 ## Política de adição de label nova (v1.x)
 
 Adicionar uma label nova ao catálogo requer **4 passos**, executados na **mesma PR**:
@@ -185,7 +236,7 @@ Adicionar label que rompe semântica (renomear / split / merge) requer também m
 
 Toda label usada em qualquer `card.yaml` deve constar deste catálogo. O schema em `docs/schemas/card.md` define:
 
-- **CARD-006** — `provides` lista de capability labels, não-vazia
+- **CARD-006** — `provides` lista de capability labels. Não-vazia para cards stack/tooling; **aceita vazia** para cards cuja `identity.category` é uma backend axis (DET-6) — sua identidade vem do cell (axis, platform) no workflow-config.
 - **CARD-007** — `requires` lista de capability labels (devem ser provided por algum card)
 - **CARD-008** — `conflicts-with` lista de labels OU nomes específicos de cards
 
@@ -202,15 +253,16 @@ A Phase 5 vai criar `validators/validate_capability_labels.py` que:
 
 ```yaml
 schema-version: 1
-last-updated: 2026-05-29
-catalog-version: 1.0.0
-covers: feature-forge v1.0 + Fase 3.5 refactor (backend-agnostic + REST coverage)
+last-updated: 2026-06-10
+catalog-version: 1.2.0
+covers: feature-forge v1.2 + DET-6 multi-axis backend (W3 — singular labels deprecated)
 total-labels:
-  singular: 13
+  singular: 10   # 13 originais - 3 removidos em v1.2 (DET-6 W3)
   latent: 3
   auxiliary: 14
   reserved: 5
-  total: 35
+  removed: 3     # auth-provider, http-client, crash-reporting (v1.2)
+  total: 35      # rows preservadas (audit-trail per Decision 22)
 ```
 
 ---

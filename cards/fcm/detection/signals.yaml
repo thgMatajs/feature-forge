@@ -1,0 +1,29 @@
+# cards/fcm/detection/signals.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# Sinais de detecção do card fcm — espelha o bloco `detection.signals` do
+# card.yaml. Threshold cumulativo 0.5.
+# ──────────────────────────────────────────────────────────────────────────
+
+schema-version: 1
+
+signals:
+  - id:         fcm-gradle-dep
+    type:       gradle-dep
+    coordinate: "com.google.firebase:firebase-messaging"
+    confidence: 0.5
+    rationale:  "Coordenada Maven canônica do Firebase Cloud Messaging SDK."
+
+  - id:         fcm-google-services-config
+    type:       file-exists
+    glob:       "**/google-services.json"
+    confidence: 0.3
+    rationale:  "Config Firebase Android — gerada pelo console. Não distingue FCM de outros módulos sozinho."
+
+  - id:         fcm-kotlin-import
+    type:       file-content
+    glob:       "**/*.kt"
+    contains:   "com.google.firebase.messaging"
+    confidence: 0.3
+    rationale:  "Import direto do SDK Messaging no código Kotlin — evidência forte de uso ativo."
+
+threshold: 0.5

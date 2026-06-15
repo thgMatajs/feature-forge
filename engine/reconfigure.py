@@ -23,6 +23,7 @@ import re as _re
 import shutil
 import sys
 from copy import deepcopy
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,7 @@ from typing import Any
 import yaml
 
 from engine.cards import LOCAL_CARD_NAME_RE
+from engine.detection._axes import BACKEND_AXES
 from engine.cards.grant import (
     GrantDecision,
     UserAbortError,
@@ -62,11 +64,107 @@ from engine.utils.paths import (
     workflow_config_path,
 )
 from engine.utils.sha256 import file_sha256
-from engine.utils.yaml_io import backup_file, read_yaml, write_yaml
+from engine.utils.paths import ensure_dir as _ensure_dir
+from engine.utils.yaml_io import backup_file, read_yaml, read_yaml_or_default, write_yaml
+from engine.utils.checkpoint_io import (
+    clear_checkpoint as _clear_checkpoint_io,
+    load_yaml_checkpoint as _load_yaml_checkpoint_io,
+    save_yaml_checkpoint as _save_yaml_checkpoint_io,
+)
+from engine.utils.iso import utc_now_iso as _utc_now_iso_shared
 
 _DRAFT_NAME = ".reconfigure-draft.yaml"
 _HISTORY_NAME = "workflow-config-history.jsonl"
 _DEFAULT_BAK_RETENTION_DAYS = 7
+
+
+# ── Checkpoint (DRIFT-1 W2.T3b — intent-resume, outcome C) ───────────────────
+#
+# Per the T3a audit (.planning/drift-1/checkpoint-audit.json,
+# action="add-new", reuse_path="init-pattern"), reconfigure ganha a
+# maior superficie interativa entre os 10 modulos (40 callsites). A
+# estrategia de save eh deliberadamente NAO per-callsite: o pattern
+# canonico de reconfigure tem ja um draft (.reconfigure-draft.yaml) que
+# persiste o estado da config-em-construcao por categoria. O checkpoint
+# de intent-resume e ortogonal ao draft — captura o ponto de pausa
+# dentro do FLUXO (qual menu/submenu/prompt esperava resposta). Os save
+# sites estrategicos sao ~5-7 pontos cobrindo:
+#   - entry (draft-resume confirm)
+#   - category-menu (ask_multi)
+#   - per-category-dispatch (breadcrumb update antes do handler rodar)
+#   - apply-confirm (final "aplicar mudancas?")
+# O question.ask* internamente calcula intent-id de cada prompt — a
+# re-invocacao consome via intent_state.read_response sem precisar de
+# save per-prompt.
+#
+# Mirrors ``_InitCheckpoint`` (engine/init.py:100-108) — outcome C, sem
+# import de ``engine.qa.checkpoint`` (Decision 22).
+#
+# Refs:
+#   - docs/superpowers/specs/drift-1-intent-protocol.md §3, §5, §8
+#   - engine/init.py:100-108 (canonical template)
+
+
+@dataclass
+class _ReconfigureCheckpoint:
+    """State serialized at strategic save sites in ``reconfigure.run``.
+
+    Carries ``menu_path`` (breadcrumb das escolhas de menu/submenu — ex.:
+    ``["cards", "add"]`` quando o handler estava em _cards_add) e
+    ``card_name`` (quando o pause aconteceu dentro de um fluxo
+    card-especifico). Save em entry, em category-menu, e em cada
+    category-dispatch.
+    """
+
+    step: str
+    at: str
+    project_root: str
+    intent_id: str | None = None
+    menu_path: list[str] = field(default_factory=list)
+    card_name: str | None = None
+
+
+def _reconfigure_checkpoint_path(project_root: Path) -> Path:
+    return claude_dir(project_root) / ".reconfigure-checkpoint.yaml"
+
+
+# Os 4 helpers abaixo são thin shims sobre ``engine.utils.checkpoint_io`` +
+# ``engine.utils.iso`` — consolidação dos 30 duplicates + 10 cópias de
+# ``_utc_now_iso_*`` apontada pelos findings #5 e #21 do master review do
+# PR #11. Os nomes ``_save_reconfigure_checkpoint`` etc. permanecem como API
+# privada do módulo para preservar os contracts dos testes em
+# ``tests/unit/test_engine_reconfigure_resume.py`` (Mandamento #2 — verde).
+
+
+def _save_reconfigure_checkpoint(cp: _ReconfigureCheckpoint) -> None:
+    """Persist the reconfigure checkpoint atomically."""
+    _save_yaml_checkpoint_io(
+        _reconfigure_checkpoint_path(Path(cp.project_root)),
+        {
+            "schema-version": 1,
+            "step": cp.step,
+            "at": cp.at,
+            "project-root": cp.project_root,
+            "intent-id": cp.intent_id,
+            "menu-path": list(cp.menu_path),
+            "card-name": cp.card_name,
+        },
+    )
+
+
+def _load_reconfigure_checkpoint(project_root: Path) -> dict[str, Any] | None:
+    """Read the reconfigure checkpoint, returning ``None`` when absent."""
+    return _load_yaml_checkpoint_io(_reconfigure_checkpoint_path(project_root))
+
+
+def _clear_reconfigure_checkpoint(project_root: Path) -> None:
+    """Remove the checkpoint — best-effort; silent on OSError (idempotent)."""
+    _clear_checkpoint_io(_reconfigure_checkpoint_path(project_root))
+
+
+def _utc_now_iso_reconfigure() -> str:
+    """ISO-8601 UTC timestamp — thin shim sobre ``engine.utils.iso``."""
+    return _utc_now_iso_shared()
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────
@@ -105,6 +203,26 @@ def run(argv: list[str]) -> int:
     draft_path = claude_dir(project_root) / _DRAFT_NAME
     draft = _load_draft(draft_path)
     if draft is not None:
+        # DRIFT-1 W2.T3b — save checkpoint ANTES do draft-confirm prompt.
+        # Outcome C — per-subcommand dataclass, no engine.qa.checkpoint import.
+        _save_reconfigure_checkpoint(
+            _ReconfigureCheckpoint(
+                step="step-draft-confirm",
+                at=_utc_now_iso_reconfigure(),
+                project_root=str(project_root),
+                intent_id=question.stable_intent_id(
+                    "confirm",
+                    "Detectei um draft de reconfigure não aplicado. Retomar?",
+                    {"s": "sim", "n": "não"},
+                    extra={
+                        "default": "s",
+                        "min-selected": None,
+                        "validator-hint": None,
+                    },
+                ),
+                menu_path=["draft-confirm"],
+            )
+        )
         if question.confirm(
             "Detectei um draft de reconfigure não aplicado. Retomar?",
             default=True,
@@ -118,9 +236,21 @@ def run(argv: list[str]) -> int:
 
     _show_snapshot(current)
 
+    # DRIFT-1 W2.T3b — save checkpoint ANTES do category-menu prompt.
+    _save_reconfigure_checkpoint(
+        _ReconfigureCheckpoint(
+            step="step-category-menu",
+            at=_utc_now_iso_reconfigure(),
+            project_root=str(project_root),
+            intent_id=None,  # intent-id derived inside _choose_categories
+            menu_path=["category-menu"],
+        )
+    )
     categories = _choose_categories()
     if not categories:
         renderer.write("Nada selecionado — saindo sem mudar nada.")
+        # DRIFT-1 W2.T3b — clean completion clears the intent-resume checkpoint.
+        _clear_reconfigure_checkpoint(project_root)
         return 0
 
     try:
@@ -128,6 +258,20 @@ def run(argv: list[str]) -> int:
             handler = _CATEGORY_HANDLERS.get(cat)
             if handler is None:
                 continue
+            # DRIFT-1 W2.T3b — breadcrumb update ANTES de cada category dispatch.
+            # O handler internamente faz seus proprios prompts via question.*;
+            # intent-id de cada um deriva da assinatura do prompt. O save aqui
+            # registra qual categoria estava em curso pra forensics + para
+            # eventual logic de resume por categoria no futuro.
+            _save_reconfigure_checkpoint(
+                _ReconfigureCheckpoint(
+                    step=f"step-category:{cat}",
+                    at=_utc_now_iso_reconfigure(),
+                    project_root=str(project_root),
+                    intent_id=None,
+                    menu_path=[cat],
+                )
+            )
             handler(project_root, current, working)
             _save_draft(draft_path, working)
     except question.PromptAbortedError:
@@ -141,6 +285,8 @@ def run(argv: list[str]) -> int:
     if working == current:
         renderer.write("Nenhuma mudança detectada — saindo sem escrever nada.")
         draft_path.unlink(missing_ok=True)
+        # DRIFT-1 W2.T3b — clean completion clears intent-resume checkpoint.
+        _clear_reconfigure_checkpoint(project_root)
         return 0
 
     # QA-11: grant flow pra sensitive env-needs declaradas em qa-extensions.
@@ -194,11 +340,33 @@ def run(argv: list[str]) -> int:
         )
 
     _show_diff(current, working)
+    # DRIFT-1 W2.T3b — save checkpoint ANTES do final apply-confirm prompt.
+    _save_reconfigure_checkpoint(
+        _ReconfigureCheckpoint(
+            step="step-apply-confirm",
+            at=_utc_now_iso_reconfigure(),
+            project_root=str(project_root),
+            intent_id=question.stable_intent_id(
+                "confirm",
+                "Aplicar essas mudanças?",
+                {"s": "sim", "n": "não"},
+                extra={
+                    "default": "n",
+                    "min-selected": None,
+                    "validator-hint": None,
+                },
+            ),
+            menu_path=["apply-confirm"],
+        )
+    )
     if not question.confirm("Aplicar essas mudanças?", default=False):
         renderer.write(
             "Cancelado. Draft salvo em .claude/.reconfigure-draft.yaml."
         )
         _save_draft(draft_path, working)
+        # DRIFT-1 W2.T3b — user cancellation is a clean completion (no
+        # writes applied). Clear intent-resume checkpoint; draft remains.
+        _clear_reconfigure_checkpoint(project_root)
         return 0
 
     before_sha = file_sha256(config_path)
@@ -218,6 +386,10 @@ def run(argv: list[str]) -> int:
     renderer.write("")
     renderer.write(renderer.colored("Reconfigure aplicado.", "green"))
     _run_quick_doctor(project_root, working)
+    # DRIFT-1 W2.T3b — full success: clears intent-resume checkpoint.
+    # PromptAbortedError branch above DELIBERATELY preserves it (forensic
+    # resume after user pause, mirroring the draft-resume semantics).
+    _clear_reconfigure_checkpoint(project_root)
     return 0
 
 
@@ -1105,25 +1277,378 @@ def _handle_conventions(
             conv[key] = val
 
 
-def _handle_backend(
-    project_root: Path, current: dict[str, Any], working: dict[str, Any]
-) -> None:
-    del project_root, current
-    backend = working.setdefault("backend", {})
-    provider = question.ask_text(
-        "backend.provider (firebase|rest|graphql|...)",
-        default=backend.get("provider", "") or "",
+# ── W7.3 multi-axis backend submenu (DET-6) ─────────────────────────────────
+#
+# Substitui o legacy `_handle_backend` (provider monolítico) pelo modelo
+# multi-axis platform-keyed canonizado em `docs/schemas/backend-axes.md`.
+# Cobertura AC-8 do SPEC det-6-multi-axis-backend.
+#
+# Shape esperado em `working["backend"]`:
+#
+#     backend:
+#       <axis>:                       # ∈ BACKEND_AXES
+#         <platform>:                 # ∈ platforms.active OR null cell
+#           card: <card-name>
+#           status: active | migrating-to | deprecated
+#           migrating-to: <card-name> # required when status=migrating-to
+#
+# Helpers vivem privados ao módulo. A ordem canônica dos 8 eixos vem de
+# `engine.detection._axes.BACKEND_AXES` — shared com init.py após
+# PR #13 review #3405254057 (antes duplicada local pra evitar suposto
+# ciclo de import que nunca existiu).
+
+# Status enum canonizado em `docs/schemas/backend-axes.md § Status enum`.
+_VALID_CELL_STATUSES: tuple[str, ...] = ("active", "migrating-to", "deprecated")
+
+
+def _platforms_active(working: dict[str, Any]) -> list[str]:
+    """Lê `platforms.active` do working config (default lista vazia)."""
+    block = working.get("platforms") or {}
+    active = block.get("active") or []
+    if not isinstance(active, list):
+        return []
+    return [p for p in active if isinstance(p, str) and p]
+
+
+def _render_backend_axes_table(
+    cells: dict[str, Any], platforms: list[str]
+) -> str:
+    """Renderiza tabela `axis × platform → cell` em texto monoespaçado.
+
+    Cells vazias / null aparecem como `—`. Cells preenchidas mostram
+    `<card>[*]` onde `[*]` é status marker (`!` migrating-to, `~`
+    deprecated; vazio se active).
+
+    Se `platforms` é vazio, renderiza apenas a coluna axis (cell payload
+    flat) — caso degenerado mas suportado pra projetos pré-platforms.
+    """
+    if not platforms:
+        # Fallback: lista linear sem tabela.
+        lines = ["(sem platforms.active — render flat)"]
+        for axis in BACKEND_AXES:
+            block = cells.get(axis) or {}
+            if not isinstance(block, dict):
+                lines.append(f"  {axis:<14} (inválido)")
+                continue
+            lines.append(f"  {axis:<14} {len(block)} entrada(s)")
+        return "\n".join(lines)
+
+    # Header
+    col_w = max(14, max((len(p) for p in platforms), default=0) + 2)
+    header = f"  {'axis':<14}" + "".join(f"{p:<{col_w}}" for p in platforms)
+    lines = [header, "  " + "-" * (14 + col_w * len(platforms))]
+    for axis in BACKEND_AXES:
+        block = cells.get(axis) if isinstance(cells.get(axis), dict) else {}
+        row = f"  {axis:<14}"
+        for pf in platforms:
+            cell = (block or {}).get(pf)
+            row += f"{_format_cell_short(cell):<{col_w}}"
+        lines.append(row)
+    return "\n".join(lines)
+
+
+def _format_cell_short(cell: Any) -> str:
+    """Renderiza cell em string curta pra tabela: `card[!~]` ou `—`."""
+    if cell is None:
+        return "—"
+    if not isinstance(cell, dict):
+        return "?"
+    card = cell.get("card") or "?"
+    status = cell.get("status") or "active"
+    marker = ""
+    if status == "migrating-to":
+        marker = "!"
+    elif status == "deprecated":
+        marker = "~"
+    return f"{card}{marker}"
+
+
+def _enumerate_cells_with_labels(
+    cells: dict[str, Any], platforms: list[str]
+) -> dict[str, str]:
+    """Monta `{axis|platform: label}` pra ask_multi.
+
+    Inclui TODAS as combinações `(axis, platform)` canônicas — não só as
+    que já existem em `cells` — pra permitir o user CRIAR cell em
+    posição vazia. Label carrega snapshot curto do estado atual.
+    """
+    out: dict[str, str] = {}
+    for axis in BACKEND_AXES:
+        block = cells.get(axis) if isinstance(cells.get(axis), dict) else {}
+        for pf in platforms:
+            key = f"{axis}|{pf}"
+            current = (block or {}).get(pf)
+            out[key] = f"{axis}/{pf}: {_format_cell_short(current)}"
+    return out
+
+
+def _parse_cell_key(key: str) -> tuple[str, str]:
+    """Inverte `_enumerate_cells_with_labels`: `axis|platform` → tupla."""
+    if "|" not in key:
+        raise ValueError(f"cell key inválida (falta '|'): {key!r}")
+    axis, platform = key.split("|", 1)
+    return axis, platform
+
+
+def _card_exists(card_name: str, project_root: Path) -> bool:
+    """Card existe em `cards/<name>/card.yaml` (canonical OR project local)?
+
+    Checa primeiro canonical (snapshot copy via Decision 15), depois local
+    overlay em `.claude/cards/local/`. Não carrega o YAML — só presença.
+    """
+    if not card_name:
+        return False
+    canonical_yaml = cards_canonical_dir() / card_name / "card.yaml"
+    if canonical_yaml.is_file():
+        return True
+    local_yaml = (
+        project_root / ".claude" / "cards" / "local" / card_name / "card.yaml"
     )
-    if provider:
-        backend["provider"] = provider
-    ticketing = working.setdefault("ticketing", {})
-    if question.confirm("Editar ticketing?", default=False):
-        for key in ("provider", "workspace", "default-project"):
-            val = question.ask_text(
-                f"ticketing.{key}", default=ticketing.get(key, "") or ""
+    return local_yaml.is_file()
+
+
+def _validate_cell_value(
+    cell_value: dict[str, Any] | None,
+    axis: str,
+    project_root: Path,
+) -> None:
+    """Valida cell shape conforme `docs/schemas/backend-axes.md § Cell object`.
+
+    Raises:
+        ValueError: se shape inválido. Caller decide se aborta a edição
+            inteira ou só esse axis — handler atual mostra erro mentor-
+            calmo e mantém valor anterior.
+    """
+    del axis  # axis enum check é feito antes do dispatch
+    if cell_value is None:
+        return  # opt-out explícito sempre OK
+    if not isinstance(cell_value, dict):
+        raise ValueError(f"cell deve ser dict ou None, got {type(cell_value).__name__}")
+    card = cell_value.get("card")
+    if not isinstance(card, str) or not card:
+        raise ValueError("cell.card obrigatório (string não-vazia)")
+    if not _card_exists(card, project_root):
+        raise ValueError(
+            f"cell.card={card!r} não existe em cards/<name>/card.yaml "
+            f"(canonical OU .claude/cards/local/)"
+        )
+    status = cell_value.get("status")
+    if status not in _VALID_CELL_STATUSES:
+        raise ValueError(
+            f"cell.status={status!r} fora do enum "
+            f"{list(_VALID_CELL_STATUSES)!r}"
+        )
+    migrating_to = cell_value.get("migrating-to")
+    if status == "migrating-to":
+        if not isinstance(migrating_to, str) or not migrating_to:
+            raise ValueError(
+                "cell.migrating-to obrigatório quando status=migrating-to "
+                "(string não-vazia)"
             )
-            if val:
-                ticketing[key] = val
+        if not _card_exists(migrating_to, project_root):
+            raise ValueError(
+                f"cell.migrating-to={migrating_to!r} não existe em "
+                f"cards/<name>/card.yaml"
+            )
+    else:
+        if migrating_to is not None:
+            raise ValueError(
+                f"cell.migrating-to MUST be absent quando status={status!r} "
+                f"(presente: {migrating_to!r})"
+            )
+
+
+def _prompt_cell_value(
+    axis: str,
+    platform: str,
+    *,
+    current: dict[str, Any] | None,
+    project_root: Path,
+) -> dict[str, Any] | None:
+    """Roda prompts pra editar a cell `(axis, platform)`.
+
+    Roteiro:
+      1) ask: ação top-level — opt-out (null) | edit cell | manter.
+      2) Se "edit": ask_text card name, ask status, se migrating-to → ask_text migrating-to.
+      3) Validate via `_validate_cell_value`; se erro → renderiza mensagem
+         mentor-calma e RETORNA o valor `current` (mantém estado).
+
+    Retorna a cell final (dict ou None) — caller escreve em `working`.
+    """
+    cur_card = current.get("card") if isinstance(current, dict) else None
+    cur_status = (
+        current.get("status") if isinstance(current, dict) else None
+    ) or "active"
+    cur_migrating = (
+        current.get("migrating-to") if isinstance(current, dict) else None
+    )
+    summary = _format_cell_short(current)
+
+    action = question.ask(
+        f"Cell {axis}/{platform} atual: {summary}. Ação?",
+        {
+            "edit":   "editar card / status / migrating-to",
+            "null":   "opt-out (null) — sem provider neste eixo×plataforma",
+            "keep":   "manter como está",
+        },
+        default="edit",
+    )
+    if action == "keep":
+        return current
+    if action == "null":
+        return None
+
+    # edit path
+    new_card = question.ask_text(
+        f"cell.card (atual {cur_card or '—'})",
+        default=cur_card or "",
+    ).strip()
+    if not new_card:
+        renderer.write(renderer.colored(
+            "card vazio — mantendo cell anterior.", "yellow"
+        ))
+        return current
+
+    new_status = question.ask(
+        f"cell.status (atual {cur_status})",
+        {s: s for s in _VALID_CELL_STATUSES},
+        default=cur_status if cur_status in _VALID_CELL_STATUSES else "active",
+    )
+
+    new_migrating: str | None = None
+    if new_status == "migrating-to":
+        new_migrating = question.ask_text(
+            f"cell.migrating-to (alvo da migração; atual {cur_migrating or '—'})",
+            default=cur_migrating or "",
+        ).strip() or None
+
+    candidate: dict[str, Any] = {"card": new_card, "status": new_status}
+    if new_migrating is not None:
+        candidate["migrating-to"] = new_migrating
+
+    try:
+        _validate_cell_value(candidate, axis, project_root)
+    except ValueError as exc:
+        renderer.write(renderer.colored(
+            f"⚠️  cell {axis}/{platform} rejeitada: {exc}", "yellow"
+        ))
+        renderer.write(renderer.dim("Mantendo valor anterior."))
+        return current
+    return candidate
+
+
+def _handle_backend_axes_submenu(
+    project_root: Path,
+    current: dict[str, Any],
+    working: dict[str, Any],
+) -> None:
+    """Reconfigure backend axes — tabela 8 axes × N platforms.
+
+    Substitui `_handle_backend` legacy (provider monolítico). Cobertura
+    AC-8 do SPEC det-6-multi-axis-backend.
+
+    Fluxo:
+      1. Lê `working["backend"]` (default {}) + `platforms.active`.
+      2. Renderiza tabela `axis × platform`.
+      3. ask_multi: quais cells editar (≥1).
+      4. Per cell selecionada: prompts (null / pick card / status /
+         migrating-to). Validation per cell — erro mantém valor anterior.
+      5. Muta `working["backend"][axis][platform]`. Apply (.bak + history
+         + sha256) fica delegado ao `_run` principal de reconfigure (não
+         duplica lógica).
+
+    Side effects:
+      - Renderiza tabela + warnings no stdout via `renderer`.
+      - Muta `working["backend"]` in-place.
+      - NÃO escreve arquivo — o apply final é responsabilidade do `_run`.
+
+    Args:
+        project_root: usado pra validar existência de cards referenciados.
+        current: snapshot pré-edição (não usado aqui — `_show_diff` já
+            mostra o delta depois).
+        working: dict mutável; recebe as edições per cell.
+    """
+    del current  # working já reflete o estado vigente; diff renderizado depois
+
+    backend_block = working.setdefault("backend", {})
+    if not isinstance(backend_block, dict):
+        renderer.write(renderer.colored(
+            "backend: bloco inválido (não é dict) — reinicializando vazio.",
+            "yellow",
+        ))
+        backend_block = {}
+        working["backend"] = backend_block
+
+    platforms = _platforms_active(working)
+    if not platforms:
+        renderer.write(renderer.colored(
+            "⚠️  platforms.active está vazio. Configure plataformas via "
+            "`forge init` ou edite workflow-config.yaml antes.",
+            "yellow",
+        ))
+        return
+
+    # 1. Render tabela current.
+    renderer.write("")
+    renderer.write(renderer.section_header("backend axes — estado atual"))
+    renderer.write(_render_backend_axes_table(backend_block, platforms))
+    renderer.write(renderer.dim(
+        "Legenda: `card!` = migrating-to · `card~` = deprecated · `—` = null/vazio"
+    ))
+    renderer.write("")
+
+    # 2. Multi-select: quais cells editar.
+    options = _enumerate_cells_with_labels(backend_block, platforms)
+    if not options:
+        renderer.write("Nada a editar — sem axes×platforms combináveis.")
+        return
+
+    picked = question.ask_multi(
+        "Quais cells (axis × platform) editar? (multi-select; ENTER vazio = sair)",
+        options,
+        min_selected=0,
+    )
+    if not picked:
+        renderer.write("Nada selecionado — saindo do submenu backend.")
+        return
+
+    # 3. Per cell: prompts + validate.
+    for cell_key in picked:
+        try:
+            axis, platform = _parse_cell_key(cell_key)
+        except ValueError as exc:
+            renderer.write(renderer.colored(f"chave {cell_key!r} inválida: {exc}", "yellow"))
+            continue
+        if axis not in BACKEND_AXES:
+            renderer.write(renderer.colored(
+                f"axis {axis!r} fora do enum canônico — pulando.", "yellow"
+            ))
+            continue
+        if platform not in platforms:
+            renderer.write(renderer.colored(
+                f"platform {platform!r} não está em platforms.active — pulando.",
+                "yellow",
+            ))
+            continue
+
+        axis_block = backend_block.get(axis)
+        if not isinstance(axis_block, dict):
+            axis_block = {}
+            backend_block[axis] = axis_block
+        existing = axis_block.get(platform)
+        new_value = _prompt_cell_value(
+            axis,
+            platform,
+            current=existing if isinstance(existing, dict) else None,
+            project_root=project_root,
+        )
+        # `None` = opt-out explícito (cell preserved as null);
+        # dict = ativo; ambos válidos pelo schema.
+        axis_block[platform] = new_value
+        renderer.write(renderer.colored(
+            f"  ✓ {axis}/{platform} → {_format_cell_short(new_value)}",
+            "green",
+        ))
 
 
 def _handle_persona(
@@ -1492,7 +2017,7 @@ _CATEGORY_HANDLERS = {
     "card-local":    _handle_card_local,
     "paths":         _handle_paths,
     "conventions":   _handle_conventions,
-    "backend":       _handle_backend,
+    "backend":       _handle_backend_axes_submenu,
     "persona":       _handle_persona,
     "memory":        _handle_memory,
     "hooks":         _handle_hooks,

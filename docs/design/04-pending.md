@@ -13,6 +13,239 @@ checklist for next sessions.
   `.claude/rules/plan-auditor.md` + integração — ver CHANGELOG
   `[Unreleased]`. Spec: `docs/superpowers/specs/2026-06-04-plan-auditor-design.md`.
 
+### B1 — `identity.backend-choice` ↔ `backend.provider` desync
+
+**Status:** ✅ FECHADO via Phase B DET-6 (2026-06-11). Removeu o
+acoplamento na raiz: `identity.backend-choice` deletado, `backend.provider`
+substituído por cell structure. Desync é arquiteturalmente impossível agora.
+
+### B2 — Seção `firebase:` órfã após swap
+
+**Status:** ✅ FECHADO via Phase B DET-6 (2026-06-11). Schema novo não
+tem subseção `firebase:` (substituído por `backend.<axis>.<platform>`
+cells). Swap = mudança de cells; sem seção legacy órfã possível.
+
+### DET-5 — `retrofit-client` fora do preset kmp-mobile
+
+**Status:** ✅ FECHADO via Phase B DET-6 W4+W6 (2026-06-11). retrofit-client
+agora carrega `category: data` (W2) e é referenciado pelo bundle
+`rest-with-firebase-telemetry.yaml` como default para
+`(data, android)` cell. Bundles substituem o conceito de "preset com
+backend-candidates fechados".
+
+### DET-6 — Modelo bundle-first é abstração errada
+
+**Status:** ✅ FECHADO (2026-06-11). Redesign multi-axis backend
+implementado integralmente conforme `docs/superpowers/specs/det-6-multi-
+axis-backend.md`. AC-2/3/5/6/7/8 cobertos. Commits: rebase em
+`origin/main` + W5 composer + W6 bundles + sqldelight card +
+crashlytics→firebase-crashlytics rename + W7.1/W7.2/W7.3/W7.4 + este
+W8 doc-sync. 29 commits sobre origin/main em `feat/det-6-multi-axis-backend`.
+
+## Open Implementation Details — DET-6 resolution (Phase B closeout, 2026-06-11)
+
+Os 8 itens "Open implementation details" da SPEC `det-6-multi-axis-backend.md`
+foram resolvidos como segue:
+
+1. **Bundle YAML path** — *Resolved inline*. Bundles vivem em
+   `presets/kmp-mobile/bundles/<bundle-name>.yaml` (arquivo separado).
+   Default proposto adotado por paridade com `card.yaml` per card.
+2. **Detection composer module location** — *Resolved inline*. Composer
+   em módulo separado `engine/detection/composer.py`. Default proposto
+   adotado por testability + reuse.
+3. **Status enum `deprecated` semantics** — *Resolved inline*. Cell
+   `status: deprecated` significa "este card está deprecated NESTE
+   projeto" independente de `card.yaml § identity.maturity`. Documentado
+   em `docs/schemas/backend-axes.md` § cell shape.
+4. **`firestore-realtime` fate** — *Deferred follow-up v1.3+*. Card
+   mantém `category: data` (W2). Sub-axis formal "realtime" fica como
+   follow-up (ver §"Follow-ups DET-6 v1.3+" abaixo).
+5. **`rest-api-contract` + `firestore-security-rules` sub-cards** —
+   *Deferred follow-up v1.3+*. Cards mantêm `category: data`. Sub-axes
+   "data-contract"/"rules" como follow-ups (ver §abaixo).
+6. **Phase A dependency API** — *Resolved*. Phase A entregou
+   AskUserQuestion intent protocol via `engine/ui/question.py` +
+   `intent_state.py` + `tty_bridge.py`. W7.1/W7.2/W7.3 consomem
+   `ask_three_paths`, `ask`, `ask_multi`, `confirm` direto.
+7. **`crashlytics` card rename** — *Resolved deviation*. Card renomeado
+   pra `firebase-crashlytics` em commit dedicado (paridade firebase-*).
+   25 arquivos atualizados.
+8. **Platform-applicability source** — *Resolved inline*. Campo
+   `identity.platforms: [android, ios, kmp]` adicionado ao card.yaml
+   schema (CARD-022 — renumber de CARD-020 devido à colisão com DET-3).
+   Composer consome esse campo via caller-supplied normalization
+   (W7.1/W7.2 augmentam dict shape passado pro composer).
+
+### Follow-ups DET-6 v1.3+
+
+- **bootstrap.sh assume `.git/hooks/` é dir (worktree edge case)** —
+  Descoberto 2026-06-12 durante test cleanup pós-`_SKIP_DIRS` fix.
+  Sintoma: `tests/integration/test_claude_rules_system.py::test_bootstrap_is_idempotent`
+  falha quando rodada de dentro de `.claude/worktrees/<branch>/` com
+  `ln: .git/hooks/pre-commit: Not a directory`. Root cause: em git
+  worktree, `.git` é um arquivo pointer com shape
+  `gitdir: <real-gitdir>/worktrees/<branch>`, não um diretório.
+  `bootstrap.sh` (linhas ~17-19) assume `.git/hooks/` é diretório
+  direto. Workaround: rodar bootstrap apenas da main worktree (use
+  case normal — bootstrap é setup inicial). Fix futuro (v1.3+):
+  detectar se `.git` é file, resolver gitdir pointer e ajustar paths
+  target. Refactor não-trivial. Não-bloqueador: afeta apenas test
+  rodado de worktree; desenvolvimento normal não toca esse path.
+- **Sub-axes formal** — `data` poderia ter sub-axes
+  `transport/contract/realtime/rules`. v1.2 mantém flat; revisitar
+  quando padrão emergir em projetos reais.
+- **9º axis (messaging direta)** — chat/push interactivo não é eixo
+  canônico v1.0. Revisitar se demanda surgir.
+- **Card composability dentro da mesma cell** — v1.0 não suporta "2
+  cards ativos na mesma (axis, platform) cell além de migrating-to".
+  Use case: side-by-side multi-tenant Firebase. Revisitar follow-up.
+- ~~**`_SKIP_DIRS` worktree bug** — engine walk filtra fixtures sob
+  `.claude/worktrees/` causando 1 unit test pré-existente + 4
+  integration tests pré-existentes a falharem do worktree (passam da
+  main repo root). Fix dedicado pendente — possível via opt-out env
+  var ou path normalization no walk.~~ **RESOLVIDO 2026-06-12:** fix em
+  `engine/inventory/_walk_cache.py` + `engine/init.py:_glob_any` —
+  match contra `path.relative_to(project_root).parts` em vez de
+  `path.parts` absoluto. Top-level `.claude/` em project_root continua
+  filtrado (caso legítimo); `.claude/` como parent do worktree não
+  bloqueia walk. Regression test em
+  `tests/unit/test__walk_cache_worktree.py`.
+- **W7.2 Phase A multi-intent re-invocation pitfall** — ✅ FECHADO em
+  2026-06-12 via consumed-intent log em `engine/ui/intent_state.py`.
+  Quando handler emite 2+ intents em sequência, `read_response` agora
+  consulta `.claude/state/forge-intent-log.jsonl` antes de tocar o
+  response file: intents já consumidos retornam a response cacheada,
+  fazendo re-entry idempotente. Schema doc atualizado em
+  `docs/schemas/intent-protocol.md §4`. Lifecycle clear do log via
+  `clear_intent_log_only` no `engine/cli.py::main()` `finally`,
+  preservando pending/response (SPEC §3 forensic). Tests de regressão
+  em `tests/unit/test_ui_intent_state.py` (cenários: cache hit, file
+  overwrite, unknown-id mismatch, log preservation, log reset, full
+  re-entry sequence, malformed lines). W7.x integration tests
+  permanecem com monkeypatch — remover seria reescrita significativa
+  sem redução de LOC; e2e tests já validam o wiring real.
+- **Bundle YAMLs com card references inexistentes** — bundle
+  `firebase-full.yaml` aponta pra `firebase-crashlytics` que ESTAVA
+  ausente (resolvido via rename), e `sqldelight` que ESTAVA ausente
+  (resolvido via criação). Pattern: bundle pode referenciar card a ser
+  criado em wave futura. validate_presets.py enforça que refs existem
+  no momento do validate.
+- **Uniform-detection duplicada: `_summarize_backend_cells` vs
+  `_render_axes_table`** — ambas implementam "detect uniform across
+  platforms → render compact" em `engine/init.py`, mas shapes de input
+  divergem genuinamente: `_render_axes_table` consome
+  `composer_result` (Cell/Conflict dataclasses, atributo `.card_id` +
+  `.candidates`); `_summarize_backend_cells` consome `cells` dict
+  pós-adapter (`{"card": ..., "status": ...}`). Consolidar exige
+  callable extractor genérico (~30-40 LOC infra) ou normalizar input
+  num shape único. Reviewer W7 L-002 sugere extrair
+  `_format_axis_compact(axis_map, get_card_id_fn)`, mas custo do
+  paralelo é baixo (duplicação cosmética, não comportamental).
+  Revisitar quando 3º callsite emergir ou refactor maior abrir
+  oportunidade barata.
+- **crashlytics rename — filenames de assets preservam nome antigo
+  (v1.3+ cosmético)** — o rename `crashlytics → firebase-crashlytics`
+  no commit `661b2d4` foi card-id-only por design. Os filenames internos
+  ficaram intocados deliberadamente: `templates/crashlytics-tech-spec.md`,
+  `templates/crashlytics-analytics.yaml`, e
+  `validators/check_crashlytics_shared_exception.py`. Também o field name
+  `crashlytics:` em contracts de analytics. Decisão consciente porque
+  filenames são identidade de arquivo (não do card) — rename mecânico
+  geraria diff massivo cross-referencing sem ganho funcional. Reviewer
+  W7 nota que isso vai gerar 1 finding cosmético em cada futuro reviewer
+  até alinharmos. Follow-up: rename cosmético `crashlytics-* →
+  firebase-crashlytics-*` em filenames + field name, com migrator pra
+  contracts existentes. Não-bloqueador, sem impacto runtime.
+
+### DRIFT-1 — Intent Protocol (Engine intent-only + tty_bridge)
+
+- **Branch:** `feat/drift-1-intent-protocol`
+- **SPEC:** `docs/superpowers/specs/drift-1-intent-protocol.md`
+- **PLAN:** `docs/superpowers/plans/drift-1-intent-protocol.md`
+- **Resumo:** engine deixa de ler stdin diretamente; emite intent via
+  state files (`.claude/state/forge-pending.json` /
+  `forge-response.json`); `engine/ui/tty_bridge.py` faz fallback TTY
+  subprocess loop; `bin/forge` dispatcher detecta contexto via TTY +
+  env `CLAUDECODE`. Exit code 2 = paused-for-input; exit 130 =
+  UserCancelledError / KeyboardInterrupt; exit 0/1 preservados.
+  AC-1..AC-9 verificados em 15 integration + 3 e2e pty tests.
+- **21 commits** (range `1b1d289..50203f3`) cobrindo W1 (foundation),
+  W2 (chokepoint refactor + 10/10 intent-resume), W3 (tty_bridge),
+  W4 (bin/forge dispatcher + hooks audit), W5 (integration + e2e
+  tests), W6 (este doc-sync).
+
+### Findings pós DRIFT-1 (a revisitar)
+
+Follow-ups capturados durante Phase A pra reentrar quando dados
+justificarem. Cada um tem critério explícito.
+
+- **Race detection via `fcntl.flock`** — `engine/ui/intent_state.py`
+  hoje detecta race via timestamp `created-at` (> 10 min = stale,
+  varre; ≤ 10 min = erro mentor calmo apontando PID). Lock real via
+  `fcntl.flock` foi considerado e deferido. Critério pra reentrar:
+  race aparecer em produção (orquestrador OR usuário tropeçando em
+  pending recente de outra sessão).
+- **`_XxxCheckpoint` promotion pra `engine.utils.checkpoint`** —
+  W2-FU-4 já documentado em `## Phase A W2 — Code review follow-ups`
+  abaixo. Outcome C lockou per-subcommand dataclass (10 ocorrências);
+  promoção a shared só se 3+ subcommands materializarem shape
+  idêntico em waves futuras (DRIFT-2+ ou v1.3).
+- **`engine.utils.paths.state_dir()` promotion** — `intent_state.py`
+  define `_state_dir(project_root)` privado (`.claude/state/`).
+  Promote-to-shared quando ≥2 consumidores aparecerem. Hoje é único.
+- **`PromptAbortedError` dead-code cleanup em 10 callsite modules** —
+  W2-FU-3 já documentado. Cleanup cross-cutting (10 subcommands)
+  agendado pra sessão dedicada pós-W6 OU callsite-migration task
+  futura. Remover agora arrisca quebrar hosts não-Claude-Code que
+  dependiam do legacy raise.
+- **W4-FU env var name `CLAUDECODE`** — confirmado empiricamente vs
+  Claude Code 2.1.153 em W4-FU (commit `b149678`). Revisitar se
+  Claude Code renomear OU expor distinção main-vs-subagent oficial
+  no hook protocol (já gap separado em `.claude/rules/doc-sync.md`
+  §Per-tool-use Mandamento 0 block).
+
+
+### Follow-ups pós-master-review PR #11 (2026-06-11)
+
+Findings #1..#28 endereçados em Wave 1+2 (10 commits sobre `e992e01`,
+range `ad49c40..626a4f0`). Cinco follow-ups deliberadamente deferidos
+ficam aqui — todos têm critério explícito pra reentrar.
+
+- **FU-DRIFT-1-LOCK** (P3) — lock file real via `fcntl.flock` para race
+  detection hard. SPEC §9 já mapeia o gap como DEFERIDO. Próximo passo:
+  implementar `.claude/state/.forge-pending.lock`. Disparar quando race
+  genuíno surgir em produção (concurrency test atual em
+  `tests/integration/test_intent_state_concurrency.py` documenta a
+  TOCTOU window mas não bloqueia merge — o protocolo é single-writer
+  por design hoje).
+- **FU-DRIFT-1-DEPRECATE-INTENT-ID-ALIAS** (P2) — remover alias
+  deprecated `_stable_intent_id = stable_intent_id` em
+  `engine/ui/question.py` na v1.3. Hoje preserva 4 test files
+  referenciando o nome antigo (`test_ui_question_intent.py` e
+  similares). Critério: bump pra v1.3 + migration dos 4 testes em uma
+  task dedicada.
+- **FU-DRIFT-1-CHECKPOINT-CONSOLIDATE** (P3) — shim de 1-linha por
+  módulo nos 10 command handlers (init, plan, implement, verify,
+  reconfigure, evolve, undo, memory_cli, graph_cli, doctor) ainda
+  existe para preservar API pública dos tests. Wave 1 fix #5 já moveu
+  o helper canônico pra `engine/utils/checkpoint_io.py`. Próxima major
+  version pode deletar os wrappers e atualizar os tests pra importar
+  direto do shared module. Critério: rodada de cleanup pós-DRIFT-2 OU
+  v1.3.
+- **FU-DRIFT-1-OBS** (P3) — observability channel pra `tty_bridge`.
+  Module docstring atual referencia "engine can log 'we are driving
+  this from a TTY fallback'" — não cumprido. Fix #14 removeu a env var
+  dead (`FORGE_INTERNAL_TTY_BRIDGE`); reentrada quando
+  `engine.utils.log` emergir como módulo de logging estruturado (hoje
+  o projeto não tem log infrastructure formal).
+- **FU-DRIFT-1-VERIFY-ISO** (P3) — `engine/verify.py::_utc_now_iso()`
+  usa `.isoformat()` com microseconds, semantically distinto do shared
+  helper `engine.utils.iso.utc_now_iso` que trunca pra seconds. Fix #21
+  consolidou os 10 outros usos mas verify.py ficou de fora — migração
+  mudaria shape de checkpoint files do `forge verify`. Diferir até bump
+  de schema-version do verify checkpoint (não há schema-version formal
+  hoje, então o bump abre o caminho).
+
 ### Gaps abertos pós plan-auditor v1
 
 Deferidos no spec `docs/superpowers/specs/2026-06-04-plan-auditor-design.md`
@@ -2322,6 +2555,83 @@ script tenta `ln .git/hooks/pre-commit` que falha com "Not a directory".
 Fix: `bootstrap.sh` detectar worktree via `git rev-parse --git-dir` antes de
 criar symlink — resolve gitdir real. Out-of-scope Phase 0; valid follow-up.
 
+## Phase A W2 — Code review follow-ups (DRIFT-1 intent protocol, 2026-06-10) (resolved by Phase A — see "Fechado em [Unreleased]")
+
+Itens identificados durante o fix-loop dos 10 findings do REVIEW de W2.T1+T2
+(`.planning/drift-1-w2-review/REVIEW.md`) + integração T3b nos 10 subcommands.
+Cada um é decisão consciente de não-fazer-em-W2, com critério explícito pra
+reentrar. Referência cruzada: SPEC §5 (tabela final 10/10) +
+`.planning/drift-1/checkpoint-audit.json`.
+
+### W2-FU-1 — Docstring count drift em `test_ui_question_api_signatures.py`
+
+**Categoria:** test-docs
+**Severidade:** baixa (cosmético — não afeta behavior nem coverage)
+**Status:** deferred (próxima task que tocar o arquivo)
+
+`tests/unit/test_ui_question_api_signatures.py` cita "125 callsites" na docstring,
+herdada de pre-W2 grep. O número atual após o refactor é 108 callsites (mensurado
+em rapid lane pós-W2). O REVIEW fixer não atualizou porque o arquivo ficou fora
+do FILE BUDGET do dispatch — touch fora do escopo do fix-loop.
+
+**Por que defer:** atualizar exige re-medir e justificar metodologia (grep
+pattern, scope dirs, exclusões); fora do escopo de doc-sync. Próxima task que
+tocar o arquivo reconcilia o número ou substitui por "verificado contra
+codebase atual em <data>".
+
+### W2-FU-2 — TDD shape sem commit RED separado em commits 90d1463 / 9980f41
+
+**Categoria:** process-learning
+**Severidade:** baixa (process drift, não bug)
+**Status:** acknowledged (não retrofit; aplicar regra prospectivamente)
+
+REVIEW finding MD-003 apontou que os dois commits maiores do W2 (90d1463
+question.py refactor, 9980f41 cli.py exit handler) carregaram test + impl no
+mesmo commit em vez de RED commit separado. TDD shape do projeto pede commit
+de teste falhando ANTES da implementação (rule `testing.md` §Para feature).
+
+**Por que defer (não retrofit):** rewriting história pós-merge no W2 não vale o
+ruído; aprendizado é prospectivo. Em refactors >300 LOC futuros (W3+? W5
+integration?), executor deve fazer commit RED separado obrigatoriamente — o
+context-pack do dispatch precisa exigir explicitamente. Anotado aqui pra
+reentrar em retrospective do branch quando W6 fechar.
+
+### W2-FU-3 — `PromptAbortedError` preservada como legacy export inerte
+
+**Categoria:** dead-code-scaffolding
+**Severidade:** baixa (cleanup, não afeta runtime)
+**Status:** deferred (callsite-migration de W3+ ou sessão de cleanup pós-W6)
+
+Os 10 callsite modules integrados em T3b mantêm `except PromptAbortedError:`
+scaffolding herdado do pre-W2. No path intent-only atual, a sentinel é
+preservada como re-export de `engine/ui/question.py` mas nunca raised internally
+— os except blocks são dead code que silencia uma exceção que não chega a
+ocorrer.
+
+**Por que defer:** cleanup cross-cutting toca os 10 subcommands; faz sentido
+fechar junto com callsite-migration task (W3+) ou em sessão dedicada de cleanup
+pós-W6 quando todas as migrações estabilizarem. Remover agora arrisca quebrar
+hosts não-Claude-Code que dependiam do legacy raise.
+
+### W2-FU-4 — Outcome C revisitable se 3º+ subcommand emergir com pattern similar
+
+**Categoria:** decision-direcional
+**Severidade:** baixa (revisita programada, não débito ativo)
+**Status:** deferred (gatilho de dados — 3+ ocorrências)
+
+W2.T0 lockou outcome C (per-subcommand `_<Module>Checkpoint` dataclass + 3
+helpers + path resolver) em vez de promover pra `engine/utils/checkpoint.py`
+shared module. Decisão consciente: pattern apareceu em 10 subcommands MAS com
+shape suficientemente variável (campos diferentes por handler) pra que abstração
+prematura custasse mais que copy. Decision 22 (no runtime deps inter-skills)
+não força mudança, mas regra de reuse (Mandamento #3) pede revisita se padrão
+muito similar emergir 3+x nas próximas waves.
+
+**Critério pra reentrar:** se W3-W6 (ou DRIFT-2+) adicionarem 3+ subcommands
+com mesma shape de campos (intent_id + 2-3 campos contextuais + breadcrumb),
+abrir brainstorming pra promote-to-shared. Senão, manter pattern atual e
+revisitar em retrospective de v1.3+.
+
 ## v1.2-dev pilot 2026-06-10 — findings + phase sequencing
 
 Pilot conduzido em projeto KMP real (inchurch-app-main, Android+iOS+KMP, módulos `androidApp`/`iosApp`/`shared`) em 2026-06-09/10. LLM-cobaia adotou postura "usuário comum descobrindo a ferramenta" sob orientação do orquestrador deste repo. Notas e relatório parcial capturados na sessão (não comitados; viver no histórico de conversa + memory persistente).
@@ -2334,42 +2644,22 @@ Pilot conduzido em projeto KMP real (inchurch-app-main, Android+iOS+KMP, módulo
 
 Implicação: todos findings de UX/microcopy/persona/banner do piloto se aplicam SÓ ao modo fallback. Sobrevivem ao redesign apenas findings de dados/detecção (abaixo).
 
-### Findings ativos (sobrevivem ao redesign DRIFT-1)
+### Findings do piloto v1.2-dev — status
 
-#### B1 — `identity.backend-choice` ↔ `backend.provider` desync (Crítico)
-
-Após `forge reconfigure` editando `backend.provider` (firebase→rest), `identity.backend-choice` permanece com valor antigo (`firebase-stack`). Dois campos descrevem o mesmo conceito com valores divergentes. `engine/reconfigure.py:_handle_backend` (linha ~1108) escreve apenas `backend["provider"]`, nunca toca `identity.backend-choice`. Downstream (`forge plan`, cards ativos) continua gerando spec Firebase apesar do user ter trocado pra REST.
-
-**Acoplamento com DET-6:** alto. Se redesign DET-6 remover `identity.backend-choice`, B1 vira moot.
-
-#### B2 — Seção `firebase:` órfã após swap (Alto)
-
-Ao trocar `backend.provider: firebase → rest`, seção `backend.firebase.{dev-project, services, ...}` permanece no YAML como dado morto. Cleanup ausente. Mesmo arquivo `engine/reconfigure.py:_handle_backend`.
-
-**Acoplamento com DET-6:** alto. Cleanup logic depende de qual modelo prevalece.
-
-#### DET-3 — Scanner cego pra `libs.versions.toml` (Alto)
-
-Cards `ktor-client` (`cards/ktor-client/detection/signals.yaml`) + `retrofit-client` (`cards/retrofit-client/detection/signals.yaml`) declaram signals apenas em `**/build.gradle*`. Projetos modernos usam Gradle version catalogs (`gradle/libs.versions.toml`) onde as deps são declaradas. Scanner não cobre esse pattern → cards não matcham → todos os backend-candidates do preset `kmp-mobile` mostram `(cards matched: 0/N)` → default vence por ser primeiro da lista, não por evidência.
-
-**Acoplamento com DET-6:** baixo. Detection layer é independente do modelo de bundles vs eixos.
-
-#### DET-5 — `retrofit-client` fora do preset kmp-mobile (Alto)
-
-`cards/retrofit-client/` existe como card canônico (com signals corretos), mas `presets/kmp-mobile/preset.yaml` `backend-candidates` (linha ~127-163) não inclui retrofit em nenhum dos 4 bundles (firebase-stack, rest-stack, hybrid-firebase-auth-rest-data, local-only). Projeto Android tradicional com 30+ services em retrofit2 fica sem caminho de detecção positiva.
-
-**Acoplamento com DET-6:** médio. Se bundles morrerem na Phase B, isso vira "adicionar retrofit aos cards listados por padrão"; se bundles sobreviverem como starter templates, é "adicionar retrofit a rest-stack ou criar android-rest-stack".
-
-#### DET-6 — Modelo bundle-first é abstração errada (Crítico de design)
-
-Preset `kmp-mobile` define backend como escolha entre 4 bundles fechados (firebase-stack, rest-stack, hybrid-firebase-auth-rest-data, local-only). Realidade observada: projetos misturam Firebase só pra Crashlytics + Analytics + REST pra dados + JWT pra identity, ou GraphQL + Firebase Auth + Sentry. Bundles não cobrem combinações reais. Modelo correto: backend como **eixos independentes** — Data transport, Identity, Observability, Analytics, Storage blob, Persistence local.
-
-**Surface findings (de Explore agent map):**
-- Cards já carregam `identity.category` (backend, observability, auth, storage, persistence, etc.) + capability-labels com constraints singular — base parcial pra multi-eixo já existe.
-- `backend-candidates` consumido apenas em `engine/init.py:979-990` — baixo blast radius.
-- `identity.backend-choice` consumido apenas em `engine/reconfigure.py:1114` (e é só comentário de enum) — código praticamente morto downstream.
-- Decisions 14 + 15 não bloqueiam multi-eixo; talvez precisem ADR note.
-- Schema doc `docs/schemas/workflow-config.md` está out-of-sync com `engine/init.py` (não documenta `identity.backend-choice`).
+- **B1 / B2 / DET-5 / DET-6** — ✅ FECHADOS em [Unreleased] via Phase B
+  DET-6 (2026-06-11). Ver §"Fechado em [Unreleased]" no topo deste doc
+  pra rationale e refs de commits. Descrições históricas dos findings
+  preservadas no git log da entrada original (commit pré-`b9c2c24`).
+- **DET-3 — Scanner cego pra `libs.versions.toml`** — ✅ resolvido
+  2026-06-10. Plan `docs/superpowers/plans/det-3-gradle-dep-signal.md`.
+  Novo signal type `gradle-dep` + helper `_eval_gradle_dep` em
+  `engine/init.py` + regra CARD-020 em `engine/cards/loader.py` +
+  migration de 9 signals em 8 cards (crashlytics, firebase-auth ×2,
+  firebase-storage, firestore-persistence, firestore-realtime,
+  koin-annotations, kotlinx-serialization-json, ktor-client/core).
+  Catálogo `gradle/libs.versions.toml` agora coberto. Audit
+  determinístico em `.planning/det-3/migration-audit.json`. Suite:
+  1125 passed.
 
 ### Phase sequencing decidido (2026-06-10)
 
@@ -2393,7 +2683,413 @@ Todos UX/microcopy/persona do piloto fallback CLI:
 
 Quando Phase A entregar protocolo Claude-Code-fronted, essas UX issues desvanecem porque persona+microcopy passam a ser responsabilidade da Claude Code, não do Python. Não vale fixar enquanto o engine ainda emite as strings.
 
+### DET-3 follow-ups não-bloqueantes (2026-06-10)
+
+Anotados conforme SPEC §"Considerações futuras" pra rastreio sem bloquear shipping de DET-3.
+
+#### Vapor cleanup — signal type `dependency` (follow-up de DET-3)
+
+`docs/schemas/card.md` declara o signal type `dependency` mas
+`engine/init.py:_eval_detection_signals` nunca implementou — cards com
+`type: dependency` são silenciosamente ignorados. Sucessor canônico
+pra Gradle deps é `gradle-dep` (DET-3, shipped 2026-06-10).
+
+Decisão pendente: (A) implementar `dependency` cobrindo
+npm/pip/swift/pod (multi-ecossistema), (B) remover do schema e marcar
+como vapor histórico, (C) renomear `dependency` → `package-manager-dep`
+pra esclarecer scope. Sem brainstorm aberto ainda.
+
+Não-bloqueante. Anotado pra abrir 3-caminhos quando tiver bandwidth.
+
+#### `signals.yaml` schema-version bump (follow-up de DET-3)
+
+Hoje `cards/*/detection/signals.yaml` não declara schema-version uniforme
+(alguns têm `schema-version: 1`, outros não). DET-3 migrou 9 signals em
+8 cards de `file-content` → `gradle-dep` sem versionamento explícito,
+dependendo do git log pra rastrear "antes/depois". Pra migrations
+futuras (próximos signal types, mudanças de shape), adicionar
+`schema-version: 2` no topo dos cards migrados (e `schema-version: 1`
+default implícito nos não-tocados, ou explícito via reconfigure).
+
+Decisão pendente: timing — bumpar nos 8 cards migrados agora (escopo
+de DET-3) ou esperar próximo signal type e bumpar batched. Default
+atual: esperar, registrar aqui.
+
+Não-bloqueante. Anotado pra próxima rodada de migration cross-card.
+
+### Follow-ups pós-master-review PR #11 (2026-06-10)
+
+Master-review do PR #11 (`feat/gradle-dep-signal`) endereçou 9 findings de code-fix em Wave 1+2 (A-1, A-2, M-2, M-3, M-4, M-5, B-1, B-2, B-3). Restam 3 follow-ups de natureza estratégica/observabilidade que não bloqueiam merge e ficam aqui pra rastreio. Severities P3 — abrir quando padrão recorrer ou demanda concreta surgir.
+
+#### FU-MR-1 (P3) — Schema-version bump trigger para signal types
+
+**Context:** `cards/*/detection/signals.yaml` (e o bloco equivalente em `card.yaml.detection.signals`) hoje não carrega `schema-version` uniforme por signal type. DET-3 introduziu `gradle-dep` migrando 9 signals em 8 cards de `file-content` sem bumpar versionamento. Pra próximas migrations cross-card (próximo signal type novo, mudança de shape de existente), faltará trigger explícito de quando bumpar.
+
+**Trigger proposto:** bumpar `signals.yaml` schema-version no próximo signal type novo (ex.: `pod-dep`, `npm-dep`, `swift-dep`). Default atual: esperar. Sem urgência v1.2-dev — anotado aqui pra evitar dívida silenciosa crescer fora do radar.
+
+**Reference:** S-2 do master-review do PR #11; `docs/superpowers/specs/det-3-gradle-dep-signal.md` §"Considerações futuras".
+
+**Outcome esperado (3-caminhos quando endereçar):**
+- (a) Bumpar agora batched nos 8 cards migrados pra schema-version 2.
+- (b) Bumpar no próximo signal type novo (trigger proposto acima).
+- (c) Esperar até 2+ signal types acumulados pra evitar churn em single-bump.
+
+#### FU-MR-2 (P3) — retrofit-client family-match decision
+
+**Context:** O SPEC de DET-3 abre citando `retrofit-client` como exemplo do gap (scanner cego pra libs.versions.toml). O audit conservou `retrofit-client` com `file-content` substring `io.squareup.retrofit2:retrofit-` porque a coordenada captura toda a família (`-converters-gson`, `-converter-moshi`, `-mock`, etc.) por design. Migrar pra `gradle-dep` exato exigiria declarar cada variante separadamente OU introduzir wildcard. Resultado: `retrofit-client` continua com problema original do SPEC — projeto TOML-only puro ainda não detecta retrofit-client.
+
+**Decisão pendente:** aceitar como tradeoff family-match preservado (retrofit-client é card pré-DET-3, comportamento idêntico) OU adicionar wildcard sufixado no signal schema (ex.: `coordinate: io.squareup.retrofit2:retrofit-*`).
+
+**Reference:** S-3 do master-review do PR #11; audit em `.planning/det-3/migration-audit.json` entrada `retrofit-client`.
+
+**Outcome esperado (3-caminhos quando endereçar):**
+- (a) Aceitar tradeoff: documentar limitação em `retrofit-client/README.md` e `docs/schemas/card.md`; deixar como está.
+- (b) Adicionar wildcard `coordinate: io.squareup.retrofit2:retrofit-*` ao signal schema; aplica a 2º card de família-multipla que surgir.
+- (c) Declarar coordenadas explícitas por variante (`-converter-gson`, `-converter-moshi`, etc.) — explosão de signals mas exato.
+
+Trigger: abrir quando 2+ cards de família-multipla pedirem o mesmo pattern.
+
+#### FU-MR-3 (P3) — BOM em libs.versions.toml silenciosamente ignorado
+
+**Context:** Surfaced por S-1.1 do master-review durante coverage de edge cases. `tomllib` (Py stdlib 3.11+) rejeita BOM UTF-8 (`\xEF\xBB\xBF`) por aderir estritamente à TOML 1.0 spec. Helper `_load_toml_catalog` engole `TOMLDecodeError` silenciosamente — resultado: catálogo com BOM vira invisível ao scanner, card não auto-ativa, usuário não tem indicação do porquê. Editores Windows às vezes salvam `.toml` com BOM por default (Notepad pre-Win10, alguns IDEs).
+
+**Sugestão:** `forge doctor` deveria warn quando lê um catálogo cujo conteúdo começa com BOM. Não-bloqueante; ajuda diagnóstico no campo. Test de regressão `test_s1_toml_with_utf8_bom_silently_skipped` (em `tests/unit/test_eval_gradle_dep.py`, commit `e6305df`) trava se algum dia o helper strippar BOM — forçando revisita consciente.
+
+**Reference:** S-1.1 do master-review do PR #11; `engine/init.py:_load_toml_catalog`; `tomllib` spec adherence.
+
+**Outcome esperado (3-caminhos quando endereçar):**
+- (a) Adicionar warn em `forge doctor` quando catálogo começa com BOM; documentar como diagnose-only.
+- (b) Strippar BOM no helper antes de passar pro tomllib (afrouxa aderência à spec); test de regressão acima trava — exige revisita consciente.
+- (c) Deixar como está; comportamento atual é spec-correct (TOML 1.0 não tem BOM).
+
+### Phase 0b — Code review follow-ups (2026-06-10)
+
+Discovered during DET-3 code review. None bloqueante — merge unlocked.
+Cada um é fix-forward, capturado aqui pra evitar perda de contexto até
+phase futura endereçar.
+
+#### FU-1 — Custom catalog path discovery (Medium)
+
+**Context:** `engine/init.py:_eval_gradle_dep` só procura
+`<root>/gradle/*.versions.toml`. Catálogos declarados em path
+customizado via `settings.gradle.kts versionCatalogs { from(...) }`
+são invisíveis ao scanner. O fallback de `build.gradle*` ainda pega
+deps declaradas inline, mas catálogos custom-path miss o caminho de
+detecção via version-catalog.
+
+**Reference:** `engine/init.py` (região de `_eval_gradle_dep`,
+~linha 658).
+
+**Outcome esperado (3-caminhos):**
+- (a) Estender resolver pra parsear `settings.gradle*` por
+  `versionCatalogs { from(...) }` e seguir o path.
+- (b) Documentar limitação explicitamente, manter scope reduzido a
+  `gradle/*.versions.toml` standard.
+- (c) Deprecar `gradle-dep` em favor de signal v2 com declared
+  catalog paths no card YAML.
+
+#### FU-2 — `signals.yaml` mirror vs source-of-truth (Medium)
+
+**Context:** Arquivos `cards/*/detection/signals.yaml` existem como
+mirror documental de `card.yaml.detection.signals`. O card loader
+(`engine/cards/loader.py:354`) lê SÓ `card.yaml` em runtime —
+`signals.yaml` NUNCA é consumido. A migração da Phase 0b tocou 9
+arquivos `signals.yaml` por paridade, mas o efeito funcional vem
+exclusivamente das edições em `card.yaml`. Manter mirrors é
+disciplina documental; risco real de drift existe.
+
+**Reference:** `cards/*/detection/signals.yaml` (22 arquivos no repo
+atual); `engine/cards/loader.py:354` (único consumer de `card.yaml`).
+
+**Outcome esperado (3-caminhos):**
+- (a) Formalizar `signals.yaml` como source-of-truth, refactor
+  loader pra consumir, deprecar `card.yaml.detection`.
+- (b) Remover mirrors `signals.yaml` inteiramente, apontar readers
+  pra `card.yaml.detection` via tooling/doc.
+- (c) Manter discipline atual de mirror, adicionar CI check
+  enforcing parity entre `card.yaml.detection.signals` e
+  `detection/signals.yaml`.
+
+#### FU-3 — Substring match no fallback build.gradle (Low)
+
+**Context:** `_glob_any("**/build.gradle*", coordinate)` faz
+substring match. Coordenada `"io.ktor:ktor-client-core"` casa
+também `"io.ktor:ktor-client-core-jvm"` (artifact diferente).
+Comportamento pre-migration `file-content` era idêntico — zero
+regression — mas o branding "exact coordinate" do novo signal
+`gradle-dep` fica enganoso.
+
+**Reference:** `engine/init.py` (fallback `_glob_any` após
+`libs.versions.toml` miss, ~linha 686).
+
+**Outcome esperado (3-caminhos):**
+- (a) Renomear pra `gradle-dep-prefix` OU documentar semântica
+  substring em `docs/schemas/card.md`.
+- (b) Tighten pra word-boundary match (regex
+  `(^|[^.\w-])<coord>([^.\w-]|$)`).
+- (c) Deixar as-is, documentar caveat.
+
+#### FU-4 — Cosmética post-review: naming + migration audit (Low)
+
+**Context:** Dois itens S-001 e S-002 da code review de 2026-06-10
+capturados aqui como deferidos:
+
+- **S-001 — naming `_eval_gradle_dep`:** função retorna `bool` (semântica
+  de predicate), mas segue convenção de nomenclatura de `_eval_*` que
+  retornam tuple `(score, matched)`. Renomear pra `_has_gradle_dep` ou
+  `_gradle_dep_matches` alinharia semântica, mas é breaking pra qualquer
+  caller interno que já usa o nome. Deferido: rename cosmético.
+- **S-002 — migration-audit.json sem `previous_signal`:** entradas
+  `action: migrate` em `.planning/det-3/migration-audit.json` registram
+  `coordinate` (after) mas não `previous_contains` (before). Rastreabilidade
+  retroativa perdida pra re-auditoria automática. Deferido: melhoria de
+  formato pra próxima migration mass.
+
+**Reference:** `engine/init.py` (`_eval_gradle_dep` ~linha 639);
+`.planning/det-3/migration-audit.json` (entradas `action: migrate`).
+
+**Outcome esperado:**
+- (a) Rename `_eval_gradle_dep` → `_has_gradle_dep` + update todos os
+  callers (grep `_eval_gradle_dep` em engine/) + update tests que mockam.
+- (b) Deixar nome as-is, adicionar docstring explícita que "retorna bool
+  indicando presença, não score tuple".
+- (c) Para S-002: se outra migração mass ocorrer, adicionar campo
+  `previous_signal: {type, value}` ao audit schema.
+
+#### FU-5 — Bootstrap idempotency em worktree context (Medium)
+
+**Context:** `tests/integration/test_bootstrap.py::test_bootstrap_is_idempotent`
+falha quando rodado de dentro de git worktree
+(`.claude/worktrees/<...>/`). Root cause: `.claude/bootstrap.sh`
+assume `.git` é diretório, mas em worktrees `.git` é ARQUIVO
+contendo `gitdir: <path>`. Afeta: qualquer um rodando pytest
+de worktree; Phase A W1 surfou isso em step de verificação.
+
+**Reference:** `.claude/bootstrap.sh` (idempotency check);
+`tests/integration/test_bootstrap.py::test_bootstrap_is_idempotent`;
+Phase A W1 verification log em
+`.planning/drift-1/w1-verification.md`.
+
+**Outcome esperado:** bootstrap handles ambos `.git` dir AND
+`.git` arquivo (worktree). Provável fix 1-2 linhas usando
+`git rev-parse --git-dir` ou similar. Phase-independente —
+pode ser endereçado a qualquer momento.
+
+## Phase B — DET-6 multi-axis backend code review follow-ups (2026-06-10 W1)
+
+Deferidos do review de Phase B W1 (`.planning/det-6-w1-review/REVIEW.md`)
+durante doc-sync W1. Não-bloqueantes pro avanço W2; revisitar em W2 ou
+cleanup pass dedicado dentro da própria branch `feat/det-6-multi-axis-backend`
+antes do PR final ao fim de W8.
+
+### W1-L-002 — Open-details #6/#7 em `workflow-config.md` em vez de `card.md` / `backend-axes.md`
+
+**Categoria:** schema-foundation (doc placement)
+**Severidade:** baixa (deviation cosmética; placement semanticamente correto)
+**Status:** deferred — revisitar em W8 doc-sync se quisermos uniformizar
+
+PLAN W1.4 nominou apenas `docs/schemas/card.md` e `docs/schemas/backend-axes.md`
+como locais pra inline `<!-- open-detail -->` comments. Os anchors #6 (Phase A
+API shape — referência ao formato de `signal-id`/`detector` que Phase A
+consolidará) e #7 (rename `crashlytics` → `crash-reporting` discutido em
+Phase B brainstorm) acabaram em `docs/schemas/workflow-config.md` porque
+semanticamente pertencem ao contexto desse schema (axes-resolution + status
+enum vivem lá). Não é regressão — só desvio do nominal do PLAN.
+
+Fix forward: ao consolidar W8 (final doc-sync da Phase B antes do PR), mover
+os 2 anchors pra `backend-axes.md` se a sentence ainda fizer sentido lá; ou
+manter onde estão com nota cross-ref. Decisão fica pro W8.
+
+### W1-L-003 — `docs/schemas/card.md:164` `# di OR dependency-injection` contradiz CARD-004
+
+**Categoria:** schema-foundation (pre-existente fora W1)
+**Severidade:** baixa (contradição interna do schema; sem efeito runtime)
+**Status:** deferred — candidate fix em W2 (category cleanup) ou cleanup pass
+
+`docs/schemas/card.md` linha 164 carrega um comentário pré-existente
+`# di OR dependency-injection` que sugere alternância no enum de
+`identity.category`. CARD-004 (revisado em W1) enumera apenas
+`dependency-injection` — o "di" curto não está no enum canônico. Zero diff
+sobre essa linha em W1 (`c60eeb1` + `26c0822` não tocaram a linha 164).
+
+Fix forward: remover o `# di OR ` do comentário, deixando apenas
+`# dependency-injection`. Trivial — pode entrar no próximo commit de W2
+quando outras refinements em CARD-004 estiverem na mesa. Anti-padrão a
+evitar: deixar pra W8 e arriscar drift adicional pelo caminho.
+
+## RULE-023/024 — detecção de ciclo em `migrating-to` (deferred pós-DET-6)
+
+PR #13 review (thgMatajs, 2026-06-12) apontou que `_check_backend` em
+`validators/validate_workflow_config.py` valida que `cell.migrating-to`
+referencia um card existente (RULE-024), mas não detecta ciclos do tipo
+`card A` em `status=migrating-to` apontando pra `card B` enquanto `card B`
+está em `status=migrating-to` apontando pra `card A`. Um config assim
+passa pelo cascade atual sem warning.
+
+Defer com razão: detecção de ciclo exige DFS 2-hop sobre todas as cells
+backend, é feature menor e baixo impacto (config-malformed convive bem
+com runtime — handlers downstream tratam `migrating-to` como hint, não
+contrato). Entra quando RULE-019..024 receber pass dedicado de
+hardening; até lá fica anotada aqui como gap conhecido.
+
 ## Reading order for new contributors
+
+## Mypy rollout — advisory mode (2026-06-12)
+
+**Baseline:** `17` errors across `engine/` + `validators/` (captured
+via `mypy engine/ validators/` post-install of `mypy >= 1.8`; 113 source
+files checked, 8 files com erros).
+
+**Scope desta sessão:** apenas setup advisory. CI gate NÃO ativo. Comando
+manual disponível: `mypy engine/ validators/`.
+
+**Rollout incremental (próximas sessões):**
+- Sub-phase 1: zero new errors policy (PR-level gate sem fail-on-existing).
+- Sub-phase 2: top-3 módulos most-error (`engine/implement.py`,
+  `engine/verify.py`, `engine/init.py`) ganham `strict = true` por seção
+  isolada (`[[tool.mypy.overrides]] module = "engine.implement"`).
+- Sub-phase 3: opt-in cascade até ≥80% módulos strict; ativar gate global.
+
+**Why not strict now:** 17 errors → fix de cada um seria scope creep
+além dos 22 findings do REVIEW.md. Setup baseline em advisory destrava o
+pipeline pra abordar em phases dedicadas.
+
+### L-06 — `sys.path.insert` em `tests/conftest.py`
+
+**Origem:** REVIEW.md 2026-06-11.
+**Estado atual:** mantém `sys.path.insert(0, _ROOT)` em `tests/conftest.py`
+e em `validators/_common.py:20-21`. Comment inline aponta pra esta entrada.
+**Caminho preferido:** substituir por `pip install -e .` quando CI pipeline
+oficial vier (sem CI hoje, mudança seria churn sem ganho).
+**Quando revisitar:** ao landing do primeiro CI workflow (GitHub Actions /
+similar) ou quando o primeiro projeto piloto adotar feature-forge fora
+deste repo.
+
+## REVIEW.md 2026-06-11 — itens verificados sem ação
+
+Findings do REVIEW.md auditados contra o estado pós-PR #13 e classificados
+como `verified-not-needed` ou `policy-decision`. Documentados aqui pra
+prevenir reabertura em review futura.
+
+- **H-05** — `verified-not-needed`. Sandbox env já endereçado em PR #9
+  ultra-review; `engine/_sandbox/env.py` contém `SENSITIVE_PATTERN` +
+  flag `allow_sensitive`. Reviewer não viu o estado atual.
+- **H-08** — `verified-not-needed`. `_qa_run` é wrapper thin; lógica
+  não-trivial em `run_qa` já coberta em `tests/engine/test_qa.py`.
+- **L-02** — `policy-decision`. Comentários PR-reference são history
+  trace documental (Decision 7 / `01-decisions.md`), não metanarrativa
+  removível.
+- **L-05** — `policy-decision`. Log "seguindo pro retrospective sem
+  findings" refere ciclo QA atual, comportamento intencional.
+- **L-08** — `monitor-only`. PEP 649 é debt distante; pyproject pinned
+  em Python 3.11, revisitar quando 3.14 ship (pin bump). Sem ação útil
+  agora.
+- **M-03** — `verified-not-needed`. `_infer_active_feature` já preenche
+  target quando slug vem vazio; reviewer leu fluxo parcial.
+- **M-06** — `verified-not-needed`. `safe_dump` schema validation é
+  YAGNI; dados gravados são internally-generated.
+- **M-11** — `verified-not-needed`. Lógica defensiva em `_resolve_slug`
+  já trata o cenário; finding interpretou ambiguamente a interação
+  com `_infer_active_feature`.
+
+## REVIEW.md 2026-06-11 — gaps deferred (próxima sessão)
+
+- **Batch git-diff optimization em `validators/_diff.py`** —
+  H-10 finding parcial. `extract_diff_hunks` roda git por arquivo;
+  batch (N→1 git invocations) é optimization, não correctness. Revisitar
+  em sessão dedicada de performance.
+- **Mypy strict rollout per module** — H-09 sub-phase 2+ (ver subseção
+  "Mypy rollout — advisory mode" acima).
+- **PEP 649 monitor** — L-08, ver entrada acima.
+
+## Final review 2026-06-15 — follow-up gaps
+
+### Consolidação completa de `feature_path` (M-04 / WR-03 follow-up)
+
+**Origem:** Final review 2026-06-15 (WR-03).
+**Estado:** `feature_path` consolidado em `engine/utils/paths.py`, mas
+`_resolve_features_root` continua em `engine/plan.py`. `paths.feature_path`
+lazy-importa pra evitar ciclo. Engine startup-time degradado marginalmente
+(plan.py é carregado no primeiro call de feature_path). Ciclo não materializa
+porque o import é lazy, mas refactor futuro que torne eager quebra os dois
+módulos.
+**Caminho preferido:** mover `_resolve_features_root` pra `engine/utils/paths.py`
+virando leaf real. Backwards-compat: re-export shim em plan.py.
+**Quando revisitar:** próxima sessão de refactor disciplinado.
+
+### YAML cap — anchor explosion + special files (H-02 / MD-01 / A-003 follow-up)
+
+**Origem:** Final review 2026-06-15 (MD-01); reforçado pelo master review
+PR #15 finding A-003 (2026-06-15).
+**Estado:** `_YAML_MAX_BYTES = 10MB` em `engine/utils/yaml_io.py` cobre
+arquivos regular grandes, mas não:
+- Symlinks pra `/dev/zero`, FIFOs, sockets, block devices (st_size retorna 0)
+- Anchor-based expansion (alias bomb) — arquivo 100KB com `&a [...]`
+  referenciado N vezes cabe em <1MB e ainda explode em memória/CPU
+  durante `yaml.safe_load`. PyYAML não tem flag nativa pra limitar
+  aliases — exige wrap manual.
+**Mitigação atual:** vetor requer attacker-controlled YAML; engine só lê
+paths internamente controlados. Não-bloqueador hoje.
+**Caminho preferido:** adicionar `path.is_file()` check antes do `st_size`;
+implementar `yaml.SafeLoader` com `composer` custom que limita
+profundidade/contagem de aliases (ou `yaml.CSafeLoader` se aceitarmos
+extensão C).
+**Quando revisitar:** se feature-forge vier a aceitar YAML user-uploaded
+(presets externos, cards de terceiros via `forge evolve`, etc.).
+
+### Consolidação completa de `_utc_now_iso` shims (L-03 / LO-01 follow-up)
+
+**Origem:** Final review 2026-06-15 (LO-01).
+**Estado:** 5 shims removidos em implement/plan/verify (Bloco 5 / L-03);
+3 shims adicionais removidos em `engine/memory/{l1,l2,distiller}.py`
+(master review M-3, commit `112244a` 2026-06-15). Shims similares
+permanecem em `engine/undo.py`, `engine/evolve.py`, `engine/reconfigure.py`,
+`engine/memory_cli.py`, `engine/graph_cli.py`, `engine/init.py`,
+`engine/doctor.py` (7 módulos restantes — alias `_utc_now_iso_shared` ou
+wrappers locais).
+**Caminho preferido:** mesma cirurgia (import direto de `utc_now_iso`)
+nos 7 módulos restantes.
+**Quando revisitar:** próxima sessão de cleanup técnico.
+
+### `check_secrets` relativization perf (M-12 / LO-03 follow-up)
+
+**Origem:** Final review 2026-06-15 (LO-03).
+**Estado:** M-12 introduziu re-mapping `_rel_map: dict[str, Path]` +
+`_rel_paths: list[Path]` antes do filter em `validators/check_secrets.py:638-655`.
+Funcional, mas hot-path per-task hook ganhou 2-passagem + dict allocation.
+**Caminho preferido:** refactor pra single-pass com generator + walrus, ou
+inline-relativize sem map intermediário.
+**Quando revisitar:** se profiling mostrar gargalo (improvável; check_secrets
+roda em batches pequenos de staged files).
+
+### Scope discipline — M-02 mudou comportamento dentro de PR de narrow-except (B-006 follow-up)
+
+**Origem:** Master review PR #15, finding B-006 (2026-06-15).
+**Estado:** M-02 alterou `_topo_sort` de "warning + continue" pra "raise" ao
+ver dep desconhecida — mudança comportamental, fora do escopo declarado de
+H-03 (narrow broad-except). Justificada no comment do código, mas tecnicamente
+viola Mandamento #4 (scope contido). Endereçado parcialmente pela troca para
+`TaskGraphError(RuntimeError)` em A-008 (domain exception, não SystemExit),
+o que reduz superfície de surpresa.
+**Caminho preferido:** próximas rodadas de scrub, separar mudanças
+comportamentais em commits explícitos com prefixo `feat`/`fix` em vez de
+`chore`/refactor. Já corrigido na convention de commits desta sessão.
+**Quando revisitar:** N/A — backward-looking; serve como reminder de scope
+hygiene para revisores futuros.
+
+### Test exit-code precision — broad SystemExit assertion (B-007 follow-up)
+
+**Origem:** Master review PR #15, finding B-007 (2026-06-15).
+**Estado:** `tests/unit/test_commands_{implement,plan,verify}.py` capturam
+`SystemExit` largo (qualquer code non-zero/None passa). Robustez contra
+regressão silenciosa pediria pin do exit code esperado (provavelmente `1`
+ou `in {1, 2}`).
+**Caminho preferido:** próximo touch nesses testes, anotar exit code
+esperado por comando.
+**Quando revisitar:** próxima sessão que mexer em `engine/cli.py` ou nos
+handlers `engine/{implement,plan,verify}.py`.
+
+---
 
 **For a fresh session retomando o projeto, use o handoff:**
 
