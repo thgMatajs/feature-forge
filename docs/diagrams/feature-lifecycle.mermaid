@@ -32,15 +32,20 @@ flowchart TD
     end
 
     subgraph REVIEW["6. Review + merge"]
-        F1["PR com checklist"]
-        F2["forge doctor — health check<br/>antes do merge"]
+        F1["forge verify — cascade<br/>de validators antes do PR"]
+        F2["PR com checklist"]
         F3["Merge na branch principal"]
     end
 
     subgraph RETROSPECTIVA["7. Retrospectiva"]
         G1["forge evolve — extrai<br/>aprendizados e propõe<br/>evoluções"]
         G2["forge memory — registra<br/>padrões em L2-project.yaml"]
-        G3["forge undo — reverte<br/>se necessário"]
+    end
+
+    subgraph TRANSVERSAL["Comandos transversais (qualquer fase)"]
+        T1["forge undo — reverte<br/>última ação mutante"]
+        T2["forge doctor — health check<br/>da instalação"]
+        T3["forge status — board<br/>read-only"]
     end
 
     INICIO --> INTAKE
@@ -58,10 +63,12 @@ flowchart TD
     E1 -.- forge_cmd5("forge implement")
     E2 -.- forge_cmd6("forge verify")
     E3 -.- forge_cmd7("forge graph")
-    F2 -.- forge_cmd8("forge doctor")
+    F1 -.- forge_cmd8("forge verify")
     G1 -.- forge_cmd9("forge evolve")
     G2 -.- forge_cmd10("forge memory")
-    G3 -.- forge_cmd11("forge undo")
+    T1 -.- forge_cmd11("forge undo")
+    T2 -.- forge_cmd12("forge doctor")
+    T3 -.- forge_cmd13("forge status")
 
     style forge_cmd1 fill:#e8eaf6,stroke:#3f51b5
     style forge_cmd2 fill:#e8eaf6,stroke:#3f51b5
@@ -74,3 +81,5 @@ flowchart TD
     style forge_cmd9 fill:#e8eaf6,stroke:#3f51b5
     style forge_cmd10 fill:#e8eaf6,stroke:#3f51b5
     style forge_cmd11 fill:#e8eaf6,stroke:#3f51b5
+    style forge_cmd12 fill:#e8eaf6,stroke:#3f51b5
+    style forge_cmd13 fill:#e8eaf6,stroke:#3f51b5

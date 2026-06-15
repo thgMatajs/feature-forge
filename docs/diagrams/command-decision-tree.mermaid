@@ -22,10 +22,10 @@ flowchart TD
     R --> R3["forge verify<br/>→ comportamento<br/>preservado"]
 
     S --> S1["forge status<br/>→ resumo do projeto"]
-    S --> S2["forge doctor<br/>→ health check<br/>14 categorias"]
+    S --> S2["forge doctor<br/>→ health check<br/>16 categorias"]
     S --> S3["forge graph<br/>→ consultas Q1-Q17<br/>ao grafo da base"]
 
-    V --> V1["forge verify<br/>→ validators cascade<br/>(20 validadores)"]
+    V --> V1["forge verify<br/>→ validators cascade<br/>(3 built-in + N de cards;<br/>21 no diretório)"]
     V --> V2["forge qa<br/>→ red-team adversarial<br/>multi-agente"]
 
     C --> C1["forge reconfigure<br/>→ muda config existente"]
