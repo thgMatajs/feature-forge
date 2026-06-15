@@ -7,6 +7,13 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **chore(gitignore)** — Adicionadas entradas faltantes pra runtime
+  artifacts: `.claude/state/*.lock`, `.claude/worktrees/`, `.gsd-tmp/`,
+  `.planning/*-review/` (generic), `.ultra-review/`, `docs/design/outputs/`.
+  Reduz noise em `git status` pós-bootstrap.
+
 ### Fixed (master review remediation — final review, 2026-06-15)
 
 - **Master review H-1** — Fix `engine/doctor.py:1308-1309` `_` redefinition
