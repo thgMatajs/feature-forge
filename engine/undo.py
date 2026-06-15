@@ -47,7 +47,7 @@ from engine.utils.paths import (
     memory_l2_path,
     workflow_config_path,
 )
-from engine.utils.yaml_io import read_yaml_or_default, write_yaml
+from engine.utils.yaml_io import YamlIOError, read_yaml_or_default, write_yaml
 from engine.utils.checkpoint_io import (
     clear_checkpoint as _clear_checkpoint_io,
     load_yaml_checkpoint as _load_yaml_checkpoint_io,
@@ -367,7 +367,12 @@ def _undo_evolve(project_root: Path, proposal_id: str) -> bool:
     target_id = proposal_id.replace("P-", "L2-") if proposal_id.startswith("P-") else proposal_id
     try:
         l2_remove_entry(project_root, target_id)
-    except Exception as exc:
+    except (KeyError, OSError, YamlIOError, MemoryError) as exc:
+        # A-012 (master review PR #15): narrow do broad-except residual no scrub
+        # H-03. `l2_remove_entry` chama `read_l2`/`write_l2` (raise YamlIOError
+        # via yaml_io, MemoryError via schema check, OSError via filesystem).
+        # KeyError defensivo se entry layout mudar; bugs reais de schema agora
+        # propagam em vez de virarem warning amarelo.
         renderer.write(renderer.colored(
             f"  remoção da entrada falhou — {exc}", "yellow"
         ))
@@ -514,8 +519,15 @@ def _append_undo_log(
         event.update(extras)
     try:
         append_history(slug, project_root, event)
-    except Exception:
-        pass
+    except (OSError, ValueError) as exc:
+        # A-011 (master review PR #15): narrow do broad-except residual no scrub
+        # H-03. `append_history` faz JSONL append — OSError (filesystem, lock,
+        # permissions); ValueError defensivo se payload virar não-serializável.
+        # History append failure agora é visível ao usuário em vez de silenciosa
+        # (auditabilidade do undo). Não propaga: undo principal já sucedeu.
+        renderer.write(renderer.dim(
+            f"  (aviso) append undo-log falhou — {exc}"
+        ))
 
 
 # ── Menu plumbing ───────────────────────────────────────────────────────────

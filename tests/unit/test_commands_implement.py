@@ -22,11 +22,14 @@ def test_run_empty_args_returns_nonzero_on_non_forge_project(
     monkeypatch.setattr("engine.ui.question.ask_text", lambda *a, **kw: "", raising=False)
     monkeypatch.setattr("engine.ui.question.confirm", lambda *a, **kw: False, raising=False)
     monkeypatch.setattr("engine.ui.question.ask_multi", lambda *a, **kw: [], raising=False)
+    # B-007 (master review PR #15): pin exit code in {1, 2} pra detectar
+    # regressão silenciosa caso outro SystemExit colateral passe pelo assert.
+    # 2 = ProjectRootNotFoundError; 1 = qualquer outro erro de domínio.
     try:
         rc = implement.run([])
-        assert rc != 0, f"expected non-zero exit on non-forge project, got {rc!r}"
+        assert rc in (1, 2), f"expected exit 1 or 2 on non-forge project, got {rc!r}"
     except SystemExit as exc:
-        assert exc.code not in (0, None), f"expected non-zero SystemExit, got {exc.code!r}"
+        assert exc.code in (1, 2), f"expected SystemExit code in {{1,2}}, got {exc.code!r}"
     captured = capsys.readouterr()
     combined = (captured.out + captured.err).lower()
     assert ".claude" in combined, (

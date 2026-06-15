@@ -33,7 +33,12 @@ from _common import (
 )
 from _diff import git_staged_files  # M-09 dedupe: reuse shared helper (with -M80% rename detection)
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# A-014 (master review PR #15): `sys.path.insert` precisa rodar ANTES de
+# qualquer `from engine....` — antes ficava entre os blocos, funcionava por
+# coincidência da ordem do interpretador mas violava PEP-8 e seria quebrado
+# silenciosamente por um futuro reorder de linter. Único `# noqa: E402` no
+# bloco abaixo cobre os imports que dependem do path patch.
+sys.path.insert(0, str(Path(__file__).parent.parent))  # noqa: E402
 
 from engine.utils.paths import feature_dir  # noqa: E402
 from engine.utils.yaml_io import read_yaml_or_default  # noqa: E402

@@ -3062,6 +3062,33 @@ inline-relativize sem map intermediário.
 **Quando revisitar:** se profiling mostrar gargalo (improvável; check_secrets
 roda em batches pequenos de staged files).
 
+### Scope discipline — M-02 mudou comportamento dentro de PR de narrow-except (B-006 follow-up)
+
+**Origem:** Master review PR #15, finding B-006 (2026-06-15).
+**Estado:** M-02 alterou `_topo_sort` de "warning + continue" pra "raise" ao
+ver dep desconhecida — mudança comportamental, fora do escopo declarado de
+H-03 (narrow broad-except). Justificada no comment do código, mas tecnicamente
+viola Mandamento #4 (scope contido). Endereçado parcialmente pela troca para
+`TaskGraphError(RuntimeError)` em A-008 (domain exception, não SystemExit),
+o que reduz superfície de surpresa.
+**Caminho preferido:** próximas rodadas de scrub, separar mudanças
+comportamentais em commits explícitos com prefixo `feat`/`fix` em vez de
+`chore`/refactor. Já corrigido na convention de commits desta sessão.
+**Quando revisitar:** N/A — backward-looking; serve como reminder de scope
+hygiene para revisores futuros.
+
+### Test exit-code precision — broad SystemExit assertion (B-007 follow-up)
+
+**Origem:** Master review PR #15, finding B-007 (2026-06-15).
+**Estado:** `tests/unit/test_commands_{implement,plan,verify}.py` capturam
+`SystemExit` largo (qualquer code non-zero/None passa). Robustez contra
+regressão silenciosa pediria pin do exit code esperado (provavelmente `1`
+ou `in {1, 2}`).
+**Caminho preferido:** próximo touch nesses testes, anotar exit code
+esperado por comando.
+**Quando revisitar:** próxima sessão que mexer em `engine/cli.py` ou nos
+handlers `engine/{implement,plan,verify}.py`.
+
 ---
 
 **For a fresh session retomando o projeto, use o handoff:**
