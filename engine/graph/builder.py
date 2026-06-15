@@ -298,12 +298,43 @@ _ALLOWED_TABLES: frozenset[str] = frozenset({
 })
 
 
-def _reset_domain_tables(conn: sqlite3.Connection) -> None:
+# Canonical default order (FK-children first) used by _reset_domain_tables.
+# Extracted as module-level constant so tests can verify the allowlist guard
+# fires by passing in a tampered list — without re-inlining the validation
+# logic into the test itself (WR-01 / final review 2026-06-15).
+_DEFAULT_TABLES_TO_CLEAR: list[str] = [
+    "reuse_finding_locations",
+    "reuse_findings",
+    "module_deps",
+    "ds_usage",
+    "ds_components",
+    "i18n_usage",
+    "i18n_keys",
+    "imports",
+    "tests",
+    "screens",
+    "routes",
+    "di_graph",
+    "symbols",
+    "files",
+]
+
+
+def _reset_domain_tables(
+    conn: sqlite3.Connection,
+    *,
+    tables: list[str] | None = None,
+) -> None:
     """Wipe all domain tables (keep schema + meta intact).
 
     Reuse-intelligence tables (`module_deps`, `reuse_findings`,
     `reuse_finding_locations`) are also cleared — they're re-derived during the
     post-passes from settings.gradle, build.gradle and symbol contents.
+
+    The ``tables`` kw-only parameter exists ONLY for regression-test injection
+    (WR-01): tests pass a tampered list to assert the allowlist guard fires
+    on unknown table names. Production callers MUST NOT pass it — leave it
+    as ``None`` to use ``_DEFAULT_TABLES_TO_CLEAR``.
     """
     # HG-01 (review): refuse to run inside an outer transaction. Two reasons:
     #   1. ``PRAGMA foreign_keys`` is silently ignored mid-transaction
@@ -322,22 +353,7 @@ def _reset_domain_tables(conn: sqlite3.Connection) -> None:
         "transaction, corrupting state)."
     )
 
-    tables_to_clear = [
-        "reuse_finding_locations",
-        "reuse_findings",
-        "module_deps",
-        "ds_usage",
-        "ds_components",
-        "i18n_usage",
-        "i18n_keys",
-        "imports",
-        "tests",
-        "screens",
-        "routes",
-        "di_graph",
-        "symbols",
-        "files",
-    ]
+    tables_to_clear = tables if tables is not None else _DEFAULT_TABLES_TO_CLEAR
     # PRAGMA foreign_keys must run outside a transaction (SQLite ignores it
     # mid-transaction). The DELETEs themselves go inside an implicit
     # transaction (`with conn:`) so a mid-stream failure rolls back the
