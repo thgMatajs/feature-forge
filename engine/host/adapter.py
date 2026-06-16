@@ -40,16 +40,48 @@ class UserCancelledError(Exception):
 class HostAdapter(ABC):
     name: HostName
 
-    @abstractmethod
-    def ask(self, *, kind: AskKind, question: str, options: dict,
-            default: str | None, allow_pause: bool) -> AskResult: ...
+    # ``min_selected`` / ``validator_hint`` / ``paths_detail`` são extras
+    # de hash + payload espelhando ``engine.ui.question._build_pending``.
+    # Default ``None`` preserva backward-compat com callsites pre-0.7a; o
+    # delegate de question.py (Task 0.7b) passa esses valores quando os
+    # callers nativos os fornecem (ex.: ``ask_text(validator_hint=...)``
+    # ou ``ask_multi(min_selected=...)``). Sem isso, hash divergence
+    # quebraria intent-id stability (MD-001) e ``pending["command"]``
+    # divergiria de HI-002.
 
     @abstractmethod
-    def ask_text(self, *, prompt: str, default: str | None) -> str: ...
+    def ask(
+        self,
+        *,
+        kind: AskKind,
+        question: str,
+        options: dict,
+        default: str | None,
+        allow_pause: bool,
+        min_selected: int | None = None,
+        validator_hint: str | None = None,
+        paths_detail: list[dict[str, str]] | None = None,
+    ) -> AskResult: ...
 
     @abstractmethod
-    def ask_multi(self, *, question: str, options: dict,
-                  min: int = 0, max: int | None = None) -> list[str]: ...
+    def ask_text(
+        self,
+        *,
+        prompt: str,
+        default: str | None,
+        validator_hint: str | None = None,
+    ) -> str: ...
+
+    @abstractmethod
+    def ask_multi(
+        self,
+        *,
+        question: str,
+        options: dict,
+        min: int = 0,
+        max: int | None = None,
+        min_selected: int | None = None,
+    ) -> list[str]: ...
 
     @abstractmethod
     def emit_progress(self, *, step: str, total: int, current: int) -> None: ...

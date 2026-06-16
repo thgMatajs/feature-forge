@@ -53,9 +53,17 @@ def test_ask_emits_stdout_marker_and_pauses(tmp_path, capsys):
 
 
 def test_ask_consumes_cached_response_on_reentry(tmp_path):
-    """Pre-populate response.json (simulating CC having asked user). Re-entry returns AskResult."""
+    """Pre-populate response.json (simulating CC having asked user). Re-entry returns AskResult.
+
+    Task 0.7a parity: the adapter now resolves ``(command, command_args)``
+    via ``_command_context()`` instead of the pre-0.7a hardcoded
+    ``("host-adapter", [])``. To keep this test deterministic across
+    invocation styles (pytest, IDE runners, CI) we set the contextvar
+    to a fixed tuple and compute the expected intent-id against the
+    same tuple.
+    """
     from engine.ui import intent_state
-    from engine.ui.question import stable_intent_id
+    from engine.ui.question import _cli_command_context, stable_intent_id
     from engine.utils.paths import forge_state_dir
 
     state = forge_state_dir(tmp_path)
@@ -64,39 +72,44 @@ def test_ask_consumes_cached_response_on_reentry(tmp_path):
     kind = AskKind.ASK
     question = "Tipo da feature?"
     options = {"product": "Product feature", "bugfix": "Bug fix"}
-    intent_id = stable_intent_id(
-        kind.value,
-        question,
-        options,
-        extra={"default": None, "min-selected": None, "validator-hint": None},
-        command="host-adapter",
-        command_args=[],
-    )
 
-    # Simulate CC harness writing the matching response.
-    intent_state.write_response(
-        tmp_path,
-        {
-            "schema-version": 1,
-            "intent-id": intent_id,
-            "value": "product",
-        },
-        state_dir=state,
-    )
-    # Reset log cache so the freshly-written response is visible.
-    intent_state._reset_log_cache()
+    token = _cli_command_context.set(("test", []))
+    try:
+        intent_id = stable_intent_id(
+            kind.value,
+            question,
+            options,
+            extra={"default": None, "min-selected": None, "validator-hint": None},
+            command="test",
+            command_args=[],
+        )
 
-    adapter = ClaudeCodeAdapter(project_root=tmp_path)
-    result = adapter.ask(
-        kind=kind,
-        question=question,
-        options=options,
-        default=None,
-        allow_pause=True,
-    )
-    assert isinstance(result, AskResult)
-    assert result.value == "product"
-    assert result.paused is False
+        # Simulate CC harness writing the matching response.
+        intent_state.write_response(
+            tmp_path,
+            {
+                "schema-version": 1,
+                "intent-id": intent_id,
+                "value": "product",
+            },
+            state_dir=state,
+        )
+        # Reset log cache so the freshly-written response is visible.
+        intent_state._reset_log_cache()
+
+        adapter = ClaudeCodeAdapter(project_root=tmp_path)
+        result = adapter.ask(
+            kind=kind,
+            question=question,
+            options=options,
+            default=None,
+            allow_pause=True,
+        )
+        assert isinstance(result, AskResult)
+        assert result.value == "product"
+        assert result.paused is False
+    finally:
+        _cli_command_context.reset(token)
 
 
 def test_emit_progress_and_warn_non_blocking(tmp_path):
@@ -138,3 +151,144 @@ def test_marker_xml_escapes_special_chars(tmp_path, capsys):
     assert elem.attrib["kind"] == "ask_text"
     # Round-trip preserves the original (unescaped) value in attrib dict.
     assert elem.attrib["question"] == tricky
+
+
+# ----------------------------------------------------------------------
+# Task 0.7a — parity with question._build_pending
+# ----------------------------------------------------------------------
+
+
+def _extract_marker_attribs(stdout: str) -> dict:
+    """Pull attributes off the ``<FORGE_INTENT .../>`` marker via stdlib XML.
+
+    Same parser the CC harness uses on the consumer side — guarantees
+    our test assertions reflect what a real harness would observe.
+    """
+    line = next(
+        ln for ln in reversed(stdout.splitlines()) if ln.strip().startswith("<FORGE_INTENT")
+    )
+    return ET.fromstring(line).attrib
+
+
+def test_ask_text_validator_hint_changes_intent_id(tmp_path, capsys):
+    """HI-002 / MD-001 parity: distinct ``validator_hint`` → distinct intent-id
+    in the stdout marker.
+
+    Same invariant as the IntentFileAdapter sibling test; here we
+    verify it via the marker attributes (CC adapter does not write
+    pending.json).
+    """
+    adapter = ClaudeCodeAdapter(project_root=tmp_path)
+
+    try:
+        adapter.ask_text(prompt="Enter:", default=None, validator_hint="email")
+    except PausedForInputError:
+        pass
+    out_a = capsys.readouterr().out
+    attribs_a = _extract_marker_attribs(out_a)
+    id_a = attribs_a["intent-id"]
+    assert attribs_a["validator-hint"] == "email"
+
+    try:
+        adapter.ask_text(prompt="Enter:", default=None, validator_hint="phone")
+    except PausedForInputError:
+        pass
+    out_b = capsys.readouterr().out
+    attribs_b = _extract_marker_attribs(out_b)
+    id_b = attribs_b["intent-id"]
+    assert attribs_b["validator-hint"] == "phone"
+
+    assert id_a != id_b, (
+        "validator_hint must enter the intent-id hash; same prompt "
+        "with different hints produced identical ids in the marker."
+    )
+
+
+def test_marker_uses_command_context(tmp_path, capsys):
+    """HI-002 invariant on the CC channel: the intent-id reflects
+    ``_command_context``, not the legacy hardcoded ``("host-adapter", [])``.
+
+    The marker itself does not surface command/command-args (those are
+    pending-payload fields), but they DO enter the hash via
+    ``stable_intent_id``. We verify by computing the expected id under
+    the contextvar and comparing.
+    """
+    from engine.ui.question import _cli_command_context, stable_intent_id
+
+    token = _cli_command_context.set(("plan", ["IN-42100"]))
+    try:
+        adapter = ClaudeCodeAdapter(project_root=tmp_path)
+        with pytest.raises(PausedForInputError):
+            adapter.ask(
+                kind=AskKind.ASK,
+                question="Q?",
+                options={"a": "A"},
+                default=None,
+                allow_pause=True,
+            )
+        out = capsys.readouterr().out
+        attribs = _extract_marker_attribs(out)
+
+        expected_id = stable_intent_id(
+            AskKind.ASK.value,
+            "Q?",
+            {"a": "A"},
+            extra={
+                "default": None,
+                "min-selected": None,
+                "validator-hint": None,
+            },
+            command="plan",
+            command_args=["IN-42100"],
+        )
+        assert attribs["intent-id"] == expected_id
+    finally:
+        _cli_command_context.reset(token)
+
+
+def test_marker_omits_optional_attribs_when_none(tmp_path, capsys):
+    """Marker attribute parity: ``validator-hint`` / ``min-selected`` /
+    ``paths-detail`` appear ONLY when supplied (not None).
+
+    Pre-0.7a the marker had no such attrs at all; with 0.7a they are
+    optional, conditional on caller intent. CC parsers that key on
+    attribute presence (``"validator-hint" in attribs``) keep working.
+    """
+    adapter = ClaudeCodeAdapter(project_root=tmp_path)
+    with pytest.raises(PausedForInputError):
+        adapter.ask(
+            kind=AskKind.ASK,
+            question="Q?",
+            options={"a": "A"},
+            default=None,
+            allow_pause=True,
+        )
+    attribs = _extract_marker_attribs(capsys.readouterr().out)
+    assert "validator-hint" not in attribs
+    assert "min-selected" not in attribs
+    assert "paths-detail" not in attribs
+
+
+def test_marker_includes_optional_attribs_when_supplied(tmp_path, capsys):
+    """Inverse of the omit-when-None case: when callers pass extras,
+    the marker surfaces them as XML-safe attributes."""
+    import json as _json
+
+    adapter = ClaudeCodeAdapter(project_root=tmp_path)
+    paths_detail = [{"path": "src/foo.py", "blast": "high"}]
+    with pytest.raises(PausedForInputError):
+        adapter.ask(
+            kind=AskKind.ASK_MULTI,
+            question="Pick files?",
+            options={"a": "A"},
+            default=None,
+            allow_pause=True,
+            min_selected=2,
+            validator_hint="email",
+            paths_detail=paths_detail,
+        )
+    attribs = _extract_marker_attribs(capsys.readouterr().out)
+    assert attribs["validator-hint"] == "email"
+    assert attribs["min-selected"] == "2"
+    # paths-detail is JSON-encoded on the wire (same encoding as ``options``).
+    assert _json.loads(attribs["paths-detail"]) == paths_detail

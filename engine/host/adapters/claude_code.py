@@ -36,6 +36,15 @@ Re-entry consume reuses the exact same ``intent_state.read_response`` +
 ``clear_intent_files`` dance the file adapter performs. That is by
 design — the response side of the protocol is identical regardless of
 how the pending was announced (stdout marker vs pending file).
+
+Task 0.7a (parity-with-question hardening): adapter now accepts
+``min_selected`` / ``validator_hint`` / ``paths_detail`` extras and
+resolves ``(command, command_args)`` via ``_command_context()``. The
+stdout marker also surfaces those optional fields as XML attributes
+when present — useful signal for the CC harness when dispatching
+``AskUserQuestion`` (e.g. ``validator-hint="email"`` lets the harness
+attach client-side validation). Attributes are omitted when ``None``
+so existing CC parsers that key on attribute presence keep working.
 """
 from __future__ import annotations
 
@@ -83,6 +92,9 @@ class ClaudeCodeAdapter(HostAdapter):
         options: dict,
         default: str | None,
         allow_pause: bool,
+        min_selected: int | None = None,
+        validator_hint: str | None = None,
+        paths_detail: list[dict[str, str]] | None = None,
     ) -> AskResult:
         return self._ask_loop(
             kind=kind,
@@ -90,15 +102,25 @@ class ClaudeCodeAdapter(HostAdapter):
             options=options or {},
             default=default,
             allow_pause=allow_pause,
+            min_selected=min_selected,
+            validator_hint=validator_hint,
+            paths_detail=paths_detail,
         )
 
-    def ask_text(self, *, prompt: str, default: str | None) -> str:
+    def ask_text(
+        self,
+        *,
+        prompt: str,
+        default: str | None,
+        validator_hint: str | None = None,
+    ) -> str:
         result = self._ask_loop(
             kind=AskKind.ASK_TEXT,
             question=prompt,
             options={},
             default=default,
             allow_pause=True,
+            validator_hint=validator_hint,
         )
         value = result.value
         if isinstance(value, list):
@@ -112,6 +134,7 @@ class ClaudeCodeAdapter(HostAdapter):
         options: dict,
         min: int = 0,
         max: int | None = None,
+        min_selected: int | None = None,
     ) -> list[str]:
         result = self._ask_loop(
             kind=AskKind.ASK_MULTI,
@@ -119,6 +142,7 @@ class ClaudeCodeAdapter(HostAdapter):
             options=options or {},
             default=None,
             allow_pause=True,
+            min_selected=min_selected,
         )
         value = result.value
         if isinstance(value, list):
@@ -150,6 +174,18 @@ class ClaudeCodeAdapter(HostAdapter):
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _resolve_command_context(self) -> tuple[str, list[str]]:
+        """Defer to ``engine.ui.question._command_context`` for HI-002 parity.
+
+        Lazy import keeps the adapter→question dependency direction
+        clean. See ``IntentFileAdapter._resolve_command_context`` for
+        the canonical rationale; the two adapters share this helper
+        shape so an eventual base-class refactor stays trivial.
+        """
+        from engine.ui.question import _command_context
+
+        return _command_context()
+
     def _ask_loop(
         self,
         *,
@@ -158,26 +194,37 @@ class ClaudeCodeAdapter(HostAdapter):
         options: dict,
         default: str | None,
         allow_pause: bool,
+        min_selected: int | None = None,
+        validator_hint: str | None = None,
+        paths_detail: list[dict[str, str]] | None = None,
     ) -> AskResult:
         """Shared loop body — re-entry consume OR first-entry marker emit.
 
         The ``intent_id`` derivation matches ``IntentFileAdapter`` bit
         for bit so a CC session that started under the fallback (or
         vice-versa) still lines up via the consumed-intent log.
+
+        Hash extras include ``min-selected`` / ``validator-hint``;
+        ``paths-detail`` is added to the hash dict only when not None
+        (MD-fix #11 parity with ``question._build_pending``).
         """
+        command, command_args = self._resolve_command_context()
+
+        extra_for_hash: dict[str, Any] = {
+            "default": default,
+            "min-selected": min_selected,
+            "validator-hint": validator_hint,
+        }
+        if paths_detail is not None:
+            extra_for_hash["paths-detail"] = [dict(item) for item in paths_detail]
+
         intent_id = stable_intent_id(
             kind=kind.value,
             question_text=question,
             options=options,
-            extra={
-                "default": default,
-                # Mirror ``IntentFileAdapter._ask_loop`` and
-                # ``question._build_pending`` parity bit-for-bit.
-                "min-selected": None,
-                "validator-hint": None,
-            },
-            command="host-adapter",
-            command_args=[],
+            extra=extra_for_hash,
+            command=command,
+            command_args=command_args,
         )
 
         # Re-entry: response already waiting? CC writes
@@ -209,6 +256,9 @@ class ClaudeCodeAdapter(HostAdapter):
             options=options,
             default=default,
             allow_pause=allow_pause,
+            min_selected=min_selected,
+            validator_hint=validator_hint,
+            paths_detail=paths_detail,
         )
         raise PausedForInputError(
             f"forge paused awaiting host response (intent-id={intent_id})"
@@ -223,6 +273,9 @@ class ClaudeCodeAdapter(HostAdapter):
         options: dict,
         default: str | None,
         allow_pause: bool,
+        min_selected: int | None = None,
+        validator_hint: str | None = None,
+        paths_detail: list[dict[str, str]] | None = None,
     ) -> None:
         """Write the single-line ``<FORGE_INTENT .../>`` marker to stdout.
 
@@ -243,13 +296,23 @@ class ClaudeCodeAdapter(HostAdapter):
           consistently. The result is well-formed XML — verifiable by
           round-tripping the marker through ``ElementTree.fromstring``.
 
+        Task 0.7a optional attributes:
+        - ``validator-hint`` / ``min-selected`` / ``paths-detail`` are
+          emitted ONLY when not None — mirroring the conditional
+          payload fields in ``question._build_pending`` and
+          ``IntentFileAdapter._build_pending``. Hosts that key on
+          attribute presence (``"validator-hint" in attrib``) continue
+          to work; ``paths-detail`` is JSON-encoded (list of dicts) for
+          the same reason ``options`` is — nested structure stays
+          parseable with stdlib alone.
+
         ``sys.stdout.write`` + ``flush`` (not ``print``) is deliberate:
         ``print``'s newline handling and the global ``sys.stdout.softspace``
         legacy can interact badly with harness consumers that read a
         single line and expect exact byte semantics. Explicit ``\\n``
         appended once keeps the output a clean single line.
         """
-        attrs = {
+        attrs: dict[str, str] = {
             "kind": kind.value,
             "intent-id": intent_id,
             "question": question,
@@ -258,6 +321,14 @@ class ClaudeCodeAdapter(HostAdapter):
             "default": "null" if default is None else default,
             "allow-pause": "true" if allow_pause else "false",
         }
+        # Optional Task 0.7a attributes — present only when set, matching
+        # the conditional payload behaviour of question._build_pending.
+        if validator_hint is not None:
+            attrs["validator-hint"] = validator_hint
+        if min_selected is not None:
+            attrs["min-selected"] = str(min_selected)
+        if paths_detail is not None:
+            attrs["paths-detail"] = json.dumps(paths_detail, ensure_ascii=False)
         # Build attribute string with xml.sax.saxutils.quoteattr so every
         # value is wrapped in matching quotes with embedded specials
         # escaped (&amp; &lt; &gt; &quot; &apos;).

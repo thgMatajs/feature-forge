@@ -24,9 +24,17 @@ Why this is a thin facade (Task 0.5 contract):
      ``intent_state`` call so the v1.3 sub-namespace
      ``.claude/forge/state/`` is honoured.
 
+Task 0.7a (parity-with-question hardening): adapter now accepts
+``min_selected`` / ``validator_hint`` / ``paths_detail`` extras and
+resolves ``(command, command_args)`` via ``_command_context()`` (the same
+contextvar→sys.argv ladder ``question._build_pending`` uses). This
+unblocks Task 0.7b (question.py delegate refactor) by guaranteeing
+intent-id stability and pending-shape parity bit-a-bit with the native
+path.
+
 Legacy callsites (``engine/ui/question.py`` and friends) continue to
 call ``intent_state`` without ``state_dir`` and keep writing to the
-legacy ``.claude/state/`` anchor — Task 0.7 unifies them later.
+legacy ``.claude/state/`` anchor — Task 0.7b unifies them later.
 """
 from __future__ import annotations
 
@@ -85,6 +93,9 @@ class IntentFileAdapter(HostAdapter):
         options: dict,
         default: str | None,
         allow_pause: bool,
+        min_selected: int | None = None,
+        validator_hint: str | None = None,
+        paths_detail: list[dict[str, str]] | None = None,
     ) -> AskResult:
         return self._ask_loop(
             kind=kind,
@@ -92,15 +103,25 @@ class IntentFileAdapter(HostAdapter):
             options=options or {},
             default=default,
             allow_pause=allow_pause,
+            min_selected=min_selected,
+            validator_hint=validator_hint,
+            paths_detail=paths_detail,
         )
 
-    def ask_text(self, *, prompt: str, default: str | None) -> str:
+    def ask_text(
+        self,
+        *,
+        prompt: str,
+        default: str | None,
+        validator_hint: str | None = None,
+    ) -> str:
         result = self._ask_loop(
             kind=AskKind.ASK_TEXT,
             question=prompt,
             options={},
             default=default,
             allow_pause=True,
+            validator_hint=validator_hint,
         )
         value = result.value
         if isinstance(value, list):
@@ -115,6 +136,7 @@ class IntentFileAdapter(HostAdapter):
         options: dict,
         min: int = 0,
         max: int | None = None,
+        min_selected: int | None = None,
     ) -> list[str]:
         result = self._ask_loop(
             kind=AskKind.ASK_MULTI,
@@ -122,6 +144,7 @@ class IntentFileAdapter(HostAdapter):
             options=options or {},
             default=None,
             allow_pause=True,
+            min_selected=min_selected,
         )
         value = result.value
         if isinstance(value, list):
@@ -152,6 +175,19 @@ class IntentFileAdapter(HostAdapter):
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _resolve_command_context(self) -> tuple[str, list[str]]:
+        """Defer to ``engine.ui.question._command_context`` for HI-002 parity.
+
+        Lazy import keeps the adapter→question dependency direction
+        one-way (adapter already imports ``stable_intent_id`` from
+        ``question``, but we localise the second import to keep the
+        module-level surface lean and avoid widening the import graph at
+        load time). The contextvar lookup itself is cheap.
+        """
+        from engine.ui.question import _command_context
+
+        return _command_context()
+
     def _ask_loop(
         self,
         *,
@@ -160,6 +196,9 @@ class IntentFileAdapter(HostAdapter):
         options: dict,
         default: str | None,
         allow_pause: bool,
+        min_selected: int | None = None,
+        validator_hint: str | None = None,
+        paths_detail: list[dict[str, str]] | None = None,
     ) -> AskResult:
         """Shared DRIFT-1 loop body — re-entry consume OR first-entry emit.
 
@@ -167,23 +206,31 @@ class IntentFileAdapter(HostAdapter):
         ``stable_intent_id`` helper means the same ``(kind, question,
         options, command-context)`` tuple produces the same id across
         re-invocations, which is what makes the consume path safe.
+
+        Hash extras (``min-selected``, ``validator-hint``, ``paths-detail``)
+        match ``question._build_pending``'s ``extra_for_hash`` shape so
+        the adapter and the native path produce identical intent-ids for
+        identical inputs. ``paths-detail`` is OMITTED from the hash dict
+        when ``None`` (MD-fix #11 parity) — including it as ``None`` here
+        would diverge from question.py and break re-entry across paths.
         """
+        command, command_args = self._resolve_command_context()
+
+        extra_for_hash: dict[str, Any] = {
+            "default": default,
+            "min-selected": min_selected,
+            "validator-hint": validator_hint,
+        }
+        if paths_detail is not None:
+            extra_for_hash["paths-detail"] = [dict(item) for item in paths_detail]
+
         intent_id = stable_intent_id(
             kind=kind.value,
             question_text=question,
             options=options,
-            extra={
-                "default": default,
-                # Match the ``extra_for_hash`` shape used by
-                # ``question._build_pending`` so the adapter and the
-                # native path stay interchangeable from the host's
-                # perspective. Adapter path does not surface
-                # validator-hint / min-selected / paths-detail today;
-                # passing ``None`` for both preserves parity bit-for-bit
-                # with the legacy callsites that also pass ``None``.
-                "min-selected": None,
-                "validator-hint": None,
-            },
+            extra=extra_for_hash,
+            command=command,
+            command_args=command_args,
         )
 
         # Re-entry: response already waiting? Returns ``None`` when the
@@ -214,6 +261,11 @@ class IntentFileAdapter(HostAdapter):
             options=options,
             default=default,
             allow_pause=allow_pause,
+            command=command,
+            command_args=command_args,
+            min_selected=min_selected,
+            validator_hint=validator_hint,
+            paths_detail=paths_detail,
         )
         intent_state.detect_race(
             self.project_root,
@@ -238,6 +290,11 @@ class IntentFileAdapter(HostAdapter):
         options: dict,
         default: str | None,
         allow_pause: bool,
+        command: str,
+        command_args: list[str],
+        min_selected: int | None = None,
+        validator_hint: str | None = None,
+        paths_detail: list[dict[str, str]] | None = None,
     ) -> dict[str, Any]:
         """Assemble the canonical pending payload.
 
@@ -247,18 +304,23 @@ class IntentFileAdapter(HostAdapter):
         clients (and ``intent_state._check_schema_version``) already
         consume that shape.
 
-        The adapter has no access to a CLI command context the way
-        ``question._command_context`` does (this is a library facade,
-        not a CLI entrypoint). We surface ``("host-adapter", [])`` so
-        the field is present and machine-parseable; race detection only
-        needs a stable ``intent-id`` and ``created-at``, not the
-        command shape.
+        Task 0.7a parity: ``command``/``command_args`` come from
+        ``_command_context()`` (resolved by ``_ask_loop``), NOT the
+        ``("host-adapter", [])`` placeholder used pre-0.7a. This honours
+        the HI-002 invariant — ``pending["command"]`` reflects the
+        ``cli.main`` argv that drove the current invocation.
+
+        Optional fields (``validator-hint``, ``min-selected``,
+        ``paths-detail``) are present in the payload ONLY when not None,
+        matching ``question._build_pending`` lines 367-372. Including
+        them as ``None`` would diverge from the native path and pollute
+        the wire format for hosts that key on ``"validator-hint" in payload``.
         """
-        return {
+        intent: dict[str, Any] = {
             "schema-version": _SCHEMA_VERSION,
             "intent-id": intent_id,
-            "command": "host-adapter",
-            "command-args": [],
+            "command": command,
+            "command-args": list(command_args),
             "kind": kind.value,
             "question": question,
             "options": dict(options) if options else {},
@@ -268,3 +330,10 @@ class IntentFileAdapter(HostAdapter):
             "pid": os.getpid(),
             "checkpoint-path": None,
         }
+        if validator_hint is not None:
+            intent["validator-hint"] = validator_hint
+        if min_selected is not None:
+            intent["min-selected"] = min_selected
+        if paths_detail is not None:
+            intent["paths-detail"] = paths_detail
+        return intent

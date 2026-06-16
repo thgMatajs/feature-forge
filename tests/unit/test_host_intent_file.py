@@ -135,3 +135,129 @@ def test_emit_progress_does_not_raise(tmp_path):
     adapter.emit_progress(step="planning", total=10, current=3)
     # Success criterion: no exception. The intent-file fallback has no
     # progress channel by design.
+
+
+# ----------------------------------------------------------------------
+# Task 0.7a — parity with question._build_pending
+# ----------------------------------------------------------------------
+
+
+def test_ask_text_validator_hint_changes_intent_id(tmp_path):
+    """HI-002 / MD-001 parity: distinct ``validator_hint`` → distinct intent-id.
+
+    Two ``ask_text`` calls with the SAME prompt but DIFFERENT
+    ``validator_hint`` MUST produce different intent-ids, otherwise a
+    stale response intended for validator A could be consumed by a
+    call expecting validator B. This mirrors the parity invariant
+    enforced inside ``engine.ui.question._build_pending``.
+    """
+    adapter = IntentFileAdapter(project_root=tmp_path)
+    state = forge_state_dir(tmp_path)
+
+    # First call — validator_hint="email"
+    try:
+        adapter.ask_text(prompt="Enter:", default=None, validator_hint="email")
+    except PausedForInputError:
+        pass
+    pending_a = json.loads((state / "forge-pending.json").read_text())
+    id_a = pending_a["intent-id"]
+    assert pending_a["validator-hint"] == "email"
+
+    # Clear the pending file + log cache so the next call starts fresh.
+    (state / "forge-pending.json").unlink()
+    intent_state._reset_log_cache()
+
+    # Second call — same prompt, different validator_hint.
+    try:
+        adapter.ask_text(prompt="Enter:", default=None, validator_hint="phone")
+    except PausedForInputError:
+        pass
+    pending_b = json.loads((state / "forge-pending.json").read_text())
+    id_b = pending_b["intent-id"]
+    assert pending_b["validator-hint"] == "phone"
+
+    assert id_a != id_b, (
+        "validator_hint must enter the intent-id hash (MD-001 parity); "
+        "same prompt with different hints produced identical ids."
+    )
+
+
+def test_ask_pending_uses_command_context(tmp_path):
+    """HI-002 invariant: ``pending["command"]`` reflects ``_command_context``, NOT 'host-adapter'.
+
+    Pre-0.7a the adapter hardcoded ``"host-adapter"`` + ``[]`` for the
+    command tuple. When question.py delegates to the adapter (Task 0.7b),
+    that hardcode would regress HI-002 — pending JSON would advertise
+    ``"host-adapter"`` instead of the actual ``cli.main`` argv. This
+    test pins the fix: setting the contextvar must propagate into the
+    pending payload bit-a-bit.
+    """
+    from engine.ui.question import _cli_command_context
+
+    token = _cli_command_context.set(("plan", ["IN-42100"]))
+    try:
+        adapter = IntentFileAdapter(project_root=tmp_path)
+        with pytest.raises(PausedForInputError):
+            adapter.ask(
+                kind=AskKind.ASK,
+                question="Q?",
+                options={"a": "A"},
+                default=None,
+                allow_pause=True,
+            )
+        pending = json.loads(
+            (forge_state_dir(tmp_path) / "forge-pending.json").read_text()
+        )
+        assert pending["command"] == "plan"
+        assert pending["command-args"] == ["IN-42100"]
+    finally:
+        _cli_command_context.reset(token)
+
+
+def test_pending_omits_optional_fields_when_none(tmp_path):
+    """Wire-shape parity: ``min-selected`` / ``validator-hint`` / ``paths-detail``
+    appear in the pending payload ONLY when supplied (not None).
+
+    Mirrors ``question._build_pending`` lines 367-372 — including those
+    keys with ``None`` values would diverge from the native path and
+    break hosts that key on ``"validator-hint" in payload``.
+    """
+    adapter = IntentFileAdapter(project_root=tmp_path)
+    with pytest.raises(PausedForInputError):
+        adapter.ask(
+            kind=AskKind.ASK,
+            question="Q?",
+            options={"a": "A"},
+            default=None,
+            allow_pause=True,
+        )
+    pending = json.loads(
+        (forge_state_dir(tmp_path) / "forge-pending.json").read_text()
+    )
+    assert "validator-hint" not in pending
+    assert "min-selected" not in pending
+    assert "paths-detail" not in pending
+
+
+def test_pending_includes_optional_fields_when_supplied(tmp_path):
+    """Inverse of the omit-when-None case: when callers pass extras,
+    the payload surfaces them on the wire."""
+    adapter = IntentFileAdapter(project_root=tmp_path)
+    paths_detail = [{"path": "src/foo.py", "blast": "high"}]
+    with pytest.raises(PausedForInputError):
+        adapter.ask(
+            kind=AskKind.ASK_MULTI,
+            question="Pick files?",
+            options={"a": "A"},
+            default=None,
+            allow_pause=True,
+            min_selected=2,
+            validator_hint="email",
+            paths_detail=paths_detail,
+        )
+    pending = json.loads(
+        (forge_state_dir(tmp_path) / "forge-pending.json").read_text()
+    )
+    assert pending["validator-hint"] == "email"
+    assert pending["min-selected"] == 2
+    assert pending["paths-detail"] == paths_detail
