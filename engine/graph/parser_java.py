@@ -53,12 +53,23 @@ _RE_PACKAGE = re.compile(r"^\s*package\s+([\w\.]+)\s*;", re.MULTILINE)
 _RE_IMPORT = re.compile(r"^\s*import\s+(?:static\s+)?([\w\.\*]+)\s*;", re.MULTILINE)
 
 # Class/interface/enum/record/annotation declarations.
+#
+# P-N-010 / gemini parser_java:65 (REVIEW PR #16): generics com bounds
+# (``<T extends Serializable>``) e nested 1-level (``<T extends Comparable<T>>``)
+# precisam casar. Antes: ``<\w+(?:,\s*\w+)*>`` aceitava só identifiers
+# bare separados por vírgula — bounds quebravam.
+#
+# Padrão aceita 1 nível de aninhamento balanced:
+#   <[^<>]*(?:<[^<>]*>[^<>]*)*>
+# Aceita ``<T>``, ``<T, U>``, ``<T extends Comparable<T>>``,
+# ``<K, V extends Number>``. Não cobre 3+ níveis (raros em prática), e
+# tree-sitter v1.4 endereça regex fragility geral (spec §Risks R1).
 _RE_CLASS = re.compile(
     r"(?:(?:public|private|protected|abstract|final|static|sealed|non-sealed)\s+)*"
     r"(?:class|interface|@interface|enum|record)\s+"
     r"(\w+)"
-    r"(?:\s*<\w+(?:,\s*\w+)*>)?"
-    r"(?:\s+extends\s+\w+(?:\.\w+)*(?:<[^>]*>)?)?"
+    r"(?:\s*<[^<>]*(?:<[^<>]*>[^<>]*)*>)?"
+    r"(?:\s+extends\s+[\w\.]+(?:<[^<>]*(?:<[^<>]*>[^<>]*)*>)?)?"
     r"(?:\s+implements\s+[\w\.,\s<>]+)?"
     r"\s*\{",
     re.MULTILINE,
@@ -77,13 +88,22 @@ _JAVA_RESERVED_TYPE_BLOCKLIST = frozenset({
     "synchronized", "try", "catch", "finally", "assert", "instanceof",
 })
 
+# P-N-010 / gemini parser_java:89 (REVIEW PR #16): nested generics no
+# return type (``List<Map<String, Object>>``) precisam casar. Antes:
+# ``(<[^>]*>)?`` parava no primeiro ``>`` — só profundidade 1 lisa.
+# Padrão agora aceita 1 nível de aninhamento:
+# ``<[^<>]*(?:<[^<>]*>[^<>]*)*>``. Reaproveitado pra ambos os slots de
+# generics (return-type qualifier + return-type capture).
 _RE_METHOD = re.compile(
     r"(?:(?:public|private|protected|static|final|abstract|synchronized|native|default)\s+)*"
-    r"(?:\w+(?:\[\])?(?:<[^>]*>)?\.)?"
-    r"(\w+(?:<[^>]*>)?)"
+    r"(?:\w+(?:\[\])?(?:<[^<>]*(?:<[^<>]*>[^<>]*)*>)?\.)?"
+    r"(\w+(?:<[^<>]*(?:<[^<>]*>[^<>]*)*>)?(?:\[\])?)"
     r"\s+"
     r"(\w+)\s*"
     r"\(([^)]*)\)"
+    # Optional ``throws Exception1, Exception2`` clause between ``)`` and
+    # ``{``/``;`` (T-N-008 / REVIEW PR #16).
+    r"(?:\s*throws\s+[\w\.,\s]+)?"
     r"\s*(?:\{|\s*;)",
     re.MULTILINE,
 )
@@ -265,9 +285,13 @@ def _parse_java(source: str) -> JavaFileInfo:
                 visibility = vis_m.group(1)
 
         modifiers = []
-        # Look for non-visibility modifiers inside ``full_match`` first
-        # (regex's non-capturing modifier group covers them).
-        for token in full_match.split():
+        # P-N-008 / gemini parser_java:273 (REVIEW PR #16): split em
+        # ``full_match`` inteiro inclui params como ``(final int x)``;
+        # ``final`` como param qualifier seria capturado como modifier do
+        # método. Limitar busca ao prefixo ANTES do nome do método.
+        idx = full_match.find(method_name)
+        modifier_window = full_match[:idx] if idx > 0 else full_match
+        for token in modifier_window.split():
             if token in {"static", "final", "abstract", "synchronized", "native", "default"}:
                 if token not in modifiers:
                     modifiers.append(token)
