@@ -960,6 +960,8 @@ git commit -m "refactor(paths): callsites usam forge_config_path/forge_state_dir
 - Modify: schema-version field default → `"1.3"`
 - Modify: cross-refs em CHANGELOG/README pendentes pra W5; engine code OK em W0.8
 
+**Justificativa do edit em doc load-bearing** (`docs/schemas/workflow-config.md` está na whitelist do scope.md): o rename é necessário porque o Goal v1.3 (spec §Q3 resolvido — bump schema-version "1.3") exige consistência entre filename do schema YAML (forge-config.yaml) e filename do schema doc (forge-config.md). Sem rename, doc fica órfão referenciando filename obsoleto. Cobre Mandamento #4 (scope) + Mandamento #6 (doc-sync).
+
 - [ ] **Step 1: Rename validator file**
 
 ```bash
@@ -2725,7 +2727,15 @@ forge upgrade
 Git pull + venv refresh + smoke. Rollback automático em falha.
 ```
 
-- [ ] **Step 2: Commit**
+- [ ] **Step 2: Atualizar §Stats do README**
+
+Em seção §Stats (ou crie se não existir), atualizar:
+- Test count: 1353 → 1538 (delta +185)
+- Novo módulo: `engine/host/` (host-aware execution)
+- Sub-namespace consumidor: `.claude/forge/` (era `.claude/`)
+- Install via: `curl ... install.sh | bash` (one-liner; XDG default em `~/.local/share/feature-forge/`)
+
+- [ ] **Step 3: Commit**
 
 ```bash
 git add README.md
