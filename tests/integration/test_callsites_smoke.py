@@ -5,7 +5,7 @@ após o refactor intent-only do chokepoint (``engine/ui/question.py``).
 Pra cada módulo, validamos UM cenário mínimo que ou:
 
   (a) dispara pelo menos um ``question.ask*`` → exit 2 + pending JSON
-      bem-formado em ``.claude/state/forge-pending.json``;
+      bem-formado em ``.claude/forge/state/forge-pending.json``;
   (b) executa um caminho não-interativo (read-only / no-op / erro
       esperado) → exit code documentado, sem pending (ou pending
       claramente ausente).
@@ -71,7 +71,14 @@ def _scaffold_brownfield(tmp_path: Path) -> Path:
     claude = tmp_path / ".claude"
     claude.mkdir(parents=True, exist_ok=True)
     (claude / "workflow-config.yaml").write_text("{}\n", encoding="utf-8")
-    (claude / "state").mkdir(exist_ok=True)
+    forge = claude / "forge"
+    forge.mkdir(parents=True, exist_ok=True)
+    # Pin host=intent-file so subprocess emits via on-disk pending JSON
+    # rather than Claude Code stdout marker (pytest inherits CLAUDECODE=1).
+    (forge / "forge-config.yaml").write_text(
+        "host: intent-file\n", encoding="utf-8"
+    )
+    (forge / "state").mkdir(exist_ok=True)
     return tmp_path
 
 
@@ -110,6 +117,18 @@ def _run_engine(
         else pythonpath
     )
     env["FORGE_HOME"] = str(PROJECT_ROOT)
+    # Strip agentic-host env hints so detect_host falls back to intent-file
+    # (the on-disk DRIFT-1 protocol). Pytest inherits CLAUDECODE=1 from the
+    # Claude Code session; without this strip the subprocess would emit
+    # `<FORGE_INTENT>` stdout markers instead of writing the pending JSON.
+    for var in (
+        "CLAUDECODE",
+        "CURSOR_AGENT",
+    ):
+        env.pop(var, None)
+    for var in list(env.keys()):
+        if var.startswith(("OPENCODE_", "CODEX", "CURSOR_")):
+            env.pop(var, None)
     if extra_env:
         env.update(extra_env)
     return subprocess.run(
@@ -124,7 +143,7 @@ def _run_engine(
 
 
 def _pending_path(project_root: Path) -> Path:
-    return project_root / ".claude" / "state" / "forge-pending.json"
+    return project_root / ".claude" / "forge" / "state" / "forge-pending.json"
 
 
 def _assert_pending_schema(project_root: Path) -> dict:

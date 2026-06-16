@@ -160,7 +160,7 @@ def read_pending(project_root: Path) -> dict[str, Any] | None:
     written yet, or the engine consumed and cleared after a successful
     run). Otherwise returns the decoded payload.
     """
-    pending_path = project_root / ".claude" / "state" / "forge-pending.json"
+    pending_path = project_root / ".claude" / "forge" / "state" / "forge-pending.json"
     if not pending_path.is_file():
         return None
     return json.loads(pending_path.read_text(encoding="utf-8"))
@@ -184,7 +184,7 @@ def write_response(
       (ask_multi) | ``bool`` (confirm)
     - ``answered-at``: ISO-8601 UTC (a fixed string is fine for tests)
     """
-    state_dir = project_root / ".claude" / "state"
+    state_dir = project_root / ".claude" / "forge" / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     response = {
         "schema-version": 1,
@@ -217,7 +217,7 @@ def clear_response(project_root: Path) -> None:
     we know the engine will encounter a different question first,
     explicitly clear the stale response.
     """
-    response_path = project_root / ".claude" / "state" / "forge-response.json"
+    response_path = project_root / ".claude" / "forge" / "state" / "forge-response.json"
     response_path.unlink(missing_ok=True)
 
 
@@ -283,7 +283,7 @@ def drive_intent_loop(
             and "mismatch" in (result.stderr or "").lower()
         ):
             clear_response(cwd)
-            pending_path = cwd / ".claude" / "state" / "forge-pending.json"
+            pending_path = cwd / ".claude" / "forge" / "state" / "forge-pending.json"
             pending_path.unlink(missing_ok=True)
             continue
 

@@ -1,10 +1,17 @@
 """State-file I/O for the DRIFT-1 intent protocol.
 
-Single chokepoint for ``.claude/state/forge-pending.json`` and
-``.claude/state/forge-response.json``. Engine reads/writes go through
-this module; ``question.py`` stays thin (sentinel + dispatch). The
-``tty_bridge`` (W3) also lands here for the read-pending +
+Single chokepoint for ``.claude/forge/state/forge-pending.json`` and
+``.claude/forge/state/forge-response.json``. Engine reads/writes go
+through this module; ``question.py`` stays thin (sentinel + dispatch).
+The ``tty_bridge`` (W3) also lands here for the read-pending +
 write-response half of the loop.
+
+State directory canonical (v1.3 clean break, spec §5):
+The default ``state_dir`` resolves to ``forge_state_dir(project_root)``
+— i.e., ``.claude/forge/state/`` — the v1.3 sub-namespace.  Callers
+that supply ``state_dir`` explicitly still win (override semantics).
+Pre-v1.3 default was ``.claude/state/``; that path is gone (no legacy
+fallback) since the project is pre-production (no install to migrate).
 
 Why a dedicated module:
 
@@ -67,7 +74,7 @@ from pathlib import Path
 from typing import Any
 
 from engine.utils import json_io
-from engine.utils.paths import claude_dir
+from engine.utils.paths import forge_state_dir
 
 # Pending older than this is considered orphaned and gets swept.
 _STALE_THRESHOLD_SECONDS = 10 * 60  # 10 minutes
@@ -95,8 +102,8 @@ class RaceDetectedError(RuntimeError):
     """Raised when a recent pending intent (≤ 10min) blocks a new one.
 
     The existing pending is NOT overwritten. Caller must wait or delete
-    ``.claude/state/forge-pending.json`` by hand. Top-level handler maps
-    this to exit code 1 with the mentor-calmo phrasing carried in
+    ``.claude/forge/state/forge-pending.json`` by hand. Top-level handler
+    maps this to exit code 1 with the mentor-calmo phrasing carried in
     ``args[0]``.
     """
 
@@ -118,21 +125,24 @@ class SchemaVersionMismatchError(RuntimeError):
 def _state_dir(
     project_root: Path, state_dir_override: Path | None = None
 ) -> Path:
-    """``.claude/state/`` for this project (default), or the explicit override.
+    """``.claude/forge/state/`` for this project (default), or the explicit
+    override.
 
-    Task 0.5 (v1.3 pilot-ready) adds the ``state_dir_override`` param so
-    the new ``engine/host/adapters/intent_file.py`` facade can point the
-    DRIFT-1 protocol at ``.claude/forge/state/`` (the v1.3 sub-namespace)
-    without touching the 13 legacy callsites. When ``state_dir_override``
-    is ``None``, behavior is byte-for-byte identical to the pre-Task-0.5
-    state: ``claude_dir(project_root) / "state"``.
+    Fix #3 / Path A (v1.3 pilot-ready, spec §5 clean break, 2026-06-16):
+    The default resolves to ``forge_state_dir(project_root)`` — i.e.,
+    ``.claude/forge/state/`` — the v1.3 canonical sub-namespace. The
+    pre-v1.3 default (``claude_dir(project_root) / "state"``) is gone:
+    no legacy fallback, no migration shim. Pre-production phase means
+    there is no install to migrate, so the cleaner default wins.
 
-    Promoted to ``engine.utils.paths`` will happen once the legacy
-    callsites migrate to the v1.3 sub-namespace too — out of scope here.
+    ``state_dir_override`` (Task 0.5 facade hook) preserves explicit-override
+    semantics: callers that need a specific path still get it back unchanged.
+    Used by ``engine/host/adapters/intent_file.py`` and by tests that need
+    to pin paths under a ``tmp_path`` root.
     """
     if state_dir_override is not None:
         return state_dir_override
-    return claude_dir(project_root) / "state"
+    return forge_state_dir(project_root)
 
 
 def _pending_path(project_root: Path, *, state_dir: Path | None = None) -> Path:
@@ -144,8 +154,8 @@ def _response_path(project_root: Path, *, state_dir: Path | None = None) -> Path
 
 
 def _log_path(project_root: Path, *, state_dir: Path | None = None) -> Path:
-    """``.claude/state/forge-intent-log.jsonl`` — consumed-intent log for
-    re-entry idempotency in multi-intent handlers.
+    """``.claude/forge/state/forge-intent-log.jsonl`` — consumed-intent log
+    for re-entry idempotency in multi-intent handlers.
 
     Lifetime is bounded by a single ``forge <cmd>`` invocation cycle:
     written by ``read_response`` on consume, cleared by
@@ -153,8 +163,8 @@ def _log_path(project_root: Path, *, state_dir: Path | None = None) -> Path:
     terminal exit.
 
     ``state_dir`` keyword (Task 0.5) overrides the default
-    ``.claude/state/`` anchor when provided. When ``None``, behavior is
-    unchanged (legacy callsites keep writing to ``.claude/state/``).
+    ``forge_state_dir(project_root)`` anchor when provided. When ``None``,
+    falls back to the v1.3 canonical sub-namespace (spec §5).
     """
     return _state_dir(project_root, state_dir) / "forge-intent-log.jsonl"
 
@@ -304,10 +314,8 @@ def write_pending(
     consumers.
 
     ``state_dir`` (Task 0.5 facade hook) overrides the default
-    ``.claude/state/`` anchor. Used by
-    ``engine/host/adapters/intent_file.py`` to redirect the DRIFT-1
-    protocol at ``.claude/forge/state/`` (v1.3 sub-namespace). Default
-    ``None`` preserves legacy behavior bit-for-bit.
+    ``forge_state_dir(project_root)`` anchor. Default ``None`` resolves
+    to ``.claude/forge/state/`` (v1.3 sub-namespace, spec §5 clean break).
     """
     json_io.write_json(_pending_path(project_root, state_dir=state_dir), intent)
 
@@ -318,7 +326,7 @@ def write_pending(
 def read_pending(
     project_root: Path, *, state_dir: Path | None = None
 ) -> dict[str, Any] | None:
-    """Read ``.claude/state/forge-pending.json`` if present.
+    """Read ``.claude/forge/state/forge-pending.json`` if present.
 
     Mirrors ``read_response`` but for the engine→caller direction: the
     ``tty_bridge`` loop calls this whenever the subprocess exits with
@@ -335,7 +343,7 @@ def read_pending(
     is the caller's choice; this function does not touch the file.
 
     ``state_dir`` (Task 0.5) overrides the default anchor; ``None``
-    preserves legacy behavior.
+    resolves to ``forge_state_dir(project_root)`` (v1.3 canonical).
     """
     path = _pending_path(project_root, state_dir=state_dir)
     if not path.exists():
@@ -379,7 +387,7 @@ def read_response(
     Lookup order (re-entry idempotency, W7-fix 2026-06-12):
 
     1. **Consumed-intent log** — if ``intent_id`` already appears in
-       ``.claude/state/forge-intent-log.jsonl``, return the cached
+       ``.claude/forge/state/forge-intent-log.jsonl``, return the cached
        response. The on-disk response file is not touched. This makes
        handler re-entry safe across subprocess invocations: the FIRST
        ``ask()`` in a multi-intent handler will always see its own

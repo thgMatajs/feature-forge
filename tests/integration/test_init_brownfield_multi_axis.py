@@ -106,7 +106,7 @@ def _scaffold_project(tmp_path: Path) -> Path:
     claude = tmp_path / ".claude"
     claude.mkdir(parents=True, exist_ok=True)
     (claude / "workflow-config.yaml").write_text("{}\n", encoding="utf-8")
-    (claude / "state").mkdir(exist_ok=True)
+    (claude / "forge" / "state").mkdir(parents=True, exist_ok=True)
     return tmp_path
 
 
@@ -144,13 +144,13 @@ dependencies {
 
 
 def _write_response(project_root: Path, intent_id: str, value: str) -> None:
-    """Escreve `.claude/state/forge-response.json` casando o intent-id."""
+    """Escreve `.claude/forge/state/forge-response.json` casando o intent-id."""
     response = {
         "schema-version": 1,
         "intent-id": intent_id,
         "value": value,
     }
-    state_dir = project_root / ".claude" / "state"
+    state_dir = project_root / ".claude" / "forge" / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "forge-response.json").write_text(
         json.dumps(response), encoding="utf-8"

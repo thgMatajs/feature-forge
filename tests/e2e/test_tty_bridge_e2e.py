@@ -289,7 +289,7 @@ def test_tty_mode_ctrlc_exits_130(tmp_path):
 
         # State files cleaned up — bridge's KeyboardInterrupt handler
         # clears them before returning 130. Pending must be absent.
-        pending = project_root / ".claude" / "state" / "forge-pending.json"
+        pending = project_root / ".claude" / "forge" / "state" / "forge-pending.json"
         assert not pending.exists(), (
             f"bridge should have cleared pending on Ctrl+C; found {pending}"
         )
@@ -343,8 +343,8 @@ def test_pause_token_propagates_as_paused_response(tmp_path):
         # must be absent so the next ``forge undo`` invocation starts
         # fresh (Decision 27 — pause is resumable via re-invoke, not
         # via stale on-disk state).
-        pending = project_root / ".claude" / "state" / "forge-pending.json"
-        response = project_root / ".claude" / "state" / "forge-response.json"
+        pending = project_root / ".claude" / "forge" / "state" / "forge-pending.json"
+        response = project_root / ".claude" / "forge" / "state" / "forge-response.json"
         assert not pending.exists(), (
             f"pending should be absent after clean pause; found {pending}"
         )

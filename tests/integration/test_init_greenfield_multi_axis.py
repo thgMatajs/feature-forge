@@ -63,7 +63,17 @@ def _scaffold_project(tmp_path: Path) -> Path:
     claude = tmp_path / ".claude"
     claude.mkdir(parents=True, exist_ok=True)
     (claude / "workflow-config.yaml").write_text("{}\n", encoding="utf-8")
-    (claude / "state").mkdir(exist_ok=True)
+    forge = claude / "forge"
+    forge.mkdir(parents=True, exist_ok=True)
+    # Pin host=intent-file so question.ask writes to forge/state/ on disk
+    # instead of the Claude Code stdout marker (pytest runs under CLAUDECODE=1).
+    (forge / "forge-config.yaml").write_text(
+        "host: intent-file\n", encoding="utf-8"
+    )
+    (forge / "state").mkdir(exist_ok=True)
+    # Clear host detection cache so the new config is honored.
+    from engine.host import detect as _host_detect
+    _host_detect._clear_cache()
     return tmp_path
 
 

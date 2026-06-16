@@ -67,14 +67,14 @@ def test_write_pending_creates_state_file_at_canonical_path(tmp_project_root):
     payload = _pending_payload()
     intent_state.write_pending(payload, tmp_project_root)
 
-    target = tmp_project_root / ".claude" / "state" / "forge-pending.json"
-    assert target.is_file(), "pending file must land at .claude/state/forge-pending.json"
+    target = tmp_project_root / ".claude" / "forge" / "state" / "forge-pending.json"
+    assert target.is_file(), "pending file must land at .claude/forge/state/forge-pending.json"
     assert _read_disk(target) == payload
 
 
 def test_write_pending_creates_parent_dirs(tmp_project_root):
     """state/ dir is created on demand — fresh project may have only .git."""
-    state_dir = tmp_project_root / ".claude" / "state"
+    state_dir = tmp_project_root / ".claude" / "forge" / "state"
     assert not state_dir.exists()
 
     intent_state.write_pending(_pending_payload(), tmp_project_root)
@@ -84,7 +84,7 @@ def test_write_pending_creates_parent_dirs(tmp_project_root):
 def test_write_pending_is_atomic_no_tmp_leftover(tmp_project_root):
     """No .tmp file may remain after a successful write."""
     intent_state.write_pending(_pending_payload(), tmp_project_root)
-    state_dir = tmp_project_root / ".claude" / "state"
+    state_dir = tmp_project_root / ".claude" / "forge" / "state"
     leftovers = [p for p in state_dir.iterdir() if p.suffix == ".tmp"]
     assert leftovers == []
 
@@ -96,7 +96,7 @@ def test_write_pending_overwrites_existing(tmp_project_root):
     second["question"] = "Outra pergunta?"
     intent_state.write_pending(second, tmp_project_root)
 
-    target = tmp_project_root / ".claude" / "state" / "forge-pending.json"
+    target = tmp_project_root / ".claude" / "forge" / "state" / "forge-pending.json"
     assert _read_disk(target)["question"] == "Outra pergunta?"
 
 
@@ -110,7 +110,7 @@ def test_read_response_returns_none_when_file_absent(tmp_project_root):
 
 def test_read_response_returns_dict_when_intent_id_matches(tmp_project_root):
     intent_id = "22222222-2222-4222-8222-222222222222"
-    response_path = tmp_project_root / ".claude" / "state" / "forge-response.json"
+    response_path = tmp_project_root / ".claude" / "forge" / "state" / "forge-response.json"
     response_path.parent.mkdir(parents=True)
     response_path.write_text(
         json.dumps(_response_payload(intent_id=intent_id)),
@@ -128,7 +128,7 @@ def test_read_response_raises_on_intent_id_mismatch(tmp_project_root):
     written_id = "33333333-3333-4333-8333-333333333333"
     expected_id = "44444444-4444-4444-8444-444444444444"
 
-    response_path = tmp_project_root / ".claude" / "state" / "forge-response.json"
+    response_path = tmp_project_root / ".claude" / "forge" / "state" / "forge-response.json"
     response_path.parent.mkdir(parents=True)
     response_path.write_text(
         json.dumps(_response_payload(intent_id=written_id)),
@@ -144,7 +144,7 @@ def test_read_response_raises_on_intent_id_mismatch(tmp_project_root):
 
 
 def test_read_response_raises_on_malformed_json(tmp_project_root):
-    response_path = tmp_project_root / ".claude" / "state" / "forge-response.json"
+    response_path = tmp_project_root / ".claude" / "forge" / "state" / "forge-response.json"
     response_path.parent.mkdir(parents=True)
     response_path.write_text("{ not valid json", encoding="utf-8")
 
@@ -157,7 +157,7 @@ def test_read_response_raises_on_malformed_json(tmp_project_root):
 
 
 def test_clear_intent_files_deletes_both(tmp_project_root):
-    state_dir = tmp_project_root / ".claude" / "state"
+    state_dir = tmp_project_root / ".claude" / "forge" / "state"
     state_dir.mkdir(parents=True)
     pending = state_dir / "forge-pending.json"
     response = state_dir / "forge-response.json"
@@ -175,7 +175,7 @@ def test_clear_intent_files_idempotent_when_absent(tmp_project_root):
 
 
 def test_clear_intent_files_deletes_only_one_when_only_one_present(tmp_project_root):
-    state_dir = tmp_project_root / ".claude" / "state"
+    state_dir = tmp_project_root / ".claude" / "forge" / "state"
     state_dir.mkdir(parents=True)
     pending = state_dir / "forge-pending.json"
     pending.write_text("{}", encoding="utf-8")
@@ -211,7 +211,7 @@ def test_detect_race_sweeps_stale_pending_over_10_minutes(tmp_project_root):
         ),
         tmp_project_root,
     )
-    pending_path = tmp_project_root / ".claude" / "state" / "forge-pending.json"
+    pending_path = tmp_project_root / ".claude" / "forge" / "state" / "forge-pending.json"
     assert pending_path.exists()
 
     # Different intent-id, but the previous is stale → sweep, return None.
@@ -240,12 +240,12 @@ def test_detect_race_raises_on_recent_concurrent_intent(tmp_project_root):
     assert "84210" in message  # pid from _pending_payload
     assert "forge-pending.json" in message
     # Pending preservado (não sobrescreve).
-    assert (tmp_project_root / ".claude" / "state" / "forge-pending.json").exists()
+    assert (tmp_project_root / ".claude" / "forge" / "state" / "forge-pending.json").exists()
 
 
 def test_detect_race_handles_pending_missing_created_at(tmp_project_root):
     """Malformed pending (no created-at) is treated as stale — safer to sweep."""
-    state_dir = tmp_project_root / ".claude" / "state"
+    state_dir = tmp_project_root / ".claude" / "forge" / "state"
     state_dir.mkdir(parents=True)
     broken = state_dir / "forge-pending.json"
     broken.write_text(json.dumps({"intent-id": "abc"}), encoding="utf-8")
@@ -273,7 +273,7 @@ def test_read_response_raises_on_schema_version_mismatch(tmp_project_root):
     """Response with a foreign schema-version surfaces a typed error, not
     a silent miscompat. File is preserved for inspection."""
     intent_id = "88888888-8888-4888-8888-888888888888"
-    response_path = tmp_project_root / ".claude" / "state" / "forge-response.json"
+    response_path = tmp_project_root / ".claude" / "forge" / "state" / "forge-response.json"
     response_path.parent.mkdir(parents=True)
     payload = _response_payload(intent_id=intent_id)
     payload["schema-version"] = 99
@@ -291,7 +291,7 @@ def test_read_response_raises_on_schema_version_mismatch(tmp_project_root):
 def test_read_response_passes_with_current_schema_version(tmp_project_root):
     """Happy path: schema-version=1 + matching intent-id round-trips cleanly."""
     intent_id = "99999999-9999-4999-8999-999999999999"
-    response_path = tmp_project_root / ".claude" / "state" / "forge-response.json"
+    response_path = tmp_project_root / ".claude" / "forge" / "state" / "forge-response.json"
     response_path.parent.mkdir(parents=True)
     response_path.write_text(
         json.dumps(_response_payload(intent_id=intent_id)),
@@ -322,7 +322,7 @@ def test_parse_created_at_tolerates_small_future_skew(tmp_project_root):
         intent_state.detect_race(tmp_project_root, new_intent_id="brand-new")
     # Pending preservado — small skew is tolerated, not swept.
     assert (
-        tmp_project_root / ".claude" / "state" / "forge-pending.json"
+        tmp_project_root / ".claude" / "forge" / "state" / "forge-pending.json"
     ).exists()
 
 
@@ -339,7 +339,7 @@ def test_parse_created_at_treats_large_future_skew_as_stale(tmp_project_root):
         ),
         tmp_project_root,
     )
-    pending_path = tmp_project_root / ".claude" / "state" / "forge-pending.json"
+    pending_path = tmp_project_root / ".claude" / "forge" / "state" / "forge-pending.json"
     assert pending_path.exists()
 
     assert (
@@ -381,7 +381,7 @@ def test_detect_race_propagates_non_io_exceptions(
 ):
     """Programming errors (ValueError, TypeError, ...) escape detect_race
     instead of being silently swallowed and turned into a sweep."""
-    state_dir = tmp_project_root / ".claude" / "state"
+    state_dir = tmp_project_root / ".claude" / "forge" / "state"
     state_dir.mkdir(parents=True)
     pending_path = state_dir / "forge-pending.json"
     pending_path.write_text("{}", encoding="utf-8")
@@ -402,7 +402,7 @@ def test_detect_race_propagates_non_io_exceptions(
 
 def _write_response_file(project_root: Path, payload: dict) -> Path:
     """Drop a synthetic forge-response.json — simulates the host caller."""
-    state_dir = project_root / ".claude" / "state"
+    state_dir = project_root / ".claude" / "forge" / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     path = state_dir / "forge-response.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
@@ -410,7 +410,7 @@ def _write_response_file(project_root: Path, payload: dict) -> Path:
 
 
 def _log_file(project_root: Path) -> Path:
-    return project_root / ".claude" / "state" / "forge-intent-log.jsonl"
+    return project_root / ".claude" / "forge" / "state" / "forge-intent-log.jsonl"
 
 
 def test_read_response_caches_consumed_response_in_log(tmp_project_root):
@@ -472,7 +472,7 @@ def test_read_response_idempotent_after_file_overwrite(tmp_project_root):
 
     # Phase 2: question.py clears file post-consume; caller writes response
     # for the NEXT intent (B).
-    (tmp_project_root / ".claude" / "state" / "forge-response.json").unlink()
+    (tmp_project_root / ".claude" / "forge" / "state" / "forge-response.json").unlink()
     _write_response_file(
         tmp_project_root, _response_payload(intent_id=intent_b, value="b")
     )
@@ -558,7 +558,7 @@ def test_clear_intent_log_only_preserves_pending_and_response(tmp_project_root):
     response_path = _write_response_file(
         tmp_project_root, _response_payload(intent_id=intent_id)
     )
-    pending_path = tmp_project_root / ".claude" / "state" / "forge-pending.json"
+    pending_path = tmp_project_root / ".claude" / "forge" / "state" / "forge-pending.json"
     pending_path.write_text(
         json.dumps(_pending_payload(intent_id=intent_id)), encoding="utf-8"
     )
@@ -596,7 +596,7 @@ def test_read_response_re_entry_sequence_resolves_without_mismatch(
         tmp_project_root, _response_payload(intent_id=intent_a, value="alpha")
     )
     assert intent_state.read_response(tmp_project_root, intent_id=intent_a) is not None
-    (tmp_project_root / ".claude" / "state" / "forge-response.json").unlink()
+    (tmp_project_root / ".claude" / "forge" / "state" / "forge-response.json").unlink()
 
     # Engine emits pending for B → exit 2. Caller writes B's response and
     # re-invokes forge.
@@ -617,7 +617,7 @@ def test_read_response_re_entry_sequence_resolves_without_mismatch(
 def test_intent_log_tolerates_malformed_lines(tmp_project_root):
     """Crash mid-write may leave a partial JSONL line. Reader must skip
     silently and surface still-good entries."""
-    state_dir = tmp_project_root / ".claude" / "state"
+    state_dir = tmp_project_root / ".claude" / "forge" / "state"
     state_dir.mkdir(parents=True)
     log = state_dir / "forge-intent-log.jsonl"
     good_id = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
@@ -685,7 +685,7 @@ def test_append_intent_log_flushes_after_write(tmp_project_root, monkeypatch):
         response={"schema-version": 1, "value": "probe"},
     )
 
-    log_path = tmp_project_root / ".claude" / "state" / "forge-intent-log.jsonl"
+    log_path = tmp_project_root / ".claude" / "forge" / "state" / "forge-intent-log.jsonl"
     log_events = [evt for evt in events if evt[1] == log_path]
     # Must observe an explicit flush BEFORE the close. ``with`` already
     # flushes implicitly on close; the durability contract is the

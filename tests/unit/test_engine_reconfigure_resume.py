@@ -168,7 +168,7 @@ def test_resume_from_checkpoint(
 
     # Limpa o pending.json escrito pela primeira invocacao — caller
     # consumiu intent, vai escrever response.
-    state_dir = tmp_forge_project / ".claude" / "state"
+    state_dir = tmp_forge_project / ".claude" / "forge" / "state"
     pending_path = state_dir / "forge-pending.json"
     if pending_path.exists():
         pending_path.unlink()

@@ -1,8 +1,8 @@
 """Unit tests — engine.ui.question in intent-only mode (DRIFT-1 W2.T1).
 
 Validates the refactored chokepoint: each ask* entrypoint either consumes
-a matching response from ``.claude/state/forge-response.json`` (returning
-the value) or emits a fresh pending intent + raises
+a matching response from ``.claude/forge/state/forge-response.json``
+(returning the value) or emits a fresh pending intent + raises
 ``PausedForInputError``. No path through stdin remains in question.py
 itself — that lives in ``tty_bridge`` (W3).
 
@@ -30,13 +30,14 @@ from engine.ui import intent_state, question
 def _read_pending(project_root: Path, *, legacy: bool = False) -> dict:
     """Read forge-pending.json written by question.* into the test project.
 
-    Task 0.7b: ``ask``/``ask_multi``/``ask_text`` now delegate to the host
-    adapter, which writes to ``.claude/forge/state/`` (v1.3 sub-namespace).
-    ``confirm`` and ``ask_three_paths`` still use the legacy native path
-    against ``.claude/state/`` — pass ``legacy=True`` for those.
+    Fix #3 / Path A (v1.3 clean break, spec §5, 2026-06-16): all
+    ``ask``/``ask_multi``/``ask_text``/``confirm``/``ask_three_paths``
+    paths now write to ``.claude/forge/state/`` (v1.3 sub-namespace).
+    The ``legacy`` flag is retained as a no-op for source-history
+    auditability but ignored — there is no legacy path anymore.
     """
-    state_subdir = "state" if legacy else "forge/state"
-    path = project_root / ".claude" / state_subdir / "forge-pending.json"
+    del legacy  # clean break: no legacy path
+    path = project_root / ".claude" / "forge" / "state" / "forge-pending.json"
     assert path.is_file(), f"expected pending at {path}"
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -46,10 +47,10 @@ def _write_response(
 ) -> Path:
     """Write a synthetic forge-response.json — simulates the host caller.
 
-    Task 0.7b: see ``_read_pending`` for the ``legacy`` flag rationale.
+    Fix #3 / Path A: see ``_read_pending``. ``legacy`` is now a no-op.
     """
-    state_subdir = "state" if legacy else "forge/state"
-    state_dir = project_root / ".claude" / state_subdir
+    del legacy  # clean break: no legacy path
+    state_dir = project_root / ".claude" / "forge" / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     path = state_dir / "forge-response.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
@@ -255,13 +256,10 @@ def test_ask_empty_options_rejected_no_pending_written(tmp_project_root):
     """Empty options → ValueError, no pending file emitted on any path."""
     with pytest.raises(ValueError):
         question.ask("Pick:", {})
-    # Validation fires upstream of the adapter, so neither the legacy nor
-    # the new sub-namespace should receive a pending write.
+    # Validation fires upstream of the adapter, so no pending write should
+    # land on the canonical sub-namespace.
     assert not (
         tmp_project_root / ".claude" / "forge" / "state" / "forge-pending.json"
-    ).exists()
-    assert not (
-        tmp_project_root / ".claude" / "state" / "forge-pending.json"
     ).exists()
 
 
@@ -402,8 +400,9 @@ def test_confirm_response_bool_true(tmp_project_root):
         question.confirm("Aplicar?")
     intent_id = exc.value.intent["intent-id"]
 
-    # ``confirm`` is NOT delegated (Task 0.7b scope is ask/ask_multi/ask_text
-    # only); it keeps writing to legacy ``.claude/state/``.
+    # Fix #3 (v1.3 clean break, spec §5): ``confirm`` is NOT delegated to
+    # the adapter, but its native ``intent_state.write_pending`` now lands
+    # on the canonical ``.claude/forge/state/`` via the migrated default.
     _write_response(
         tmp_project_root,
         {
@@ -413,7 +412,6 @@ def test_confirm_response_bool_true(tmp_project_root):
             "value": True,
             "answered-at": "2026-06-10T19:00:00Z",
         },
-        legacy=True,
     )
 
     assert question.confirm("Aplicar?") is True
@@ -425,7 +423,8 @@ def test_confirm_response_string_s_or_n(tmp_project_root):
         question.confirm("Aplicar?")
     intent_id = exc.value.intent["intent-id"]
 
-    # ``confirm`` is NOT delegated (Task 0.7b scope is ask/ask_multi/ask_text).
+    # Fix #3 clean break: ``confirm`` writes to canonical sub-namespace
+    # via the migrated default in intent_state.
     _write_response(
         tmp_project_root,
         {
@@ -435,7 +434,6 @@ def test_confirm_response_string_s_or_n(tmp_project_root):
             "value": "n",
             "answered-at": "2026-06-10T19:00:00Z",
         },
-        legacy=True,
     )
 
     assert question.confirm("Aplicar?") is False
@@ -474,7 +472,7 @@ def test_ask_three_paths_requires_exactly_three_paths(tmp_project_root):
         )
     # No pending should have been written for the invalid call.
     assert not (
-        tmp_project_root / ".claude" / "state" / "forge-pending.json"
+        tmp_project_root / ".claude" / "forge" / "state" / "forge-pending.json"
     ).exists()
 
 
@@ -488,7 +486,8 @@ def test_ask_three_paths_response_returns_choice_key(tmp_project_root):
         question.ask_three_paths("gate", paths=paths)
     intent_id = exc.value.intent["intent-id"]
 
-    # ``ask_three_paths`` is NOT delegated (Task 0.7b scope is ask/ask_multi/ask_text).
+    # Fix #3 clean break: ``ask_three_paths`` writes to canonical
+    # sub-namespace via the migrated default in intent_state.
     _write_response(
         tmp_project_root,
         {
@@ -498,7 +497,6 @@ def test_ask_three_paths_response_returns_choice_key(tmp_project_root):
             "value": "b",
             "answered-at": "2026-06-10T19:00:00Z",
         },
-        legacy=True,
     )
 
     assert question.ask_three_paths("gate", paths=paths) == "b"
@@ -641,8 +639,8 @@ def test_ask_three_paths_intent_carries_motives(tmp_project_root):
     assert by_key["c"]["motive"] == "document in commit body"
 
     # Also check the serialised pending JSON (wire-level guarantee).
-    # ``ask_three_paths`` is NOT delegated — read from legacy state path.
-    on_disk = _read_pending(tmp_project_root, legacy=True)
+    # Fix #3 clean break: ask_three_paths writes via the migrated default.
+    on_disk = _read_pending(tmp_project_root)
     assert on_disk["paths-detail"] == detail
 
 

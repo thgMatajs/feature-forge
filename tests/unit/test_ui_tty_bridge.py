@@ -171,7 +171,7 @@ def test_main_prompts_and_writes_response_on_exit_2_with_pending(
     assert len(fake_run.calls) == 2  # type: ignore[attr-defined]
 
     # Response was written with the correct intent-id + value.
-    response_path = tmp_project_root / ".claude" / "state" / "forge-response.json"
+    response_path = tmp_project_root / ".claude" / "forge" / "state" / "forge-response.json"
     assert response_path.is_file()
     response = json.loads(response_path.read_text(encoding="utf-8"))
     assert response["intent-id"] == pending["intent-id"]
@@ -224,7 +224,7 @@ def test_pause_token_produces_paused_response(
     pending = _pending_payload()
     intent_state.write_pending(pending, tmp_project_root)
 
-    state_dir = tmp_project_root / ".claude" / "state"
+    state_dir = tmp_project_root / ".claude" / "forge" / "state"
     pending_path = state_dir / "forge-pending.json"
     response_path = state_dir / "forge-response.json"
 
@@ -281,8 +281,8 @@ def test_keyboard_interrupt_during_prompt_returns_130(
 
     assert rc == 130
     # State files cleared on cancel — no residue.
-    pending_path = tmp_project_root / ".claude" / "state" / "forge-pending.json"
-    response_path = tmp_project_root / ".claude" / "state" / "forge-response.json"
+    pending_path = tmp_project_root / ".claude" / "forge" / "state" / "forge-pending.json"
+    response_path = tmp_project_root / ".claude" / "forge" / "state" / "forge-response.json"
     assert not pending_path.exists()
     assert not response_path.exists()
 
@@ -352,7 +352,7 @@ def test_ask_multi_response_splits_comma_separated_input(
 
     tty_bridge.main("engine.cli", ["evolve"])
 
-    response_path = tmp_project_root / ".claude" / "state" / "forge-response.json"
+    response_path = tmp_project_root / ".claude" / "forge" / "state" / "forge-response.json"
     response = json.loads(response_path.read_text(encoding="utf-8"))
     assert response["value"] == ["p1", "p3"]
     assert response["kind"] == "ask_multi"
@@ -395,7 +395,7 @@ def test_confirm_response_carries_yes_no_value(
 
     tty_bridge.main("engine.cli", ["undo"])
 
-    response_path = tmp_project_root / ".claude" / "state" / "forge-response.json"
+    response_path = tmp_project_root / ".claude" / "forge" / "state" / "forge-response.json"
     response = json.loads(response_path.read_text(encoding="utf-8"))
     assert response["value"] is expected
     assert response["kind"] == "confirm"
@@ -424,7 +424,7 @@ def test_ask_text_returns_typed_string_verbatim(
 
     tty_bridge.main("engine.cli", ["reconfigure"])
 
-    response_path = tmp_project_root / ".claude" / "state" / "forge-response.json"
+    response_path = tmp_project_root / ".claude" / "forge" / "state" / "forge-response.json"
     response = json.loads(response_path.read_text(encoding="utf-8"))
     assert response["value"] == "custom/path"
     assert response["kind"] == "ask_text"
@@ -496,7 +496,7 @@ def test_intent_state_read_pending_returns_payload_when_present(tmp_project_root
 
 
 def test_intent_state_write_response_atomically_writes_canonical_path(tmp_project_root):
-    """write_response lands at ``.claude/state/forge-response.json`` atomically."""
+    """write_response lands at ``.claude/forge/state/forge-response.json`` atomically."""
     response = {
         "schema-version": 1,
         "intent-id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -506,7 +506,7 @@ def test_intent_state_write_response_atomically_writes_canonical_path(tmp_projec
     }
     intent_state.write_response(tmp_project_root, response)
 
-    target = tmp_project_root / ".claude" / "state" / "forge-response.json"
+    target = tmp_project_root / ".claude" / "forge" / "state" / "forge-response.json"
     assert target.is_file()
     assert json.loads(target.read_text(encoding="utf-8")) == response
     # No .tmp leftover (atomic write contract).
@@ -544,7 +544,7 @@ def test_eof_during_prompt_exits_130_with_clean_message(
     # No Python traceback signature leaked.
     assert "Traceback" not in captured.err
     # State cleared on cancel.
-    state_dir = tmp_project_root / ".claude" / "state"
+    state_dir = tmp_project_root / ".claude" / "forge" / "state"
     assert not (state_dir / "forge-pending.json").exists()
     assert not (state_dir / "forge-response.json").exists()
 
@@ -576,7 +576,7 @@ def test_confirm_invalid_token_reprompts_up_to_3_times(
     rc = tty_bridge.main("engine.cli", ["undo"])
 
     assert rc == 0
-    response_path = tmp_project_root / ".claude" / "state" / "forge-response.json"
+    response_path = tmp_project_root / ".claude" / "forge" / "state" / "forge-response.json"
     response = json.loads(response_path.read_text(encoding="utf-8"))
     assert response["value"] is True
     rendered = capsys.readouterr().out
@@ -613,7 +613,7 @@ def test_confirm_3_invalid_tokens_exits_130(
     assert "cancelando" in captured.err
     assert "Traceback" not in captured.err
     # No response file should have been written.
-    response_path = tmp_project_root / ".claude" / "state" / "forge-response.json"
+    response_path = tmp_project_root / ".claude" / "forge" / "state" / "forge-response.json"
     assert not response_path.exists()
 
 
@@ -639,7 +639,7 @@ def test_ask_invalid_token_reprompts(
     rc = tty_bridge.main("engine.cli", ["init"])
 
     assert rc == 0
-    response_path = tmp_project_root / ".claude" / "state" / "forge-response.json"
+    response_path = tmp_project_root / ".claude" / "forge" / "state" / "forge-response.json"
     response = json.loads(response_path.read_text(encoding="utf-8"))
     assert response["value"] == "kmp-mobile"
     rendered = capsys.readouterr().out
@@ -675,7 +675,7 @@ def test_ask_three_paths_invalid_token_reprompts(
     rc = tty_bridge.main("engine.cli", ["verify"])
 
     assert rc == 0
-    response_path = tmp_project_root / ".claude" / "state" / "forge-response.json"
+    response_path = tmp_project_root / ".claude" / "forge" / "state" / "forge-response.json"
     response = json.loads(response_path.read_text(encoding="utf-8"))
     assert response["value"] == "b"
 
@@ -697,7 +697,7 @@ def test_pause_token_bypasses_validation(
     )
     intent_state.write_pending(pending, tmp_project_root)
 
-    state_dir = tmp_project_root / ".claude" / "state"
+    state_dir = tmp_project_root / ".claude" / "forge" / "state"
     pending_path = state_dir / "forge-pending.json"
     response_path = state_dir / "forge-response.json"
     captured: dict[str, Any] = {}

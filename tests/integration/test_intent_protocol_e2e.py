@@ -72,7 +72,14 @@ def _scaffold_project(tmp_path: Path) -> Path:
     claude = tmp_path / ".claude"
     claude.mkdir(parents=True, exist_ok=True)
     (claude / "workflow-config.yaml").write_text("{}\n", encoding="utf-8")
-    (claude / "state").mkdir(exist_ok=True)
+    forge = claude / "forge"
+    forge.mkdir(parents=True, exist_ok=True)
+    # Pin host=intent-file so subprocess emits via on-disk pending JSON
+    # rather than Claude Code stdout marker (pytest inherits CLAUDECODE=1).
+    (forge / "forge-config.yaml").write_text(
+        "host: intent-file\n", encoding="utf-8"
+    )
+    (forge / "state").mkdir(exist_ok=True)
     return tmp_path
 
 
@@ -98,6 +105,15 @@ def _run_engine(
     # FORGE_HOME anchors auxiliary lookups (cards/, agents/, etc.) — the
     # canonical worktree owns the engine sources we just imported.
     env["FORGE_HOME"] = str(PROJECT_ROOT)
+    # Strip agentic-host env hints so detect_host falls back to intent-file
+    # (the on-disk DRIFT-1 protocol). Pytest inherits CLAUDECODE=1 from the
+    # outer session; without this strip the subprocess would emit the
+    # `<FORGE_INTENT>` stdout marker instead of the pending JSON file.
+    for var in ("CLAUDECODE", "CURSOR_AGENT"):
+        env.pop(var, None)
+    for var in list(env.keys()):
+        if var.startswith(("OPENCODE_", "CODEX", "CURSOR_")):
+            env.pop(var, None)
     if extra_env:
         env.update(extra_env)
 
@@ -113,11 +129,11 @@ def _run_engine(
 
 
 def _pending_path(project_root: Path) -> Path:
-    return project_root / ".claude" / "state" / "forge-pending.json"
+    return project_root / ".claude" / "forge" / "state" / "forge-pending.json"
 
 
 def _response_path(project_root: Path) -> Path:
-    return project_root / ".claude" / "state" / "forge-response.json"
+    return project_root / ".claude" / "forge" / "state" / "forge-response.json"
 
 
 def _read_pending(project_root: Path) -> dict:
@@ -258,22 +274,22 @@ def test_resume_consumes_response_and_deletes(tmp_path):
         f"stdout={second.stdout!r}"
     )
 
+    # CR-002 (commit db861fc) defers state-file cleanup to preserve forensics
+    # across error paths — the adapter no longer auto-clears pending/response
+    # on a successful consume; the cli.py finally only clears the consumed-
+    # intent log. AC-6's "files gone on clean completion" predates CR-002 and
+    # was deliberately relaxed: the only invariant we can assert here is that
+    # the engine state advanced (response was consumed; no IntentMismatchError
+    # was raised; new intent-id or exit 0 reached).
     if second.returncode == 0:
-        # Happy clean completion — both state files MUST be gone (AC-6).
-        assert not _pending_path(project_root).exists(), (
-            "pending file should be deleted on clean completion"
-        )
-        assert not _response_path(project_root).exists(), (
-            "response file should be deleted on clean completion"
-        )
+        # Happy clean completion — state files may linger for forensic reasons
+        # (CR-002). The relevant signal is that exit 0 was reached without
+        # an IntentMismatchError, which proves the response was consumed.
+        pass
     else:
-        # Engine advanced — old response is consumed regardless. New
-        # pending exists with a DIFFERENT intent-id (state moved
-        # forward). The old response file MUST be gone (AC-6 still
-        # applies for the consumed payload).
-        assert not _response_path(project_root).exists(), (
-            "response file should be deleted after successful consume"
-        )
+        # Engine advanced — new pending exists with a DIFFERENT intent-id
+        # (state moved forward). Same CR-002 caveat applies; we only assert
+        # the advance, not the cleanup.
         new_pending = _read_pending(project_root)
         assert new_pending["intent-id"] != first_intent_id, (
             "engine did not advance — same intent-id re-emitted"
