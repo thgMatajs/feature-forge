@@ -65,7 +65,7 @@ def test_cascade_unions_canon_and_local(tmp_path):
     project = _make_project(tmp_path)
     _write_card_dir(project / ".claude" / "cards" / "canon-a", _valid_card_dict("canon-a"))
     _write_card_dir(
-        project / ".claude" / "cards" / "local" / "team-b",
+        project / ".claude" / "forge" / "cards" / "local" / "team-b",
         _valid_card_dict("team-b", provides=["kotlin-multiplatform"]),
     )
     manifests = loader.load_all_cards(project)
@@ -81,7 +81,7 @@ def test_cascade_hard_fails_on_canon_local_name_collision(tmp_path):
     project = _make_project(tmp_path)
     _write_card_dir(project / ".claude" / "cards" / "collide", _valid_card_dict("collide"))
     _write_card_dir(
-        project / ".claude" / "cards" / "local" / "collide",
+        project / ".claude" / "forge" / "cards" / "local" / "collide",
         _valid_card_dict("collide"),
     )
     with pytest.raises(CardConflictError) as exc:
@@ -94,7 +94,7 @@ def test_cascade_hard_fails_on_canon_local_name_collision(tmp_path):
 
 
 def test_cascade_silent_when_local_root_missing(tmp_path):
-    """`.claude/cards/local/` ausente é canon-only, sem warning."""
+    """`.claude/forge/cards/local/` ausente é canon-only, sem warning."""
     project = _make_project(tmp_path)
     _write_card_dir(project / ".claude" / "cards" / "canon-only", _valid_card_dict("canon-only"))
     # nota: local/ NÃO é criado
@@ -106,7 +106,7 @@ def test_cascade_skips_empty_local_dir(tmp_path):
     """Dir `local/<name>/` existe sem card.yaml → skip silencioso."""
     project = _make_project(tmp_path)
     _write_card_dir(project / ".claude" / "cards" / "canon-a", _valid_card_dict("canon-a"))
-    empty_local = project / ".claude" / "cards" / "local" / "no-card"
+    empty_local = project / ".claude" / "forge" / "cards" / "local" / "no-card"
     empty_local.mkdir(parents=True)
     # nenhum card.yaml dentro
     manifests = loader.load_all_cards(project)
@@ -115,7 +115,7 @@ def test_cascade_skips_empty_local_dir(tmp_path):
 
 def test_cascade_raises_on_malformed_local_card_yaml(tmp_path):
     project = _make_project(tmp_path)
-    bad_dir = project / ".claude" / "cards" / "local" / "bad"
+    bad_dir = project / ".claude" / "forge" / "cards" / "local" / "bad"
     bad_dir.mkdir(parents=True)
     (bad_dir / "card.yaml").write_text(
         "not: a: valid: yaml: shape: at: all", encoding="utf-8"
@@ -152,7 +152,7 @@ def test_cascade_writes_local_cards_manifest_when_local_present(tmp_path):
 
     _write_card_dir(project / ".claude" / "cards" / "canon-a", _valid_card_dict("canon-a"))
     _write_card_dir(
-        project / ".claude" / "cards" / "local" / "team-x",
+        project / ".claude" / "forge" / "cards" / "local" / "team-x",
         _valid_card_dict("team-x", provides=["kotlin-multiplatform"]),
     )
 
@@ -179,11 +179,11 @@ def test_cascade_writes_local_cards_manifest_with_multiple_cards_sorted(tmp_path
     _write_card_dir(project / ".claude" / "cards" / "canon-a", _valid_card_dict("canon-a"))
     # Cria em ordem reversa pra confirmar que o sort é determinístico.
     _write_card_dir(
-        project / ".claude" / "cards" / "local" / "team-y",
+        project / ".claude" / "forge" / "cards" / "local" / "team-y",
         _valid_card_dict("team-y", provides=["kotlin-multiplatform"]),
     )
     _write_card_dir(
-        project / ".claude" / "cards" / "local" / "team-x",
+        project / ".claude" / "forge" / "cards" / "local" / "team-x",
         _valid_card_dict("team-x", provides=["kotlin-multiplatform"]),
     )
 

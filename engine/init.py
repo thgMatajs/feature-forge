@@ -76,7 +76,9 @@ from engine.utils.paths import (
     cards_dir,
     claude_dir,
     ensure_dir,
+    forge_cards_local_dir,
     forge_home,
+    forge_hooks_dir,
     graph_db_path,
     inventory_dir,
     memory_dir,
@@ -382,7 +384,7 @@ def _surface_three_paths(
         renderer.write("     PR de promoção rodar.")
     else:
         renderer.write("  1) Criar card local agora (recomendado pra stack atual)")
-        renderer.write("     Materializa card(s) local(is) em .claude/cards/local/ cobrindo")
+        renderer.write("     Materializa card(s) local(is) em .claude/forge/cards/local/ cobrindo")
         renderer.write("     os signals órfãos. Init segue com a `activated` corrente —")
         renderer.write("     re-rode `forge init` pra ativar com catálogo expandido.")
     renderer.write("")
@@ -493,7 +495,7 @@ def _card_local_add_inline(
     # as capabilities órfãs apontam pra labels SEM card canon — mas defensivo
     # caso o catálogo evolua), sufixa com `-local` pra evitar colisão silenciosa
     # com a cascade canon×local (que faria hard fail no próximo load).
-    canon_root = project_root / ".claude" / "cards"
+    canon_root = cards_dir(project_root)
     canon_names: set[str] = set()
     if canon_root.is_dir():
         canon_names = {
@@ -503,7 +505,9 @@ def _card_local_add_inline(
         }
     name = base_name if base_name not in canon_names else f"{base_name}-local"
 
-    local_root = project_root / ".claude" / "cards" / "local" / name
+    # Task 0.8 (v1.3 pilot-ready): local card vive em
+    # ``.claude/forge/cards/local/<name>/`` (sub-namespace spec §2).
+    local_root = forge_cards_local_dir(project_root) / name
     local_root.mkdir(parents=True, exist_ok=True)
     (local_root / "detection").mkdir(parents=True, exist_ok=True)
 
@@ -608,7 +612,7 @@ def _index_cards(canonical: list[CardManifest]) -> dict[str, CardManifest]:
 
 
 def _install_hooks(project_root: Path) -> int:
-    """Copy canonical hooks from FORGE_HOME/hooks/ to .claude/hooks/.
+    """Copy canonical hooks from FORGE_HOME/hooks/ to .claude/forge/hooks/.
 
     Rules:
     - `.sh` scripts and `git-*` wrappers → copied with +x preserved.
@@ -616,13 +620,16 @@ def _install_hooks(project_root: Path) -> int:
       workflows the user installs into `.github/workflows/` manually.
     - Idempotent: overwrites existing copies (canonical wins).
 
+    Task 0.8 (v1.3 pilot-ready): destino migrado para sub-namespace
+    ``.claude/forge/hooks/`` (spec §2).
+
     Returns the number of hooks installed.
     """
     canonical = forge_home() / "hooks"
     if not canonical.is_dir():
         return 0
 
-    target = claude_dir(project_root) / "hooks"
+    target = forge_hooks_dir(project_root)
     ensure_dir(target)
 
     count = 0
@@ -658,7 +665,8 @@ def _install_git_hooks(project_root: Path) -> None:
         "pre-push": "git-pre-push",
     }
     for git_name, claude_name in mappings.items():
-        source = claude_dir(project_root) / "hooks" / claude_name
+        # Task 0.8 (v1.3): hooks ficam sob ``.claude/forge/hooks/``.
+        source = forge_hooks_dir(project_root) / claude_name
         if not source.is_file():
             continue
         target = git_hooks / git_name
@@ -680,7 +688,10 @@ def _install_git_hooks(project_root: Path) -> None:
                     continue
 
         try:
-            target.symlink_to(Path("../../.claude/hooks") / claude_name)
+            # Task 0.8: o symlink fica em ``.git/hooks/<git_name>`` → relative
+            # path precisa subir 2 níveis até a raiz do projeto e descer pra
+            # ``.claude/forge/hooks/<claude_name>``.
+            target.symlink_to(Path("../../.claude/forge/hooks") / claude_name)
             target.chmod(0o755)
         except OSError:
             pass
@@ -1314,18 +1325,19 @@ def _run_pipeline(project_root: Path) -> int:
         renderer.write("  ✓ no reuse opportunities detected")
 
     # ── Step 11.6 — Incremental detection hook (opt-in) ─────────────────────
-    # Writes a hook script in .claude/hooks/. Wiring it to Claude Code's
+    # Writes a hook script in .claude/forge/hooks/. Wiring it to Claude Code's
     # `tool-use:post:Edit` hook is left to the user — we print a one-liner
     # they can paste into .claude/settings.local.json.
-    hooks_dir = claude_dir(project_root) / "hooks"
-    hooks_dir.mkdir(parents=True, exist_ok=True)
-    hook_script = hooks_dir / "post-edit-detect-duplications.sh"
+    # Task 0.8 (v1.3 pilot-ready): hooks vivem em sub-namespace .claude/forge/.
+    hooks_local = forge_hooks_dir(project_root)
+    hooks_local.mkdir(parents=True, exist_ok=True)
+    hook_script = hooks_local / "post-edit-detect-duplications.sh"
     hook_script.write_text(
         "#!/usr/bin/env bash\n"
         "# Post-edit hook: surface reuse-intelligence findings introduced by the edit.\n"
         "# Installed by `forge init` — wire it up in .claude/settings.local.json:\n"
         "#   { \"hooks\": { \"tool-use:post:Edit\": "
-        "[{\"command\": \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit-detect-duplications.sh \\\"$file_path\\\"\"}] } }\n"
+        "[{\"command\": \"$CLAUDE_PROJECT_DIR/.claude/forge/hooks/post-edit-detect-duplications.sh \\\"$file_path\\\"\"}] } }\n"
         "set -e\n"
         "FILE=\"${1:-}\"\n"
         "[ -z \"$FILE\" ] && exit 0\n"
@@ -1415,13 +1427,14 @@ def _run_pipeline(project_root: Path) -> int:
     checkpoint.step = "step-14-history"
 
     # ── Step 13 — Hooks install ──────────────────────────────────────────────
-    # Copy canonical shims into .claude/hooks/ and wire git hooks symlinks.
-    ensure_dir(claude_dir(project_root) / "hooks")
+    # Copy canonical shims into .claude/forge/hooks/ and wire git hooks symlinks.
+    # Task 0.8 (v1.3 pilot-ready): hooks live under .claude/forge/ sub-namespace.
+    ensure_dir(forge_hooks_dir(project_root))
     try:
         n_hooks = _install_hooks(project_root)
         _install_git_hooks(project_root)
         if n_hooks:
-            renderer.write(f"  └─ {n_hooks} hooks instalados em .claude/hooks/")
+            renderer.write(f"  └─ {n_hooks} hooks instalados em .claude/forge/hooks/")
     except (OSError, shutil.Error) as exc:  # pragma: no cover - hooks must not block init
         # MD-03 (final review 2026-06-15): narrow scope is intentional —
         # `_install_hooks` + `_install_git_hooks` only use shutil.copy*/chmod/
@@ -2418,7 +2431,7 @@ def _build_paths(project_root: Path, conv_inv: Any) -> dict[str, Any]:
         "inventory-root": ".claude/inventory",
         "memory-root": ".claude/memory",
         "graph-path": ".claude/graph.db",
-        "hooks-root": ".claude/hooks",
+        "hooks-root": ".claude/forge/hooks",
         "feature-roots": {},
         "tests-roots": {},
     }

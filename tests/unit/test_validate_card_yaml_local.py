@@ -55,6 +55,11 @@ def _build_project_with_cards(
     canon: dict[str, dict] | None = None,
     local: dict[str, dict] | None = None,
 ) -> Path:
+    """Task 0.8 (v1.3): local overlay agora vive em ``.claude/forge/cards/local/``.
+
+    Canon snapshot continua em ``.claude/cards/`` — só o overlay migrou
+    pro sub-namespace.
+    """
     project = tmp_path / "proj"
     cards_root = project / ".claude" / "cards"
     cards_root.mkdir(parents=True)
@@ -62,8 +67,10 @@ def _build_project_with_cards(
         for name, data in canon.items():
             _write_card(cards_root / name, data)
     if local:
+        local_root = project / ".claude" / "forge" / "cards" / "local"
+        local_root.mkdir(parents=True, exist_ok=True)
         for name, data in local.items():
-            _write_card(cards_root / "local" / name, data)
+            _write_card(local_root / name, data)
     return project
 
 

@@ -401,9 +401,13 @@ def load_all_cards(cards_root: Path) -> list[CardManifest]:
     """Load every card under `cards_root/<name>/card.yaml`.
 
     Backward-compatible shape: when caller passes the canonical cards/ root
-    directly (no `.claude/cards/local/` sibling), returns canon-only. When
-    caller passes a project root that has `.claude/cards/local/`, returns
-    canon ∪ local with `card.origin` tagged.
+    directly (no `.claude/forge/cards/local/` sibling), returns canon-only.
+    When caller passes a project root that has `.claude/forge/cards/local/`,
+    returns canon ∪ local with `card.origin` tagged.
+
+    Task 0.8 (v1.3 pilot-ready): local overlay vive em
+    ``.claude/forge/cards/local/`` (sub-namespace §2). O canon continua em
+    ``.claude/cards/`` (snapshot per project, sem migração).
 
     Argument semantics (autodetect):
       - If `cards_root` itself contains `<name>/card.yaml` entries, treat it
@@ -411,7 +415,7 @@ def load_all_cards(cards_root: Path) -> list[CardManifest]:
       - If `cards_root` looks like a project root (contains `.claude/`),
         treat it as cascade-mode: canon snapshot under
         `cards_root/.claude/cards/<name>/` + local under
-        `cards_root/.claude/cards/local/<name>/`.
+        `cards_root/.claude/forge/cards/local/<name>/`.
 
     Raises:
       CardConflictError: when a name appears in both canon and local layers.
@@ -450,8 +454,14 @@ def _load_with_cascade(project_root: Path) -> list[CardManifest]:
     extension. Inverting order would permit silent override (violates
     Approach A from spec).
     """
-    canon_root = project_root / ".claude" / "cards"
-    local_root = project_root / ".claude" / "cards" / "local"
+    # Task 0.8 (v1.3 pilot-ready): canonical cards continuam em
+    # ``.claude/cards/`` (snapshot per project, audit-trail estável); local
+    # overlay migrou pra ``.claude/forge/cards/local/`` (sub-namespace
+    # spec §2). cards_dir helper retorna o legacy canonical;
+    # forge_cards_local_dir retorna o novo overlay.
+    from engine.utils.paths import cards_dir, forge_cards_local_dir
+    canon_root = cards_dir(project_root)
+    local_root = forge_cards_local_dir(project_root)
 
     canon: dict[str, CardManifest] = {}
     if canon_root.is_dir():

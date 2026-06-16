@@ -50,9 +50,15 @@ def _write_config(project_root: Path, backend_block: str) -> Path:
 
 
 def _seed_card(project_root: Path, card_name: str, *, local: bool = False) -> None:
-    """Cria stub `card.yaml` sob canonical (`.claude/cards/`) ou local overlay."""
+    """Cria stub `card.yaml` sob canonical (`.claude/cards/`) ou local overlay.
+
+    Task 0.8 (v1.3 pilot-ready): local overlay migrou pra
+    ``.claude/forge/cards/local/`` (sub-namespace §2).
+    """
     if local:
-        card_dir = project_root / ".claude" / "cards" / "local" / card_name
+        card_dir = (
+            project_root / ".claude" / "forge" / "cards" / "local" / card_name
+        )
     else:
         card_dir = project_root / ".claude" / "cards" / card_name
     card_dir.mkdir(parents=True, exist_ok=True)

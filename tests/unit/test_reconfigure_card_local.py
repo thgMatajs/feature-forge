@@ -20,7 +20,7 @@ from engine import reconfigure
 
 
 def _write_local_card(project: Path, name: str, provides: list[str] | None = None) -> None:
-    card_dir = project / ".claude" / "cards" / "local" / name
+    card_dir = project / ".claude" / "forge" / "cards" / "local" / name
     card_dir.mkdir(parents=True, exist_ok=True)
     data = {
         "schema-version": 1,
@@ -42,7 +42,7 @@ def _write_local_card(project: Path, name: str, provides: list[str] | None = Non
 @pytest.fixture
 def project(tmp_path: Path) -> Path:
     proj = tmp_path / "p"
-    (proj / ".claude" / "cards" / "local").mkdir(parents=True)
+    (proj / ".claude" / "forge" / "cards" / "local").mkdir(parents=True)
     (proj / ".claude" / "state").mkdir(parents=True)
     return proj
 
@@ -84,8 +84,8 @@ def test_card_local_remove_happy_path_moves_to_bak(project):
     ) as hist_mock:
         ask_mock.side_effect = ["team-x", "remove"]
         reconfigure._card_local_remove(project, working={})
-    assert not (project / ".claude" / "cards" / "local" / "team-x").exists()
-    assert (project / ".claude" / "cards" / "local" / "team-x.bak").is_dir()
+    assert not (project / ".claude" / "forge" / "cards" / "local" / "team-x").exists()
+    assert (project / ".claude" / "forge" / "cards" / "local" / "team-x.bak").is_dir()
     hist_mock.assert_called_once()
     args = hist_mock.call_args.args
     assert args[1]["op"] == "card-local-remove"
@@ -97,8 +97,8 @@ def test_card_local_remove_cancel_keeps_card(project):
     with patch.object(reconfigure.question, "ask") as ask_mock:
         ask_mock.side_effect = ["team-y", "keep"]
         reconfigure._card_local_remove(project, working={})
-    assert (project / ".claude" / "cards" / "local" / "team-y").is_dir()
-    assert not (project / ".claude" / "cards" / "local" / "team-y.bak").exists()
+    assert (project / ".claude" / "forge" / "cards" / "local" / "team-y").is_dir()
+    assert not (project / ".claude" / "forge" / "cards" / "local" / "team-y.bak").exists()
 
 
 def test_card_local_remove_abort_keeps_card(project):
@@ -106,8 +106,8 @@ def test_card_local_remove_abort_keeps_card(project):
     with patch.object(reconfigure.question, "ask") as ask_mock:
         ask_mock.side_effect = ["team-q", "abort"]
         reconfigure._card_local_remove(project, working={})
-    assert (project / ".claude" / "cards" / "local" / "team-q").is_dir()
-    assert not (project / ".claude" / "cards" / "local" / "team-q.bak").exists()
+    assert (project / ".claude" / "forge" / "cards" / "local" / "team-q").is_dir()
+    assert not (project / ".claude" / "forge" / "cards" / "local" / "team-q.bak").exists()
 
 
 def test_card_local_remove_cancelar_at_first_prompt(project):
@@ -115,19 +115,19 @@ def test_card_local_remove_cancelar_at_first_prompt(project):
     with patch.object(reconfigure.question, "ask") as ask_mock:
         ask_mock.side_effect = ["cancelar"]
         reconfigure._card_local_remove(project, working={})
-    assert (project / ".claude" / "cards" / "local" / "team-z").is_dir()
+    assert (project / ".claude" / "forge" / "cards" / "local" / "team-z").is_dir()
 
 
 def test_card_local_remove_with_preexisting_bak_surface_warning(project, capsys):
     _write_local_card(project, "team-w")
     # cria .bak fake (simula remoção anterior não limpa)
-    bak = project / ".claude" / "cards" / "local" / "team-w.bak"
+    bak = project / ".claude" / "forge" / "cards" / "local" / "team-w.bak"
     bak.mkdir()
     with patch.object(reconfigure.question, "ask") as ask_mock:
         ask_mock.side_effect = ["team-w", "remove"]
         reconfigure._card_local_remove(project, working={})
     # card original deve permanecer (não sobrescrevemos .bak)
-    assert (project / ".claude" / "cards" / "local" / "team-w").is_dir()
+    assert (project / ".claude" / "forge" / "cards" / "local" / "team-w").is_dir()
     captured = capsys.readouterr()
     assert "já existe" in captured.out or "cleanup-bak" in captured.out
 
@@ -228,7 +228,7 @@ def test_card_local_add_happy_creates_skeleton(project):
         ask_mock.side_effect = ["yes", "create"]
         reconfigure._card_local_add(project, working={})
 
-    card_dir = project / ".claude" / "cards" / "local" / "hilt-di"
+    card_dir = project / ".claude" / "forge" / "cards" / "local" / "hilt-di"
     assert card_dir.is_dir()
     assert (card_dir / "card.yaml").is_file()
     assert (card_dir / "README.md").is_file()
@@ -251,7 +251,7 @@ def test_card_local_add_name_collision_aborts(project):
         ask_mock.side_effect = ["abort"]
         reconfigure._card_local_add(project, working={})
     # nenhum card novo criado
-    assert len(list((project / ".claude" / "cards" / "local").iterdir())) == 1
+    assert len(list((project / ".claude" / "forge" / "cards" / "local").iterdir())) == 1
 
 
 def test_card_local_add_cancel_at_confirmation(project):
@@ -261,4 +261,4 @@ def test_card_local_add_cancel_at_confirmation(project):
         ask_text_mock.side_effect = ["xyz", "some-cap", "", "android"]
         ask_mock.side_effect = ["yes", "cancel"]
         reconfigure._card_local_add(project, working={})
-    assert not (project / ".claude" / "cards" / "local" / "xyz").exists()
+    assert not (project / ".claude" / "forge" / "cards" / "local" / "xyz").exists()

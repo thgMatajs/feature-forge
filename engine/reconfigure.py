@@ -61,6 +61,8 @@ from engine.utils.paths import (
     cards_dir,
     claude_dir,
     find_project_root,
+    forge_cards_local_dir,
+    forge_hooks_dir,
     workflow_config_path,
 )
 from engine.utils.sha256 import file_sha256
@@ -642,9 +644,9 @@ def _handle_card_local(
 ) -> None:
     """Submenu card-local — cobre listar, adicionar (Task 9), remover.
 
-    Cards locais vivem em `<project>/.claude/cards/local/<name>/`. Schema
-    idêntico ao canon — diferença é apenas o path. Loader cascade
-    (Task 4-5) tagga `card.origin = "local"`.
+    Cards locais vivem em `<project>/.claude/forge/cards/local/<name>/`
+    (Task 0.8 — v1.3 sub-namespace). Schema idêntico ao canon — diferença é
+    apenas o path. Loader cascade (Task 4-5) tagga `card.origin = "local"`.
     """
     del current  # working já reflete o estado vigente
     action = question.ask(
@@ -887,11 +889,13 @@ def _qa_adjust_retention(working: dict[str, Any]) -> None:
 
 
 def _card_local_root(project_root: Path) -> Path:
-    return project_root / ".claude" / "cards" / "local"
+    # Task 0.8 (v1.3 pilot-ready): local cards vivem em
+    # ``.claude/forge/cards/local/`` (sub-namespace spec §2).
+    return forge_cards_local_dir(project_root)
 
 
 def _card_local_list(project_root: Path) -> None:
-    """Enumera `.claude/cards/local/*/card.yaml` em tabela name+provides+conflicts."""
+    """Enumera `.claude/forge/cards/local/*/card.yaml` em tabela name+provides+conflicts."""
     root = _card_local_root(project_root)
     if not root.is_dir():
         renderer.write("Nenhum card local cadastrado neste projeto.")
@@ -939,7 +943,7 @@ def _card_local_add(project_root: Path, working: dict[str, Any]) -> None:
     """Cria card local do skeleton via prompts mentor-calmo.
 
     Skeleton minimal (espelha schema canon):
-      .claude/cards/local/<name>/
+      .claude/forge/cards/local/<name>/
       ├── card.yaml           (preenchido pelos prompts)
       ├── README.md           (skeleton placeholder)
       └── detection/signals.yaml  (vazio com comentário pra preencher depois)
@@ -1115,7 +1119,7 @@ def _card_local_add(project_root: Path, working: dict[str, Any]) -> None:
         )
 
         (detection_dir / "signals.yaml").write_text(
-            "# .claude/cards/local/{0}/detection/signals.yaml\n"
+            "# .claude/forge/cards/local/{0}/detection/signals.yaml\n"
             "# ──────────────────────────────────────────────────────────────────\n"
             "# Signals do card local. Preencha após init rodar e mapear sinais\n"
             "# reais do projeto. Espelhe entries em `card.yaml > detection.signals`.\n"
@@ -1394,16 +1398,15 @@ def _card_exists(card_name: str, project_root: Path) -> bool:
     """Card existe em `cards/<name>/card.yaml` (canonical OR project local)?
 
     Checa primeiro canonical (snapshot copy via Decision 15), depois local
-    overlay em `.claude/cards/local/`. Não carrega o YAML — só presença.
+    overlay em ``.claude/forge/cards/local/`` (Task 0.8 — v1.3 sub-namespace).
+    Não carrega o YAML — só presença.
     """
     if not card_name:
         return False
     canonical_yaml = cards_canonical_dir() / card_name / "card.yaml"
     if canonical_yaml.is_file():
         return True
-    local_yaml = (
-        project_root / ".claude" / "cards" / "local" / card_name / "card.yaml"
-    )
+    local_yaml = forge_cards_local_dir(project_root) / card_name / "card.yaml"
     return local_yaml.is_file()
 
 
@@ -1430,7 +1433,7 @@ def _validate_cell_value(
     if not _card_exists(card, project_root):
         raise ValueError(
             f"cell.card={card!r} não existe em cards/<name>/card.yaml "
-            f"(canonical OU .claude/cards/local/)"
+            f"(canonical OU .claude/forge/cards/local/)"
         )
     status = cell_value.get("status")
     if status not in _VALID_CELL_STATUSES:
@@ -1694,7 +1697,9 @@ def _handle_hooks(
 ) -> None:
     del current, working
     renderer.write("Regenerando hooks…")
-    hooks_target = claude_dir(project_root) / "hooks"
+    # Task 0.8 (v1.3 pilot-ready): hooks vivem em ``.claude/forge/hooks/``
+    # (sub-namespace spec §2).
+    hooks_target = forge_hooks_dir(project_root)
     hooks_target.mkdir(parents=True, exist_ok=True)
     renderer.write(renderer.colored(
         "  · hooks dir tocada. Re-merge real depende de templates/hooks/ "

@@ -38,7 +38,7 @@ def _write_card_with_qa_extension(
     Args:
         project: project root (tmp).
         origin: ``"canon"`` (em `.claude/cards/<name>/`) ou ``"local"``
-            (em `.claude/cards/local/<name>/`).
+            (em `.claude/forge/cards/local/<name>/`).
         name: card name.
         auditor_name: nome do auditor declarado em qa-extensions.auditors[].
         provides: lista de capability labels válidas no catálogo canon.
@@ -49,7 +49,8 @@ def _write_card_with_qa_extension(
     if origin == "canon":
         card_dir = project / ".claude" / "cards" / name
     else:
-        card_dir = project / ".claude" / "cards" / "local" / name
+        # Task 0.8 (v1.3): local overlay vive em .claude/forge/cards/local/.
+        card_dir = project / ".claude" / "forge" / "cards" / "local" / name
     card_dir.mkdir(parents=True, exist_ok=True)
 
     # Cria stub do agent .md referenciado em contributes.agents (Regra 3).

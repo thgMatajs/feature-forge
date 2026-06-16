@@ -10,8 +10,9 @@ Contract:
 - ``_run_secrets_gate(project_root)`` retorna dict ``{"status": ..., ...,
   "blocking": bool}``. ``blocking`` é True iff o gate falhou hard.
 - ``NO_SECRETS_GATE=1`` → ``{"status": "warn", "blocking": False}`` E
-  append em ``.claude/state/secrets-gate-bypass.jsonl`` (path via
-  ``_secrets_bypass_log_path`` pra teste redirecionar).
+  append em ``.claude/forge/state/secrets-gate-bypass.jsonl`` (path via
+  ``_secrets_bypass_log_path`` pra teste redirecionar). Task 0.8 (v1.3) —
+  sub-namespace.
 - ``validate()`` retorna ``status: "fail"`` → wrapper marca ``blocking=True``.
 - ``validate()`` retorna ``status: "pass"`` (override silenciou) → ``blocking=False``.
 - ``validate()`` levanta exceção → ``status: "warn"``, ``blocking=False``.
@@ -108,7 +109,9 @@ def test_run_secrets_gate_bypassed_by_env_var(
 ) -> None:
     """NO_SECRETS_GATE=1 short-circuits → warn + JSONL audit line."""
     monkeypatch.setenv("NO_SECRETS_GATE", "1")
-    bypass_log = tmp_path / ".claude" / "state" / "secrets-gate-bypass.jsonl"
+    bypass_log = (
+        tmp_path / ".claude" / "forge" / "state" / "secrets-gate-bypass.jsonl"
+    )
     monkeypatch.setattr(
         implement, "_secrets_bypass_log_path", lambda root: bypass_log
     )

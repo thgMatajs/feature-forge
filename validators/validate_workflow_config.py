@@ -47,7 +47,12 @@ from _common import (
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from engine.utils.paths import cards_dir, memory_dir, workflow_config_path  # noqa: E402
+from engine.utils.paths import (  # noqa: E402
+    cards_dir,
+    forge_cards_local_dir,
+    memory_dir,
+    workflow_config_path,
+)
 from engine.utils.sha256 import file_sha256  # noqa: E402
 from engine.utils.yaml_io import YamlIOError, read_yaml_or_default  # noqa: E402
 
@@ -216,8 +221,9 @@ def _check_backend(project_root: Path, data: dict[str, Any]) -> list[str]:
 
             # RULE-021 — cell.card existe em cards/ (canonical OR local overlay).
             # Espelha `engine/reconfigure._card_exists`: snapshot canonical
-            # primeiro, depois `.claude/cards/local/<name>/card.yaml`. Local
+            # primeiro, depois `.claude/forge/cards/local/<name>/card.yaml`. Local
             # cards são fonte legítima (orphan workflow Step 7.5 + Gap 5).
+            # Task 0.8 (v1.3): local overlay vive sob `.claude/forge/` (sub-namespace).
             card_id = cell.get("card")
             if not isinstance(card_id, str) or not card_id:
                 out.append(
@@ -225,14 +231,13 @@ def _check_backend(project_root: Path, data: dict[str, Any]) -> list[str]:
                 )
             else:
                 canonical_yaml = cards_root / card_id / "card.yaml"
-                local_yaml = (
-                    project_root / ".claude" / "cards" / "local" / card_id / "card.yaml"
-                )
+                # Task 0.8: local overlay migrou pra .claude/forge/cards/local/
+                local_yaml = forge_cards_local_dir(project_root) / card_id / "card.yaml"
                 if not canonical_yaml.is_file() and not local_yaml.is_file():
                     out.append(
                         f"backend.{axis}.{platform_key}.card={card_id!r} não existe "
                         f"em {cards_root}/<name>/card.yaml nem em "
-                        f".claude/cards/local/<name>/card.yaml (RULE-021)"
+                        f".claude/forge/cards/local/<name>/card.yaml (RULE-021)"
                     )
 
             # RULE-022 — status enum.
@@ -265,14 +270,15 @@ def _check_backend(project_root: Path, data: dict[str, Any]) -> list[str]:
             # RULE-024 — migrating-to referencia card existente (canonical OR local).
             if isinstance(migrating_to, str) and migrating_to:
                 canonical_mig = cards_root / migrating_to / "card.yaml"
+                # Task 0.8: local overlay migrou pra .claude/forge/cards/local/
                 local_mig = (
-                    project_root / ".claude" / "cards" / "local" / migrating_to / "card.yaml"
+                    forge_cards_local_dir(project_root) / migrating_to / "card.yaml"
                 )
                 if not canonical_mig.is_file() and not local_mig.is_file():
                     out.append(
                         f"backend.{axis}.{platform_key}.migrating-to={migrating_to!r} "
                         f"não existe em {cards_root}/<name>/card.yaml nem em "
-                        f".claude/cards/local/<name>/card.yaml (RULE-024)"
+                        f".claude/forge/cards/local/<name>/card.yaml (RULE-024)"
                     )
     return out
 
