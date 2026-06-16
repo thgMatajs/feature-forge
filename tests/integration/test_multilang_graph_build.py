@@ -87,6 +87,11 @@ def test_full_build_dispatches_to_java_xml_objc_parsers(multilang_project: Path)
     assert result["files_scanned"] >= 3  # java + xml + objc
 
     db = multilang_project / ".claude" / "graph.db"
+    # Pré-condição explícita: build_full deveria ter persistido o sqlite.
+    # Sem este assert, falha de build produz `OperationalError: unable to
+    # open database file` mais à frente — diagnóstico pior (codereviewbot
+    # 3417876795 / PR16-FU).
+    assert db.exists(), f"Database file not created at {db}"
     conn = sqlite3.connect(str(db))
     conn.row_factory = sqlite3.Row
     try:
