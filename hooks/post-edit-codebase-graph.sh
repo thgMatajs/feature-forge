@@ -20,6 +20,18 @@ if [[ -z "$FILE" ]]; then
     exit 0
 fi
 
+# Early-exit em paths gerados / dependency / artifact (PR #16 finding T-N-017).
+# Sem isso, edits em build/ ou node_modules/ disparam re-ingest de arquivos
+# que não pertencem ao codebase canônico — particularmente custoso pra `.m`
+# falso-positivo em diretórios de output que casualmente terminem em `.m`
+# (ex.: `*.map.m` ou source maps minificados). Match por substring evita
+# loop sobre extensão.
+case "$FILE" in
+    */build/*|*/node_modules/*|*/.gradle/*|*/dist/*|*/target/*|*/DerivedData/*|*/.next/*|*/out/*)
+        exit 0
+        ;;
+esac
+
 case "$FILE" in
     *.kt|*.kts|*.swift|*.ts|*.tsx|*.js|*.jsx|*.java|*.xml|*.m|*.mm) ;;
     *) exit 0 ;;
