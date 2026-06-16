@@ -72,6 +72,17 @@ def test_resume_from_checkpoint(
     """
     monkeypatch.chdir(tmp_project_root)
 
+    # Task 0.7b — pin host: intent-file so question.ask delegate writes/reads
+    # against .claude/forge/state/ (v1.3 sub-namespace), not stdout.
+    forge_dir = tmp_project_root / ".claude" / "forge"
+    forge_dir.mkdir(parents=True, exist_ok=True)
+    (forge_dir / "forge-config.yaml").write_text(
+        "host: intent-file\n", encoding="utf-8"
+    )
+    from engine.host import detect as _host_detect
+
+    _host_detect._clear_cache()
+
     # Pre-grava checkpoint simulando pause anterior.
     init._save_checkpoint(
         init._InitCheckpoint(
@@ -100,7 +111,7 @@ def test_resume_from_checkpoint(
     )
 
     # Host escreveu response='abort'.
-    state_dir = tmp_project_root / ".claude" / "state"
+    state_dir = tmp_project_root / ".claude" / "forge" / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "forge-response.json").write_text(
         json.dumps(
@@ -120,10 +131,13 @@ def test_resume_from_checkpoint(
 
     assert rc == 2, f"expected abort exit 2, got {rc}"
 
-    # Response consumida; checkpoint preservado (user escolheu abort
-    # explicitamente, comportamento existente pre-T3b).
-    assert not (state_dir / "forge-response.json").exists(), (
-        "response file should be consumed by question.ask"
+    # Task 0.7b — CR-002 invariant: state files MUST remain on disk
+    # after happy-path consume. cli.py finally block performs the
+    # terminal cleanup at handler exit, preserving forensic inspection.
+    # Checkpoint preservado (user escolheu abort explicitamente,
+    # comportamento existente pre-T3b).
+    assert (state_dir / "forge-response.json").exists(), (
+        "response file must survive happy-path consume (CR-002)"
     )
     # Checkpoint mantido por contract de init (abort = nao apaga).
     assert init._load_checkpoint(tmp_project_root) is not None, (

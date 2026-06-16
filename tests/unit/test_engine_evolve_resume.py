@@ -127,13 +127,24 @@ def test_resume_from_checkpoint(
     _seed_workflow_config(tmp_forge_project)
     monkeypatch.chdir(tmp_forge_project)
 
+    # Task 0.7b — pin host: intent-file so question.ask delegate writes/reads
+    # against .claude/forge/state/ (v1.3 sub-namespace), not stdout.
+    forge_dir = tmp_forge_project / ".claude" / "forge"
+    forge_dir.mkdir(parents=True, exist_ok=True)
+    (forge_dir / "forge-config.yaml").write_text(
+        "host: intent-file\n", encoding="utf-8"
+    )
+    from engine.host import detect as _host_detect
+
+    _host_detect._clear_cache()
+
     _queue_proposals(tmp_forge_project, ["P-001"])
 
     # Pre-computa intent-id da action ask do P-001 (espelha _action_for):
     intent_id_p001 = evolve._action_intent_id("P-001")
 
     # Escreve response + checkpoint (action: "d" defer pra P-001).
-    state_dir = tmp_forge_project / ".claude" / "state"
+    state_dir = tmp_forge_project / ".claude" / "forge" / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "forge-response.json").write_text(
         json.dumps(
@@ -162,9 +173,11 @@ def test_resume_from_checkpoint(
     # loop terminou clean.
     assert rc == 0, f"unexpected exit code from evolve.run: {rc}"
 
-    # Response consumida pelo question.ask.
-    assert not (state_dir / "forge-response.json").exists(), (
-        "response should be consumed/cleared on resume"
+    # Task 0.7b — CR-002 invariant: state files MUST remain on disk
+    # after happy-path consume. cli.py finally block performs the
+    # terminal cleanup at handler exit, preserving forensic inspection.
+    assert (state_dir / "forge-response.json").exists(), (
+        "response file must survive happy-path consume (CR-002)"
     )
 
     # Checkpoint apagado apos clean completion (linha _clear_checkpoint

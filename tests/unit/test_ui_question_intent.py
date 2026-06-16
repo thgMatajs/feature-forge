@@ -27,16 +27,29 @@ from engine.ui import intent_state, question
 # --- Helpers ---------------------------------------------------------------
 
 
-def _read_pending(project_root: Path) -> dict:
-    """Read forge-pending.json written by question.* into the test project."""
-    path = project_root / ".claude" / "state" / "forge-pending.json"
+def _read_pending(project_root: Path, *, legacy: bool = False) -> dict:
+    """Read forge-pending.json written by question.* into the test project.
+
+    Task 0.7b: ``ask``/``ask_multi``/``ask_text`` now delegate to the host
+    adapter, which writes to ``.claude/forge/state/`` (v1.3 sub-namespace).
+    ``confirm`` and ``ask_three_paths`` still use the legacy native path
+    against ``.claude/state/`` — pass ``legacy=True`` for those.
+    """
+    state_subdir = "state" if legacy else "forge/state"
+    path = project_root / ".claude" / state_subdir / "forge-pending.json"
     assert path.is_file(), f"expected pending at {path}"
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _write_response(project_root: Path, payload: dict) -> Path:
-    """Write a synthetic forge-response.json — simulates the host caller."""
-    state_dir = project_root / ".claude" / "state"
+def _write_response(
+    project_root: Path, payload: dict, *, legacy: bool = False
+) -> Path:
+    """Write a synthetic forge-response.json — simulates the host caller.
+
+    Task 0.7b: see ``_read_pending`` for the ``legacy`` flag rationale.
+    """
+    state_subdir = "state" if legacy else "forge/state"
+    state_dir = project_root / ".claude" / state_subdir
     state_dir.mkdir(parents=True, exist_ok=True)
     path = state_dir / "forge-response.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
@@ -45,13 +58,33 @@ def _write_response(project_root: Path, payload: dict) -> Path:
 
 @pytest.fixture(autouse=True)
 def _chdir_to_project(monkeypatch, tmp_project_root):
-    """Most callsites resolve project_root via cwd — keep tests deterministic."""
+    """Most callsites resolve project_root via cwd — keep tests deterministic.
+
+    Task 0.7b also pins the host adapter to ``intent-file`` so the
+    delegated entrypoints (``ask``/``ask_multi``/``ask_text``) hit the
+    on-disk DRIFT-1 loop instead of stdout (ClaudeCodeAdapter) under
+    CLAUDECODE=1. The detection cache + registry are cleared between
+    tests so the global state stays deterministic.
+    """
     monkeypatch.chdir(tmp_project_root)
     # Make .claude/workflow-config.yaml present so find_project_root works.
     (tmp_project_root / ".claude").mkdir(exist_ok=True)
     (tmp_project_root / ".claude" / "workflow-config.yaml").write_text(
         "schema-version: 1\n", encoding="utf-8"
     )
+    # Force host: intent-file so delegate writes to .claude/forge/state/.
+    forge_dir = tmp_project_root / ".claude" / "forge"
+    forge_dir.mkdir(parents=True, exist_ok=True)
+    (forge_dir / "forge-config.yaml").write_text(
+        "host: intent-file\n", encoding="utf-8"
+    )
+    # Clear host detection cache (per-project_root dict in detect.py).
+    from engine.host import detect as _host_detect
+    _host_detect._clear_cache()
+    # Clear intent log cache too — tests reuse Path("...") via tmp_project_root
+    # but each test gets a fresh tmp_path, so this is defensive.
+    from engine.ui import intent_state as _intent_state
+    _intent_state._reset_log_cache()
     yield
 
 
@@ -100,10 +133,13 @@ def test_ask_without_response_emits_pending_and_raises(tmp_project_root):
     assert "created-at" in payload
 
 
-def test_ask_with_matching_response_returns_value_and_clears_files(
+def test_ask_with_matching_response_returns_value_and_preserves_files(
     tmp_project_root,
 ):
-    """Consume response, return key, delete both pending + response files."""
+    """Consume response, return key. Task 0.7b: state files remain on disk
+    after happy path — adapter no longer auto-clears (CR-002 invariant);
+    cli.py finally is responsible for the terminal cleanup.
+    """
     # First call emits pending.
     with pytest.raises(question.PausedForInputError) as exc:
         question.ask("Pick:", {"a": "Apple", "b": "Banana"})
@@ -125,9 +161,18 @@ def test_ask_with_matching_response_returns_value_and_clears_files(
     result = question.ask("Pick:", {"a": "Apple", "b": "Banana"})
     assert result == "b"
 
-    # Both state files cleared.
-    assert not (tmp_project_root / ".claude" / "state" / "forge-pending.json").exists()
-    assert not (tmp_project_root / ".claude" / "state" / "forge-response.json").exists()
+    # Task 0.7b — state files MUST remain on disk (CR-002). cli.py finally
+    # block performs the terminal cleanup at handler exit; the per-prompt
+    # in-process clear was retired so forensic inspection of an accepted
+    # response survives until the engine actually terminates.
+    pending = (
+        tmp_project_root / ".claude" / "forge" / "state" / "forge-pending.json"
+    )
+    response = (
+        tmp_project_root / ".claude" / "forge" / "state" / "forge-response.json"
+    )
+    assert pending.exists(), "pending must survive happy-path consume (CR-002)"
+    assert response.exists(), "response must survive happy-path consume (CR-002)"
 
 
 def test_ask_rejects_response_value_outside_options(tmp_project_root):
@@ -207,9 +252,14 @@ def test_ask_response_paused_with_allow_pause_false_raises_value_error(
 
 
 def test_ask_empty_options_rejected_no_pending_written(tmp_project_root):
-    """Empty options → ValueError, no pending file emitted."""
+    """Empty options → ValueError, no pending file emitted on any path."""
     with pytest.raises(ValueError):
         question.ask("Pick:", {})
+    # Validation fires upstream of the adapter, so neither the legacy nor
+    # the new sub-namespace should receive a pending write.
+    assert not (
+        tmp_project_root / ".claude" / "forge" / "state" / "forge-pending.json"
+    ).exists()
     assert not (
         tmp_project_root / ".claude" / "state" / "forge-pending.json"
     ).exists()
@@ -352,6 +402,8 @@ def test_confirm_response_bool_true(tmp_project_root):
         question.confirm("Aplicar?")
     intent_id = exc.value.intent["intent-id"]
 
+    # ``confirm`` is NOT delegated (Task 0.7b scope is ask/ask_multi/ask_text
+    # only); it keeps writing to legacy ``.claude/state/``.
     _write_response(
         tmp_project_root,
         {
@@ -361,6 +413,7 @@ def test_confirm_response_bool_true(tmp_project_root):
             "value": True,
             "answered-at": "2026-06-10T19:00:00Z",
         },
+        legacy=True,
     )
 
     assert question.confirm("Aplicar?") is True
@@ -372,6 +425,7 @@ def test_confirm_response_string_s_or_n(tmp_project_root):
         question.confirm("Aplicar?")
     intent_id = exc.value.intent["intent-id"]
 
+    # ``confirm`` is NOT delegated (Task 0.7b scope is ask/ask_multi/ask_text).
     _write_response(
         tmp_project_root,
         {
@@ -381,6 +435,7 @@ def test_confirm_response_string_s_or_n(tmp_project_root):
             "value": "n",
             "answered-at": "2026-06-10T19:00:00Z",
         },
+        legacy=True,
     )
 
     assert question.confirm("Aplicar?") is False
@@ -433,6 +488,7 @@ def test_ask_three_paths_response_returns_choice_key(tmp_project_root):
         question.ask_three_paths("gate", paths=paths)
     intent_id = exc.value.intent["intent-id"]
 
+    # ``ask_three_paths`` is NOT delegated (Task 0.7b scope is ask/ask_multi/ask_text).
     _write_response(
         tmp_project_root,
         {
@@ -442,6 +498,7 @@ def test_ask_three_paths_response_returns_choice_key(tmp_project_root):
             "value": "b",
             "answered-at": "2026-06-10T19:00:00Z",
         },
+        legacy=True,
     )
 
     assert question.ask_three_paths("gate", paths=paths) == "b"
@@ -458,7 +515,10 @@ def test_ask_race_detection_raises_when_pending_recent_other_intent(
         datetime.now(timezone.utc) - timedelta(minutes=2)
     ).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    state_dir = tmp_project_root / ".claude" / "state"
+    # Task 0.7b — ``ask`` is delegated and the adapter writes to
+    # ``.claude/forge/state/`` (v1.3 sub-namespace). The stale pending must
+    # land in that sub-namespace for ``detect_race`` to see it.
+    state_dir = tmp_project_root / ".claude" / "forge" / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "forge-pending.json").write_text(
         json.dumps(
@@ -512,8 +572,13 @@ def test_invalid_response_preserves_state_files(tmp_project_root):
     can diff the response that arrived vs the response that was
     expected; the response stays for the same forensic reason.
     """
-    pending_path = tmp_project_root / ".claude" / "state" / "forge-pending.json"
-    response_path = tmp_project_root / ".claude" / "state" / "forge-response.json"
+    # Task 0.7b — delegate writes to forge/state sub-namespace.
+    pending_path = (
+        tmp_project_root / ".claude" / "forge" / "state" / "forge-pending.json"
+    )
+    response_path = (
+        tmp_project_root / ".claude" / "forge" / "state" / "forge-response.json"
+    )
 
     # Emit pending first so intent-id matches.
     with pytest.raises(question.PausedForInputError) as exc:
@@ -576,7 +641,8 @@ def test_ask_three_paths_intent_carries_motives(tmp_project_root):
     assert by_key["c"]["motive"] == "document in commit body"
 
     # Also check the serialised pending JSON (wire-level guarantee).
-    on_disk = _read_pending(tmp_project_root)
+    # ``ask_three_paths`` is NOT delegated — read from legacy state path.
+    on_disk = _read_pending(tmp_project_root, legacy=True)
     assert on_disk["paths-detail"] == detail
 
 
@@ -632,8 +698,12 @@ def test_ask_text_intent_id_includes_validator_hint(tmp_project_root):
     # second call. Race detection is itself a working safeguard (proven
     # by ``test_ask_race_detection_raises_when_pending_recent_other_intent``);
     # here we are only interested in the intent-id derivation, so we
-    # sweep the disk and re-emit.
-    intent_state.clear_intent_files(tmp_project_root)
+    # sweep the disk and re-emit. Task 0.7b: ``ask_text`` is delegated so
+    # the adapter writes to the forge sub-namespace — sweep that one.
+    from engine.utils.paths import forge_state_dir as _forge_state_dir
+    intent_state.clear_intent_files(
+        tmp_project_root, state_dir=_forge_state_dir(tmp_project_root)
+    )
 
     # Re-emit with a different validator_hint. Without the MD-001 fix
     # this would produce the same intent-id because the hash extra

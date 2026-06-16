@@ -122,6 +122,17 @@ def test_resume_from_checkpoint(
     slug_a, slug_b = _setup_two_active_features(tmp_forge_project)
     monkeypatch.chdir(tmp_forge_project)
 
+    # Task 0.7b — pin host: intent-file so question.ask delegate writes/reads
+    # against .claude/forge/state/ (v1.3 sub-namespace), not stdout.
+    forge_dir = tmp_forge_project / ".claude" / "forge"
+    forge_dir.mkdir(parents=True, exist_ok=True)
+    (forge_dir / "forge-config.yaml").write_text(
+        "host: intent-file\n", encoding="utf-8"
+    )
+    from engine.host import detect as _host_detect
+
+    _host_detect._clear_cache()
+
     # Calcula o intent-id da pergunta canonica do _infer_active_feature
     # com 2 candidatos (allow_prompt=True). Opcoes seguem o pattern em
     # verify.py:461 — {slug: f"feature {slug}" for slug in candidatos}.
@@ -134,7 +145,7 @@ def test_resume_from_checkpoint(
     )
 
     # Host escreveu response + checkpoint do verify.
-    state_dir = tmp_forge_project / ".claude" / "state"
+    state_dir = tmp_forge_project / ".claude" / "forge" / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     response_payload = {
         "schema-version": 1,
@@ -162,9 +173,11 @@ def test_resume_from_checkpoint(
     rc = verify.run([])
     assert rc in (0, 1), f"unexpected exit code from verify.run: {rc}"
 
-    # Response consumida (clear_state apos question.ask).
-    assert not (state_dir / "forge-response.json").exists(), (
-        "response file should be consumed by question.ask on resume"
+    # Task 0.7b — CR-002 invariant: state files MUST remain on disk
+    # after happy-path consume. cli.py finally block performs the
+    # terminal cleanup at handler exit, preserving forensic inspection.
+    assert (state_dir / "forge-response.json").exists(), (
+        "response file must survive happy-path consume (CR-002)"
     )
 
     # Checkpoint apagado apos clean completion.
