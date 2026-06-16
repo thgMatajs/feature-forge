@@ -198,3 +198,24 @@ def ensure_dir(path: Path) -> Path:
     """mkdir -p — returns the path for chaining. Idempotent."""
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def forge_dir(project_root: Path) -> Path:
+    """Sub-namespace canônico do forge no projeto consumidor. Spec §2."""
+    return project_root / ".claude" / "forge"
+
+
+def forge_config_path(project_root: Path) -> Path:
+    return forge_dir(project_root) / "forge-config.yaml"
+
+
+def forge_state_dir(project_root: Path) -> Path:
+    return forge_dir(project_root) / "state"
+
+
+def forge_cards_local_dir(project_root: Path) -> Path:
+    return forge_dir(project_root) / "cards" / "local"
+
+
+def forge_hooks_dir(project_root: Path) -> Path:
+    return forge_dir(project_root) / "hooks"
