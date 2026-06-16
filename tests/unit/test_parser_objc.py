@@ -9,40 +9,86 @@ from engine.graph.parser_objc import _parse_objc, parse_objc_file
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 
 
+# T-N-004 (REVIEW PR #16): counts da fixture UserModel.h/.m pinados.
+# Quando fixture muda, esses asserts forçam revisão consciente do parser
+# em vez de "passou por sorte". Não usar ``>=`` em testes fixture-based.
+
 def test_objc_header_parses_imports() -> None:
     info = parse_objc_file(FIXTURES / "objc-basic" / "Models" / "UserModel.h")
-    assert any("Foundation.h" in imp for imp in info.imports)
+    # UserModel.h: 1 import canônico (#import <Foundation/Foundation.h>)
+    assert info.imports == ["Foundation/Foundation.h"], (
+        f"Imports do header drift — esperado 1 (Foundation.h), got {info.imports}"
+    )
 
 
 def test_objc_header_parses_interface() -> None:
     info = parse_objc_file(FIXTURES / "objc-basic" / "Models" / "UserModel.h")
     classes = [s for s in info.symbols if s.kind == "class"]
-    assert len(classes) >= 1
+    assert len(classes) == 1, (
+        f"Esperado 1 @interface (UserModel), got {len(classes)}: {[c.name for c in classes]}"
+    )
     assert classes[0].name == "UserModel"
 
 
 def test_objc_implementation_parses_methods() -> None:
     info = parse_objc_file(FIXTURES / "objc-basic" / "Models" / "UserModel.m")
     methods = [s for s in info.symbols if s.kind == "method"]
-    assert len(methods) >= 1
+    # UserModel.m tem 3 métodos: initWithId:name:, displayName, +anonymousUser
+    assert len(methods) == 3, (
+        f"Esperado 3 métodos no UserModel.m, got {len(methods)}: "
+        f"{[m.name for m in methods]}"
+    )
 
 
 def test_objc_implementation_parses_imports() -> None:
     info = parse_objc_file(FIXTURES / "objc-basic" / "Models" / "UserModel.m")
-    assert any("UserModel.h" in imp for imp in info.imports)
+    # UserModel.m tem 3 imports: UserModel.h, ../Services/AuthService.h, @module:Foundation
+    assert len(info.imports) == 3, (
+        f"Esperado 3 imports no UserModel.m, got {len(info.imports)}: {info.imports}"
+    )
+    assert "UserModel.h" in info.imports
+    assert "../Services/AuthService.h" in info.imports
+    assert "@module:Foundation" in info.imports
 
 
 def test_objc_implementation_symbol() -> None:
     info = parse_objc_file(FIXTURES / "objc-basic" / "Models" / "UserModel.m")
     impls = [s for s in info.symbols if s.kind == "implementation"]
-    assert len(impls) >= 1
+    assert len(impls) == 1, (
+        f"Esperado 1 @implementation, got {len(impls)}: {[i.name for i in impls]}"
+    )
     assert impls[0].name == "UserModel"
 
 
 def test_objc_class_method_detection() -> None:
     info = parse_objc_file(FIXTURES / "objc-basic" / "Models" / "UserModel.m")
     methods = [s for s in info.symbols if s.kind == "method" and s.is_class_method]
-    assert len(methods) >= 1  # +anonymousUser
+    # UserModel.m tem exatamente 1 ``+`` method: +anonymousUser
+    assert len(methods) == 1, (
+        f"Esperado 1 class method (+anonymousUser), got {len(methods)}: "
+        f"{[m.name for m in methods]}"
+    )
+    assert methods[0].name == "anonymousUser"
+
+
+# ---------------------------------------------------------------------------
+# T-N-005 (REVIEW PR #16) — formatos de import ObjC.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("snippet,expected", [
+    ('#import <Foundation/Foundation.h>\n', "Foundation/Foundation.h"),
+    ('#import "MyClass.h"\n', "MyClass.h"),
+    ('#import "../Relative/Path.h"\n', "../Relative/Path.h"),
+    ('@import UIKit;\n', "@module:UIKit"),
+    ('@import Foundation;\n', "@module:Foundation"),
+])
+def test_objc_import_formats(snippet: str, expected: str) -> None:
+    """Cada formato de import ObjC deve casar e normalizar consistentemente."""
+    info = _parse_objc(snippet)
+    assert expected in info.imports, (
+        f"Format ``{snippet.strip()}`` não casou — esperado {expected!r} em "
+        f"imports={info.imports}"
+    )
 
 
 # ---------------------------------------------------------------------------
