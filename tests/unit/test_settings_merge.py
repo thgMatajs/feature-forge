@@ -1,4 +1,6 @@
-from engine.utils.settings_merge import merge_settings_json
+import pytest
+
+from engine.utils.settings_merge import _HAS_JSON5, merge_settings_json
 
 
 def test_merge_appends_to_existing_arrays():
@@ -33,6 +35,10 @@ def test_merge_idempotent_dedupe_identical_entries():
     assert len(result["hooks"]["PreToolUse"]) == 1  # idempotent
 
 
+@pytest.mark.skipif(
+    not _HAS_JSON5,
+    reason="json5 lib not installed in current Python environment",
+)
 def test_read_settings_tolerant_handles_comments():
     from engine.utils.settings_merge import read_settings_tolerant
     content = """{

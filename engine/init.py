@@ -759,6 +759,67 @@ def _install_git_hooks(project_root: Path) -> None:
                 pass
 
 
+def _merge_forge_hooks_into_settings(project_root: Path) -> None:
+    """Append forge's CC hook registrations to `.claude/settings.json`.
+
+    Brownfield-safe via ``merge_settings_json`` (append-only, dedup-via-deep-equal).
+    JSON5-tolerant read via ``read_settings_tolerant``. Idempotent.
+
+    Forge hooks live in ``.claude/forge/hooks/`` after init (Task 0.8); this
+    function registers their CC events in the user's ``.claude/settings.json``
+    so Claude Code dispatches them on SessionStart/PostToolUse/SubagentStop.
+
+    Wave 1 Fix #1 (v1.3 pilot-ready): closes the gap where ``_install_hooks``
+    copied the shims but didn't register them in CC settings.
+    """
+    from engine.utils.settings_merge import (
+        merge_settings_json,
+        read_settings_tolerant,
+    )
+
+    settings_path = project_root / ".claude" / "settings.json"
+    if settings_path.exists():
+        try:
+            existing = read_settings_tolerant(settings_path.read_text())
+        except (OSError, ValueError):
+            existing = {}
+    else:
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        existing = {}
+
+    # Canonical forge hook entries (paths relative to project root; Task 0.8
+    # migrated forge shims to .claude/forge/hooks/ sub-namespace).
+    forge_additions = {
+        "hooks": {
+            "SessionStart": [
+                {"matcher": "", "hooks": [
+                    {"type": "command",
+                     "command": ".claude/forge/hooks/session-start-drift-check.sh"}
+                ]}
+            ],
+            "PostToolUse": [
+                {"matcher": "Edit|Write|NotebookEdit", "hooks": [
+                    {"type": "command",
+                     "command": ".claude/forge/hooks/post-edit-codebase-graph.sh"}
+                ]},
+                {"matcher": "Write", "hooks": [
+                    {"type": "command",
+                     "command": ".claude/forge/hooks/post-write-feature-artifact.sh"}
+                ]},
+            ],
+            "SubagentStop": [
+                {"matcher": "", "hooks": [
+                    {"type": "command",
+                     "command": ".claude/forge/hooks/post-subagent-validate.sh"}
+                ]}
+            ],
+        }
+    }
+
+    merged = merge_settings_json(existing, forge_additions)
+    settings_path.write_text(json.dumps(merged, indent=2) + "\n")
+
+
 # ── Entry point ──────────────────────────────────────────────────────────────
 
 
@@ -1496,6 +1557,10 @@ def _run_pipeline(project_root: Path) -> int:
     try:
         n_hooks = _install_hooks(project_root)
         _install_git_hooks(project_root)
+        # Wave 1 Fix #1: register forge CC hooks in .claude/settings.json
+        # (brownfield-safe, append-only, dedup via merge_settings_json).
+        # Must run AFTER hooks are copied so settings.json points to real files.
+        _merge_forge_hooks_into_settings(project_root)
         if n_hooks:
             renderer.write(f"  └─ {n_hooks} hooks instalados em .claude/forge/hooks/")
     except (OSError, shutil.Error) as exc:  # pragma: no cover - hooks must not block init
