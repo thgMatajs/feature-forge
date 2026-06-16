@@ -150,6 +150,20 @@ Wave A+B+C endereçou 60+ findings; estes 7 ficam pra ciclos futuros.
   severidades deve recalibrar com base no histórico de PRs reais
   (PR #15 + PR #16). Fora do escopo de Wave C porque exige policy
   decision, não edit técnico.
+- **PR16-FU-1** — `Symbol` data structure com campo `parse_status`
+  (`ok | partial | failed`) pra dar contrato observable a downstream
+  consumers do registry de símbolos. Codereviewbot comment 3417876789
+  (`parser_kotlin.py:262`) pediu structured error signaling quando
+  body extraction falha silentemente. Wave final endereçou a silent
+  failure imediata via `logging.debug` em commit `873195f` —
+  observabilidade mínima sem reshape de schema. O fix completo exige
+  refactor cross-parser (Kotlin + Java + ObjC + Swift) das dataclasses
+  de symbol pra propagar status até persistência (`_persist_*` +
+  schema SQLite + queries Q1-Q17 que assumem symbol = sucesso).
+  *Reentrar* quando próximo parser novo for adicionado OU quando
+  consumer downstream pedir diferenciação entre "símbolo ausente" vs
+  "símbolo com extração parcial" — momento natural pra justificar o
+  reshape sem custo de retrabalho cego.
 
 ## Fechado em [Unreleased]
 
