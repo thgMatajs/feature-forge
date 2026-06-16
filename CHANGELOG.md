@@ -7,6 +7,30 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed (v1.3 Wave 1 follow-ups, 2026-06-16)
+
+- **Production bug — intent_state default state_dir.** `engine.ui.intent_state._state_dir`
+  default migrated from legacy `.claude/state/` to `forge_state_dir(project_root)` =
+  `.claude/forge/state/`. Closes 13 pre-existing integration failures that surfaced
+  during Wave 0 cleanup (tty_bridge + question.confirm/ask_three_paths were reading
+  from legacy path while adapters write to sub-namespace). Clean break per spec §5.
+  ~50 test path assertions migrated; tty_bridge tests no longer hang. CR-002 contract
+  (state preserved on consume) acknowledged in `test_resume_consumes_response_and_deletes`.
+
+- **Wave 1 wiring gap — settings_merge not invoked from init.py.** `engine.init._run_pipeline`
+  now calls new `_merge_forge_hooks_into_settings(project_root)` after hooks install,
+  registering forge's canonical CC hook entries in `.claude/settings.json` via the
+  Wave 1 `merge_settings_json` utility. Brownfield-safe (append-only + dedup), JSON5-tolerant
+  via `read_settings_tolerant`, idempotent. Forge registers: SessionStart →
+  session-start-drift-check.sh; PostToolUse(Edit|Write|NotebookEdit) → post-edit-codebase-graph.sh;
+  PostToolUse(Write) → post-write-feature-artifact.sh; SubagentStop → post-subagent-validate.sh.
+  All commands point to `.claude/forge/hooks/<script>`.
+
+- **Test environment — json5 skipif.** `test_read_settings_tolerant_handles_comments`
+  now skips when `json5` lib absent (system pytest fallback). The other 4 settings_merge
+  tests work with stdlib `json` graceful fallback. Allows tests to run cleanly without
+  the optional `json5` dep installed.
+
 ### Added (v1.3 Wave 1 — brownfield-safe init, 2026-06-16)
 
 - **v1.3 Wave 1 — Brownfield-safe init.** `_detect_brownfield` helper signals
