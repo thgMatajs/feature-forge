@@ -407,7 +407,16 @@ def mask_strings_and_comments(text: str) -> str:
                     break
                 out[j] = " "
                 j += 1
-            i = j + 1 if j < n and text[j] == '"' else j
+            # Unterminated string (hit newline OR EOF sem closing quote):
+            # análogo a block comment não-fechado — mascara também o
+            # opening quote pra evitar que ``"class X {`` deixe ``"``
+            # solto + ``class X {`` legível por matchers downstream
+            # (codereviewbot 3417876782 / PR16-FU).
+            if j >= n or text[j] != '"':
+                out[i] = " "
+                i = j  # preserva newline (já guardado) ou EOF
+            else:
+                i = j + 1
             continue
         # Single-quoted char literal.
         if ch == "'":
@@ -422,7 +431,14 @@ def mask_strings_and_comments(text: str) -> str:
                     break
                 out[j] = " "
                 j += 1
-            i = j + 1 if j < n and text[j] == "'" else j
+            # Unterminated char literal (hit newline OR EOF):
+            # mesmo tratamento do double-quote acima (codereviewbot
+            # 3417876787 / PR16-FU).
+            if j >= n or text[j] != "'":
+                out[i] = " "
+                i = j
+            else:
+                i = j + 1
             continue
         i += 1
     return "".join(out)
