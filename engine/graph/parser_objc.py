@@ -24,6 +24,15 @@ from engine.graph._body_text import (
     hash_body,
     tokens_to_json,
 )
+from engine.graph.kinds import (
+    KIND_OBJC_RAW_CATEGORY,
+    KIND_OBJC_RAW_CLASS,
+    KIND_OBJC_RAW_CLASS_EXTENSION,
+    KIND_OBJC_RAW_IMPLEMENTATION,
+    KIND_OBJC_RAW_METHOD,
+    KIND_OBJC_RAW_PROPERTY,
+    KIND_OBJC_RAW_PROTOCOL,
+)
 
 # P-N-018 / codereviewbot parser_objc:158 (REVIEW PR #16): warnings de
 # ``@end`` faltando são logged em DEBUG (não printam em runtime default).
@@ -197,7 +206,7 @@ def _parse_objc(source: str) -> ObjcFileInfo:
         category_name = m.group(2)  # vazio = class extension
         line = source[:m.start()].count("\n") + 1
         if category_name:
-            kind = "category"
+            kind = KIND_OBJC_RAW_CATEGORY  # P-N-021 (REVIEW PR #16): consume Kind const
             display_name = f"{class_name}({category_name})"
             sig = f"@interface {class_name} ({category_name})"
         else:
@@ -205,7 +214,7 @@ def _parse_objc(source: str) -> ObjcFileInfo:
             # Builder não trata explicitamente; emitimos kind="class_extension"
             # pra distinguir de category nomeada. Visibility default
             # (public) é aceitável aqui já que extension ainda é declarada.
-            kind = "class_extension"
+            kind = KIND_OBJC_RAW_CLASS_EXTENSION  # P-N-021
             display_name = class_name
             sig = f"@interface {class_name} ()"
         # P-N-018: binary search em vez de re.search(source[m.end():]).
@@ -247,7 +256,7 @@ def _parse_objc(source: str) -> ObjcFileInfo:
         body_hash = hash_body(body) if body is not None else None
         symbols.append(ObjcSymbolInfo(
             name=name,
-            kind="class",
+            kind=KIND_OBJC_RAW_CLASS,  # P-N-021
             signature=sig,
             line=line,
             body=body,
@@ -270,7 +279,7 @@ def _parse_objc(source: str) -> ObjcFileInfo:
         body_hash = hash_body(body) if body is not None else None
         symbols.append(ObjcSymbolInfo(
             name=name,
-            kind="protocol",
+            kind=KIND_OBJC_RAW_PROTOCOL,  # P-N-021
             signature=f"@protocol {name}",
             line=line,
             body=body,
@@ -292,7 +301,7 @@ def _parse_objc(source: str) -> ObjcFileInfo:
         body_hash = hash_body(body) if body is not None else None
         symbols.append(ObjcSymbolInfo(
             name=name,
-            kind="implementation",
+            kind=KIND_OBJC_RAW_IMPLEMENTATION,  # P-N-021
             signature=f"@implementation {name}",
             line=line,
             body=body,
@@ -342,7 +351,7 @@ def _parse_objc(source: str) -> ObjcFileInfo:
 
         symbols.append(ObjcSymbolInfo(
             name=full_sel,
-            kind="method",
+            kind=KIND_OBJC_RAW_METHOD,  # P-N-021
             is_class_method=is_class,
             signature=sig,
             line=line,
@@ -357,7 +366,7 @@ def _parse_objc(source: str) -> ObjcFileInfo:
         line = source[:m.start()].count("\n") + 1
         symbols.append(ObjcSymbolInfo(
             name=prop_name,
-            kind="property",
+            kind=KIND_OBJC_RAW_PROPERTY,  # P-N-021
             signature=f"{prop_type} {prop_name}",
             line=line,
         ))

@@ -18,6 +18,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from engine.graph.kinds import (
+    KIND_BINDING_ACTION,
+    KIND_BINDING_VARIABLE,
+    KIND_CLASS_REF,
+    KIND_COLOR_RESOURCE,
+    KIND_STRING_RESOURCE,
+    KIND_VIEW_ID,
+)
+
 # View ID: @+id/foo, @id/foo, @android:id/foo
 _RE_VIEW_ID = re.compile(r'@(?:\+)?(?:android:)?id/([\w_]+)')
 
@@ -165,14 +174,14 @@ def _parse_xml(source: str, path: Path) -> XmlFileInfo:
             line = source[:m.start()].count("\n") + 1
             symbols.append(XmlSymbolInfo(
                 name=m.group(1),
-                kind="string_resource",
+                kind=KIND_STRING_RESOURCE,  # P-N-021 (REVIEW PR #16)
                 line=line,
             ))
         for m in _RE_COLOR_RESOURCE.finditer(source):
             line = source[:m.start()].count("\n") + 1
             symbols.append(XmlSymbolInfo(
                 name=m.group(1),
-                kind="color_resource",
+                kind=KIND_COLOR_RESOURCE,  # P-N-021
                 line=line,
             ))
 
@@ -182,7 +191,7 @@ def _parse_xml(source: str, path: Path) -> XmlFileInfo:
             line = source[:m.start()].count("\n") + 1
             symbols.append(XmlSymbolInfo(
                 name=m.group(1),
-                kind="view_id",
+                kind=KIND_VIEW_ID,  # P-N-021
                 line=line,
             ))
 
@@ -192,7 +201,7 @@ def _parse_xml(source: str, path: Path) -> XmlFileInfo:
             line = source[:m.start()].count("\n") + 1
             symbols.append(XmlSymbolInfo(
                 name=class_name,
-                kind="class_ref",
+                kind=KIND_CLASS_REF,  # P-N-021
                 line=line,
             ))
             class_refs_set.add(class_name)
@@ -209,7 +218,7 @@ def _parse_xml(source: str, path: Path) -> XmlFileInfo:
             line = source[:m.start()].count("\n") + 1
             symbols.append(XmlSymbolInfo(
                 name=var_name,
-                kind="binding_variable",
+                kind=KIND_BINDING_VARIABLE,  # P-N-021
                 line=line,
                 context=var_type,
             ))
@@ -233,7 +242,7 @@ def _parse_xml(source: str, path: Path) -> XmlFileInfo:
             line = source[:m.start()].count("\n") + 1
             symbols.append(XmlSymbolInfo(
                 name=expr,
-                kind="binding_action",
+                kind=KIND_BINDING_ACTION,  # P-N-021
                 line=line,
                 is_method_call=is_method_call,
             ))

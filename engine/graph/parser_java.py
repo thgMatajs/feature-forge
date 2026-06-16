@@ -48,6 +48,15 @@ from engine.graph._body_text import (
     mask_strings_and_comments,
     tokens_to_json,
 )
+from engine.graph.kinds import (
+    KIND_ANNOTATION,
+    KIND_CLASS,
+    KIND_CONSTRUCTOR,
+    KIND_ENUM,
+    KIND_INTERFACE,
+    KIND_METHOD,
+    KIND_RECORD,
+)
 
 # Language passed to shared body helpers. Onda 6 registrou ``java`` em
 # ``_SUPPORTED_LANGS`` + ``_NOISE_TOKENS_PER_LANG`` (engine/graph/_body_text.py),
@@ -197,16 +206,17 @@ def _parse_java(source: str) -> JavaFileInfo:
 
         # Infer kind from keyword. ``@interface`` must be checked before
         # plain ``interface`` to avoid mis-classifying annotations.
+        # P-N-021 (REVIEW PR #16): consume Kind constants em vez de literais.
         if "@interface" in kind_raw:
-            kind = "annotation"
+            kind = KIND_ANNOTATION
         elif re.search(r"\binterface\b", kind_raw):
-            kind = "interface"
+            kind = KIND_INTERFACE
         elif re.search(r"\benum\b", kind_raw):
-            kind = "enum"
+            kind = KIND_ENUM
         elif re.search(r"\brecord\b", kind_raw):
-            kind = "record"
+            kind = KIND_RECORD
         else:
-            kind = "class"
+            kind = KIND_CLASS
 
         line = source[:start].count("\n") + 1
 
@@ -286,10 +296,11 @@ def _parse_java(source: str) -> JavaFileInfo:
         # Treat them as ``method`` kind (still callable surface), not
         # ``constructor`` — constructor must come from name match.
         ends_with_semicolon = full_match.rstrip().endswith(";")
+        # P-N-021: consume Kind constants.
         if is_constructor:
-            kind = "constructor"
+            kind = KIND_CONSTRUCTOR
         else:
-            kind = "method"
+            kind = KIND_METHOD
 
         line = source[:m.start()].count("\n") + 1
 
