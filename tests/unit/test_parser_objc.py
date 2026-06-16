@@ -251,6 +251,71 @@ def test_objc_multiline_method_header() -> None:
 # preservar body_hash distinto de None (alinhamento com parser_java).
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# P-N-003 + T-N-003 (REVIEW PR #16) — categories e class extensions.
+# ``@interface Foo (Bar)`` é category nomeada; ``@interface Foo ()`` é
+# class extension (privado, definido no .m).
+# ---------------------------------------------------------------------------
+
+def test_objc_category_named() -> None:
+    """``@interface UIView (Animations)`` vira symbol kind=category."""
+    src = (
+        "@interface UIView (Animations)\n"
+        "- (void)fadeIn;\n"
+        "@end\n"
+    )
+    info = _parse_objc(src)
+    categories = [s for s in info.symbols if s.kind == "category"]
+    assert len(categories) == 1, (
+        f"Category não foi emitida — P-N-003 regression. "
+        f"Symbols: {[(s.kind, s.name) for s in info.symbols]}"
+    )
+    assert categories[0].name == "UIView(Animations)"
+    assert "@interface UIView (Animations)" in (categories[0].signature or "")
+
+
+def test_objc_class_extension_anonymous() -> None:
+    """``@interface Foo ()`` vira kind=class_extension."""
+    src = (
+        "@interface Foo ()\n"
+        "@property NSString *privateField;\n"
+        "@end\n"
+    )
+    info = _parse_objc(src)
+    exts = [s for s in info.symbols if s.kind == "class_extension"]
+    assert len(exts) == 1, (
+        f"Class extension não foi emitida — P-N-003 regression. "
+        f"Symbols: {[(s.kind, s.name) for s in info.symbols]}"
+    )
+    assert exts[0].name == "Foo"
+
+
+def test_objc_category_does_not_double_emit_as_class() -> None:
+    """``@interface Foo (Bar)`` não pode também aparecer como kind=class."""
+    src = (
+        "@interface Foo (Bar)\n"
+        "- (void)baz;\n"
+        "@end\n"
+    )
+    info = _parse_objc(src)
+    classes_named_foo = [s for s in info.symbols if s.kind == "class" and s.name == "Foo"]
+    assert classes_named_foo == [], (
+        f"Foo apareceu como kind=class além de category — double-emission bug. "
+        f"Symbols: {[(s.kind, s.name) for s in info.symbols]}"
+    )
+
+
+def test_objc_fixture_class_extension_parsed() -> None:
+    """Fixture UserModel.m tem ``@interface UserModel ()`` — precisa virar class_extension."""
+    info = parse_objc_file(FIXTURES / "objc-basic" / "Models" / "UserModel.m")
+    exts = [s for s in info.symbols if s.kind == "class_extension"]
+    assert len(exts) >= 1, (
+        f"UserModel ()` na fixture não virou class_extension. "
+        f"Symbols: {[(s.kind, s.name) for s in info.symbols]}"
+    )
+    assert exts[0].name == "UserModel"
+
+
 def test_objc_empty_interface_keeps_body_hash() -> None:
     """``@interface Empty\n@end`` produz body="" — hash precisa existir."""
     src = "@interface Empty\n@end\n"

@@ -34,6 +34,24 @@ assert "objc" in _SUPPORTED_LANGS, (
 _RE_IMPORT = re.compile(r'^#import\s+[<"]([^>"]+)[>"]', re.MULTILINE)
 _RE_MODULE_IMPORT = re.compile(r'^@import\s+(\w+)\s*;', re.MULTILINE)
 
+# P-N-003 (REVIEW PR #16): ObjC categories ``@interface Foo (CategoryName)``
+# e class extensions ``@interface Foo ()`` precisam de regex próprio porque
+# o paren-form não tem superclass colon. ``_RE_CATEGORY`` casa AMBOS — com
+# nome de category (group 2 populado) ou anonymous (group 2 vazio = class
+# extension). O builder mapeia ``kind="category"`` pra visibility=public
+# (cf. builder.py:790).
+#
+# Distinção operacional pro consumer:
+#   group(2) não-vazio → category nomeada (``UIView+Animations``)
+#   group(2) vazio     → class extension (``@interface Foo ()`` —
+#                        adiciona ivars/methods privados ao .m)
+#
+# ``_RE_INTERFACE`` mantém ordem-sensível: o match de category roda ANTES
+# pra que ``@interface Foo (Bar)`` não case primeiro como class sem super.
+_RE_CATEGORY = re.compile(
+    r'@interface\s+(\w+)\s*\(\s*(\w*)\s*\)',
+    re.MULTILINE,
+)
 _RE_INTERFACE = re.compile(
     r'@interface\s+(\w+)\s*(?::\s*(\w+(?:\s*<\w+>)?))?',
     re.MULTILINE,
@@ -88,7 +106,7 @@ _RE_PROPERTY = re.compile(
 @dataclass
 class ObjcSymbolInfo:
     name: str
-    kind: str  # "class" | "protocol" | "implementation" | "method" | "property"
+    kind: str  # "class" | "protocol" | "implementation" | "method" | "property" | "category" | "class_extension"
     is_class_method: bool = False  # True for + methods
     signature: Optional[str] = None
     line: int = 0
@@ -122,8 +140,46 @@ def _parse_objc(source: str) -> ObjcFileInfo:
 
     symbols: list[ObjcSymbolInfo] = []
 
-    # @interface
+    # P-N-003 (REVIEW PR #16): categories e class extensions casam ANTES de
+    # @interface pra que ``@interface Foo (Bar)`` não case primeiro como
+    # class sem superclass. Coletamos os ranges dos category-matches pra
+    # excluir o passo de @interface (evita double-emission).
+    category_ranges: set[int] = set()  # m.start() do header de cada category
+    for m in _RE_CATEGORY.finditer(source):
+        category_ranges.add(m.start())
+        class_name = m.group(1)
+        category_name = m.group(2)  # vazio = class extension
+        line = source[:m.start()].count("\n") + 1
+        if category_name:
+            kind = "category"
+            display_name = f"{class_name}({category_name})"
+            sig = f"@interface {class_name} ({category_name})"
+        else:
+            # Class extension — adiciona surface privada à classe original.
+            # Builder não trata explicitamente; emitimos kind="class_extension"
+            # pra distinguir de category nomeada. Visibility default
+            # (public) é aceitável aqui já que extension ainda é declarada.
+            kind = "class_extension"
+            display_name = class_name
+            sig = f"@interface {class_name} ()"
+        end_m = re.search(r'@end', source[m.end():])
+        body = None
+        if end_m:
+            body = source[m.end():m.end() + end_m.start()]
+        body_hash = hash_body(body) if body is not None else None
+        symbols.append(ObjcSymbolInfo(
+            name=display_name,
+            kind=kind,
+            signature=sig,
+            line=line,
+            body=body,
+            body_hash=body_hash,
+        ))
+
+    # @interface — skip positions já cobertas por category/extension.
     for m in _RE_INTERFACE.finditer(source):
+        if m.start() in category_ranges:
+            continue
         name = m.group(1)
         superclass = m.group(2)
         line = source[:m.start()].count("\n") + 1
