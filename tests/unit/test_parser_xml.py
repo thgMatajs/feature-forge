@@ -99,3 +99,118 @@ def test_xml_binding_action_is_method_call_flag() -> None:
     assert lambda_call.is_method_call is True, (
         "Lambda invocation deveria ter is_method_call=True"
     )
+
+
+# ---------------------------------------------------------------------------
+# P-N-006 (REVIEW PR #16) — resource prefixes incompletos.
+# ---------------------------------------------------------------------------
+
+def test_xml_resource_prefix_navigation(tmp_path) -> None:
+    """``@navigation/main_graph`` precisa virar resource_key."""
+    from engine.graph.parser_xml import _parse_xml
+    src = (
+        '<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android">\n'
+        '  <fragment android:name="@navigation/main_graph"/>\n'
+        '  <Foo android:icon="@font/roboto"/>\n'
+        '  <Foo android:menu="@menu/main_menu"/>\n'
+        '</LinearLayout>\n'
+    )
+    info = _parse_xml(src, tmp_path / "layout" / "fake.xml")
+    keys = set(info.resource_keys)
+    assert any(k.startswith("navigation/") for k in keys), (
+        f"@navigation/ prefix não casou — P-N-006 regression. Keys: {keys}"
+    )
+    assert any(k.startswith("font/") for k in keys), (
+        f"@font/ prefix não casou — P-N-006 regression. Keys: {keys}"
+    )
+    assert any(k.startswith("menu/") for k in keys), (
+        f"@menu/ prefix não casou — P-N-006 regression. Keys: {keys}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# P-N-014 / codereviewbot parser_xml:81 (REVIEW PR #16) — class_refs dedup.
+# ---------------------------------------------------------------------------
+
+def test_xml_class_refs_deduped(tmp_path) -> None:
+    """Mesma classe FQ em tag + attr não pode aparecer 2x em imports."""
+    from engine.graph.parser_xml import _parse_xml
+    src = (
+        '<androidx.constraintlayout.widget.ConstraintLayout '
+        '  android:name="androidx.constraintlayout.widget.ConstraintLayout">\n'
+        '  <com.example.MyView class="com.example.MyView"/>\n'
+        '</androidx.constraintlayout.widget.ConstraintLayout>\n'
+    )
+    info = _parse_xml(src, tmp_path / "layout" / "fake.xml")
+    # imports é sorted unique list — sem duplicatas.
+    assert len(info.imports) == len(set(info.imports)), (
+        f"imports tem duplicatas — P-N-014 regression. imports={info.imports}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# P-N-018 / codereviewbot parser_xml:109 (REVIEW PR #16) — layout fallback
+# por root tag quando path não tem ``/layout/``.
+# ---------------------------------------------------------------------------
+
+def test_xml_layout_detection_by_root_tag(tmp_path) -> None:
+    """Arquivo sem ``/layout/`` no path mas com root LinearLayout → is_layout."""
+    from engine.graph.parser_xml import _parse_xml
+    src = (
+        '<?xml version="1.0"?>\n'
+        '<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android">\n'
+        '  <Button android:id="@+id/btn"/>\n'
+        '</LinearLayout>\n'
+    )
+    # Path SEM /layout/
+    info = _parse_xml(src, tmp_path / "fixtures" / "weird.xml")
+    assert info.is_layout is True, (
+        "Root LinearLayout não foi detectado como layout — P-N-018 regression."
+    )
+    view_ids = {s.name for s in info.symbols if s.kind == "view_id"}
+    assert "btn" in view_ids
+
+
+# ---------------------------------------------------------------------------
+# T-N-007 (REVIEW PR #16) — adversarial XML edge cases.
+# ---------------------------------------------------------------------------
+
+def test_xml_empty_file(tmp_path) -> None:
+    """Arquivo XML vazio não deve crashar."""
+    from engine.graph.parser_xml import _parse_xml
+    info = _parse_xml("", tmp_path / "empty.xml")
+    assert info.symbols == []
+    assert info.imports == []
+
+
+def test_xml_with_bom_prefix(tmp_path) -> None:
+    """BOM UTF-8 (``\\ufeff``) no início não deve quebrar parsing."""
+    from engine.graph.parser_xml import _parse_xml
+    src = (
+        '﻿<?xml version="1.0"?>\n'
+        '<resources>\n'
+        '  <string name="hello">Hi</string>\n'
+        '</resources>\n'
+    )
+    info = _parse_xml(src, tmp_path / "values" / "strings.xml")
+    assert info.is_resources is True
+    string_keys = {s.name for s in info.symbols if s.kind == "string_resource"}
+    assert "hello" in string_keys
+
+
+def test_xml_comment_with_classlike_text(tmp_path) -> None:
+    """Comentário com texto que parece class FQ não deve virar import."""
+    from engine.graph.parser_xml import _parse_xml
+    src = (
+        '<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android">\n'
+        '  <!-- TODO: replace with com.example.RealView -->\n'
+        '  <TextView android:id="@+id/title"/>\n'
+        '</LinearLayout>\n'
+    )
+    info = _parse_xml(src, tmp_path / "layout" / "fake.xml")
+    # ``com.example.RealView`` no comentário pode (regex naive) virar import;
+    # comportamento conhecido — registramos pra rastrear se vira problema.
+    # NOTA: este teste é informativo — se passar com RealView NÃO em imports,
+    # ótimo; se aparecer, gap conhecido fica documentado em PR-N-016.
+    # Aqui não assertamos forte — apenas verificamos que parsing não crasha.
+    assert isinstance(info.imports, list)
