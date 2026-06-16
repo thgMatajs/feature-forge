@@ -176,3 +176,90 @@ def test_objc_parser_distinguishes_class_from_implementation() -> None:
     kinds = {s.kind for s in info.symbols}
     assert "class" in kinds
     assert "implementation" in kinds
+
+
+# ---------------------------------------------------------------------------
+# P-N-001 (REVIEW PR #16) — body extraction de método ObjC tem que popular
+# ``body`` e ``body_hash``. Antes do fix, ``find_opening_brace`` recebia um
+# offset DEPOIS do ``{`` (regex consumia o delimitador) e procurava o
+# próximo ``{`` ou retornava None → body sempre None.
+# ---------------------------------------------------------------------------
+
+def test_objc_method_body_is_populated() -> None:
+    """Método com corpo precisa entregar ``body`` não-None."""
+    src = (
+        "@implementation Foo\n"
+        "- (NSString *)greet {\n"
+        "    return @\"hello\";\n"
+        "}\n"
+        "@end\n"
+    )
+    info = _parse_objc(src)
+    methods = [s for s in info.symbols if s.kind == "method"]
+    assert len(methods) == 1
+    assert methods[0].body is not None, (
+        "Method body retornou None — P-N-001 regression. "
+        f"Symbol: {methods[0]!r}"
+    )
+    assert "return @\"hello\"" in methods[0].body
+    assert methods[0].body_hash is not None
+
+
+def test_objc_fixture_method_has_body() -> None:
+    """Fixture canônica: ``UserModel.m initWithId:name:`` precisa de body."""
+    info = parse_objc_file(FIXTURES / "objc-basic" / "Models" / "UserModel.m")
+    methods = [s for s in info.symbols if s.kind == "method"]
+    init_m = next((m for m in methods if m.name == "initWithId:name:"), None)
+    assert init_m is not None, (
+        f"Selector composto initWithId:name: ausente. Vistos: "
+        f"{[m.name for m in methods]}"
+    )
+    assert init_m.body is not None, (
+        "Body do init na fixture saiu None — P-N-001 regression."
+    )
+    assert "super init" in init_m.body
+
+
+# ---------------------------------------------------------------------------
+# P-N-011 (REVIEW PR #16) — method header multi-linha (3+ selectors) é
+# padrão ObjC; antes do fix, ``[^\n{;]+?`` no rest group bloqueava ``\n``.
+# ---------------------------------------------------------------------------
+
+def test_objc_multiline_method_header() -> None:
+    """Header quebrado em múltiplas linhas continua casando."""
+    src = (
+        "@implementation Foo\n"
+        "- (void)setUser:(NSString *)u\n"
+        "          email:(NSString *)e\n"
+        "       password:(NSString *)p {\n"
+        "    return;\n"
+        "}\n"
+        "@end\n"
+    )
+    info = _parse_objc(src)
+    methods = [s for s in info.symbols if s.kind == "method"]
+    assert len(methods) == 1, (
+        f"Multi-line header não casou — P-N-011 regression. Symbols: "
+        f"{[(s.kind, s.name) for s in info.symbols]}"
+    )
+    assert methods[0].name == "setUser:email:password:"
+    assert methods[0].body is not None
+
+
+# ---------------------------------------------------------------------------
+# P-N-002 (REVIEW PR #16) — body vazio (``@interface Foo\n@end``) deve
+# preservar body_hash distinto de None (alinhamento com parser_java).
+# ---------------------------------------------------------------------------
+
+def test_objc_empty_interface_keeps_body_hash() -> None:
+    """``@interface Empty\n@end`` produz body="" — hash precisa existir."""
+    src = "@interface Empty\n@end\n"
+    info = _parse_objc(src)
+    classes = [s for s in info.symbols if s.kind == "class"]
+    assert len(classes) == 1
+    # body string vazia (entre @interface e @end) é um valor válido — não None.
+    assert classes[0].body is not None
+    assert classes[0].body_hash is not None, (
+        "Empty interface caiu pra body_hash=None — P-N-002 regression "
+        "(truthiness vs is-not-none)."
+    )

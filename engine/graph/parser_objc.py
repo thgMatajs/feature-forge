@@ -46,11 +46,22 @@ _RE_IMPLEMENTATION = re.compile(r'@implementation\s+(\w+)', re.MULTILINE)
 # impedindo que comentários ``// - here's a note`` casem. Captura toda a
 # header até o primeiro ``{`` ou ``;`` pra que o parser extraia selector
 # segments num passo separado (C-002).
+#
+# P-N-001 (REVIEW PR #16): usa lookahead ``(?=\{|;)`` em vez de consumir o
+# delimitador, pra que ``m.end()`` aponte PARA o ``{`` (não depois dele).
+# Sem isso, ``find_opening_brace(source, m.end())`` pulava o `{` real e
+# procurava o próximo — body extraction de todo método ObjC retornava None.
+#
+# P-N-011 (REVIEW PR #16): rest group passa a aceitar ``\n`` (multi-line
+# headers são padrão em ObjC com 3+ selectors). A âncora ``^[+-]`` no MODE
+# MULTILINE garante que só linhas começando com ``+``/``-`` iniciem o match,
+# então permitir ``\n`` no rest não causa over-match — o terminador ``{``
+# ou ``;`` continua delimitando precisamente.
 _RE_METHOD_HEADER = re.compile(
     r'^([+-])\s*'                            # 1: class/instance
     r'\(([\w\s\*<>,\[\]{}]+)\)\s*'            # 2: return type
-    r'([^\n{;]+?)'                            # 3: rest of header (selector + params)
-    r'\s*(?:\{|;)',                           # body opener or no-body decl
+    r'([^{;]+?)'                              # 3: rest of header (selector + params, NL ok)
+    r'\s*(?=\{|;)',                           # lookahead pro body opener / no-body decl
     re.MULTILINE,
 )
 
@@ -122,7 +133,10 @@ def _parse_objc(source: str) -> ObjcFileInfo:
         body = None
         if end_m:
             body = source[m.end():m.end() + end_m.start()]
-        body_hash = hash_body(body) if body else None
+        # P-N-002 (REVIEW PR #16): ``is not None`` em vez de truthiness pra
+        # alinhar com parser_java e preservar empty body (``@interface Foo\n@end``)
+        # como hash distinto em vez de cair pra None.
+        body_hash = hash_body(body) if body is not None else None
         symbols.append(ObjcSymbolInfo(
             name=name,
             kind="class",
@@ -139,7 +153,8 @@ def _parse_objc(source: str) -> ObjcFileInfo:
         line = source[:m.start()].count("\n") + 1
         end_m = re.search(r'@end', source[m.end():])
         body = source[m.end():m.end() + end_m.start()] if end_m else None
-        body_hash = hash_body(body) if body else None
+        # P-N-002 (REVIEW PR #16): truthiness → ``is not None``.
+        body_hash = hash_body(body) if body is not None else None
         symbols.append(ObjcSymbolInfo(
             name=name,
             kind="protocol",
@@ -155,7 +170,8 @@ def _parse_objc(source: str) -> ObjcFileInfo:
         line = source[:m.start()].count("\n") + 1
         end_m = re.search(r'@end', source[m.end():])
         body = source[m.end():m.end() + end_m.start()] if end_m else None
-        body_hash = hash_body(body) if body else None
+        # P-N-002 (REVIEW PR #16): truthiness → ``is not None``.
+        body_hash = hash_body(body) if body is not None else None
         symbols.append(ObjcSymbolInfo(
             name=name,
             kind="implementation",
@@ -192,12 +208,19 @@ def _parse_objc(source: str) -> ObjcFileInfo:
         prefix = "+" if is_class else "-"
         sig = f"{prefix} ({ret_type}){full_sel}"
 
-        # Body extraction via brace matching
+        # Body extraction via brace matching. P-N-001 (REVIEW PR #16): com o
+        # regex usando lookahead pro ``{``/``;``, ``m.end()`` aponta PRO
+        # ``{`` (ou ``;``). ``find_opening_brace`` skipa whitespace e retorna
+        # o offset do ``{`` quando presente, ou None pra header terminando
+        # em ``;`` (forward decl).
         brace_offset = find_opening_brace(source, m.end())
         body = None
         if brace_offset is not None:
             body = extract_function_body(source, brace_offset, language="objc")
-        body_hash = hash_body(body) if body else None
+        # P-N-002 (REVIEW PR #16): truthiness ``if body`` cai pra None com
+        # body vazio (``{}``) — inconsistente com parser_java (linha 190).
+        # ``is not None`` preserva empty body como hash distinto.
+        body_hash = hash_body(body) if body is not None else None
 
         symbols.append(ObjcSymbolInfo(
             name=full_sel,
