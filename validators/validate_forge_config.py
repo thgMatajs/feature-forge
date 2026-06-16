@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""validate_workflow_config.py — workflow-config.yaml schema + sha256 integrity.
+"""validate_forge_config.py — forge-config.yaml schema + sha256 integrity.
 
-Validates `.claude/workflow-config.yaml`:
-- schema-version == 1 (RULE-001)
+Validates `.claude/forge/forge-config.yaml` (v1.3 sub-namespace; engine/init
+still writes the legacy `.claude/workflow-config.yaml` until Task 0.10
+migrates the writer — see `forge_config_path` helper for resolution order).
+
+- schema-version == "1.3" (RULE-001)
 - required top-level blocks present (identity, platforms, cards, paths,
   conventions, backend, workflow, persona, memory, graph)
 - identity.project-slug matches [a-z0-9-]+ (RULE-002)
@@ -19,7 +22,7 @@ Validates `.claude/workflow-config.yaml`:
 - workflow.readiness-strictness ∈ {strict, standard, lean} (RULE-013)
 - L1 mutation lock — operations bloqueadas se algum L1 está em phase ativa (RULE-018)
 
-Schema source: docs/schemas/workflow-config.md (RULE-001..018) +
+Schema source: docs/schemas/forge-config.md (RULE-001..018) +
 docs/schemas/backend-axes.md (RULE-019..024). DET-6 Phase B removeu
 RULE-010/011 (legacy `backend.provider`) — esses slots ficam reservados
 como audit-trail do clean-break pre-production.
@@ -50,8 +53,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from engine.utils.paths import (  # noqa: E402
     cards_dir,
     forge_cards_local_dir,
+    forge_config_path,
     memory_dir,
-    workflow_config_path,
 )
 from engine.utils.sha256 import file_sha256  # noqa: E402
 from engine.utils.yaml_io import YamlIOError, read_yaml_or_default  # noqa: E402
@@ -79,6 +82,20 @@ _VALID_CELL_STATUSES = {"active", "migrating-to", "deprecated"}
 _SLUG_RE = re.compile(r"^[a-z0-9-]+$")
 # Estados L1 que indicam fase ativa (mutation forbidden via RULE-018).
 _L1_ACTIVE_STATES = {"planning", "implementing", "verifying"}
+
+
+class ValidateForgeConfig:
+    """Schema-version + identity namespace for the forge-config validator.
+
+    v1.3 (pilot-ready) renamed the artifact `workflow-config.yaml` →
+    `forge-config.yaml` (Decision 18 / spec §5 clean-break, pre-production).
+    Schema version bumped from `1` → `"1.3"` to make the format change
+    explicit at the YAML level. The module-level :func:`validate` reads
+    this constant — instances are not required for validation; the class
+    exists as a canonical handle for callers, tests, and registry lookups.
+    """
+
+    EXPECTED_SCHEMA_VERSION: str = "1.3"
 
 
 def _check_required(data: dict[str, Any]) -> list[str]:
@@ -357,20 +374,20 @@ def _check_card_sha(project_root: Path, data: dict[str, Any]) -> list[str]:
 
 
 def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
-    """Validate workflow-config.yaml schema + card snapshot integrity."""
-    cfg_path = workflow_config_path(project_root)
+    """Validate forge-config.yaml schema + card snapshot integrity."""
+    cfg_path = forge_config_path(project_root)
     if not cfg_path.is_file():
         return result_fail(
-            "workflow-config.yaml ausente",
+            "forge-config.yaml ausente",
             what_failed=f"missing {cfg_path}",
             where=str(cfg_path),
-            why=["Sem workflow-config, nenhum command funciona."],
+            why=["Sem forge-config, nenhum command funciona."],
             paths=make_paths(
                 "Rodar `forge init` pra criar o arquivo",
                 "init detecta o projeto e escreve o config.",
-                "Restaurar do git — `git checkout -- .claude/workflow-config.yaml`",
+                "Restaurar do git — `git checkout -- .claude/forge/forge-config.yaml`",
                 "Se foi removido por engano.",
-                "Pedir backup ao time — `git log -- .claude/workflow-config.yaml`",
+                "Pedir backup ao time — `git log -- .claude/forge/forge-config.yaml`",
                 "Se nunca foi committed, alguém local pode ter cópia.",
             ),
         )
@@ -379,31 +396,37 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
         data = read_yaml_or_default(cfg_path, {}) or {}
     except (YamlIOError, OSError, UnicodeDecodeError) as exc:
         return result_fail(
-            "workflow-config.yaml YAML parse error",
+            "forge-config.yaml YAML parse error",
             what_failed=str(exc),
             where=str(cfg_path),
             why=["forge não consegue parsear o config — todos os comandos falham."],
             paths=make_paths(
                 "Corrigir o YAML manualmente",
                 "Indentação ou aspas geralmente.",
-                "Reverter pro último .bak — `cp workflow-config.yaml.bak workflow-config.yaml`",
+                "Reverter pro último .bak — `cp forge-config.yaml.bak forge-config.yaml`",
                 "Atomic-write deixa .bak quando configurado.",
                 "Re-rodar `forge reconfigure` em outra branch",
                 "Para regenerar do zero preservando dados.",
             ),
         )
 
-    if data.get("schema-version") != 1:
+    if data.get("schema-version") != ValidateForgeConfig.EXPECTED_SCHEMA_VERSION:
         return result_fail(
             f"schema-version inválido: {data.get('schema-version')!r}",
-            what_failed=f"got {data.get('schema-version')!r}, expected 1",
+            what_failed=(
+                f"got {data.get('schema-version')!r}, "
+                f"expected {ValidateForgeConfig.EXPECTED_SCHEMA_VERSION!r}"
+            ),
             where=str(cfg_path),
-            why=["v1 é a única versão suportada (RULE-001)"],
+            why=[
+                f"{ValidateForgeConfig.EXPECTED_SCHEMA_VERSION} é a única versão "
+                "suportada (RULE-001 — v1.3 clean break, Decision 18 / spec §5)"
+            ],
             paths=make_paths(
-                "Setar schema-version: 1 no topo",
-                "v2 ainda não existe.",
-                "Rodar migrador — `forge raw migrator-N-to-1`",
-                "Se o config veio de uma versão futura.",
+                f"Setar schema-version: \"{ValidateForgeConfig.EXPECTED_SCHEMA_VERSION}\" no topo",
+                "Versões anteriores não são compatíveis (clean-break pre-production).",
+                "Rodar migrador — `forge raw migrator-N-to-1-3`",
+                "Se o config veio de uma versão anterior.",
                 "Re-init — `forge init` em backup",
                 "Se quiser começar do zero.",
             ),
@@ -445,10 +468,10 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
             ],
             paths=make_paths(
                 "Corrigir o YAML manualmente seguindo as RULEs apontadas",
-                "Cada violation cita o código da RULE em docs/schemas/{workflow-config,backend-axes}.md.",
+                "Cada violation cita o código da RULE em docs/schemas/{forge-config,backend-axes}.md.",
                 "Re-rodar `forge reconfigure` se o erro for em bloco inteiro",
                 "Reconfigure regenera os blocos preservando customizações.",
-                "Restaurar do git — `git checkout -- .claude/workflow-config.yaml`",
+                "Restaurar do git — `git checkout -- .claude/forge/forge-config.yaml`",
                 "Se a edição manual deixou inconsistente.",
             ),
         )
@@ -490,7 +513,7 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
 
     if combined_warns:
         return result_warn(
-            f"workflow-config OK com {len(combined_warns)} warning(s)",
+            f"forge-config OK com {len(combined_warns)} warning(s)",
             what_failed="; ".join(combined_warns[:3])
             + (f" (+{len(combined_warns) - 3} more)" if len(combined_warns) > 3 else ""),
             where=str(cfg_path),
@@ -501,7 +524,7 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
         )
 
     return result_pass(
-        f"workflow-config OK ({len(data.get('cards', {}).get('active') or [])} cards ativos)"
+        f"forge-config OK ({len(data.get('cards', {}).get('active') or [])} cards ativos)"
     )
 
 

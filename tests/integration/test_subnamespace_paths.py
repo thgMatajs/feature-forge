@@ -55,23 +55,23 @@ def test_validators_import_subnamespace_helpers() -> None:
 
     import check_cyclomatic_complexity as cc
     import check_secrets as cs
-    import validate_workflow_config as vwc
+    import validate_forge_config as vfc
 
     cc_src = inspect.getsource(cc)
     cs_src = inspect.getsource(cs)
-    vwc_src = inspect.getsource(vwc)
+    vfc_src = inspect.getsource(vfc)
 
     # Cada um dos três validators tem que referenciar o helper canônico
     # em algum ponto (import OU chamada). Isso é proxy estático suficiente
     # pra garantir que o callsite migrou.
     assert "forge_config_path" in cc_src or "workflow_config_path" in cc_src
     assert "forge_config_path" in cs_src or "workflow_config_path" in cs_src
-    assert "forge_config_path" in vwc_src or "workflow_config_path" in vwc_src
+    assert "forge_config_path" in vfc_src or "workflow_config_path" in vfc_src
 
     # Sem hardcoded `project_root / ".claude" / "workflow-config.yaml"`
     # remanescente no código (string literal "workflow-config.yaml" sozinho
     # pode aparecer em docstrings / mensagens — só path construction conta).
-    for src in (cc_src, cs_src, vwc_src):
+    for src in (cc_src, cs_src, vfc_src):
         assert '".claude" / "workflow-config.yaml"' not in src, (
             "callsite ainda constrói path hardcoded — deveria usar helper"
         )
