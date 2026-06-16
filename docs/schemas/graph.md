@@ -50,15 +50,25 @@ v1 picks SQLite. Migration to Kuzu is a v2 candidate if join verbosity hurts.
 CREATE TABLE files (
   id              INTEGER PRIMARY KEY,
   path            TEXT NOT NULL UNIQUE,         -- relative to repo root
-  language        TEXT,                          -- kotlin | swift | typescript | ...
+  language        TEXT,                          -- kotlin | swift | typescript | java | objc | xml | ...
   module          TEXT,                          -- shared | androidApp | iosApp | webApp
+  source_set      TEXT,                          -- KMP source-set (commonMain | androidMain | iosMain | …) — NULL fora de KMP
   lines           INTEGER,
   last_modified   TEXT,                          -- ISO8601
   sha256          TEXT
 );
 CREATE INDEX idx_files_module ON files(module);
 CREATE INDEX idx_files_language ON files(language);
+CREATE INDEX idx_files_source_set ON files(source_set);
 ```
+
+> **`files.language`** carrega o slug curto da linguagem detectada na
+> ingestão (`engine/graph/builder.py` mapeia extensão → slug). Pós-v1.3
+> o registry inclui Java, Objective-C e XML além de Kotlin/Swift/TS.
+> **`files.source_set`** vem da §Reuse Intelligence (schema v2) — aparece
+> no DDL canônico (`engine/utils/sqlite_io.py`) e fica `NULL` em projetos
+> sem layout KMP. Documentação detalhada da semântica está em §Reuse
+> Intelligence > New columns.
 
 ### `symbols`
 
@@ -606,7 +616,9 @@ redundant platform-specific) at `forge init` and on graph rebuild.
 
 **`files`**
 - `source_set TEXT` — KMP source-set name (`commonMain`, `androidMain`,
-  `iosMain`, …) or NULL for non-KMP projects.
+  `iosMain`, …) or NULL for non-KMP projects. (Também listado no DDL
+  principal da tabela `files` acima — esta seção descreve a semântica
+  reuse-intelligence; a coluna em si é canônica na criação do schema.)
 
 **`symbols`**
 - `receiver_type TEXT` — receiver of an extension function. Non-NULL only for
