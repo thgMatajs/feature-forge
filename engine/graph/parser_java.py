@@ -45,6 +45,7 @@ from engine.graph._body_text import (
     extract_function_body,
     find_opening_brace,
     hash_body,
+    mask_strings_and_comments,
     tokens_to_json,
 )
 
@@ -181,8 +182,15 @@ def _parse_java(source: str) -> JavaFileInfo:
 
     symbols: list[JavaSymbolInfo] = []
 
+    # P-N-004 (REVIEW PR #16, Mandamento #3 reuse-first): aplica masking
+    # de strings/comments antes do _RE_CLASS finditer pra evitar
+    # false-positives em literais (``"class Foo {"`` em string) ou em
+    # javadoc inline (``/* class Bar */``). Offsets preservados — todas
+    # as posições reportadas continuam apontando pra source original.
+    masked = mask_strings_and_comments(source)
+
     # Top-level type declarations.
-    for m in _RE_CLASS.finditer(source):
+    for m in _RE_CLASS.finditer(masked):
         kind_raw = m.group(0)
         name = m.group(1)
         start = m.start()
@@ -249,7 +257,9 @@ def _parse_java(source: str) -> JavaFileInfo:
         if s.kind in {"class", "interface", "enum", "record", "annotation"}
     }
 
-    for m in _RE_METHOD.finditer(source):
+    # P-N-004: methods também rodam sobre source mascarado pra evitar
+    # ``void foo() { ... }`` aparecer dentro de string literal.
+    for m in _RE_METHOD.finditer(masked):
         raw_type = m.group(1)
         method_name = m.group(2)
         params = m.group(3)

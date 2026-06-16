@@ -217,6 +217,50 @@ def test_java_method_with_throws_clause() -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# P-N-004 (REVIEW PR #16, Mandamento #3 reuse-first) — strings e comments
+# precisam ser mascarados antes de _RE_CLASS / _RE_METHOD pra evitar
+# false-positives em literais e javadoc.
+# ---------------------------------------------------------------------------
+
+def test_java_class_in_string_literal_not_emitted() -> None:
+    """``\"class Foo { ... }\"`` em string literal não deve virar symbol."""
+    src = (
+        "package com.example;\n"
+        "class Real {\n"
+        '    static final String TEMPLATE = "class Fake { void m() {} }";\n'
+        "}\n"
+    )
+    info = _parse_java(src)
+    class_names = {s.name for s in info.symbols if s.kind == "class"}
+    assert "Real" in class_names
+    assert "Fake" not in class_names, (
+        f"``class Fake`` em string literal virou symbol — P-N-004 regression. "
+        f"Classes: {class_names}"
+    )
+
+
+def test_java_method_in_block_comment_not_emitted() -> None:
+    """``/* void doStuff() { } */`` em block comment não vira method."""
+    src = (
+        "class Real {\n"
+        "    /*\n"
+        "     * void ghost() {\n"
+        "     *     return;\n"
+        "     * }\n"
+        "     */\n"
+        "    void real() { }\n"
+        "}\n"
+    )
+    info = _parse_java(src)
+    methods = {s.name for s in info.symbols if s.kind == "method"}
+    assert "real" in methods
+    assert "ghost" not in methods, (
+        f"``void ghost()`` em block comment virou method — P-N-004 regression. "
+        f"Methods: {methods}"
+    )
+
+
 def test_java_no_phantom_from_throw_and_super() -> None:
     src = """
     class Bar {

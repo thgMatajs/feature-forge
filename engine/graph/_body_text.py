@@ -332,3 +332,97 @@ def find_opening_brace(source: str, start: int) -> Optional[int]:
             return i
         return None
     return None
+
+
+def mask_strings_and_comments(text: str) -> str:
+    """Return ``text`` com strings e comments substituídos por espaços,
+    preservando offsets/line counts pra regex downstream.
+
+    Promovido de ``parser_kotlin._mask_strings_and_comments`` (P-N-004 /
+    REVIEW PR #16, Mandamento #3 reuse-first) — reutilizável por
+    parser_java e qualquer parser C-style futuro que precise filtrar
+    declarações dentro de literais.
+
+    Handled forms:
+      - Triple-quoted raw strings (Kotlin ``\"\"\" ... \"\"\"``).
+      - Double-quoted strings ``" ... "`` com ``\\"`` escapes.
+      - Single-quoted char literals ``' ... '`` com ``\\'`` escapes.
+      - Block comments ``/* ... */`` (multi-linha; newlines preservadas).
+      - Line comments ``// ...`` até EOL.
+
+    Delimitadores ficam onde estão; só o *conteúdo* é mascarado, então
+    offsets ficam estáveis pra matches subsequentes.
+    """
+    n = len(text)
+    out = list(text)
+    i = 0
+    while i < n:
+        ch = text[i]
+        # Triple-quoted raw string (Kotlin idiom; ignorado em Java mas
+        # inofensivo — Java não tem triple-quote então o text.startswith
+        # nunca casa em fontes Java).
+        if ch == '"' and text.startswith('"""', i):
+            end = text.find('"""', i + 3)
+            if end == -1:
+                for j in range(i + 3, n):
+                    if text[j] != "\n":
+                        out[j] = " "
+                return "".join(out)
+            for j in range(i + 3, end):
+                if text[j] != "\n":
+                    out[j] = " "
+            i = end + 3
+            continue
+        # Block comment.
+        if ch == "/" and i + 1 < n and text[i + 1] == "*":
+            end = text.find("*/", i + 2)
+            if end == -1:
+                for j in range(i + 2, n):
+                    if text[j] != "\n":
+                        out[j] = " "
+                return "".join(out)
+            for j in range(i + 2, end):
+                if text[j] != "\n":
+                    out[j] = " "
+            i = end + 2
+            continue
+        # Line comment.
+        if ch == "/" and i + 1 < n and text[i + 1] == "/":
+            j = i + 2
+            while j < n and text[j] != "\n":
+                out[j] = " "
+                j += 1
+            i = j
+            continue
+        # Double-quoted string (single-line semantics).
+        if ch == '"':
+            j = i + 1
+            while j < n and text[j] != "\n":
+                if text[j] == "\\" and j + 1 < n:
+                    out[j] = " "
+                    out[j + 1] = " "
+                    j += 2
+                    continue
+                if text[j] == '"':
+                    break
+                out[j] = " "
+                j += 1
+            i = j + 1 if j < n and text[j] == '"' else j
+            continue
+        # Single-quoted char literal.
+        if ch == "'":
+            j = i + 1
+            while j < n and text[j] != "\n":
+                if text[j] == "\\" and j + 1 < n:
+                    out[j] = " "
+                    out[j + 1] = " "
+                    j += 2
+                    continue
+                if text[j] == "'":
+                    break
+                out[j] = " "
+                j += 1
+            i = j + 1 if j < n and text[j] == "'" else j
+            continue
+        i += 1
+    return "".join(out)
