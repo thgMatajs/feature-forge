@@ -677,10 +677,17 @@ def _install_hooks(project_root: Path) -> int:
 
 
 def _install_git_hooks(project_root: Path) -> None:
-    """Symlink `.git/hooks/{pre-commit,post-commit,pre-push}` to canonical wrappers.
+    """Install `.git/hooks/{pre-commit,post-commit,pre-push}` as chained delegators.
 
-    Idempotent — pre-existing custom hooks get backed up to `<name>.bak` once
-    before being replaced. On non-git projects this is a no-op.
+    Each wrapper is a Bash script bearing ``# FORGE_DELEGATOR_MARKER``. Pre-existing
+    user hooks (non-wrapper, non-symlink) são migrados pra ``<name>.user`` UMA vez
+    e re-encadeados a partir do wrapper, preservando o que o usuário escreveu
+    (brownfield-safe). Symlinks antigos (estilo Task 0.8 pré-1.4) são descartados
+    porque apontam direto pro forge hook — o wrapper já cobre esse exec.
+
+    Idempotente: re-rodar detecta o marker e no-op. Em projetos não-git é no-op.
+
+    Substitui o install symlink-com-``.bak`` (Task 1.4, v1.3 pilot-ready).
     """
     git_hooks = project_root / ".git" / "hooks"
     if not git_hooks.is_dir():
@@ -692,36 +699,64 @@ def _install_git_hooks(project_root: Path) -> None:
         "pre-push": "git-pre-push",
     }
     for git_name, claude_name in mappings.items():
-        # Task 0.8 (v1.3): hooks ficam sob ``.claude/forge/hooks/``.
-        source = forge_hooks_dir(project_root) / claude_name
-        if not source.is_file():
+        forge_hook = forge_hooks_dir(project_root) / claude_name
+        if not forge_hook.is_file():
             continue
         target = git_hooks / git_name
+        user_backup = git_hooks / f"{git_name}.user"
 
-        if target.is_symlink() or target.exists():
-            backup = target.with_name(target.name + ".bak")
-            if not backup.exists():
+        # Idempotente: já é um forge delegator? (file, não symlink, com marker)
+        if target.exists() and not target.is_symlink():
+            try:
+                content = target.read_text()
+                if "# FORGE_DELEGATOR_MARKER" in content:
+                    continue
+            except (OSError, UnicodeDecodeError):
+                pass
+
+        # Migra hook pré-existente do usuário pra <name>.user
+        if target.exists() or target.is_symlink():
+            if target.is_symlink():
+                # Symlink estilo antigo — descarta, wrapper substituirá
                 try:
-                    target.replace(backup)
+                    target.unlink()
                 except OSError:
-                    try:
-                        target.unlink()
-                    except OSError:
-                        continue
+                    continue
+            elif not user_backup.exists():
+                # Primeira migração de um hook real do usuário
+                try:
+                    target.rename(user_backup)
+                except OSError:
+                    continue
             else:
+                # .user já existe de migração anterior — preserva-o, descarta target
                 try:
                     target.unlink()
                 except OSError:
                     continue
 
+        # Escreve o wrapper encadeado
+        wrapper = (
+            "#!/usr/bin/env bash\n"
+            "# FORGE_DELEGATOR_MARKER\n"
+            "set -e\n"
+            "# Chain user hook if present (preserves brownfield content)\n"
+            f'if [ -x "$(dirname "$0")/{git_name}.user" ]; then\n'
+            f'    "$(dirname "$0")/{git_name}.user" "$@"\n'
+            "fi\n"
+            "# Then run forge hook\n"
+            f'exec "{forge_hook}" "$@"\n'
+        )
         try:
-            # Task 0.8: o symlink fica em ``.git/hooks/<git_name>`` → relative
-            # path precisa subir 2 níveis até a raiz do projeto e descer pra
-            # ``.claude/forge/hooks/<claude_name>``.
-            target.symlink_to(Path("../../.claude/forge/hooks") / claude_name)
+            target.write_text(wrapper)
             target.chmod(0o755)
         except OSError:
-            pass
+            continue
+        if user_backup.exists():
+            try:
+                user_backup.chmod(0o755)  # preserva exec bit
+            except OSError:
+                pass
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────
