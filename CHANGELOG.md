@@ -7,6 +7,26 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (v1.3 Wave 1 — brownfield-safe init, 2026-06-16)
+
+- **v1.3 Wave 1 — Brownfield-safe init.** `_detect_brownfield` helper signals
+  on `.claude/{skills,agents,settings.json}` content. `engine.utils.settings_merge`
+  provides append-only `merge_settings_json` (dedup-via-deep-equal) +
+  JSON5-tolerant `read_settings_tolerant` (comments + trailing commas via json5
+  lib). `engine.init._install_git_hooks` rewritten as chained delegator: user
+  pre-commit / post-commit / pre-push hooks migrate to `<name>.user` and chain
+  via bash wrapper bearing `FORGE_DELEGATOR_MARKER`. Idempotent; upgrades old
+  symlink-style installs. Synthetic `tests/fixtures/meobonsai-class/` (5 skills
+  + 3 agents + 2 user hooks + settings.json + CLAUDE.md) drives 3 regression
+  tests + 3 brownfield contract tests. New dep: `json5>=0.9.10` in
+  `pyproject.toml`. 14 new tests, zero regressions.
+
+  **Known gap:** `merge_settings_json` is provided as a standalone utility but
+  not yet invoked from `engine.init.run`'s brownfield branch — the e2e test
+  (`tests/integration/test_init_brownfield_meobonsai_class.py`) is a composition
+  test that exercises the helper manually. Wiring into the interactive init
+  pipeline is a follow-up.
+
 ### Added (v1.3 Wave 0 — host abstraction + sub-namespace foundation, 2026-06-16)
 
 - **v1.3 Wave 0 — Host abstraction + sub-namespace foundation.** New `engine/host/`
