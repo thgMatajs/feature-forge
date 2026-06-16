@@ -145,6 +145,16 @@ def _resolve(cmd: str) -> Callable[[list[str]], int | None]:
 # que precisam funcionar antes do `bash .claude/bootstrap.sh` ter rodado
 # (ex.: usuário inspecionando versão ou pedindo ajuda pra descobrir como
 # inicializar).
+#
+# C-004 (master review PR #16, thgMatajs inline): ``graph``, ``status``,
+# ``memory`` e ``raw`` são read-only e devem completar pré-bootstrap. UX
+# pra novo dev que clona o repo e roda ``forge status`` pra inspecionar
+# estado — bloquear com "rode bash .claude/bootstrap.sh" antes de o user
+# sequer entender o que o comando faz é hostil. ``raw`` é a pipe genérica
+# de leitura — mesmo princípio. Comandos que MUTAM state (``init``,
+# ``plan``, ``implement``, ``verify``, ``reconfigure``, ``evolve``,
+# ``undo``, ``qa``, ``ingest``) ficam fora da skip-list e continuam
+# disparando o check.
 _BOOTSTRAP_SKIP_COMMANDS: frozenset[str] = frozenset({
     "--version",
     "-v",
@@ -153,6 +163,10 @@ _BOOTSTRAP_SKIP_COMMANDS: frozenset[str] = frozenset({
     "help",
     "doctor",
     "bootstrap",  # reservado caso vire subcommand explícito no futuro
+    "graph",      # read-only — query menu sobre graph.db
+    "status",     # read-only — inspeção de estado
+    "memory",     # read-only — leitura/listagem de L1/L2/L3
+    "raw",        # read-only — pipe genérica de leitura
 })
 
 
@@ -242,12 +256,20 @@ def main(argv: list[str] | None = None) -> int:
     # precisam rodar pré-bootstrap. Demais subcommands recebem friendly
     # error com instrução pra rodar `bash .claude/bootstrap.sh`.
     if cmd not in _BOOTSTRAP_SKIP_COMMANDS:
+        from engine.utils.paths import (
+            ProjectRootNotFoundError,
+            find_project_root,
+        )
         try:
-            from engine.utils.paths import find_project_root
             err = _check_bootstrap_state(find_project_root())
-        except Exception:  # noqa: BLE001
+        except ProjectRootNotFoundError:
             # Sem project root resolvível → não bloqueia; o handler dará a
             # mensagem canônica de ProjectRootNotFoundError.
+            #
+            # M-014 fix (master review PR #16): except narrow em vez de
+            # ``except Exception``. Outras exceptions (OSError, perms,
+            # bugs) propagam — telemetria preservada. O handler ainda
+            # roda e dá mensagem canônica pro caso esperado.
             err = None
         if err:
             sys.stderr.write(err + "\n")
