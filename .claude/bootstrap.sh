@@ -33,15 +33,36 @@ fi
 # Glob `hooks/git-*` pega TODOS os delegators presentes — futuros hooks (ex.:
 # `hooks/git-post-commit`) entram automaticamente sem editar este script
 # (PR #16 finding T-N-016).
+#
+# Em worktrees Git, `.git` é arquivo apontando pra `.git/worktrees/<name>/`,
+# e o subdir `hooks/` não é criado automaticamente nesse path. Resolve o
+# caminho canônico via `git rev-parse --git-path hooks` (funciona tanto no
+# .git/ tradicional quanto no gitdir do worktree) e garante mkdir.
+GIT_HOOKS_DIR="$(git rev-parse --git-path hooks 2>/dev/null || echo "")"
+if [[ -n "$GIT_HOOKS_DIR" ]]; then
+    mkdir -p "$GIT_HOOKS_DIR"
+else
+    # Fallback defensivo: fora de repo git, mantém o path histórico.
+    GIT_HOOKS_DIR=".git/hooks"
+fi
+
 for hook_source in hooks/git-*; do
     [[ -f "$hook_source" ]] || continue
     h="${hook_source#hooks/git-}"
-    target=".git/hooks/$h"
+    [[ -d "$GIT_HOOKS_DIR" ]] || { echo "  [skip] $GIT_HOOKS_DIR não acessível"; continue; }
+    target="$GIT_HOOKS_DIR/$h"
     source_file="$hook_source"
+    # Usa path absoluto pro symlink — funciona tanto no .git/hooks/ canônico
+    # quanto em worktrees (cujo GIT_HOOKS_DIR vive em .git/worktrees/<n>/hooks/,
+    # de onde "../../hooks/git-X" não resolveria corretamente).
+    expected="$REPO_ROOT/$source_file"
+    # Forma relativa histórica (bootstrap pre-T-N-016) — aceita como
+    # equivalente apenas se o target ainda existe (idempotência pra repos
+    # que rodaram bootstrap anterior).
+    expected_legacy="../../$source_file"
     if [[ -f "$source_file" ]]; then
         if [[ -L "$target" || -f "$target" ]]; then
             current=$(readlink "$target" 2>/dev/null || echo "")
-            expected="../../$source_file"
             # R3.2 fix: `[[ -L "$target" ]]` is true even when the symlink
             # target doesn't exist (broken link). Combine -L with -e (target
             # exists) so a broken symlink falls through to relink instead
@@ -49,12 +70,16 @@ for hook_source in hooks/git-*; do
             if [[ "$current" == "$expected" && -e "$target" ]]; then
                 echo "  ✓ $target → $source_file (já linkado)"
                 continue
-            elif [[ "$current" == "$expected" && ! -e "$target" ]]; then
+            elif [[ "$current" == "$expected_legacy" && -e "$target" ]]; then
+                # Symlink legado (relativo) ainda válido — preserva idempotência.
+                echo "  ✓ $target → $source_file (já linkado, forma legada)"
+                continue
+            elif [[ ( "$current" == "$expected" || "$current" == "$expected_legacy" ) && ! -e "$target" ]]; then
                 # Symlink aponta pro lugar certo mas o alvo sumiu — relinka.
                 echo "  [bootstrap] $target era symlink quebrado — recriando"
                 rm -f "$target"
                 # fall through to ln -s below
-            elif [[ -n "$current" && "$current" != "$expected" ]]; then
+            elif [[ -n "$current" && "$current" != "$expected" && "$current" != "$expected_legacy" ]]; then
                 echo "  [aviso] $target já existe e aponta pra outro lugar — pulando (revisão manual)"
                 continue
             else
@@ -63,7 +88,7 @@ for hook_source in hooks/git-*; do
                 continue
             fi
         fi
-        ln -s "../../$source_file" "$target"
+        ln -s "$expected" "$target"
         chmod +x "$source_file" 2>/dev/null || true
         echo "  ✓ $target → $source_file (novo symlink)"
     else
