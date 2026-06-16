@@ -200,6 +200,32 @@ def _is_git_repo(root: Path) -> bool:
     return (root / ".git").exists()
 
 
+def _detect_brownfield(project_root: Path) -> bool:
+    """True if the project's `.claude/` directory already carries user-owned
+    content that forge must not touch.
+
+    Signals:
+    - `.claude/skills/` exists and is non-empty
+    - `.claude/agents/` exists and is non-empty
+    - `.claude/settings.json` exists with non-zero size
+
+    Used by init to switch into brownfield-safe mode (Wave 1) — append-only
+    settings merge, hook delegator chained, sub-namespace `.claude/forge/`
+    isolation. Spec §3 / §4.
+    """
+    claude_dir = project_root / ".claude"
+    if not claude_dir.exists():
+        return False
+    for sub in ("skills", "agents"):
+        d = claude_dir / sub
+        if d.exists() and any(d.iterdir()):
+            return True
+    settings = claude_dir / "settings.json"
+    if settings.exists() and settings.stat().st_size > 0:
+        return True
+    return False
+
+
 @dataclass
 class OrphanSignal:
     """Signal que casou em scan mas não em nenhum card (canon ∪ local).
