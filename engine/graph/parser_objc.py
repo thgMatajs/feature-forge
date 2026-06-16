@@ -9,6 +9,7 @@ via body_hash) without the complexity of a full ObjC AST walker.
 
 from __future__ import annotations
 
+import bisect
 import logging
 import re
 from dataclasses import dataclass, field
@@ -158,6 +159,19 @@ def parse_objc_file(path: Path) -> ObjcFileInfo:
     return _parse_objc(source)
 
 
+def _find_end_after(end_positions: list[int], offset: int) -> Optional[int]:
+    """P-N-018 (REVIEW PR #16): retorna o offset do primeiro ``@end`` a partir
+    de ``offset`` via binary search em positions pré-computadas. Substitui
+    ``re.search(r'@end', source[offset:])`` que era O(N) por chamada × N
+    chamadas = O(N²) em arquivos ObjC grandes. Custo amortizado: O(log N)
+    por chamada após O(N) de precompute.
+    """
+    idx = bisect.bisect_left(end_positions, offset)
+    if idx < len(end_positions):
+        return end_positions[idx]
+    return None
+
+
 def _parse_objc(source: str) -> ObjcFileInfo:
     # Imports
     imports: list[str] = []
@@ -167,6 +181,10 @@ def _parse_objc(source: str) -> ObjcFileInfo:
         imports.append(f"@module:{m.group(1)}")
 
     symbols: list[ObjcSymbolInfo] = []
+
+    # P-N-018 (REVIEW PR #16): pré-computa offsets de ``@end`` uma única vez.
+    # Substitui 3 loops de re.search por binary search em lista ordenada.
+    end_positions: list[int] = [m.start() for m in re.finditer(r'@end', source)]
 
     # P-N-003 (REVIEW PR #16): categories e class extensions casam ANTES de
     # @interface pra que ``@interface Foo (Bar)`` não case primeiro como
@@ -190,10 +208,11 @@ def _parse_objc(source: str) -> ObjcFileInfo:
             kind = "class_extension"
             display_name = class_name
             sig = f"@interface {class_name} ()"
-        end_m = re.search(r'@end', source[m.end():])
+        # P-N-018: binary search em vez de re.search(source[m.end():]).
+        end_offset = _find_end_after(end_positions, m.end())
         body = None
-        if end_m:
-            body = source[m.end():m.end() + end_m.start()]
+        if end_offset is not None:
+            body = source[m.end():end_offset]
         body_hash = hash_body(body) if body is not None else None
         symbols.append(ObjcSymbolInfo(
             name=display_name,
@@ -212,11 +231,12 @@ def _parse_objc(source: str) -> ObjcFileInfo:
         superclass = m.group(2)
         line = source[:m.start()].count("\n") + 1
         sig = f"@interface {name}" + (f" : {superclass}" if superclass else "")
-        # Find body (up to @end)
-        end_m = re.search(r'@end', source[m.end():])
+        # Find body (up to @end). P-N-018: binary search em positions
+        # pré-computadas em vez de re.search(source[m.end():]).
+        end_offset = _find_end_after(end_positions, m.end())
         body = None
-        if end_m:
-            body = source[m.end():m.end() + end_m.start()]
+        if end_offset is not None:
+            body = source[m.end():end_offset]
         else:
             # P-N-018 (REVIEW PR #16): @end ausente → parsing truncado/malformed.
             # Logged DEBUG pra forensics; body permanece None deterministicamente.
@@ -239,9 +259,10 @@ def _parse_objc(source: str) -> ObjcFileInfo:
     for m in _RE_PROTOCOL.finditer(source):
         name = m.group(1)
         line = source[:m.start()].count("\n") + 1
-        end_m = re.search(r'@end', source[m.end():])
-        if end_m:
-            body = source[m.end():m.end() + end_m.start()]
+        # P-N-018: binary search em positions pré-computadas.
+        end_offset = _find_end_after(end_positions, m.end())
+        if end_offset is not None:
+            body = source[m.end():end_offset]
         else:
             body = None
             _log.debug("@end ausente para @protocol %s na linha %d", name, line)
@@ -260,9 +281,10 @@ def _parse_objc(source: str) -> ObjcFileInfo:
     for m in _RE_IMPLEMENTATION.finditer(source):
         name = m.group(1)
         line = source[:m.start()].count("\n") + 1
-        end_m = re.search(r'@end', source[m.end():])
-        if end_m:
-            body = source[m.end():m.end() + end_m.start()]
+        # P-N-018: binary search em positions pré-computadas.
+        end_offset = _find_end_after(end_positions, m.end())
+        if end_offset is not None:
+            body = source[m.end():end_offset]
         else:
             body = None
             _log.debug("@end ausente para @implementation %s na linha %d", name, line)
