@@ -52,14 +52,20 @@ for hook_source in hooks/git-*; do
     [[ -d "$GIT_HOOKS_DIR" ]] || { echo "  [skip] $GIT_HOOKS_DIR não acessível"; continue; }
     target="$GIT_HOOKS_DIR/$h"
     source_file="$hook_source"
-    # Usa path absoluto pro symlink — funciona tanto no .git/hooks/ canônico
-    # quanto em worktrees (cujo GIT_HOOKS_DIR vive em .git/worktrees/<n>/hooks/,
-    # de onde "../../hooks/git-X" não resolveria corretamente).
-    expected="$REPO_ROOT/$source_file"
-    # Forma relativa histórica (bootstrap pre-T-N-016) — aceita como
-    # equivalente apenas se o target ainda existe (idempotência pra repos
-    # que rodaram bootstrap anterior).
-    expected_legacy="../../$source_file"
+    # hotfix-2: escolhe forma do symlink target conforme topologia do .git.
+    # Em repo tradicional (`.git/` é diretório) o GIT_HOOKS_DIR é `.git/hooks`
+    # e a forma relativa "../../hooks/git-X" resolve corretamente — preserva
+    # contrato testado em test_bootstrap_symlink_handling.py (readlink ==
+    # "../../hooks/git-pre-commit"). Em worktree (`.git` é arquivo apontando
+    # pra `.git/worktrees/<n>/`), o GIT_HOOKS_DIR vive em
+    # `.git/worktrees/<n>/hooks/` e "../../..." não resolve — usa absoluto.
+    if [[ -d .git ]]; then
+        expected="../../$source_file"
+        expected_legacy="$REPO_ROOT/$source_file"
+    else
+        expected="$REPO_ROOT/$source_file"
+        expected_legacy="../../$source_file"
+    fi
     if [[ -f "$source_file" ]]; then
         if [[ -L "$target" || -f "$target" ]]; then
             current=$(readlink "$target" 2>/dev/null || echo "")
