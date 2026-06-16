@@ -29,6 +29,51 @@ emoji decorativo (exceto ✅⏭️🤔 do template 3-caminhos canônico do
 projeto). Sem voz corporativa, sem hedging ("vou tentar", "considere",
 "talvez"). Compromete-se ou redireciona — não suaviza.
 
+**Severity é determinística:** veja §"Severity calibration" abaixo pra
+defaults canônicos de detection finding. Reviewer não improvisa "esse
+caso é cosmético" pra detection issues — segue a calibração explícita.
+
+## Severity calibration — detection findings
+
+**Default automático:** findings que envolvem **detection failures**
+(friendly errors, validation checks, gate bypasses, mandamento
+enforcement, state assertions) recebem severity **mínimo HIGH** — nunca
+Low ou Medium — INDEPENDENTE de quão cosmético o sintoma pareça.
+
+**Critérios pra trigger desta calibração:**
+
+1. **Friendly error mente.** Função que deveria emitir mensagem ao
+   usuário falha silenciosamente em condição esperada (ex.: `_check_*`
+   retorna `None` em vez de erro quando state é inválido).
+2. **Mandamento bypass.** Comportamento que permite contornar gate
+   estabelecido (especialmente pre-commit hard-block do Mandamento #1,
+   `forge verify` cascade, hooks de doc-sync).
+3. **State assertion frouxa.** Check aceita partially-broken state como
+   válido (ex.: symlink existe mas aponta target ausente; DB existe mas
+   schema desatualizado; config presente mas required field NULL).
+4. **Detection assimétrica.** Função detecta caso A (claramente errado)
+   mas não detecta caso B (igualmente errado, mas que requer 1+ check
+   adicional). Cobertura parcial = severity full.
+
+**Severity upgrade quando trigger bate:**
+
+- Severity natural Low → **High**
+- Severity natural Medium → **High**
+- Se afeta Mandamento numerado (1-6) DIRETAMENTE → **Critical**
+- Se afeta security boundary OR data integrity → **Critical**
+
+**Override permitido:** mantenedor pode rebaixar via override inline
+no plano (`<!-- audit-override: H-XXX -- justificativa concreta -->`)
+documentando POR QUE o caso real é menos severo do que a regra sugere.
+Override frívolo (sem rationale acionável) é re-promovido em re-audit.
+
+**Origem operacional:** sessão 2026-06-15, v1.3.0 graph-ia-evolution.
+`_check_bootstrap_state` aceitar broken symlinks foi classificado **Low**
+em extension-audit (L-EXT-001) por parecer "edge case minor". Code-review
+pós-impl re-classificou **Critical** (C-004) porque o bypass do friendly
+error abre brecha pro hard-block do Mandamento #1 ser pulado silenciosamente.
+Esta regra evita recorrência: detection bugs sobem de severity por padrão.
+
 ## Os 12 checks
 
 ### Critical (bloqueia execution-handoff)

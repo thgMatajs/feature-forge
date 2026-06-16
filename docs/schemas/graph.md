@@ -50,15 +50,25 @@ v1 picks SQLite. Migration to Kuzu is a v2 candidate if join verbosity hurts.
 CREATE TABLE files (
   id              INTEGER PRIMARY KEY,
   path            TEXT NOT NULL UNIQUE,         -- relative to repo root
-  language        TEXT,                          -- kotlin | swift | typescript | ...
+  language        TEXT,                          -- kotlin | swift | typescript | java | objc | xml | ...
   module          TEXT,                          -- shared | androidApp | iosApp | webApp
+  source_set      TEXT,                          -- KMP source-set (commonMain | androidMain | iosMain | …) — NULL fora de KMP
   lines           INTEGER,
   last_modified   TEXT,                          -- ISO8601
   sha256          TEXT
 );
 CREATE INDEX idx_files_module ON files(module);
 CREATE INDEX idx_files_language ON files(language);
+CREATE INDEX idx_files_source_set ON files(source_set);
 ```
+
+> **`files.language`** carrega o slug curto da linguagem detectada na
+> ingestão (`engine/graph/builder.py` mapeia extensão → slug). Pós-v1.3
+> o registry inclui Java, Objective-C e XML além de Kotlin/Swift/TS.
+> **`files.source_set`** vem da §Reuse Intelligence (schema v2) — aparece
+> no DDL canônico (`engine/utils/sqlite_io.py`) e fica `NULL` em projetos
+> sem layout KMP. Documentação detalhada da semântica está em §Reuse
+> Intelligence > New columns.
 
 ### `symbols`
 
@@ -68,15 +78,44 @@ CREATE TABLE symbols (
   file_id         INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
   name            TEXT NOT NULL,                 -- e.g., "LoginViewModel"
   kind            TEXT NOT NULL,                 -- class | object | interface | enum | fun | val | sealed_class
-  signature       TEXT,                           -- e.g., "fun login(email: String, password: String): Flow<StateUI<LoginUI>>"
+  signature       TEXT,                          -- e.g., "fun login(email: String, password: String): Flow<StateUI<LoginUI>>"
   line_start      INTEGER,
   line_end        INTEGER,
-  visibility      TEXT                           -- public | internal | private | protected
+  visibility      TEXT,                          -- public | internal | private | protected
+  receiver_type   TEXT,                          -- reuse-intelligence: receiver type para extension functions
+  body_hash       TEXT,                          -- reuse-intelligence: hash do body normalizado (Q12/Q15 dedup)
+  body_tokens     TEXT,                          -- reuse-intelligence: tokens normalizados pra similarity
+  modifiers       TEXT,                          -- reuse-intelligence: modifiers serializados (space-separated)
+  body            TEXT                           -- raw source text com comentários preservados (v1.3+); ver §body column
 );
-CREATE INDEX idx_symbols_name ON symbols(name);
-CREATE INDEX idx_symbols_file ON symbols(file_id);
-CREATE INDEX idx_symbols_kind ON symbols(kind);
+CREATE INDEX idx_symbols_name          ON symbols(name);
+CREATE INDEX idx_symbols_file          ON symbols(file_id);
+CREATE INDEX idx_symbols_kind          ON symbols(kind);
+CREATE INDEX idx_symbols_receiver_type ON symbols(receiver_type);
+CREATE INDEX idx_symbols_body_hash     ON symbols(body_hash);
 ```
+
+#### `symbols.body` column (v1.3+)
+
+Texto-fonte cru do corpo do símbolo (entre `{` e `}` matched), com
+comentários e whitespace preservados. Populado pra Kotlin, Swift,
+TypeScript, Java e Objective-C — linguagens com corpo delimitado por
+chaves. Para XML symbols, o campo é `NULL` (XML não tem corpo textual
+com a mesma semântica). Body extraction reusa `_body_text._SUPPORTED_LANGS`
+registry em `engine/graph/_body_text.py`.
+
+Habilita assistentes IA a inspecionar implementação direto do graph,
+sem precisar abrir o arquivo-fonte — reduz tokens de contexto e acelera
+compreensão de codebases grandes.
+
+DBs criados antes do v1.3 são migrados em-place via `ALTER TABLE symbols
+ADD COLUMN body TEXT` executado idempotentemente por
+`_ensure_graph_body_column` em `engine/graph/builder.py`. Re-execução
+do helper em DB já migrado é no-op. SCHEMA_VERSION não é bumpado — a
+migração é aditiva e backwards-compatible (queries antigas continuam
+funcionando, ignorando a coluna nova). `engine/utils/sqlite_io.py`
+contém apenas o DDL canônico e helpers de conexão; migrations idempotentes
+vivem em `builder.py`.
 
 ### `imports`
 
@@ -251,9 +290,50 @@ CREATE TABLE meta (
 The planning-conductor and sub-agents use these queries via a stable
 interface. End users reach them via `forge graph` (interactive menu of named
 queries); ad-hoc SQL access is intentionally available only through the
-`forge raw` escape hatch — there are no flags on `forge graph`. The
-`CLI form` shown under each query below is the **named-query slug** the user
-picks from the interactive menu, not a flag-bearing CLI call.
+`forge raw` escape hatch — there are no flags on `forge graph` exceto
+`--json` (non-interactive JSON) e `--no-auto-build` (opt-out lazy
+rebuild). O `CLI form` shown under each query below is the **named-query
+slug** the user picks from the interactive menu — também aceito como
+identificador via `forge graph --json`.
+
+### forge graph --json (v1.3+)
+
+Flag non-interactive pra consumo por IA/automação. Aceita o mesmo
+conjunto de queries do menu interativo (Q1–Q17) mas emite JSON
+estruturado em stdout, sem prompts. Útil pra assistentes IA consultarem
+o graph antes de ler arquivos-fonte (reduz tokens de contexto).
+
+```
+forge graph --json <query> [args...]
+```
+
+Onde `<query>` é um dos formatos:
+- Alias curto: `q1`, `q2`, …, `q17`, `r` (combined reuse view).
+- Numeric key: `1`, `2`, …, `17`.
+- Label textual do handler: `similar-features`, `blast-radius`,
+  `orphan-files`, `symbols`, `ds-used-in`, `i18n-used-in`, `routes`,
+  `di-deps`, `tests-for`, `commits`, `reusable-helpers`, `dup-within-module`,
+  `dup-cross-module`, `kmp-migration`, `near-duplicates`,
+  `redundant-platform`, `dup-ts-helpers`, `reuse-findings` (catálogo
+  canônico em `_HANDLERS`, `engine/graph_cli.py:267-286`).
+
+Output é JSON parseável (`json.loads`-válido) em stdout; stderr
+reservado pra erros. Modo interactivo (`forge graph` sem `--json`)
+continua disponível e inalterado.
+
+Exemplos:
+
+```
+forge graph --json q3                                         # orphan-files (no args)
+forge graph --json q4 :feature:auth                           # symbols no módulo
+forge graph --json q1 lembrete-rega                           # similar-features por slug
+forge graph --json q2 path/to/LoginViewModel.kt               # blast-radius (file paths posicionais)
+forge graph --json blast-radius path/to/LoginViewModel.kt     # idem via label
+forge graph --json r                                          # reuse-findings combined
+```
+
+Para CI/scripts determinísticos, combinar com `--no-auto-build` desativa
+o lazy rebuild do graph (espera que `.claude/graph.db` já exista).
 
 ### Q1 — Where is X used?
 
@@ -536,7 +616,9 @@ redundant platform-specific) at `forge init` and on graph rebuild.
 
 **`files`**
 - `source_set TEXT` — KMP source-set name (`commonMain`, `androidMain`,
-  `iosMain`, …) or NULL for non-KMP projects.
+  `iosMain`, …) or NULL for non-KMP projects. (Também listado no DDL
+  principal da tabela `files` acima — esta seção descreve a semântica
+  reuse-intelligence; a coluna em si é canônica na criação do schema.)
 
 **`symbols`**
 - `receiver_type TEXT` — receiver of an extension function. Non-NULL only for

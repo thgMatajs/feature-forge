@@ -2,7 +2,7 @@
 
 A standalone CLI skill that orchestrates end-to-end planning + implementation of mobile features across Android, iOS, KMP, and Web. Backend-agnostic (Firebase, REST, GraphQL, local-only).
 
-> **State:** v1.2-dev · 2026-06-12 · 1523 tests collected (REVIEW.md remediation Blocos 1-5 ✅; Phase B DET-6 multi-axis backend SHIPPING-READY + REVIEWED + E2E COVERED em worktree `det-6-w1`; Phase A DRIFT-1 PR #11 master-review remediado integralmente; DET-3 gradle-dep signal type mergido de `main`) · 25 validators · 13 comandos · 29 cards · 4 bundles · ~400 arquivos · ~52.5K LOC
+> **State:** v1.3.0 · 2026-06-16 · 1619 tests collected (graph-ia-evolution ✅ shipped: `symbols.body` column + `forge graph --json` + Java/XML/ObjC parsers + onboarding UX; PR #16 master review fix-pack Wave A+B+C aplicado integralmente; REVIEW.md remediation Blocos 1-5 ✅; Phase B DET-6 multi-axis backend SHIPPING-READY + REVIEWED + E2E COVERED em worktree `det-6-w1`; Phase A DRIFT-1 PR #11 master-review remediado integralmente; DET-3 gradle-dep signal type mergido de `main`) · 25 validators · 13 comandos · 29 cards · 4 bundles · 6 parsers (kotlin/swift/typescript + java/xml/objc) · ~400 arquivos · ~52.5K LOC
 
 ## What it is
 
@@ -93,7 +93,8 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 | Preset | kmp-mobile (8 stack cards + 4 bundles: firebase-full + rest-with-firebase-telemetry + local-only + custom-from-scratch sentinela) — substitui o bloco `backend-candidates` monolítico desde Phase B DET-6 |
 | Validators Python | 25 + 3 helpers (`_gate_infra`, `_diff`, `_common`) — inclui `check_cyclomatic_complexity` (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon), `check_secrets` (gitleaks + trufflehog), `check_no_behavior_change` (refactor), `validate_extension_feature` (extends-feature cross-cutting), `validate_presets` (Phase B DET-6 — bundle YAML schema) |
 | Hooks | 9 + 1 reuse incremental (`post-edit-detect-duplications.sh`) |
-| Tests | 1523 collected (unit + integration + e2e · ~20 skipped · baseline histórico em CHANGELOG.md). Phase A DRIFT-1 acresceu +118 sobre o pré-W2 1046; Phase B DET-6 acresceu W4-W7 (~88 unit + 12 integration) + W8 polish (+23 rapid + 3 integration + 4 e2e); REVIEW.md remediation Blocos 1-5 (2026-06-12) acresceu +N regression tests chegando a 1523 collected (WR-01 fix-pack adicionou +1 regression test). |
+| Graph parsers | 6 (Kotlin / Swift / TypeScript + Java / XML / Objective-C — Java/XML/ObjC novos em v1.3.0 graph-ia-evolution). Body extraction (`symbols.body`) cobre brace-delimited bodies (5 linguagens; XML é NULL). |
+| Tests | 1619 collected em v1.3.0 pós PR #16 fix-pack (unit + integration + e2e · ~20 skipped · baseline histórico em CHANGELOG.md). Phase A DRIFT-1 acresceu +118 sobre o pré-W2 1046; Phase B DET-6 acresceu W4-W7 (~88 unit + 12 integration) + W8 polish (+23 rapid + 3 integration + 4 e2e); REVIEW.md remediation Blocos 1-5 (2026-06-12) levou a 1523 collected (WR-01 fix-pack adicionou +1 regression test); **v1.3.0 graph-ia-evolution acresceu 84 tests em arquivos novos do PR (Java 19 + ObjC 25 + XML 13 + bootstrap 6 + lazy 6 + json 9 + migrations 5 + integration 1); Wave A+B+C fix-pack pós-master-review somou cobertura nova em arquivos preexistentes, chegando a 1619 collected (+71 vs baseline pré-PR 1548 — counts validados via `pytest --collect-only -q`)**. |
 | LOC total | ~52.500 |
 | Engine LOC | ~33.500 (Python; engine/ apenas — validators/ adicional ~7.300) |
 | Files total | ~400 |
@@ -110,7 +111,7 @@ export FORGE_HOME=~/Documents/feature-forge
 export PATH="$FORGE_HOME/bin:$PATH"
 
 # Verifica
-forge --version  # → forge 1.2.0
+forge --version  # → forge 1.3.0
 
 # Init num projeto novo (Step 11.5 já escaneia duplicações existentes)
 cd ~/code/my-project
@@ -124,6 +125,23 @@ forge graph      # opções 12–17 ou "r" (combined view)
 Requer Python 3.11+ + PyYAML + pathspec (runtime). Dev: pytest + mypy.
 Install canônico: `pip install -e .` na raiz do repo (também rodado
 idempotentemente por `bash .claude/bootstrap.sh`).
+
+### Bootstrap
+
+Após clonar, rode uma vez:
+
+```bash
+bash .claude/bootstrap.sh
+```
+
+Idempotente. Liga git hooks, instala deps via `pip install -e .` e dispara
+o build inicial do graph + inventory (one-shot, ~30s-2min). Sem isso, a
+primeira invocação de `forge graph` triggera lazy rebuild silenciosamente
+na mesma janela de tempo.
+
+Para CI/scripts determinísticos, use `forge graph --no-auto-build <query>`
+para desabilitar o auto-rebuild — útil quando o graph deve ser controlado
+explicitamente.
 
 ## Where it lives
 
@@ -178,6 +196,9 @@ forge reconfigure    single mutation entrypoint
                      · graph rebuild re-queue reuse proposals automaticamente
 forge graph          query graph (Q1-Q17, "r" combined view)
                      · Q12-Q17: 6 reuse-intelligence queries
+                     · `forge graph --json <query> [args...]` — non-interactive JSON
+                       (entrypoint pra IA/automação; aceita aliases/keys/labels);
+                       combina com `--no-auto-build` em CI determinístico (v1.3.0+)
 forge memory         inspect L1/L2/L3
 forge evolve         review propostas (single-by-single) — 16 kinds
                      · 10 retrospective + 6 reuse-intelligence
@@ -215,7 +236,7 @@ Start here:
 - `docs/design/06-command-surface.md` — 13 comandos canônicos + 2 hidden
 - `docs/design/07-discipline.md` — 10 disciplinas universais (3-caminhos, fail-fast, pause/abort, vocabulário, fingerprint)
 - `docs/design/04-pending.md` — gaps abertos + itens deferred por versão
-- `docs/schemas/graph.md` — schema v2 com reuse_findings + module_deps + Q1-Q17
+- `docs/schemas/graph.md` — schema v2 com reuse_findings + module_deps + Q1-Q17 + `symbols.body` column (v1.3+) + `forge graph --json` non-interactive (v1.3+)
 - `docs/schemas/proposed-evolutions.md` — 16 proposal kinds (10 retrospective + 6 reuse-intelligence)
 - `docs/schemas/capability-labels.md` — catálogo canônico de capabilities
 - `docs/lifecycle/memory-and-graph.md` — dataflow reuse-intelligence + idempotência

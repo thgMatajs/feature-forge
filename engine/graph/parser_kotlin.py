@@ -10,6 +10,7 @@ Switch to tree-sitter for v2 if accuracy bites.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,8 +21,14 @@ from engine.graph._body_text import (
     extract_function_body,
     find_opening_brace,
     hash_body,
+    mask_strings_and_comments,
     tokens_to_json,
 )
+
+# P-N-012 / codereviewbot parser_kotlin:261 (REVIEW PR #16): parse failures
+# em _parse_function_tail são logged em DEBUG pra forensics; silencioso em
+# runtime default.
+_log = logging.getLogger(__name__)
 
 _RE_PACKAGE = re.compile(r"^\s*package\s+([\w\.]+)", re.MULTILINE)
 _RE_IMPORT = re.compile(r"^\s*import\s+([\w\.\*]+)(?:\s+as\s+\w+)?\s*$", re.MULTILINE)
@@ -56,96 +63,11 @@ _TYPE_MODIFIERS = (
 _ALL_MODIFIERS = _FUN_MODIFIERS + _TYPE_MODIFIERS + ("inline",)
 
 
-def _mask_strings_and_comments(text: str) -> str:
-    """Return ``text`` with the contents of strings and comments replaced
-    by spaces, preserving overall length so character offsets and line
-    counts stay aligned. Used to pre-process source before running
-    ``_RE_DECL.finditer`` so that ``fun``/``class``/``object`` tokens
-    inside literals or comments don't produce false-positive symbols
-    (R2.4).
-
-    Handled forms:
-      - Triple-quoted raw strings ``\"\"\" ... \"\"\"`` (multi-line).
-      - Double-quoted strings ``" ... "`` with ``\\"`` escapes (single line).
-      - Single-quoted char literals ``' ... '`` with ``\\'`` escapes.
-      - Block comments ``/* ... */`` (multi-line; newlines preserved).
-      - Line comments ``// ...`` to end-of-line.
-
-    Delimiters themselves are kept in place; only the *content* is
-    masked, so positions remain stable.
-    """
-    n = len(text)
-    out = list(text)
-    i = 0
-    while i < n:
-        ch = text[i]
-        # Triple-quoted raw string.
-        if ch == '"' and text.startswith('"""', i):
-            end = text.find('"""', i + 3)
-            if end == -1:
-                # Unterminated — mask to EOF, keep newlines for line count.
-                for j in range(i + 3, n):
-                    if text[j] != "\n":
-                        out[j] = " "
-                return "".join(out)
-            for j in range(i + 3, end):
-                if text[j] != "\n":
-                    out[j] = " "
-            i = end + 3
-            continue
-        # Block comment.
-        if ch == "/" and i + 1 < n and text[i + 1] == "*":
-            end = text.find("*/", i + 2)
-            if end == -1:
-                for j in range(i + 2, n):
-                    if text[j] != "\n":
-                        out[j] = " "
-                return "".join(out)
-            for j in range(i + 2, end):
-                if text[j] != "\n":
-                    out[j] = " "
-            i = end + 2
-            continue
-        # Line comment.
-        if ch == "/" and i + 1 < n and text[i + 1] == "/":
-            j = i + 2
-            while j < n and text[j] != "\n":
-                out[j] = " "
-                j += 1
-            i = j
-            continue
-        # Double-quoted string (single-line semantics is enough here).
-        if ch == '"':
-            j = i + 1
-            while j < n and text[j] != "\n":
-                if text[j] == "\\" and j + 1 < n:
-                    out[j] = " "
-                    out[j + 1] = " "
-                    j += 2
-                    continue
-                if text[j] == '"':
-                    break
-                out[j] = " "
-                j += 1
-            i = j + 1 if j < n and text[j] == '"' else j
-            continue
-        # Single-quoted char literal.
-        if ch == "'":
-            j = i + 1
-            while j < n and text[j] != "\n":
-                if text[j] == "\\" and j + 1 < n:
-                    out[j] = " "
-                    out[j + 1] = " "
-                    j += 2
-                    continue
-                if text[j] == "'":
-                    break
-                out[j] = " "
-                j += 1
-            i = j + 1 if j < n and text[j] == "'" else j
-            continue
-        i += 1
-    return "".join(out)
+# P-N-004 (REVIEW PR #16, Mandamento #3): _mask_strings_and_comments
+# foi promovido pra ``engine.graph._body_text.mask_strings_and_comments``
+# pra reuse cross-parser (parser_java consome o mesmo helper).
+# Alias local preservado pra backwards-compat com testes existentes.
+_mask_strings_and_comments = mask_strings_and_comments
 
 
 # Top-level declarations. Multi-modifier slot via repeated non-capturing group;
@@ -201,6 +123,7 @@ class KotlinSymbol:
     body_hash: Optional[str] = None
     body_tokens: Optional[str] = None
     modifiers: tuple[str, ...] = field(default_factory=tuple)
+    body: Optional[str] = None
 
 
 @dataclass
@@ -254,6 +177,7 @@ def parse_kotlin_file(path: Path) -> KotlinFileInfo:
         signature: Optional[str] = None
         body_hash: Optional[str] = None
         body_tokens_json: Optional[str] = None
+        body_text: Optional[str] = None
 
         if kind == "fun":
             signature, body_text = _parse_function_tail(text, match.end(), receiver)
@@ -277,6 +201,7 @@ def parse_kotlin_file(path: Path) -> KotlinFileInfo:
                 body_hash=body_hash,
                 body_tokens=body_tokens_json,
                 modifiers=modifiers,
+                body=body_text,
             )
         )
 
@@ -313,9 +238,25 @@ def _parse_function_tail(
 ) -> tuple[Optional[str], Optional[str]]:
     """Walk past the function declaration to capture signature + body.
 
-    Returns ``(canonical_signature, body_text)``. Both may be ``None`` for
-    abstract functions, expression bodies (``fun foo() = ...``), or anything
-    the brace scanner can't close.
+    Returns ``(canonical_signature, body_text)``. Ambos podem ser ``None``
+    legitimamente em 4 cenários distintos:
+
+    1. **Abstract function** (no body): ``abstract fun foo()`` — sem ``{``,
+       termina em newline/EOF.
+    2. **Expression body**: ``fun foo() = bar`` — Kotlin idiom, ``=`` em vez
+       de ``{...}``.
+    3. **Interface method**: ``interface I { fun foo() }`` — declaração sem
+       corpo.
+    4. **Parse failure**: signature malformada que o regex achou mas o
+       scanner balanced-paren não conseguiu fechar. Logged em DEBUG via
+       ``_log.debug`` pra forensics.
+
+    Convenção: ``body_hash=None`` no symbol pode significar (1)/(2)/(3) —
+    "intencionalmente sem corpo" — OU (4) — "parse falhou". Downstream
+    consumers que precisam distinguir devem inspecionar ``signature`` (None
+    em (4), populated em (1)/(2)/(3) tipicamente).
+
+    P-N-013 / codereviewbot parser_kotlin:285 (REVIEW PR #16).
     """
     n = len(source)
     i = decl_end_offset
@@ -324,11 +265,17 @@ def _parse_function_tail(
         i += 1
 
     if i >= n or source[i] != "(":
+        _log.debug(
+            "_parse_function_tail: param-list ( ausente em offset %d", decl_end_offset
+        )
         return None, None
 
     params_start = i
     params_end = _scan_matching_paren(source, params_start)
     if params_end is None:
+        _log.debug(
+            "_parse_function_tail: param-list não fecha (offset %d)", params_start
+        )
         return None, None
 
     params_text = source[params_start + 1:params_end]

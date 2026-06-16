@@ -306,12 +306,14 @@ forge doctor
 
 ## forge graph — Consultar o codebase
 
-**O que faz:** Menu interativo com 17 queries canônicas sobre o grafo do
-codebase. Read-only — o graph é construído no `init` e atualizado via
-`forge reconfigure`.
+**O que faz:** Menu interativo OU modo non-interactive (`--json`) com 17
+queries canônicas sobre o grafo do codebase. Read-only — o graph é
+construído no `bash .claude/bootstrap.sh` (ou via lazy rebuild na primeira
+invocação) e atualizado por hooks incrementais ou `forge reconfigure`.
 
 **Quando usar:** "Quais arquivos usam esse componente?", "Onde esse símbolo é
-importado?", "Tem código duplicado entre módulos?".
+importado?", "Tem código duplicado entre módulos?". Em pipelines de IA
+ou scripts CI, use o modo `--json` (vide abaixo).
 
 **Exemplo:**
 
@@ -350,6 +352,33 @@ Blast-radius: 8 arquivos → 3 módulos
 **Dica:** Q12–Q17 são as queries de **reuse intelligence**. Elas alimentam o
 `forge evolve` com propostas de melhoria. Rode `forge graph` e escolha `r` para
 ver tudo de uma vez.
+
+### Modo `--json` (non-interactive, IA-friendly)
+
+Pra IA, scripts ou pipelines CI, use `forge graph --json <query> [args...]`.
+Emite JSON parseável em stdout, sem prompts. Aceita aliases (`q1..q17`,
+`r`), numeric keys (`1..17`) ou labels textuais.
+
+```bash
+forge graph --json q3                          # orphan-files (sem args)
+forge graph --json q4 :feature:auth            # symbols num módulo
+forge graph --json q2 src/LoginViewModel.kt    # blast-radius (positional file)
+forge graph --json blast-radius src/Foo.kt     # idem via label
+forge graph --json r                           # reuse-findings combinada
+```
+
+Stderr fica reservado pra erros (mensagens de "buildando…" do lazy
+rebuild também vão pra stderr). Combine com `--no-auto-build` quando o
+contexto for CI/determinístico — assim a flag falha rápido se o DB
+ausente em vez de gastar minutos buildando:
+
+```bash
+forge graph --json --no-auto-build q3
+```
+
+Modelo de consumo + exemplos canônicos por query: `CLAUDE.md §Codebase
+Graph — IA-ready`. Schema da coluna `symbols.body` (texto-fonte cru
+preservado): `docs/schemas/graph.md §body column`.
 
 ---
 

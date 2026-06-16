@@ -23,7 +23,8 @@ flowchart TD
 
     S --> S1["forge status<br/>→ resumo do projeto"]
     S --> S2["forge doctor<br/>→ health check<br/>16 categorias"]
-    S --> S3["forge graph<br/>→ consultas Q1-Q17<br/>ao grafo da base"]
+    S --> S3["forge graph<br/>→ menu interativo<br/>Q1-Q17 + r"]
+    S --> S3J["forge graph --json &lt;q&gt;<br/>→ non-interactive (IA/CI)<br/>JSON stdout, --no-auto-build<br/>p/ pipelines determinísticos"]
 
     V --> V1["forge verify<br/>→ validators cascade<br/>(3 built-in + N de cards;<br/>21 no diretório)"]
     V --> V2["forge qa<br/>→ red-team adversarial<br/>multi-agente"]
@@ -47,3 +48,4 @@ flowchart TD
     style C fill:#e0f7fa,stroke:#00695c
     style ROAD fill:#fff8e1,stroke:#f9a825
     style REV fill:#fce4ec,stroke:#880e4f
+    style S3J fill:#e8eaf6,stroke:#3f51b5

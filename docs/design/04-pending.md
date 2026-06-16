@@ -3,6 +3,168 @@
 What still needs to be drafted, in dependency order. Use this as the
 checklist for next sessions.
 
+## Fechado em [1.3.0] — graph-ia-evolution (2026-06-15)
+
+- **Expansão de cobertura de linguagem** — Java / XML / ObjC ganharam
+  parsers dedicados (`engine/graph/parser_{java,xml,objc}.py`) +
+  extensões registradas em todos os pontos de discovery. Closes gap
+  histórico de cobertura legada.
+- **`symbols.body` column** — graph passa a armazenar texto-fonte cru
+  com comentários preservados pra Kotlin/Swift/TS/Java/ObjC. ALTER TABLE
+  idempotente em `_ensure_graph_body_column` migra DBs existentes.
+  Closes gap de "IA tem que abrir o arquivo-fonte".
+- **`forge graph --json`** — flag non-interactive emite JSON
+  estruturado em stdout. Closes gap de "graph só consumível via menu
+  interativo".
+- **Onboarding UX (Task 9.5 / AC-11)** — `engine/cli.py` detecta
+  bootstrap ausente e emite friendly error; `engine/graph_cli.py`
+  lazy-auto-builda o graph na primeira invocação; flag
+  `--no-auto-build` opt-out pra CI. Bootstrap script (`bash
+  .claude/bootstrap.sh`) Step 6 faz o build idempotente. Closes gap de
+  "novo dev clona o repo e o graph não existe".
+
+### Fechado em PR #16 master review fix-pack (Wave A+B+C, 2026-06-16)
+
+Fix-pack pós-review consolidou 60+ findings em três waves atômicas
+sobre `feat/graph-ia-evolution`. Itens abaixo são closures genuínos —
+movem-se da forma "gap em aberto" pra "endereçado no PR #16".
+
+- **`engine/graph/kinds.py` deixa de ser dead code** (P-N-021) —
+  parsers Java/XML/ObjC consomem `Kind.*` constants no lugar de
+  string literals. Antes o módulo era referenciado só por tests; agora
+  é fonte canônica pra `symbols.kind`.
+- **`_mask_strings_and_comments` consolidado em `_body_text.py`**
+  (P-N-004) — antes vivia em `parser_objc.py` e Java/Kotlin
+  re-implementavam variantes. Promovido pra módulo compartilhado;
+  todos os parsers consomem a mesma máscara.
+- **ObjC perf debt parcial (M-003 ObjC `@end` O(N²) → O(log N))**
+  (P-N-018) — `parser_objc.py` pre-computa posições de `@end` uma vez
+  por arquivo e usa busca binária pra associar method body ao bloco
+  enclosing. Java/XML ainda usam padrão O(N²) com `source[:m.start()].count("\n")`;
+  registrado pra v1.3.1+ (ver §Performance — Graph parsers).
+- **Bootstrap detection cobre `--help`, `--version`, `bootstrap` e
+  comandos read-only** (C-004 + M-014) — antes friendly error
+  disparava em fluxos legítimos sem bootstrap (`forge status` num
+  worktree fresh, por exemplo). Skip-list amplia pra `status`, `memory`,
+  `graph` e o trio de meta-flags.
+- **Symlink-safe walker em `builder.py`** (E-N-001) — substitui
+  `rglob` por `scandir` + early-skip de `_SKIP_DIRS`. Symlinks
+  quebrados não fazem mais full walk fail; build full em monorepos
+  com symlink fica determinístico.
+- **TOCTOU migration race coberto por commit-after-migration** (E-N-003)
+  + cobertura de `tests/engine/test_migrations.py` ampliada de 2 → 5
+  testes incluindo race detection.
+- **Overload collision em parsers emite warning estruturado**
+  (E-N-016) — antes silent overwrite em Kotlin/Java com mesma
+  assinatura. Agora `logger.warning` reporta + audit logs picks up
+  via stderr capture.
+- **Bootstrap script transparência operacional** (codereviewbot bootstrap.sh:46 +
+  T-N-014 + T-N-015 + T-N-016) — `flock` previne race em runs simultâneos;
+  `pip install -e .` e `forge graph --json q3` probe capturam stderr em
+  logs (`.claude/state/pip-install.log`, `.claude/state/bootstrap-graph.log`)
+  em vez de silenciar; lista hardcoded de git hooks substituída por glob.
+- **Hook path filter em `post-edit-codebase-graph.sh`** (T-N-017) —
+  early-exit em `*/build/*`, `*/node_modules/*`, `*/.gradle/*`, `*/dist/*`,
+  `*/target/*`, `*/DerivedData/*`, `*/.next/*`, `*/out/*`. Evita re-ingest
+  custoso de arquivos gerados; particularmente importante pra falso-positivo
+  `.m` em source maps minificados.
+
+### Follow-ups graph-ia-evolution v1.4+
+
+Os 6 non-goals declarados na spec
+`docs/superpowers/specs/2026-06-12-graph-ia-evolution.md §Non-goals`
+ficam registrados aqui pra reentrada futura. Cada um com critério
+concreto pra revisitar — não esperamos endereçar especulativamente.
+
+- **(a) Tree-sitter parsers** — *Reentrar* quando regex insuficiente
+  em projeto real (false positives críticos ou misses observados
+  in-vivo, NÃO inferidos). v1.3 cobertura regex é pragmática; tree-sitter
+  troca-se quando custo de precision exceder custo de runtime dep.
+- **(b) MCP server** — *Reentrar* quando IA com runtime stateful (não
+  apenas Claude Code via CLI emitindo `forge graph --json`) precisar de
+  protocol-level integration. v1.3 ship é stdout JSON suficiente pro
+  cenário Claude Code atual.
+- **(c) ObjC call graph completo** — *Reentrar* quando legacy iOS
+  estiver ativo em projeto adotante e o parsing de `[obj selector]`
+  trouxer ganho concreto (tipos rastreáveis disponíveis). v1.3 entrega
+  símbolos + imports + protocols; mensagens enviadas explicitamente
+  NÃO geram call edges.
+- **(d) Call graph preciso (qualquer linguagem)** — *Reentrar* quando
+  demanda concreta justificar refactor cross-cutting de Q1–Q17.
+  Precision atual (regex-based) mantida intencionalmente; tentativa de
+  aprimoramento seria escopo amplo sem caso de uso bloqueador.
+- **(e) SCHEMA_VERSION bump** — *Reentrar* quando schema delta exigir
+  migrator não-aditivo (ALTER TABLE não cobre). v1.3 adicionou `body`
+  por ALTER incremental; SCHEMA_VERSION fica reservado pra mudanças
+  estruturais.
+- **(f) Visualização gráfica do graph (D3.js / mermaid / etc.)** —
+  *Reentrar* quando demanda real surgir (humano pedindo, não inferida).
+  Consumo v1.3 é CLI + JSON; renderização gráfica fica fora até alguém
+  precisar.
+
+### Follow-ups PR #16 master review (deferred — pós Wave A+B+C, 2026-06-16)
+
+Findings deferidos durante o fix-pack pós-master-review do PR #16.
+Cada item carrega justificativa específica + critério de reentrada.
+Wave A+B+C endereçou 60+ findings; estes 7 ficam pra ciclos futuros.
+
+- **P-N-007** — `is_method_call` heurística regex em `parser_objc.py`
+  produz falsos positivos em contextos complexos (`[obj selectorWithArg:
+  [other anotherSelector]]` aninhado). *Reentrar* quando tree-sitter
+  parser real disponível — refinement via regex tem retorno marginal
+  e risca enviesar o registry de calls.
+- **N-004** — AC-11 (bootstrap detection skip-list) precisa decision
+  policy explícita do user: que comandos exatamente devem ser
+  read-only no sentido de "não exigir bootstrap"? Wave B (C-004) amplia
+  empiricamente; falta confirmação de produto se a lista atual é completa
+  ou se deve incluir mais (`evolve --dry-run`? `undo --list`?).
+  *Reentrar* na próxima sessão de UX review com user.
+- **N-007 / N-015** — silent audit log centralizado em
+  `.claude/state/hook-failures.jsonl` pra todos os hooks (não só
+  bootstrap). Cross-cutting cross-hook; toca `.claude/hooks/*.sh` +
+  `hooks/*.sh` + spec de schema novo. *Reentrar* quando tooling de
+  observabilidade de hooks ganhar prioridade (gap registrado em SMOKE-CHECKLIST
+  hook-2 inconsistency).
+- **N-012** — migrations idempotentes (`_ensure_graph_body_column`,
+  outros ALTER TABLE) dentro de transaction SQLite explícita.
+  Refactor estrutural; parcialmente coberto por commit-after-migration
+  de E-N-003 (Wave B), mas a transação envolvente é a feature-gap real.
+  *Reentrar* quando próximo ALTER incremental for adicionado (próximo
+  schema delta).
+- **N-013** — 3-state helper `_db_has_full_rebuild_marker` (`fresh`,
+  `migrated`, `none`) substitui boolean atual. Permite diferenciar DB
+  pré-v1.3 (migrado em-place) de DB criado já com schema atual. Útil
+  pra telemetry futura + debug. *Reentrar* quando bug report pedir
+  distinção, ou quando próximo schema migration for adicionado.
+- **M-003 — perf O(N²) Java/XML (parser_{java,xml}.py)** — ObjC
+  endereçado por P-N-018 (pre-compute `@end` positions). Java e XML
+  ainda usam `source[:m.start()].count("\n")` em loops grandes.
+  Detalhe completo em §Performance — Graph parsers abaixo. *Reentrar*
+  em v1.3.1+ ou quando primeiro projeto consumer reportar build lento
+  em arquivo monolítico.
+- **T-N-025** — plan-auditor severity calibration (`.claude/rules/plan-auditor.md`):
+  algumas severidades parecem desalinhadas com o impacto real
+  observado pós-PR (ex.: items que viraram findings críticos no master
+  review eram Medium no plan-auditor). DOC ONLY — não é fix de bug.
+  *Reentrar* em discussion com user pra decidir se a tabela de
+  severidades deve recalibrar com base no histórico de PRs reais
+  (PR #15 + PR #16). Fora do escopo de Wave C porque exige policy
+  decision, não edit técnico.
+- **PR16-FU-1** — `Symbol` data structure com campo `parse_status`
+  (`ok | partial | failed`) pra dar contrato observable a downstream
+  consumers do registry de símbolos. Codereviewbot comment 3417876789
+  (`parser_kotlin.py:262`) pediu structured error signaling quando
+  body extraction falha silentemente. Wave final endereçou a silent
+  failure imediata via `logging.debug` em commit `873195f` —
+  observabilidade mínima sem reshape de schema. O fix completo exige
+  refactor cross-parser (Kotlin + Java + ObjC + Swift) das dataclasses
+  de symbol pra propagar status até persistência (`_persist_*` +
+  schema SQLite + queries Q1-Q17 que assumem symbol = sucesso).
+  *Reentrar* quando próximo parser novo for adicionado OU quando
+  consumer downstream pedir diferenciação entre "símbolo ausente" vs
+  "símbolo com extração parcial" — momento natural pra justificar o
+  reshape sem custo de retrabalho cego.
+
 ## Fechado em [Unreleased]
 
 - **Auditoria pós-plano** — gap identificado em 2026-06-04 (não estava
@@ -3088,6 +3250,45 @@ ou `in {1, 2}`).
 esperado por comando.
 **Quando revisitar:** próxima sessão que mexer em `engine/cli.py` ou nos
 handlers `engine/{implement,plan,verify}.py`.
+
+## Performance — Graph parsers (v1.3.0 debt)
+
+**Origem:** Final review v1.3.0 graph-ia-evolution (M-003, 2026-06-15).
+**Atualização:** PR #16 master review fix-pack (Wave A, 2026-06-16) —
+ObjC parcialmente endereçado.
+
+**Estado:**
+
+- **`engine/graph/parser_objc.py`** — ✅ **endereçado** em Wave A
+  (P-N-018). Pre-computa posições de `@end` uma vez por arquivo + busca
+  binária pra associar method body ao bloco enclosing. Pattern
+  `source[:m.start()].count("\n")` removido dos hot-paths principais
+  do parser ObjC.
+- **`engine/graph/parser_java.py`** e **`engine/graph/parser_xml.py`**
+  — ainda usam o padrão `source[:m.start()].count("\n")` em loops
+  grandes pra recuperar o número da linha de cada match
+  (`_RE_*.finditer(source)`). Cada match faz uma substring + count,
+  gerando comportamento O(N²) por arquivo onde N é o tamanho do source.
+  Aceitável pra arquivos < 5k linhas (típico em mobile nativo), mas vira
+  gargalo em codebases legacy com arquivos monolíticos.
+
+**Mitigação prevista:** mesma cirurgia aplicada em ObjC — pre-computar a
+lista de posições de `\n` uma única vez por arquivo e usar
+`bisect.bisect_right(newlines, m.start())` pra obter o line number em
+O(log N) por match. Refator local em cada parser — não muda contract
+público, só corpo das funções `parse_*`.
+
+**Quando revisitar:**
+- v1.3.1 OR
+- primeiro projeto consumer reporta `forge graph` build lento em arquivo
+  específico (>5k linhas) OR
+- ambos.
+
+Anti-padrão a evitar: NÃO substituir só num parser e deixar os outros —
+o ganho some no agregado e o read-pattern fica inconsistente. ObjC já
+está no caminho final; quando Java/XML forem migrados, os três devem
+compartilhar helper canônico em `_body_text.py` ou módulo similar pra
+evitar três cópias da mesma busca binária.
 
 ---
 

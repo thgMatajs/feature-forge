@@ -7,6 +7,245 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed (master review PR #16 — Wave A + B + C remediation, 2026-06-16)
+
+Aplicação dos 60+ findings do master review PR #16 contra `feat/graph-ia-evolution`
+(v1.3.0 candidate). Distribuído em três waves atômicas: A (parsers), B (engine
+core), C (bootstrap + hooks + docs). Test baseline do PR sobe de 1548 → 1619
+(`pytest --collect-only -q`), refletindo cobertura nova em arquivos
+preexistentes além dos 84 testes em arquivos novos do PR (Java 19 + ObjC 25 +
+XML 13 + bootstrap 6 + lazy 6 + json 9 + migrations 5 + integration 1).
+
+**Parsers (Wave A — engine/graph/parser_{java,xml,objc,kotlin}.py):**
+
+- **P-N-001 / P-N-011 / P-N-002** (`parser_objc.py`) — body extraction
+  brace-matched + skip de strings/comments via `_mask_strings_and_comments`
+  + tratamento de categorias e class extensions; cobertura de instance/class
+  methods previamente perdidos.
+- **P-N-003** (`parser_objc.py`) — categorias `@interface Foo (Bar)` e
+  class extensions `@interface Foo ()` reconhecidas como símbolos próprios.
+- **P-N-015 / P-N-016 / P-N-018** (`parser_objc.py`) — regex hardening
+  (anchors, escapes, escopo de match); P-N-018 pre-computa posições de
+  `@end` pra evitar varredura O(N²) ao casar method bodies. Endereça parte
+  de M-003 (perf O(N²) entre parsers) — gap restante (Java/XML) registrado
+  pra v1.3.1+.
+- **P-N-006 / P-N-014 / P-N-018 / T-N-007** (`parser_xml.py`) — prefixes
+  fully-qualified, sanitização de IDs, perf de scan de attributes, cobertura
+  de view IDs e data-binding actions.
+- **P-N-010 / P-N-008 / T-N-008** (`parser_java.py`) — generics em assinatura
+  de método, modifiers (default/static/synchronized/etc.), tipos de retorno
+  parametrizados; cobertura de cases anteriormente ignorados em classes
+  Android idiomáticas.
+- **P-N-012 / P-N-013** (`parser_kotlin.py`) — logging consistente em path
+  de detecção + docstring detalhada sobre limites conhecidos do parser
+  regex (overload disambiguation, lambda body extraction).
+- **P-N-004** (`engine/graph/_body_text.py`) — `_mask_strings_and_comments`
+  promovido pra módulo compartilhado a partir de `parser_objc.py`. Java
+  + Kotlin + Swift + TypeScript + Objective-C reusam mesma máscara;
+  divergência prévia entre parsers eliminada.
+- **P-N-021** (`engine/graph/kinds.py`) — constantes `Kind.CLASS`,
+  `Kind.FUNCTION`, etc. consumidas pelos parsers Java/XML/ObjC.
+  `kinds.py` deixa de ser dead code; valor único pra cada `symbols.kind`.
+
+**Engine (Wave B — engine/cli.py, engine/ingest.py, engine/graph/builder.py,
+engine/utils/sqlite_io.py):**
+
+- **C-001** (`parser_java.py`) — remove type-hints duplicados (mypy
+  strict-mode cleanup).
+- **C-004 + M-014** (`engine/cli.py`) — skip-list de bootstrap detection
+  amplia pra cobrir read-only commands (`status`, `memory`, `graph`,
+  `--help`, `--version`, `bootstrap`); narrow do broad-except em path
+  de discovery.
+- **E-N-001** (`engine/graph/builder.py`) — symlink-safe walker via
+  `scandir` (substitui `rglob`), early-skip de `_SKIP_DIRS`; cobre
+  fallback gracioso quando symlink target sumiu mid-walk.
+- **E-N-002 / N-005 / N-006 / N-009** (`engine/cli.py`) — narrow de
+  exceptions em handlers + fail-loud em invariants quebrados; sanitiza
+  stderr em paths emergenciais (não vaza traceback Python pro user).
+- **E-N-003 + N-008** (`engine/utils/sqlite_io.py`) — TOCTOU migration
+  race coberto por commit-after-migration + integration tests novos
+  (T-N-012). Per-file lock em ingest narrowed pra evitar contention em
+  builds full paralelos.
+- **E-N-016** (`engine/graph/builder.py`) — overload collision em parsers
+  Kotlin/Java emite warning estruturado em vez de silent overwrite; log
+  via `logger.warning` (compatível com hooks audit).
+- **T-N-002** (`tests/engine/test_bootstrap_detection.py`) — testes saíram
+  de skip; 6/6 passam contra implementação real (eram 3 skipped antes).
+- **T-N-012** (`tests/engine/test_migrations.py`) — +3 testes cobrindo
+  migration race (2 → 5 total no arquivo).
+
+**Bootstrap + hooks + docs (Wave C — esta entrega):**
+
+- **codereviewbot bootstrap.sh:46** (`.claude/bootstrap.sh`) — `flock -n`
+  em `.claude/state/bootstrap.lock` previne race em runs simultâneos.
+  Fallback gracioso quando flock indisponível (macOS default).
+- **codereviewbot bootstrap.sh:74 + T-N-015** — captura stderr de
+  `pip install -e .` em `.claude/state/pip-install.log` + tail das
+  últimas 20 linhas quando falha. Antes silenciava `>/dev/null 2>&1`.
+- **T-N-014** — mesmo tratamento pra probe `forge graph --json q3`;
+  log em `.claude/state/bootstrap-graph.log` + orientação pra
+  `forge doctor` / `forge init`.
+- **T-N-016** — substitui lista hardcoded `pre-commit pre-push` por
+  glob `hooks/git-*`. Futuros delegators entram sem editar bootstrap.
+- **T-N-017** (`hooks/post-edit-codebase-graph.sh`) — early-exit em
+  `*/build/*`, `*/node_modules/*`, `*/.gradle/*`, `*/dist/*`, `*/target/*`,
+  `*/DerivedData/*`, `*/.next/*`, `*/out/*`. Evita re-ingest custoso por
+  edit em diretório gerado, especialmente falso-positivo `.m` em source
+  maps minificados.
+- **T-N-018** — counts factuais corrigidos em CHANGELOG + README + spec:
+  release [1.3.0] subscrevia "+35 tests novos" mas a contagem real é 84
+  tests novos em arquivos novos do PR (Java 19 + ObjC 25 + XML 13 +
+  bootstrap 6 + lazy 6 + json 9 + migrations 5 + integration 1); full
+  suite cresce de 1548 → 1619 (+71).
+- **T-N-019** (`docs/schemas/graph.md`) — nota explícita sobre
+  `files.source_set` (presente no DDL real desde schema v2; documentado
+  na §Reuse Intelligence pero ausente do bloco `files` principal). Schema
+  doc agora aponta cross-reference.
+- **T-N-020** (`docs/superpowers/specs/2026-06-12-graph-ia-evolution.md`) —
+  `_SUPPORTED_LANGS` registry pós-fix-pack listado explicitamente:
+  `{kotlin, swift, typescript, javascript, java, objc}`; XML fora por
+  design (bodies XML não fazem sentido).
+
+### Changed (master review PR #16 remediation)
+
+- **`engine/graph/kinds.py` consumido por parsers** — antes dead code
+  (referenciado só por tests). P-N-021 promoveu adoção em parser_java +
+  parser_xml + parser_objc.
+- **`_mask_strings_and_comments` em `engine/graph/_body_text.py`** — P-N-004
+  promoveu de parser_objc.py pra módulo compartilhado; demais parsers
+  consomem o helper canônico em vez de re-implementar.
+
+### Added (master review PR #16 remediation — tests)
+
+Cobertura nova em arquivos preexistentes (delta full suite 1548 → 1619 = +71):
+
+- `tests/unit/test_parser_objc.py`: 14 → 25 (T-N-004 + T-N-005)
+- `tests/unit/test_parser_xml.py`: 7 → 13 (T-N-007)
+- `tests/unit/test_parser_java.py`: 9 → 19 (T-N-008)
+- `tests/engine/test_migrations.py`: 2 → 5 (T-N-012, Wave B)
+- `tests/integration/test_multilang_graph_build.py`: cobertura expandida
+  (T-N-011 — asserts ampliados; count 1 mantido por design — é
+  integration test único cobrindo round-trip multi-language).
+- Demais arquivos novos do PR (bootstrap 6, lazy 6, json 9, migrations
+  delta) compõem o total 84 tests **PR-scope** em arquivos novos.
+
+### Deferred (master review PR #16 — anotados em `docs/design/04-pending.md`)
+
+- **P-N-007** (is_method_call heurística refinamento — exige parser real,
+  fora do escopo regex)
+- **N-004** (AC-11 escopo bootstrap-detection — policy decision pendente
+  com user)
+- **N-007 / N-015** (silent audit log em `.claude/state/hook-failures.jsonl`
+  — cross-cutting cross-hook)
+- **N-012** (migrations dentro de transaction — refactor estrutural;
+  parcialmente coberto por commit-after-migration de E-N-003)
+- **N-013** (3-state helper `_db_has_full_rebuild_marker`)
+- **M-003** (perf O(N²) Java/XML — pre-compute newlines positions via
+  `bisect`; ObjC já coberto por P-N-018, registrado pra v1.3.1+)
+- **T-N-025** (plan-auditor severity calibration — DOC only, exige
+  discussion com user antes de mexer)
+
+### Carry-over
+
+(Itens das remediations PR #15 + chore gitignore listados abaixo
+ficam fora de v1.3.0 — eles foram acumulados em `main` paralelo ao
+branch de graph-ia-evolution e seguem release lifecycle separado.)
+
+## [1.3.0] — 2026-06-15
+
+### Added (graph-ia-evolution — body column + multi-language parsers + --json + onboarding UX)
+
+Expansão do codebase graph pra consumo direto por IA: símbolos agora
+carregam `body` text, novos parsers cobrem Java/XML/ObjC, flag `--json`
+habilita queries non-interactive, e onboarding UX detecta bootstrap state
+ausente. 8 ondas lógicas (11 commits atômicos: plan-extension + extension-fix
++ doc-sync ficaram em commits separados das ondas principais) acumuladas em
+`feat/graph-ia-evolution`.
+
+- **`symbols.body` column** — `engine/utils/sqlite_io.py` ganha
+  `_ensure_graph_body_column` (ALTER TABLE idempotente). DBs novos
+  contêm `body TEXT` na criação; DBs existentes migram em-place sem
+  rebuild + sem bump de `SCHEMA_VERSION`. Populado por todos os parsers
+  com corpo delimitado por chaves (Kotlin/Swift/TS/Java/ObjC); NULL pra
+  XML symbols. Habilita assistentes IA a inspecionar implementação direto
+  do graph sem abrir o arquivo-fonte.
+- **`forge graph --json <query> [args...]`** — flag non-interactive emite
+  JSON parseável em stdout, sem prompts. Aceita aliases (`q1..q17`/`r`),
+  numeric keys (`1..17`), ou labels textuais (`where-is-used`,
+  `blast-radius`, …). Modo interactivo (`forge graph` sem `--json`)
+  continua inalterado. Stderr reservado pra erros.
+- **Java parser** — `engine/graph/parser_java.py` expõe
+  `parse_java_file(text, path) -> JavaFileInfo`: package declaration,
+  imports (incl. wildcards), classes/interfaces/enums/records (top-level
+  e nested), methods/constructors com body text e reuse-intelligence
+  metadata. Constructor distinguido de method via match de nome contra
+  classe enclosing (heurística regex).
+- **XML parser** — `engine/graph/parser_xml.py` expõe
+  `parse_xml_file(text, path) -> XmlFileInfo`: view IDs (`@+id/...`),
+  classes referenciadas (tag fully-qualified + atributos
+  `android:name`/`class=`), data binding variables, resource keys
+  (`string`/`dimen`/`color`/etc.), e expressões de binding action
+  (`@{...}` com método invocado).
+- **Objective-C parser** — `engine/graph/parser_objc.py` expõe
+  `parse_objc_file(text, path) -> ObjcFileInfo`: `#import` e `@import`,
+  `@interface`/`@protocol`/`@implementation`, methods (instance `-` e
+  class `+`), properties com attributes (`nonatomic`, `strong`, …).
+  Mensagens enviadas (`[obj selector]`) explicitamente NÃO geram call
+  edges (non-goal v1.3).
+- **Extensões `.java` / `.xml` / `.m` / `.mm` registradas** — em
+  `_LANGUAGE_EXTENSIONS` (`engine/graph/builder.py`), `_GRAPH_EXTENSIONS`
+  (`engine/ingest.py`), `_SUPPORTED_LANGS` (`engine/graph/_body_text.py`,
+  exceto `xml` que não tem body extraction), e no `case` match de
+  `hooks/post-edit-codebase-graph.sh`. Build full e incremental
+  dispatcham os novos parsers via `_persist_java`/`_persist_xml`/
+  `_persist_objc`.
+- **CLAUDE.md AI consumption instructions** — seção `## Codebase Graph
+  — IA-ready` instrui o modelo a consultar `forge graph --json <q>` antes
+  de ler arquivos-fonte quando a pergunta cabe em Q1–Q17. Inclui
+  exemplos canônicos por query + lista de linguagens cobertas.
+- **Bootstrap state detection** — `engine/cli.py::_check_bootstrap_state`
+  detecta `.git/hooks/pre-commit` symlink ausente/broken e emite friendly
+  error instruindo o user a rodar `bash .claude/bootstrap.sh`. Onboarding
+  UX pra novos devs num projeto que já tem forge.
+- **Lazy graph auto-build** — `engine/graph_cli.py::_maybe_auto_build`
+  detecta `.claude/graph.db` ausente/empty e dispara build inicial
+  silenciosamente na primeira invocação de `forge graph` (~30s-2min,
+  one-shot). Bootstrap script (`bash .claude/bootstrap.sh`) faz o mesmo
+  build idempotentemente no setup inicial.
+- **Flag `--no-auto-build`** — em `forge graph` desativa o lazy rebuild
+  pra uso em CI/scripts determinísticos (espera que o DB já exista).
+  Combina com `--json` pro pattern não-interativo completo.
+
+### Changed (graph-ia-evolution)
+
+- **`.claude/bootstrap.sh` Step 6** — após install de deps via
+  `pip install -e .`, dispara build inicial do graph + inventory
+  (idempotente). Sem isso, a primeira invocação de `forge graph`
+  triggera lazy rebuild. Ambos caminhos convergem no mesmo state.
+
+### Documentation (graph-ia-evolution)
+
+- **`docs/schemas/graph.md`** — documenta a coluna `symbols.body`
+  (semântica + populated-for + NULL-for + ALTER TABLE migration) e a
+  flag `--json` (non-interactive JSON queries) com exemplos canônicos.
+- **`docs/design/08-session-handoff.md`** — Estado v1.3.0 entregue;
+  Última atualização 2026-06-15.
+- **`README.md`** — §Stats bump (parser count 3 → 6, test count
+  baseline + 84 tests novos em arquivos novos do PR: Java 19 + ObjC 25 +
+  XML 13 + bootstrap 6 + lazy 6 + json 9 + migrations 5 + integration 1;
+  full suite cresce de 1548 → 1619, +71 considerando cobertura nova em
+  arquivos preexistentes — diferença é Wave A+B+C fix-pack pós-review)
+  + §Command surface menciona `forge graph --json` como entrypoint
+  non-interactive.
+- **`docs/design/04-pending.md`** — registra v1.3.0 shipped + 6
+  non-goals como follow-ups v1.4+ (tree-sitter, MCP server, ObjC call
+  graph, call graph preciso, SCHEMA_VERSION bump, visualização
+  gráfica). Critério explícito pra reentrada de cada um.
+- **`docs/superpowers/plans/2026-06-12-graph-ia-evolution.md`** —
+  extensão Task 9.5 (onboarding UX) + Step 9.6/9.7 (pending + README).
+
+## [Unreleased — pre-1.3 carry-over]
+
 ### Changed
 
 - **chore(gitignore)** — Adicionadas entradas faltantes pra runtime

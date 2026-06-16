@@ -127,23 +127,31 @@ você rodar `forge reconfigure`.
 
 ### `graph.db`
 
-**O que contém:** Um banco SQLite com o **grafo de conhecimento** do seu
-código: classes, funções, chamadas, hierarquias, similaridade entre
+**O que contém:** Um banco SQLite (WAL mode) com o **grafo de conhecimento**
+do seu código: classes, funções, chamadas, hierarquias, similaridade entre
 arquivos, dependências entre módulos. É o que alimenta os comandos
-`forge graph` (Q1–Q17) e as queries de reuso.
+`forge graph` (Q1–Q17, modo interativo ou `--json`) e as queries de reuso.
+
+Em v1.3+, a tabela `symbols` ganhou a coluna `body` com o texto-fonte cru
+(comentários preservados) dos símbolos com corpo — Kotlin, Swift, TS,
+Java e ObjC. XML symbols ficam com `body NULL`. Isso permite que
+assistentes IA inspecionem implementação direto do graph sem abrir o
+arquivo-fonte. Schema canônico em `docs/schemas/graph.md §body column`.
 
 **Por que NÃO é versionado:** Cada dev tem branches diferentes. O grafo
 precisa refletir o código que está no checkout atual — versionar um SQLite
 binário geraria conflitos de merge sem sentido.
 
 **Como é atualizado:**
-- `forge init` — construção inicial
-- `forge reconfigure` -> rebuild completo
+- `bash .claude/bootstrap.sh` — construção inicial pós-clone (idempotente)
+- **Lazy auto-build** — `forge graph` detecta DB ausente/empty e dispara
+  build inicial silenciosamente (~30s-2min). Bypass com `--no-auto-build`.
+- `forge init` / `forge reconfigure` -> rebuild completo
 - Hooks automáticos — atualizações incrementais a cada edição/commit
 
 **Se eu apagar:** O forge simplesmente reconstrói na próxima execução de
-`forge graph`, `forge status`, ou no próximo hook pós-edit. A
-reconstrução leva alguns segundos dependendo do tamanho do projeto.
+`forge graph` (lazy auto-build), `forge status`, ou no próximo hook
+pós-edit. A reconstrução leva ~30s-2min em projetos de porte médio.
 
 ---
 
@@ -229,6 +237,13 @@ adicionados em versões mais recentes do forge.
 automaticamente. Os comandos do forge continuam funcionando, mas as
 queries de reuso (`forge graph` Q11–Q17) ficam progressivamente
 desatualizadas. Solução: `forge reconfigure` reinstala.
+
+> **Bootstrap state detection (v1.3+):** se os symlinks de git hooks em
+> `.git/hooks/pre-commit` estão ausentes ou quebrados, o
+> `engine/cli._check_bootstrap_state` emite um friendly error orientando
+> a rodar `bash .claude/bootstrap.sh`. Subcommands read-only
+> (`--version`, `doctor`, `status`, `graph`, `memory`) seguem
+> funcionando sem o bootstrap pra não bloquear diagnóstico.
 
 ---
 

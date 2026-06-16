@@ -8,6 +8,10 @@ The graph DB lives at `.claude/graph.db` and is accessed concurrently by:
 WAL mode lets readers and writers coexist without blocking. The full schema
 is documented in `docs/schemas/graph.md`; this module ships the canonical
 DDL so a fresh `.claude/graph.db` can be bootstrapped without parsing markdown.
+
+NOTE: Idempotent migrations (e.g., ``_ensure_graph_body_column``,
+``_ensure_reuse_intelligence_columns``) live in ``engine/graph/builder.py``,
+not here. This module only holds canonical DDL + connection helpers.
 """
 
 from __future__ import annotations
@@ -36,6 +40,14 @@ CREATE INDEX IF NOT EXISTS idx_files_module     ON files(module);
 CREATE INDEX IF NOT EXISTS idx_files_language   ON files(language);
 CREATE INDEX IF NOT EXISTS idx_files_source_set ON files(source_set);
 
+-- ``symbols`` deliberadamente NÃO carrega UNIQUE(file_id, name, kind):
+-- o invariante de unicidade vem do purge-before-insert pattern
+-- (incremental._purge_file_rows + builder._reset_domain_tables wipe
+-- todas as rows por file_id antes de re-popular). Adicionar UNIQUE
+-- forçaria migration custosa em DBs existentes e mascararia bugs de
+-- parser que emitam símbolos duplicados (preferimos detectar via
+-- count anomaly + logging em vez de constraint violation). Decisão
+-- by-design; ver review PR #16 codereviewbot sqlite_io.py:57.
 CREATE TABLE IF NOT EXISTS symbols (
   id              INTEGER PRIMARY KEY,
   file_id         INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
@@ -48,7 +60,8 @@ CREATE TABLE IF NOT EXISTS symbols (
   receiver_type   TEXT,
   body_hash       TEXT,
   body_tokens     TEXT,
-  modifiers       TEXT
+  modifiers       TEXT,
+  body            TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_symbols_name          ON symbols(name);
 CREATE INDEX IF NOT EXISTS idx_symbols_file          ON symbols(file_id);

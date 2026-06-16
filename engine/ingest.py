@@ -42,7 +42,10 @@ from engine.utils.paths import (
 from engine.utils.sqlite_io import open_db, transaction
 from engine.utils.yaml_io import read_yaml
 
-_GRAPH_EXTENSIONS = {".kt", ".kts", ".swift", ".ts", ".tsx", ".js", ".jsx"}
+_GRAPH_EXTENSIONS = {
+    ".kt", ".kts", ".swift", ".ts", ".tsx", ".js", ".jsx",
+    ".java", ".xml", ".m", ".mm",
+}
 
 
 def run(argv: list[str]) -> int:
@@ -384,7 +387,7 @@ def _handle_pre_push(args: dict[str, str], project_root: Path) -> None:
     Falls back silently when the doctor quick API is not available.
     """
     try:
-        from engine import doctor  # type: ignore
+        from engine import doctor
 
         quick = getattr(doctor, "_run_quick_check", None) or getattr(
             doctor, "run_quick_check", None

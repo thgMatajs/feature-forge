@@ -36,7 +36,8 @@ from __future__ import annotations
 
 import importlib
 import sys
-from typing import Callable
+from pathlib import Path
+from typing import Callable, Optional
 
 from engine.ui.exit_codes import EXIT_CANCELLED, EXIT_PAUSED
 from engine.ui.question import (
@@ -140,6 +141,79 @@ def _resolve(cmd: str) -> Callable[[list[str]], int | None]:
     return handler
 
 
+# Subcommands que NÃO disparam bootstrap-state check — read-only/meta
+# que precisam funcionar antes do `bash .claude/bootstrap.sh` ter rodado
+# (ex.: usuário inspecionando versão ou pedindo ajuda pra descobrir como
+# inicializar).
+#
+# C-004 (master review PR #16, thgMatajs inline): ``graph``, ``status``,
+# ``memory`` e ``raw`` são read-only e devem completar pré-bootstrap. UX
+# pra novo dev que clona o repo e roda ``forge status`` pra inspecionar
+# estado — bloquear com "rode bash .claude/bootstrap.sh" antes de o user
+# sequer entender o que o comando faz é hostil. ``raw`` é a pipe genérica
+# de leitura — mesmo princípio. Comandos que MUTAM state (``init``,
+# ``plan``, ``implement``, ``verify``, ``reconfigure``, ``evolve``,
+# ``undo``, ``qa``, ``ingest``) ficam fora da skip-list e continuam
+# disparando o check.
+_BOOTSTRAP_SKIP_COMMANDS: frozenset[str] = frozenset({
+    "--version",
+    "-v",
+    "--help",
+    "-h",
+    "help",
+    "doctor",
+    "bootstrap",  # reservado caso vire subcommand explícito no futuro
+    "graph",      # read-only — query menu sobre graph.db
+    "status",     # read-only — inspeção de estado
+    "memory",     # read-only — leitura/listagem de L1/L2/L3
+    "raw",        # read-only — pipe genérica de leitura
+})
+
+
+def _check_bootstrap_state(project_root: Path) -> Optional[str]:
+    """Detect if bootstrap was run. Returns error message if missing, None if OK.
+
+    Check: ``.git/hooks/pre-commit`` symlink existe (criado por
+    ``.claude/bootstrap.sh``).
+
+    Task 9.5 (graph-ia-evolution AC-11): friendly error pra novos devs
+    que clonam o repo e tentam rodar comandos antes do bootstrap. NÃO
+    auto-fixar (instalar symlinks silenciosamente é invasivo).
+
+    Skip se:
+    - ``.claude/`` não existe — não é projeto forge ainda (ou é bare
+      repo de testes); deixar o handler dar a mensagem canônica.
+    - ``hooks/git-pre-commit`` (no repo source) não existe — não é o
+      repo da feature-forge em si; check de bootstrap só faz sentido
+      pra mantenedores do próprio forge. Consumer projects que usam
+      ``forge init`` recebem hooks por outra via.
+    - ``.git`` é arquivo (git worktree linked) — hooks vivem no main
+      repo, fora do path do worktree. Worktrees herdam o bootstrap
+      do parent, então não é gap de UX local.
+    """
+    if not (project_root / ".claude").is_dir():
+        return None
+    if not (project_root / "hooks" / "git-pre-commit").is_file():
+        return None
+    if (project_root / ".git").is_file():
+        # Linked worktree — hooks compartilhados com main repo.
+        return None
+
+    hooks_target = project_root / ".git" / "hooks" / "pre-commit"
+    # Symlink válido (aponta pra target real) OU arquivo regular copiado
+    # contam como state OK. Symlink quebrado (aponta pra path inexistente)
+    # cai pra mensagem canônica — `is_symlink() and exists()` filtra esse
+    # caso porque `exists()` resolve o link e retorna False em broken.
+    is_valid = (hooks_target.is_symlink() and hooks_target.exists()) or hooks_target.is_file()
+    if is_valid:
+        return None
+    return (
+        "Atenção: forge não foi inicializado nesta máquina.\n"
+        "   Rode: bash .claude/bootstrap.sh\n"
+        "   (necessário uma vez após clone; idempotente)"
+    )
+
+
 def _print_help() -> None:
     """Render the top-level help. No flags listed — by design."""
     from engine import __version__
@@ -176,6 +250,30 @@ def main(argv: list[str] | None = None) -> int:
         from engine import __version__
         sys.stdout.write(f"forge {__version__}\n")
         return 0
+
+    # Task 9.5 (graph-ia-evolution AC-11) — bootstrap-state check antes do
+    # handler dispatch. Skip-list cobre comandos read-only/meta que
+    # precisam rodar pré-bootstrap. Demais subcommands recebem friendly
+    # error com instrução pra rodar `bash .claude/bootstrap.sh`.
+    if cmd not in _BOOTSTRAP_SKIP_COMMANDS:
+        from engine.utils.paths import (
+            ProjectRootNotFoundError,
+            find_project_root,
+        )
+        try:
+            err = _check_bootstrap_state(find_project_root())
+        except ProjectRootNotFoundError:
+            # Sem project root resolvível → não bloqueia; o handler dará a
+            # mensagem canônica de ProjectRootNotFoundError.
+            #
+            # M-014 fix (master review PR #16): except narrow em vez de
+            # ``except Exception``. Outras exceptions (OSError, perms,
+            # bugs) propagam — telemetria preservada. O handler ainda
+            # roda e dá mensagem canônica pro caso esperado.
+            err = None
+        if err:
+            sys.stderr.write(err + "\n")
+            return 1
 
     handler = _resolve(cmd)
     # Lazy imports — keeps cli.main decoupled from foundation modules

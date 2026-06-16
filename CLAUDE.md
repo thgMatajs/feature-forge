@@ -187,6 +187,61 @@ forge doctor                        # health check 16 categorias
 
 ---
 
+## Codebase Graph — IA-ready
+
+O forge mantém um codebase graph em `.claude/graph.db` (SQLite, WAL mode)
+com símbolos, imports, body-text, e dependências do projeto. **Consulte
+o graph antes de ler arquivos fonte** — reduz tokens de contexto e acelera
+a compreensão do projeto.
+
+### Como consultar
+
+```bash
+# Listar símbolos de um módulo (Q4 = symbols; arg é MODULE name)
+forge graph --json q4 <module-name>           # ex: q4 :feature:auth
+
+# Encontrar features similares por slug (Q1 = similar-features)
+forge graph --json q1 <feature-slug>
+
+# Calcular blast radius de arquivos (Q2 = blast-radius; args posicionais — file paths)
+forge graph --json q2 path/to/Foo.kt
+
+# Encontrar orphan files (Q3 = orphan-files; sem args)
+forge graph --json q3
+
+# Listar dependências de DI (Q8 = di-deps; arg é class name)
+forge graph --json q8 <class-name>
+
+# Listar reuse-findings combinados (alias `r`)
+forge graph --json r
+```
+
+### Linguagens cobertas
+
+Kotlin, Swift, TypeScript, JavaScript, Java, XML (Android layouts +
+resources), Objective-C (`.m`, `.mm`).
+
+### Limitações conhecidas
+
+- Call graph para ObjC não implementado (regex-based, sem AST)
+- XML parser extrai apenas IDs de view, class refs, resource keys e binding vars
+- Body text preserva comentários (cru, sem stripping)
+- Primeira invocação `forge graph` em máquina sem bootstrap pode ser lenta
+  (~30s-2min de lazy rebuild); rode `bash .claude/bootstrap.sh` uma vez
+  após clone pra build inicial.
+
+### Quando ler arquivos fonte diretamente
+
+- Quando precisa do texto exato de uma string literal ou comentário fora
+  do escopo do `symbols.body`
+- Quando precisa de contexto de múltiplas linhas em torno de um símbolo
+- Quando o graph retorna stale data (raro — incremental hook mantém atualizado)
+- Quando o usuário pede explicitamente "leia o arquivo X"
+
+Caso contrário: **graph first**.
+
+---
+
 ## Pointers
 
 - Decisões: `docs/design/01-decisions.md` · `.claude/rules/decisions.md`

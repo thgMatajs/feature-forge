@@ -45,6 +45,7 @@ dist/
 .claude/state/*.json
 .claude/state/*.jsonl
 .claude/state/*.lock
+.claude/state/*.log
 !.claude/state/.gitkeep
 
 # Claude Code — worktrees (git linked-worktrees criadas por subagentes)

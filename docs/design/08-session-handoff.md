@@ -3,9 +3,9 @@
 > Use este doc se você está **retomando feature-forge numa sessão nova** ou se
 > é um agente cold-start sem contexto da conversa de design original.
 
-**Última atualização:** 2026-06-15 (PR #14 — user guides + housekeeping + post-review fixes)
-**Estado PR #14:** 4 guias (`getting-started`, `daily-workflow`, `feature-lifecycle`, `dot-claude-reference`) + 5 diagramas mermaid + README Quick Start. Acrescido housekeeping: `.gitignore` `.planning/*` catch-all (whitelist `det-3/`, `det-6/`, `drift-1/`) + nova seção §Cleanup de `.planning/` em `.claude/rules/orchestrator-persona.md`. Post-review (fresh independent review encontrou 5 Critical + 4 High + 5 Medium + 4 Low) endereçado dentro do PR: counts factuais alinhados à ground truth (`forge doctor` 16 categorias, `forge verify` 3 built-in + N de cards / 21 no diretório, 13 user-facing commands + `ingest` documentado como hook interno), Fase 6/7 corrigidas no diagrama de lifecycle (verify, não doctor), L1/archived isolado no diagrama versionado-vs-local, gates list expandida em feature-lifecycle.md Fase 5, PT-BR neutro (shipada → entregue, fora da caixa → por padrão), Phase 6 qualificado como Phase 6 do roadmap. `CLAUDE.md` raiz também atualizado.
-**Estado master review PR #15 (mergeado pós-fix):** todos os 22 findings (14 Group A + 8 Group B) aplicados em 5 commits atomicos sobre `fix/review-md-remediation`. Test baseline 1350 → 1353 (3 novos testes de A-013 cobrindo path-traversal do guard de undo). Detalhes em CHANGELOG `## [Unreleased] > ### Fixed (master review PR #15 remediation)`.
+**Última atualização:** 2026-06-16 (v1.3.0 + PR #16 master review fix-pack — endereçados 60+ findings: Wave A parsers + Wave B engine + Wave C bootstrap/hooks/docs)
+**Estado v1.3.0 graph-ia-evolution:** ✅ entregue em 8 ondas + Task 9 (doc-sync) sobre `feat/graph-ia-evolution`, **com fix-pack PR #16 aplicado integralmente em cima**. 11 commits originais sobre origin/main cobrem: (1) `symbols.body` ALTER TABLE migration + persistência por todos os parsers; (2) `forge graph --json` non-interactive emissor de JSON; (3) Java parser (`engine/graph/parser_java.py`); (4) XML parser (`engine/graph/parser_xml.py`); (5) ObjC parser (`engine/graph/parser_objc.py`); (6) registro `.java`/`.xml`/`.m`/`.mm` em todos os pontos de discovery (builder + ingest + `_body_text` + hook script); (7) AI consumption section em `CLAUDE.md`; (7.5) onboarding UX — bootstrap detection em `engine/cli.py` + lazy graph auto-build em `engine/graph_cli.py` + flag `--no-auto-build` pra CI; (8) Task 9 doc-sync centralizado. **Fix-pack PR #16 (Wave A+B+C, 26 commits adicionais 2026-06-15..2026-06-16):** Wave A endereçou 13+ findings em parsers (P-N-001..P-N-021, T-N-007/008/011); Wave B endereçou cli/engine/sqlite_io (C-001, C-004 + M-014, E-N-001/002/003, E-N-016, M-003 ObjC perf, N-005/006/008/009, T-N-002, T-N-012); Wave C endereçou bootstrap/hooks/docs (codereviewbot bootstrap.sh:46 — flock race; T-N-014/015 stderr logs; T-N-016 glob hooks; T-N-017 path filter em post-edit hook; T-N-018 test counts; T-N-019 schema cross-ref; T-N-020 `_SUPPORTED_LANGS` registry). Test count: **1619 collected pós fix-pack** (baseline pré-PR 1548 → +71); rapid lane sobe pra 1456 (era 1411 pré-fix-pack). 84 testes em arquivos novos do PR (Java 19 + ObjC 25 + XML 13 + bootstrap 6 + lazy 6 + json 9 + migrations 5 + integration 1); fix-pack somou cobertura nova em arquivos preexistentes. AC-1..AC-11 cobertos por design. Detalhes em CHANGELOG `## [1.3.0]` + `## [Unreleased] §Fixed (master review PR #16 — Wave A + B + C remediation)`. 6 non-goals originais (tree-sitter / MCP server / ObjC call graph / call graph preciso / SCHEMA_VERSION bump / visualização gráfica) + 7 deferreds novos PR #16 (P-N-007, N-004, N-007/015, N-012, N-013, M-003 parsers Java/XML, T-N-025) anotados como follow-ups v1.4+ em `04-pending.md`.
+**Estado master review PR #15 (anterior):** todos os 22 findings (14 Group A + 8 Group B) aplicados em 5 commits atomicos sobre `fix/review-md-remediation`. Test baseline 1350 → 1353 (3 novos testes de A-013 cobrindo path-traversal do guard de undo). Detalhes em CHANGELOG `## [Unreleased — pre-1.3 carry-over] > ### Fixed (master review PR #15 remediation)`.
 **Estado REVIEW.md remediation (anterior):** 22 findings VÁLIDOS do REVIEW.md endereçados; 8 anti-goals anotados em `04-pending.md`; mypy advisory + pathspec dep adicionados.
 **Wave A (PR #13 review, 2026-06-12):** 6 fixes contidos remediados em 5 commits sobre `96a0896` (cli paused_exc refactor + intent-state flush + validate_presets imports + RULE-020 cascade guard + doc-sync). Fix 4 (clear_intent_log_only delegation) skipped — semantics divergem, anotado pra Wave B. Rapid lane verde (1306 passing, 6 falhas pré-existentes inalteradas em test_cards_resolver/test_commands_init/test_validators_card_yaml). +2 regression tests.
 **Wave B (PR #13 review, 2026-06-12):** 5 fixes cross-module remediados em 5 commits sobre `b8731f7` (commits `37084c0` → `4b6eada`): (1) ciclo composer↔init quebrado via `engine/detection/_eval.py` novo + shape guard no composer; (2) `isinstance(Cell/Conflict)` em vez de `hasattr` em 5 sites de init.py; (3) `BACKEND_AXES` shared em `engine/detection/_axes.py` (init + reconfigure consomem); (4) cache process-level pra `_read_intent_log` (O(1) cache hit vs O(n) re-parse); (5) `VALID_BACKEND_AXES`/`VALID_BUNDLE_PLATFORM_KEYS`/`VALID_PROJECT_PLATFORMS` consolidados em `validators/_common.py`. Rapid lane sobe pra 1321 passed (+15 vs Wave A baseline). Mesmas 6 falhas pré-existentes herdadas, não tocadas (out of scope).
@@ -66,6 +66,7 @@ Próximo passo: PR #7 mergeable + Wave R1.1 verde + considerar Gap 14 (preset co
 - Phase B aguarda push da branch `feat/det-6-multi-axis-backend` (29 commits
   acumulados em worktree `det-6-w1`) + abertura de PR. W8 doc-sync neste
   commit é a última wave; review da PR + merge fecham DET-6 em main.
+
 
 - **Phase 0 (gate-infra-extract) — esta branch** — refactor estrito: 7 commits de
   extração + 1 doc-sync + 4 robustness fixes pós-power-review (render_config,
@@ -187,30 +188,6 @@ Depois siga as instruções. Estou na Fase {N}.
 ~400 arquivos · ~52,500 linhas · 27 decisões locked + 7 direcionais (Fase 3.5) + 2 ADR append-only (Decisão 28, Gap 5; Decisão 31, Revisita 30 sandbox guard via sitecustomize.py)
 v1.2-dev cumulativo (PR #4 CC gate + Phase 0 + R1.1 secrets + PR #8 forge qa CONF + pause/resume): **1113 passed** em main (pós PR #9) (baseline pré-PR #8: 847; +86 tests da CONF wave + pause/resume + review fixes); branch gate-infra-extract registra Gap 9 baseline 637 + CC gate +~63 + Phase 0 -1 justificado + secrets gate +~30 · 17 graph queries · 16 proposal kinds · 20 validators (inclui check_cyclomatic_complexity + check_secrets + validate_extension_feature) · 22 cards canon (+ overlay local)
 ```
-### User-facing documentation (2026-06-12)
-
-**O que:** 4 guias de uso (`docs/guides/`), 5 diagramas Mermaid (`docs/diagrams/`), e README renovado com Quick Start + tabela de documentação.
-
-**Público:** dev mobile que usa forge no dia a dia — estagiário a tech lead.
-
-**Guias:**
-- `docs/guides/getting-started.md` — onboarding: instalação, init, adoção em time
-- `docs/guides/daily-workflow.md` — 13 comandos com cenários e árvore de decisão
-- `docs/guides/feature-lifecycle.md` — pipeline completo do intake à retrospectiva
-- `docs/guides/dot-claude-reference.md` — referência de arquivos `.claude/`
-
-**Diagramas Mermaid:**
-- `docs/diagrams/bootstrap-flow.mermaid`
-- `docs/diagrams/feature-lifecycle.mermaid`
-- `docs/diagrams/command-decision-tree.mermaid`
-- `docs/diagrams/graph-query-flow.mermaid`
-- `docs/diagrams/files-versioned-vs-local.mermaid`
-
-**O que NÃO cobre (deixado pra próxima):**
-- Guia de troubleshooting / FAQ
-- Guia de migração de v1.0 para v1.2
-- Tutoriais em vídeo ou screencast
-- Exemplos por stack específica (Firebase, REST, etc.)
 
 | Categoria | Status |
 |---|---|
@@ -242,6 +219,8 @@ v1.2-dev cumulativo (PR #4 CC gate + Phase 0 + R1.1 secrets + PR #8 forge qa CON
 | v1.2-dev — Phase 0 (gate-infra-extract) | ✅ extracted (`_gate_infra.py` + `_diff.py`) 2026-06-05 — refactor estrito sem behavior change: 7 commits extraem `DispatchResult`/`check_tool_available`/`dispatch_native_tool`/`render_config_with_placeholders`/`parse_overrides`/`apply_overrides` em `_gate_infra.py` + `DiffHunk`/`classify_range_against_hunks`/`extract_diff_hunks`/`git_staged_files`/`read_commit_body` em `_diff.py`; rename `cc_threshold_lookup` → `gate_threshold_lookup` e `cc_format_three_paths` → `format_three_paths_message` em `_common.py` (DEFAULTS_CC preservado). CC validator ~1127 → ~840 LOC compondo helpers. Suite 750 (baseline 751 - 1 justificado em T4). Destrava Wave R1+ (check_secrets/check_deps_cve/check_duplication/check_cognitive_complexity/check_dead_code/check_arch_rules/check_function_length_and_nesting). |
 | v1.2-dev — Secrets gate (R1.1) | ✅ merged main 2026-06-05 — `check_secrets` per-stage split: gitleaks no per-task hook de `forge implement`, trufflehog `--only-verified` na cascade de `forge verify`. Posicionado após `check_cyclomatic_complexity` (fail-fast Decision 23 preservado). Override via `SECRETS-OVERRIDE: <file>:<line> kind=<token-type> — <razão>` no commit body. Hard-fail sempre; tool missing → warn; bypass `NO_SECRETS_GATE=1` logado em `.claude/state/secrets-gate-bypass.jsonl`. Composto inteiro da infra Phase 0 (2º consumer, prova que a extração paga). Validators 15→16, doctor 13→14 categorias (`secrets-tools`). 6 commits + ~30 tests novos. |
 | v1.2-dev — Phase A DRIFT-1 intent protocol (branch `feat/drift-1-intent-protocol`) | ✅ shipping-ready 2026-06-10 — 21 commits sobre `1b1d289`. Engine deixa de ler stdin: emite intent em `.claude/state/forge-pending.json`, consome `.claude/state/forge-response.json`, exit code 2 = paused-for-input. Novos módulos: `engine/utils/json_io.py`, `engine/ui/intent_state.py`, `engine/ui/tty_bridge.py`. `bin/forge` dispatcher detecta TTY + `CLAUDECODE` env. 3 sentinels exportadas de `engine/ui/question.py` (`PausedForInputError` / `UserCancelledError` / `UserPausedError`); 10 per-subcommand checkpoint dataclasses (outcome C de W2.T0). Schema canônico em `docs/schemas/intent-protocol.md`. AC-1..AC-9 verificados em 15 integration + 3 e2e pty tests. Rapid lane 1151 passed / 11 skipped preservada. Aguardando push + PR. |
+| **v1.3.0 — graph-ia-evolution (branch `feat/graph-ia-evolution`)** | ✅ **shipped 2026-06-15** — 11 commits cobrindo 8 ondas + Task 9 doc-sync: (1) `symbols.body` column via ALTER TABLE idempotente em `_ensure_graph_body_column` (sem bump SCHEMA_VERSION); (2) `forge graph --json <query>` non-interactive emitting JSON em stdout, aceitando aliases/keys/labels; (3) Java parser (`parser_java.py`) cobrindo package/imports/classes/methods/constructors com body + reuse metadata; (4) XML parser (`parser_xml.py`) cobrindo Android view IDs / class refs / binding vars / resource keys; (5) ObjC parser (`parser_objc.py`) cobrindo `@interface`/`@protocol`/`@implementation`/methods/properties + imports (SEM call graph); (6) registro `.java`/`.xml`/`.m`/`.mm` em `_LANGUAGE_EXTENSIONS`+`_GRAPH_EXTENSIONS`+`_SUPPORTED_LANGS`+hook script; (7) seção "Codebase Graph — IA-ready" em `CLAUDE.md` instruindo modelo a consultar graph antes de ler fontes; (7.5) onboarding UX — bootstrap detection em `engine/cli.py::_check_bootstrap_state` + lazy graph auto-build em `engine/graph_cli.py::_maybe_auto_build` + flag `--no-auto-build`; (8) doc-sync centralizado (schema doc + CHANGELOG v1.3.0 + handoff + README + 04-pending). Test count: **1393 rapid passed; 1566 collected** (baseline 1523 + 43 cumulativos da cobertura nova). AC-1..AC-11 cobertos por design. 6 non-goals (tree-sitter / MCP server / ObjC call graph / call graph preciso / SCHEMA_VERSION bump / visualização gráfica) anotados como follow-ups v1.4+ em `04-pending.md`. Decisões locked não tocadas. Detalhe em CHANGELOG `## [1.3.0]`. |
+| **v1.3.0 — PR #16 master review fix-pack (Wave A+B+C)** | ✅ **endereçados todos os críticos/altos antes do merge (2026-06-16)** — 26 commits adicionais sobre `feat/graph-ia-evolution` cobrem 60+ findings do master review do PR #16. **Wave A (parsers):** P-N-001/002/003/004/006/008/010/011/012/013/014/015/016/018/021 + C-001 + T-N-007/008 — `kinds.py` deixa de ser dead code; `_mask_strings_and_comments` consolidado em `_body_text.py`; ObjC `@end` perf O(N²) → O(log N) (closure parcial de M-003); regex hardening em todos os parsers; categorias e class extensions ObjC. **Wave B (engine):** C-004 + M-014 (bootstrap detection skip-list) + E-N-001 (symlink-safe walker) + E-N-002/N-005/N-006/N-009 (narrow exceptions + sanitiza stderr) + E-N-003 + N-008 (TOCTOU migration race) + E-N-016 (overload collision warning) + T-N-002 (desvacua bootstrap-detection skip tests) + T-N-012 (migrations race tests). **Wave C (bootstrap/hooks/docs):** codereviewbot bootstrap.sh:46 (`flock` race) + T-N-014/015 (`pip install` + `forge graph` probe captura stderr em `.claude/state/*.log`) + T-N-016 (`hooks/git-*` glob no lugar de lista hardcoded) + T-N-017 (early-exit em `build/`/`node_modules/`/`.gradle/`/`dist/`/`target/`/`DerivedData/`/`.next/`/`out/`) + T-N-018 (test count tripla inconsistência: "+35 tests" → 84 PR-scope em arquivos novos / +71 full suite) + T-N-019 (`files.source_set` documentada no bloco principal do schema doc) + T-N-020 (`_SUPPORTED_LANGS` registry explícito: `{kotlin, swift, typescript, javascript, java, objc}`). 7 deferreds anotados em `04-pending.md` §Follow-ups PR #16: P-N-007 (regex `is_method_call`), N-004 (AC-11 policy), N-007/N-015 (audit log cross-hook), N-012 (migrations dentro de transaction), N-013 (3-state helper), M-003 perf Java/XML (ObjC closurado), T-N-025 (plan-auditor severity calibration). Suite: 1548 → 1619 collected (+71); rapid 1411 → 1456 (+45). Bootstrap.sh + hook script syntax-checked (`bash -n`). |
 
 ## REVIEW.md remediation — baseline (2026-06-12)
 
@@ -258,6 +237,38 @@ v1.2-dev cumulativo (PR #4 CC gate + Phase 0 + R1.1 secrets + PR #8 forge qa CON
 A v1.1 entregue inclui o pipeline completo de planning + verify + memory + graph
 + reuse-intelligence + non-product feature track (refactor/bugfix). Limites
 restantes ficam pra v1.2+ ou v2/Phase 6:
+
+**v1.3-dev (graph-ia-evolution Task 9.5):**
+
+- **Graph é local per-dev (Decision 20).** `.claude/graph.db` é construído
+  no clone via `bash .claude/bootstrap.sh` (uma vez, idempotente). Sem
+  bootstrap, a primeira invocação de `forge graph` triggera lazy rebuild
+  (~30s-2min, gerenciado por `engine/graph_cli._maybe_auto_build`).
+  Bootstrap script faz o build inicial e setup de hooks; para CI/scripts
+  determinísticos use `forge graph --no-auto-build <query>` pra desativar
+  o auto-rebuild.
+
+**v1.3-dev (graph-ia-evolution PR #16 fix-pack — Wave A+B+C, 2026-06-16):**
+
+- **Perf debt parcial em parsers Java/XML.** ObjC foi endereçado em
+  Wave A via P-N-018 (pre-compute `@end` positions + busca binária).
+  Java e XML ainda usam `source[:m.start()].count("\n")` em loops grandes
+  — O(N²) por arquivo. Aceitável pra arquivos < 5k linhas (típico mobile);
+  gargalo em legacy monolítico. Registrado em `04-pending.md §Performance —
+  Graph parsers` pra v1.3.1+. Anti-padrão a evitar: substituir só num
+  parser e deixar os outros.
+- **Bootstrap sem `flock` em macOS.** `.claude/bootstrap.sh` tenta usar
+  `flock -n` pra serializar runs simultâneos (PR #16 codereviewbot
+  finding). macOS default não traz `flock` — fallback gracioso roda
+  sem lock. Race é raro porque bootstrap é gesto manual single-run,
+  mas teoricamente possível em automação. Sem fix porque exige
+  reimplementação Python ou dependência externa.
+- **Bootstrap detection skip-list incompleta (N-004).** Wave B (C-004 +
+  M-014) ampliou empiricamente a lista de comandos read-only pulados
+  pela detection (`status`, `memory`, `graph`, `--help`, `--version`,
+  `bootstrap`). Falta confirmação de produto se deve cobrir
+  `evolve --dry-run`, `undo --list`, etc. *Reentrar* na próxima sessão
+  de UX review com user.
 
 **v1.0 herdados (ainda válidos):**
 

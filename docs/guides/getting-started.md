@@ -65,10 +65,17 @@ git clone <repo-url> ~/Documents/feature-forge
 export FORGE_HOME=~/Documents/feature-forge
 export PATH="$FORGE_HOME/bin:$PATH"
 cd ~/Documents/feature-forge
-pip install -e .   # instala em modo editável — dependências locais (pyyaml, pathspec)
+bash .claude/bootstrap.sh   # instala deps + builda graph + inventory iniciais (idempotente)
 forge --version
-# → forge 1.2.0
+# → forge 1.3.0
 ```
+
+O `bootstrap.sh` substitui o `pip install -e .` manual em v1.3+: além de
+instalar dependências, ele linka os git hooks ao delegator canônico e
+dispara o **build inicial do graph + inventory** (lazy build no probe
+`forge graph --json q3`). Sem isso, a primeira invocação de `forge graph`
+acionaria o mesmo lazy rebuild — os dois caminhos convergem no mesmo
+estado. Detalhes em `.claude/rules/SMOKE-CHECKLIST.md`.
 
 Para persistir no shell, adicione as duas linhas de `export` ao seu `~/.zshrc`
 ou `~/.bashrc`.
@@ -193,14 +200,20 @@ git push
 ```bash
 git pull
 # → .claude/ (versionado) já está no disco
-forge reconfigure
-# → escolhe "rebuild graph" no menu
-# → graph.db é construído localmente
+bash .claude/bootstrap.sh
+# → linka git hooks + builda graph.db inicial (idempotente)
 # → pronto
 ```
 
-O `forge reconfigure` detecta que o `workflow-config.yaml` já existe e pergunta
-se você quer rebuildar o graph local. Leva 10 segundos.
+`bash .claude/bootstrap.sh` é o caminho canônico em v1.3+: ele linka os
+git hooks e dispara o build inicial do graph via probe `forge graph --json
+q3`. Caso pule esse passo, a primeira invocação de `forge graph` faz o
+mesmo lazy rebuild automaticamente (~30s-2min em projetos de porte médio).
+
+> Se o bootstrap não rodou e algum subcomando precisa dos hooks, o forge
+> emite um friendly error pedindo `bash .claude/bootstrap.sh` (vide
+> `engine/cli._check_bootstrap_state`). Subcommands read-only (`--version`,
+> `doctor`, `status`, `graph`, `memory`) seguem funcionando.
 
 ### Fluxograma do bootstrap
 
@@ -236,6 +249,19 @@ O **graph** é um catálogo pesquisável do seu código, armazenado em SQLite
 (`.claude/graph.db`). Ele não substitui seu editor — ele dá à IA (Claude Code)
 um mapa rápido do codebase sem precisar ler arquivo por arquivo.
 
+Duas formas de consultar:
+
+- **Interativo:** `forge graph` abre menu com Q1–Q17 + `r` (reuse combinada).
+- **Non-interactive (IA-friendly):** `forge graph --json <query> [args...]`
+  emite JSON em stdout sem prompts. Aceita aliases (`q1..q17`, `r`),
+  numeric keys (`1..17`), ou labels textuais (`orphan-files`,
+  `blast-radius`, …). Flag adicional `--no-auto-build` desativa o
+  lazy rebuild pra contextos CI/scripts determinísticos.
+
+Vide `CLAUDE.md §Codebase Graph — IA-ready` pra exemplos canônicos por
+query e instrução de quando o assistente IA deve consultar o graph
+antes de ler arquivos-fonte.
+
 O graph responde a 17 queries canônicas (Q1–Q17):
 
 | Query | Label | O que responde |
@@ -260,7 +286,12 @@ O graph responde a 17 queries canônicas (Q1–Q17):
 
 O build do graph é **determinístico** — mesmo código sempre produz o mesmo
 graph. Ele usa parsers baseados em regex (não AST real — decisão consciente
-v1) para extrair símbolos, dependências e similaridades.
+v1) para extrair símbolos, dependências e similaridades. v1.3 cobre **6
+linguagens**: Kotlin, Swift, TypeScript/JavaScript, Java, XML (Android
+layouts + resources) e Objective-C (`.m`/`.mm`). Símbolos com corpo
+(Kotlin/Swift/TS/Java/ObjC) carregam a coluna `symbols.body` com o
+texto-fonte cru, permitindo que assistentes IA inspecionem implementação
+sem abrir o arquivo (vide `docs/schemas/graph.md §body column`).
 
 ---
 

@@ -19,7 +19,9 @@ from typing import Optional
 
 # Languages that go through this helper. Used only to pick comment / string
 # rules; everything else is shared.
-_SUPPORTED_LANGS = frozenset({"kotlin", "swift", "typescript", "javascript"})
+_SUPPORTED_LANGS = frozenset(
+    {"kotlin", "swift", "typescript", "javascript", "java", "objc"}
+)
 
 
 def extract_function_body(
@@ -227,6 +229,36 @@ _NOISE_TOKENS_PER_LANG: dict[str, frozenset[str]] = {
             "switch", "null", "undefined", "true", "false", "of", "in",
         }
     ),
+    "java": frozenset(
+        {
+            "public", "private", "protected", "class", "interface", "enum",
+            "return", "if", "else", "for", "while", "do", "switch", "case",
+            "break", "continue", "new", "this", "super", "null", "true",
+            "false", "void", "int", "long", "double", "float", "boolean",
+            "char", "byte", "short", "final", "static", "abstract", "extends",
+            "implements", "import", "package", "try", "catch", "finally",
+            "throw", "throws", "synchronized", "volatile", "transient",
+            "instanceof", "assert", "record", "sealed", "non-sealed", "var",
+        }
+    ),
+    "objc": frozenset(
+        {
+            "self", "super", "return", "if", "else", "for", "while", "do",
+            "switch", "case", "break", "continue", "nil", "null", "yes", "no",
+            "true", "false", "id", "instancetype", "void", "int", "bool",
+            "nsinteger", "nsuinteger", "cgfloat", "nsstring", "nsarray",
+            "nsdictionary", "nsset", "nsobject", "strong", "weak", "copy",
+            "assign", "retain", "nonatomic", "atomic", "readwrite", "readonly",
+            "in", "out", "inout", "byref", "bycopy", "oneway", "typedef",
+            "struct", "union", "enum", "const", "static", "extern",
+            "@public", "@protected", "@private", "@package", "@class",
+            "@selector", "@protocol", "@required", "@optional", "@end",
+            "@synthesize", "@dynamic", "@synchronized", "@try", "@catch",
+            "@finally", "@throw", "@autoreleasepool", "@encode",
+            "@compatibility_alias", "@defs", "@property", "@implementation",
+            "@interface",
+        }
+    ),
 }
 
 
@@ -300,3 +332,113 @@ def find_opening_brace(source: str, start: int) -> Optional[int]:
             return i
         return None
     return None
+
+
+def mask_strings_and_comments(text: str) -> str:
+    """Return ``text`` com strings e comments substituídos por espaços,
+    preservando offsets/line counts pra regex downstream.
+
+    Promovido de ``parser_kotlin._mask_strings_and_comments`` (P-N-004 /
+    REVIEW PR #16, Mandamento #3 reuse-first) — reutilizável por
+    parser_java e qualquer parser C-style futuro que precise filtrar
+    declarações dentro de literais.
+
+    Handled forms:
+      - Triple-quoted raw strings (Kotlin ``\"\"\" ... \"\"\"``).
+      - Double-quoted strings ``" ... "`` com ``\\"`` escapes.
+      - Single-quoted char literals ``' ... '`` com ``\\'`` escapes.
+      - Block comments ``/* ... */`` (multi-linha; newlines preservadas).
+      - Line comments ``// ...`` até EOL.
+
+    Delimitadores ficam onde estão; só o *conteúdo* é mascarado, então
+    offsets ficam estáveis pra matches subsequentes.
+    """
+    n = len(text)
+    out = list(text)
+    i = 0
+    while i < n:
+        ch = text[i]
+        # Triple-quoted raw string (Kotlin idiom; ignorado em Java mas
+        # inofensivo — Java não tem triple-quote então o text.startswith
+        # nunca casa em fontes Java).
+        if ch == '"' and text.startswith('"""', i):
+            end = text.find('"""', i + 3)
+            if end == -1:
+                for j in range(i + 3, n):
+                    if text[j] != "\n":
+                        out[j] = " "
+                return "".join(out)
+            for j in range(i + 3, end):
+                if text[j] != "\n":
+                    out[j] = " "
+            i = end + 3
+            continue
+        # Block comment.
+        if ch == "/" and i + 1 < n and text[i + 1] == "*":
+            end = text.find("*/", i + 2)
+            if end == -1:
+                for j in range(i + 2, n):
+                    if text[j] != "\n":
+                        out[j] = " "
+                return "".join(out)
+            for j in range(i + 2, end):
+                if text[j] != "\n":
+                    out[j] = " "
+            i = end + 2
+            continue
+        # Line comment.
+        if ch == "/" and i + 1 < n and text[i + 1] == "/":
+            j = i + 2
+            while j < n and text[j] != "\n":
+                out[j] = " "
+                j += 1
+            i = j
+            continue
+        # Double-quoted string (single-line semantics).
+        if ch == '"':
+            j = i + 1
+            while j < n and text[j] != "\n":
+                if text[j] == "\\" and j + 1 < n:
+                    out[j] = " "
+                    out[j + 1] = " "
+                    j += 2
+                    continue
+                if text[j] == '"':
+                    break
+                out[j] = " "
+                j += 1
+            # Unterminated string (hit newline OR EOF sem closing quote):
+            # análogo a block comment não-fechado — mascara também o
+            # opening quote pra evitar que ``"class X {`` deixe ``"``
+            # solto + ``class X {`` legível por matchers downstream
+            # (codereviewbot 3417876782 / PR16-FU).
+            if j >= n or text[j] != '"':
+                out[i] = " "
+                i = j  # preserva newline (já guardado) ou EOF
+            else:
+                i = j + 1
+            continue
+        # Single-quoted char literal.
+        if ch == "'":
+            j = i + 1
+            while j < n and text[j] != "\n":
+                if text[j] == "\\" and j + 1 < n:
+                    out[j] = " "
+                    out[j + 1] = " "
+                    j += 2
+                    continue
+                if text[j] == "'":
+                    break
+                out[j] = " "
+                j += 1
+            # Unterminated char literal (hit newline OR EOF):
+            # mesmo tratamento do double-quote acima (codereviewbot
+            # 3417876787 / PR16-FU).
+            if j >= n or text[j] != "'":
+                out[i] = " "
+                i = j
+            else:
+                i = j + 1
+            continue
+        i += 1
+    return "".join(out)
