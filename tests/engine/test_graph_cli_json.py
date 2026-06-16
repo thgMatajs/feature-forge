@@ -232,7 +232,19 @@ def test_json_flag_skips_interactive_prompt(
     monkeypatch.chdir(tmp_forge_project)
 
     # Sentinel: instrumentamos question.ask pra explodir se chamado.
+    #
+    # T-N-013 (master review): assert pre-patch que ``question.ask`` é o
+    # atributo real do módulo — protege contra refator que renomeie/mova
+    # o attr. Sem isso, monkeypatch.setattr aceitava silently um attr
+    # inexistente em versões antigas do pytest (atual: monkeypatch raises
+    # AttributeError por default em attrs ausentes — confirmamos via
+    # ``raising=True`` padrão). O assert explícito é defesa em camada.
     from engine.ui import question
+
+    assert hasattr(question, "ask"), (
+        "engine.ui.question precisa expor 'ask' — assinatura mudou? "
+        "Atualize o sentinel antes do patch."
+    )
 
     def _boom(*args: object, **kwargs: object) -> str:  # pragma: no cover
         raise AssertionError("question.ask should not be called in --json mode")

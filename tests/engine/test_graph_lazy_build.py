@@ -73,7 +73,16 @@ def _patch_build_full(monkeypatch: pytest.MonkeyPatch, calls: list[Path]) -> Non
 
     Captura cada invocação em ``calls`` e cria um DB seedado mínimo no
     target, simulando build bem-sucedido sem walk de filesystem real.
+
+    T-N-009 (master review): valida em patch-time que a assinatura do
+    spy bate com a função real via ``inspect.signature``. Refator de
+    ``build_full`` que adicione/remova params positional-or-keyword
+    estoura no test (em vez de silently mascarar). Usamos ``inspect``
+    em vez de ``patch.object(autospec=True)`` porque o spy aceita
+    ``*args, **kwargs`` por design (compatibilidade pra-frente).
     """
+    import inspect
+    import engine.graph.builder as _builder_mod
 
     def _fake_build_full(project_root: Path, *args: object, **kwargs: object) -> dict:
         calls.append(project_root)
@@ -99,6 +108,23 @@ def _patch_build_full(monkeypatch: pytest.MonkeyPatch, calls: list[Path]) -> Non
         conn.commit()
         conn.close()
         return {"files_scanned": 1, "symbols_extracted": 0, "edges_created": 0, "duration_ms": 1}
+
+    # Sanity check: o primeiro param da função real é ``project_root: Path``.
+    # Se isso mudar (refator), o spy precisa ser revisitado. ``inspect``
+    # falha loudly em vez de silent miscall.
+    real_sig = inspect.signature(_builder_mod.build_full)
+    real_params = list(real_sig.parameters.keys())
+    assert real_params and real_params[0] == "project_root", (
+        f"build_full assinatura mudou: primeiro param = {real_params[:1]} "
+        "(esperava 'project_root'). Atualize _fake_build_full antes."
+    )
+    # Validamos também que o spy aceita esse param positional — chamando
+    # signature do spy com ``project_root`` como kwarg garantido funciona.
+    fake_sig = inspect.signature(_fake_build_full)
+    fake_params = list(fake_sig.parameters.keys())
+    assert fake_params[0] == "project_root", (
+        f"_fake_build_full primeiro param = {fake_params[:1]}; deve ser 'project_root'"
+    )
 
     monkeypatch.setattr("engine.graph.builder.build_full", _fake_build_full)
 
@@ -243,6 +269,22 @@ def test_lazy_build_quiet_in_json_mode(
     # Garantia: stdout não contém mensagem de build
     assert "buildando" not in stdout.lower()
     assert "building" not in stdout.lower()
-    # JSON parseável
+    # T-N-010 (master review): non-empty stdout assert ANTES de json.loads
+    # — empty stdout passaria silently no parse antigo (json.loads('') já
+    # raise mas mensagem é críptica). assert + shape check produzem
+    # diagnóstico claro em failure.
+    assert stdout, (
+        "stdout esperado não-vazio (auto-build deveria emitir JSON "
+        f"válido). captured.err={captured.err!r}"
+    )
+    # JSON parseável + shape sane (list ou dict — orphan-files retorna list)
     import json
-    json.loads(stdout)  # raises se inválido
+    try:
+        parsed = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise AssertionError(
+            f"stdout não é JSON válido: {exc}. stdout={stdout!r}"
+        ) from exc
+    assert isinstance(parsed, (list, dict)), (
+        f"JSON esperado list/dict, got {type(parsed).__name__}: {parsed!r}"
+    )
