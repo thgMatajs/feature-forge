@@ -8,6 +8,7 @@ escape hatch. For per-edit deltas use `engine.graph.incremental`.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
 import sqlite3
@@ -16,6 +17,8 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
+
+_logger = logging.getLogger("engine.graph.builder")
 
 from pathspec import PathSpec
 from pathspec.patterns.gitignore.spec import GitIgnoreSpecPattern
@@ -94,11 +97,36 @@ def build_full(
     target_db = db_path or graph_db_path(project_root)
     conn = open_db(target_db, create=True)
     try:
-        _ensure_imports_to_file_id_column(conn)
-        _ensure_reuse_intelligence_columns(conn)
-        _ensure_graph_body_column(conn)
+        # Migrations agrupadas em try/except — sem isto, um DDL falhando
+        # deixava o DB em estado parcialmente migrado sem visibilidade.
+        # Codereviewbot builder.py:1040 + master review N-012.
+        try:
+            _ensure_imports_to_file_id_column(conn)
+            _ensure_reuse_intelligence_columns(conn)
+            _ensure_graph_body_column(conn)
+        except sqlite3.Error as exc:
+            _logger.error(
+                "schema migration failed during build_full: %s", exc, exc_info=True
+            )
+            raise RuntimeError(
+                f"graph schema migration failed: {exc}. "
+                "DB may be in inconsistent state — consider `forge reconfigure`."
+            ) from exc
         _reset_domain_tables(conn)
-        files_by_ext = discover_source_files(project_root)
+        # discover_source_files: filesystem walk pode raise OSError em
+        # permissões esquisitas. Codereviewbot builder.py:102: era OK em
+        # tese (caller já valida project_root) mas wrap explícito facilita
+        # diagnóstico e impede que o conn fique aberto sem rollback claro.
+        try:
+            files_by_ext = discover_source_files(project_root)
+        except OSError as exc:
+            _logger.error(
+                "discover_source_files failed in %s: %s", project_root, exc,
+                exc_info=True,
+            )
+            raise RuntimeError(
+                f"failed to walk project_root={project_root}: {exc}"
+            ) from exc
         total_files = sum(len(paths) for paths in files_by_ext.values())
 
         files_scanned = 0
@@ -162,32 +190,74 @@ def discover_source_files(project_root: Path) -> dict[str, list[Path]]:
 
 
 def _iter_files(root: Path, gitignore_rules: Optional[list[tuple[str, bool, bool]]] = None):
+    """Walk ``root`` yielding source files; skip symlinks and excluded dirs.
+
+    E-N-001 (master review PR #16): replicado o pattern já existente em
+    ``_find_gitignore_files`` — usa ``os.scandir`` + ``entry.is_symlink()``
+    guard + ``entry.is_dir(follow_symlinks=False)``. Symlinks são SKIPPADOS
+    por completo (não seguimos), o que previne loop infinito em ciclos
+    (``a/b -> a/``) e fuga acidental do project_root via link arbitrário.
+    Também tracking ``visited`` de ``os.path.realpath`` cobre hard links e
+    bind mounts esquisitos com baixo custo.
+
+    Antes do fix, ``Path.is_dir()`` default SEGUIA symlinks; em monorepo
+    com ciclo, o walker enchia o stack até OS encerrar via ENAMETOOLONG —
+    com milhares de duplicates antes do crash.
+    """
     rules = gitignore_rules or []
+    visited: set[str] = set()
     stack: list[Path] = [root]
     while stack:
         current = stack.pop()
         try:
-            entries = list(current.iterdir())
-        except (PermissionError, OSError):
+            real = os.path.realpath(current)
+        except OSError:
             continue
-        for entry in entries:
-            name = entry.name
-            is_dir = entry.is_dir()
-            if name.startswith(".") and name not in {".github"}:
-                if is_dir and name in _EXCLUDED_DIRS:
+        if real in visited:
+            continue
+        visited.add(real)
+        try:
+            it = os.scandir(current)
+        except (PermissionError, OSError, FileNotFoundError):
+            continue
+        with it:
+            for entry in it:
+                name = entry.name
+                # Symlink-first: nunca segue links (cycle protection + escape
+                # do project_root prevention). Mesmo pattern de
+                # _find_gitignore_files.
+                try:
+                    if entry.is_symlink():
+                        continue
+                except OSError:
                     continue
+                try:
+                    is_dir = entry.is_dir(follow_symlinks=False)
+                except OSError:
+                    continue
+                if name.startswith(".") and name not in {".github"}:
+                    if is_dir and name in _EXCLUDED_DIRS:
+                        continue
+                    if is_dir:
+                        continue
                 if is_dir:
-                    continue
-            if is_dir:
-                if name in _EXCLUDED_DIRS:
-                    continue
-                if rules and _matches_gitignore(entry, root, rules, is_dir=True):
-                    continue
-                stack.append(entry)
-            elif entry.is_file():
-                if rules and _matches_gitignore(entry, root, rules, is_dir=False):
-                    continue
-                yield entry
+                    if name in _EXCLUDED_DIRS:
+                        continue
+                    entry_path = Path(entry.path)
+                    if rules and _matches_gitignore(entry_path, root, rules, is_dir=True):
+                        continue
+                    stack.append(entry_path)
+                else:
+                    try:
+                        is_file = entry.is_file(follow_symlinks=False)
+                    except OSError:
+                        continue
+                    if not is_file:
+                        continue
+                    entry_path = Path(entry.path)
+                    if rules and _matches_gitignore(entry_path, root, rules, is_dir=False):
+                        continue
+                    yield entry_path
 
 
 def _find_gitignore_files(project_root: Path) -> list[Path]:
@@ -508,6 +578,15 @@ _DI_ANNOTATION_TO_KIND = {
 def _persist_kotlin(conn: sqlite3.Connection, file_id: int, info: KotlinFileInfo) -> dict:
     # Kotlin precisa de lastrowid por símbolo para preencher di_graph; mantemos
     # loop em symbols mas usamos executemany em imports / firebase_refs / di.
+    #
+    # E-N-016 (master review PR #16): em arquivos Kotlin com overload (mesmo
+    # nome, signatures diferentes — common em `.kts` ou nested classes), o
+    # mapping ``name → lastrowid`` colidia silenciosamente: o último símbolo
+    # sobrescrevia anteriores no dict, fazendo o DI graph apontar pro
+    # símbolo errado. Mitigação minimal: log warning quando colisão é
+    # detectada. A fix completa (chave composta ``(file_id, name, kind,
+    # line)`` ou ``dict[name, list[symbol_id]]``) fica como follow-up — a
+    # detecção dá sinal de produção pra calibrar a urgência.
     edges = 0
     name_to_symbol_id: dict[str, int] = {}
     for symbol in info.symbols:
@@ -532,6 +611,19 @@ def _persist_kotlin(conn: sqlite3.Connection, file_id: int, info: KotlinFileInfo
             ),
         )
         if cur.lastrowid is not None:
+            if symbol.name in name_to_symbol_id:
+                _logger.warning(
+                    "kotlin overload collision: name=%r already mapped to "
+                    "symbol_id=%d in file_id=%d; new symbol_id=%d (kind=%s, "
+                    "line=%s) overwrites — DI graph mapping may be ambiguous. "
+                    "Track via E-N-016 follow-up.",
+                    symbol.name,
+                    name_to_symbol_id[symbol.name],
+                    file_id,
+                    cur.lastrowid,
+                    symbol.kind,
+                    symbol.line,
+                )
             name_to_symbol_id[symbol.name] = cur.lastrowid
 
     import_rows = [(file_id, imp) for imp in info.imports]
