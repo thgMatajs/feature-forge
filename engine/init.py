@@ -3,7 +3,7 @@
 This is the MOST IMPORTANT command of feature-forge. It:
 
 - detects whether the cwd is a fresh project (greenfield) or already has
-  `.claude/workflow-config.yaml` (brownfield — defer to `forge reconfigure`);
+  `.claude/forge/forge-config.yaml` (brownfield — defer to `forge reconfigure`);
 - runs cinematic discovery (cards, stack detection, design system, i18n,
   conventions);
 - proposes the canonical preset (`kmp-mobile`) and asks the user to confirm;
@@ -14,7 +14,7 @@ This is the MOST IMPORTANT command of feature-forge. It:
 - snapshots cards into `.claude/cards/`;
 - merges contributions, writes inventory snapshots, seeds memory L1/L2 dirs;
 - builds the codebase graph (SQLite, deterministic);
-- writes `.claude/workflow-config.yaml` (schema v1) + history JSONL seed;
+- writes `.claude/forge/forge-config.yaml` (schema v1.3) + history JSONL seed;
 - renders a final summary.
 
 Decision 10 (zero flags): only positional `help` accepted. Everything else
@@ -77,13 +77,14 @@ from engine.utils.paths import (
     claude_dir,
     ensure_dir,
     forge_cards_local_dir,
+    forge_config_path,
+    forge_dir,
     forge_home,
     forge_hooks_dir,
     graph_db_path,
     inventory_dir,
     memory_dir,
     memory_l2_path,
-    workflow_config_path,
 )
 from engine.utils.sha256 import file_sha256
 from engine.utils.yaml_io import read_yaml_or_default, write_yaml
@@ -773,12 +774,12 @@ def _run_pipeline(project_root: Path) -> int:
             )
         )
 
-    if workflow_config_path(project_root).is_file():
+    if forge_config_path(project_root).is_file():
         renderer.write(
             mentor_calmo.three_paths_block(
                 "INIT-BROWNFIELD",
-                what_failed="já existe .claude/workflow-config.yaml neste projeto",
-                where=str(workflow_config_path(project_root)),
+                what_failed="já existe .claude/forge/forge-config.yaml neste projeto",
+                where=str(forge_config_path(project_root)),
                 why=[
                     "init é destrutivo — sobrescreveria cards/inventory já curados",
                     "reconfigure é a porta canônica pra mudar config existente",
@@ -1358,7 +1359,7 @@ def _run_pipeline(project_root: Path) -> int:
     checkpoint.at = _utc_now_iso()
     _save_checkpoint(checkpoint)
 
-    # ── Step 12 — workflow-config.yaml ───────────────────────────────────────
+    # ── Step 12 — forge-config.yaml ──────────────────────────────────────────
     config = _build_workflow_config(
         project_root=project_root,
         activated=activated,
@@ -1385,13 +1386,17 @@ def _run_pipeline(project_root: Path) -> int:
                 existing.append(var)
         qa_cfg["sensitive-env-grants"] = existing
 
-    write_yaml(workflow_config_path(project_root), config, atomic=True)
+    # Task 0.10 (v1.3 pilot-ready): config vive em
+    # ``.claude/forge/forge-config.yaml`` (sub-namespace spec §2).
+    ensure_dir(forge_dir(project_root))
+    write_yaml(forge_config_path(project_root), config, atomic=True)
 
     checkpoint.step = "step-12.5-version-lock"
 
     # ── Step 12.5 — forge-version-lock.yaml ─────────────────────────────────
     # `forge doctor` checks this lock to detect engine/project version drift.
-    version_lock_path = claude_dir(project_root) / "forge-version-lock.yaml"
+    # Task 0.10: version-lock também migra pro sub-namespace.
+    version_lock_path = forge_dir(project_root) / "forge-version-lock.yaml"
     write_yaml(
         version_lock_path,
         {
@@ -1405,21 +1410,18 @@ def _run_pipeline(project_root: Path) -> int:
 
     checkpoint.step = "step-12.6-gitignore"
 
-    # ── Step 12.6 — .claude/.gitignore ──────────────────────────────────────
+    # ── Step 12.6 — .claude/forge/.gitignore ────────────────────────────────
     # Auto-managed gitignore per docs/design/05-filesystem-layout.md so that
-    # graph.db, archived L1 entries and checkpoints stay out of git.
-    gitignore_path = claude_dir(project_root) / ".gitignore"
+    # forge-internal state (init checkpoints, reconfigure drafts) stays out
+    # of git. Task 0.10 (v1.3 pilot-ready): vive em ``.claude/forge/``.
+    gitignore_path = forge_dir(project_root) / ".gitignore"
     gitignore_content = (
         "# feature-forge — auto-managed\n"
-        "graph.db\n"
-        "graph.db-journal\n"
-        "graph.db-wal\n"
-        "memory/L1/**/!archived/\n"
-        "memory/L1/**/!archived/**\n"
-        "*.bak\n"
+        "state/\n"
         ".init-checkpoint.yaml\n"
         ".reconfigure-draft.yaml\n"
         ".evolve-checkpoint.yaml\n"
+        "*.bak\n"
     )
     ensure_dir(gitignore_path.parent)
     gitignore_path.write_text(gitignore_content, encoding="utf-8")
@@ -1448,8 +1450,10 @@ def _run_pipeline(project_root: Path) -> int:
     # ── Step 14 — workflow-config-history.jsonl seed ─────────────────────────
     # Schema HIST-001..012 per docs/schemas/workflow-config-history.md.
     # Greenfield init → before-snapshot-sha is null; after-snapshot-sha is the
-    # sha256 of the workflow-config.yaml we just wrote.
-    cfg_path = workflow_config_path(project_root)
+    # sha256 of the forge-config.yaml we just wrote.
+    # Task 0.10: config lê de forge_config_path; history continua em claude_dir
+    # (reconfigure/undo coupling — fora do escopo desta task).
+    cfg_path = forge_config_path(project_root)
     after_sha = file_sha256(cfg_path) if cfg_path.is_file() else ""
     history_path = claude_dir(project_root) / "workflow-config-history.jsonl"
     history_entry = {
@@ -1487,7 +1491,7 @@ def _run_pipeline(project_root: Path) -> int:
         f"i18n keys:      {n_i18n}",
         "",
         "Saved to .claude/:",
-        "  workflow-config.yaml  ·  cards/  ·  inventory/  ·  memory/  ·  graph.db",
+        "  forge/forge-config.yaml  ·  cards/  ·  inventory/  ·  memory/  ·  graph.db",
         "",
         "Próximos passos:",
         "  forge plan <slug>     começar uma feature",
@@ -1517,10 +1521,12 @@ def _build_workflow_config(
     qa_enabled: bool = True,
     qa_auto_run: bool = False,
 ) -> dict[str, Any]:
-    """Assemble the workflow-config.yaml dict (schema v1).
+    """Assemble the forge-config.yaml dict (schema v1.3).
 
-    Follows docs/schemas/workflow-config.md. Optional blocks are populated
-    with sane defaults when init can't infer them (ticketing, external-docs).
+    Follows docs/schemas/workflow-config.md (canonical reference — schema
+    bumped to "1.3" in Task 0.9, artifact renamed to forge-config.yaml).
+    Optional blocks are populated with sane defaults when init can't infer
+    them (ticketing, external-docs).
 
     W7.4 — ``backend_cells`` substitui o legacy ``backend_choice``. Shape
     canônico em ``docs/schemas/backend-axes.md``:
@@ -1533,7 +1539,7 @@ def _build_workflow_config(
     project_slug = project_root.name.lower().replace("_", "-")
 
     config: dict[str, Any] = {
-        "schema-version": 1,
+        "schema-version": "1.3",
         "identity": {
             "project-name": project_root.name,
             "project-slug": project_slug,
