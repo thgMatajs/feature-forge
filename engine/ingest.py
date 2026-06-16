@@ -387,7 +387,7 @@ def _handle_pre_push(args: dict[str, str], project_root: Path) -> None:
     Falls back silently when the doctor quick API is not available.
     """
     try:
-        from engine import doctor  # type: ignore
+        from engine import doctor
 
         quick = getattr(doctor, "_run_quick_check", None) or getattr(
             doctor, "run_quick_check", None
