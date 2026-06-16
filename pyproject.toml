@@ -24,6 +24,7 @@ classifiers = [
 dependencies = [
     "pyyaml>=6.0",
     "pathspec>=0.12",
+    "json5>=0.9.10",
 ]
 
 [project.optional-dependencies]

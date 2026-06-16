@@ -31,3 +31,22 @@ def test_merge_idempotent_dedupe_identical_entries():
     additions = {"hooks": {"PreToolUse": [{"matcher": "Write", "hooks": [{"type": "command", "command": "forge.sh"}]}]}}
     result = merge_settings_json(existing, additions)
     assert len(result["hooks"]["PreToolUse"]) == 1  # idempotent
+
+
+def test_read_settings_tolerant_handles_comments():
+    from engine.utils.settings_merge import read_settings_tolerant
+    content = """{
+        // line comment
+        "theme": "dark",
+        "hooks": {},  // trailing comma below ↓
+    }"""
+    result = read_settings_tolerant(content)
+    assert result["theme"] == "dark"
+    assert result["hooks"] == {}
+
+
+def test_read_settings_tolerant_plain_json_still_works():
+    from engine.utils.settings_merge import read_settings_tolerant
+    content = '{"theme": "light"}'
+    result = read_settings_tolerant(content)
+    assert result["theme"] == "light"
