@@ -10,12 +10,15 @@ Strictly read-only. Graph rebuilds belong to `forge reconfigure`.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
+
+_logger = logging.getLogger("engine.graph_cli")
 
 from engine.graph import queries as gq
 from engine.ui import question, renderer
@@ -430,10 +433,19 @@ def _run_json_query(
             sys.stderr.write(f"forge graph --json: chave nao mapeada: {key!r}\n")
             return 1
     except Exception as exc:
-        # Erro de runtime no handler — emite JSON-friendly error em stderr +
-        # exit 1. stdout fica limpo pra consumers (Claude Code, scripts) nao
-        # confundirem com payload valido.
-        sys.stderr.write(f"forge graph --json: query falhou — {exc}\n")
+        # Erro de runtime no handler — emite mensagem genérica em stderr +
+        # log detalhado via logger.error (visível com FORGE_DEBUG=1 ou
+        # logging config). stdout fica limpo pra consumers (Claude Code,
+        # scripts) nao confundirem com payload valido.
+        #
+        # Codereviewbot graph_cli:437: exception cru vazava stack/paths/DB
+        # internals. Mensagem genérica protege superficie de attack;
+        # logger captura full context pra debug sem disclosure.
+        _logger.error("forge graph --json: query=%s failed", key, exc_info=True)
+        sys.stderr.write(
+            "forge graph --json: query falhou — internal error "
+            "(set FORGE_DEBUG=1 ou consulte logs pra detalhes).\n"
+        )
         return 1
 
     # ``default=str`` coage Path e qualquer objeto nao-serializavel pra string.
@@ -466,7 +478,22 @@ def _run_detect_incremental(project_root: Path, file_args: list[str]) -> int:
     try:
         findings = detect_after_update(project_root, paths)
     except Exception as exc:
-        sys.stderr.write(f"forge graph detect-incremental: {exc}\n")
+        # N-009 (master review): mesma sanitização do _run_json_query.
+        # detect-incremental roda em hook context — stderr é descartado
+        # pelo hook bash, mas se algum consumer pegar isso (debug REPL,
+        # forge ingest verbose), nao expomos internals.
+        _logger.error(
+            "forge graph detect-incremental failed for paths=%s",
+            [str(p) for p in paths],
+            exc_info=True,
+        )
+        sys.stderr.write(
+            "forge graph detect-incremental: internal error "
+            "(set FORGE_DEBUG=1 pra detalhes).\n"
+        )
+        # Mantém exit 0 (contract: hook nunca falha edit do dev).
+        # exc usado intencionalmente pelo _logger.error acima.
+        del exc
         return 0
 
     if not findings:
@@ -524,7 +551,10 @@ def _maybe_auto_build(
     if no_auto_build:
         return
 
-    db_path = project_root / ".claude" / "graph.db"
+    # N-005 (master review): usa o util canônico em vez de recriar o path
+    # à mão. Drift risk se a localização de ``.claude/graph.db`` for
+    # revisitada (e.g., per-config scope, Decision 14).
+    db_path = graph_db_path(project_root)
     needs_build = False
 
     if not db_path.exists():
@@ -549,12 +579,39 @@ def _maybe_auto_build(
                     needs_build = True
             finally:
                 conn.close()
-        except sqlite3.OperationalError:
-            # ``meta`` table ausente — DB seedado por outro caminho
-            # (fixture de teste, partial init manual). Não auto-buildar:
-            # invocar ``build_full`` sobre schema inconsistente é
-            # destrutivo. Quem seedou conhece o estado.
-            needs_build = False
+        except sqlite3.OperationalError as exc:
+            # Distinção crítica (E-N-002): ``no such table: meta`` é
+            # fixture-seedado por testes (path legítimo, NÃO buildar —
+            # build_full sobre schema inconsistente é destrutivo). Demais
+            # OperationalErrors (perms, locked, etc.) propagam — não
+            # silenciamos bugs reais.
+            if "no such table: meta" in str(exc).lower():
+                needs_build = False
+            else:
+                _logger.error(
+                    "graph.db at %s raised unexpected OperationalError: %s",
+                    db_path,
+                    exc,
+                    exc_info=True,
+                )
+                raise
+        except sqlite3.DatabaseError as exc:
+            # E-N-002: DB malformado / zero-byte / corrupto. Antes:
+            # propagava traceback cru pro usuário, contradizendo SPEC §3/§8.
+            # Agora: log + tratar como needs_build (auto-rebuild). User vê
+            # warning em stderr explicando rebuild — UX consistente com o
+            # path "DB ausente" canônico.
+            _logger.warning(
+                "graph.db at %s appears malformed/corrupt (%s) — "
+                "will auto-rebuild",
+                db_path,
+                exc,
+            )
+            sys.stderr.write(
+                f"graph.db em {db_path} parece corrompido — fazendo rebuild "
+                "automático.\n"
+            )
+            needs_build = True
 
     if not needs_build:
         return
@@ -638,10 +695,11 @@ def run(argv: list[str]) -> int:
                 "`forge reconfigure` → 'rebuild graph' antes.\n"
             )
             return 1
-        # key já resolvido acima — re-resolve aqui pra manter tipo claro
-        # (mypy: argv[1] já foi validado, key é não-None).
-        key = _resolve_json_query_key(argv[1])
-        assert key is not None  # validado acima
+        # N-006 (master review): key já foi resolvido na validação acima
+        # (linha que detecta json_mode). Reaproveitamos com cast simples
+        # em vez de re-chamar _resolve_json_query_key + assert. mypy se
+        # contenta com o narrowing no bloco condicional.
+        assert key is not None  # garantido pelo branch json_mode validation
         return _run_json_query(project_root, key, argv[2:])
 
     if not graph_db_path(project_root).exists():
