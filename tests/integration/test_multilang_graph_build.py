@@ -124,5 +124,46 @@ def test_full_build_dispatches_to_java_xml_objc_parsers(multilang_project: Path)
         assert xml_kinds & {"view_id", "class_ref"}, (
             f"XML em /layout/ deveria emitir view_id ou class_ref; got {xml_kinds}"
         )
+
+        # T-N-011 (REVIEW PR #16): asserts de invariantes downstream que
+        # detectam regressão silenciosa em body extraction / meta tracking.
+
+        # (1) meta.last_full_rebuild_at populado pelo build_full.
+        meta = conn.execute(
+            "SELECT value FROM meta WHERE key = 'last_full_rebuild_at'"
+        ).fetchone()
+        assert meta is not None and meta["value"], (
+            "meta.last_full_rebuild_at deve ser não-null após build_full"
+        )
+
+        # (2) symbols.body populado pra java/objc — confirma P-N-001 fix.
+        rows_with_body = conn.execute(
+            "SELECT files.language AS lang, COUNT(*) AS n "
+            "FROM symbols JOIN files ON symbols.file_id = files.id "
+            "WHERE symbols.body IS NOT NULL AND files.language IN ('java', 'objc') "
+            "GROUP BY files.language"
+        ).fetchall()
+        by_lang_body = {r["lang"]: r["n"] for r in rows_with_body}
+        # Java: classe Foo (com body \"public class Foo {...}\") + método greet.
+        assert by_lang_body.get("java", 0) >= 1, (
+            f"Java deveria ter ao menos 1 symbol com body. Got: {by_lang_body}"
+        )
+        # ObjC: implementation Bar (body \" - (void)doStuff... \") + método doStuff.
+        assert by_lang_body.get("objc", 0) >= 1, (
+            f"ObjC deveria ter ao menos 1 symbol com body. Got: {by_lang_body}. "
+            f"P-N-001 regression — body sempre None?"
+        )
+
+        # (3) symbols.body NULL pra xml — design choice (parser_xml não
+        # consome _body_text; XML não tem ``{}`` body).
+        xml_body_rows = conn.execute(
+            "SELECT COUNT(*) AS n "
+            "FROM symbols JOIN files ON symbols.file_id = files.id "
+            "WHERE symbols.body IS NOT NULL AND files.language = 'xml'"
+        ).fetchone()
+        assert xml_body_rows["n"] == 0, (
+            f"XML symbols não deveriam ter body (design choice — "
+            f"parser_xml não popula). Got {xml_body_rows['n']} com body."
+        )
     finally:
         conn.close()

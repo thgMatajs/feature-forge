@@ -16,6 +16,20 @@ raw strings) and typescript/javascript (backtick templates), so the Java
 path is exactly the C-style baseline. Onda 6 moved ``java`` into
 ``_SUPPORTED_LANGS`` + ``_NOISE_TOKENS_PER_LANG``, so this parser passes
 the canonical language label end-to-end.
+
+Known limitations (REVIEW PR #16 + codereviewbot parser_java:305):
+- Multi-line annotations entre modifiers e ``class``/``method`` heading
+  podem confundir o regex (raro em prática).
+- Generics 3+ níveis aninhados (``Map<K, List<Set<V>>>``) ainda quebram —
+  o padrão 1-level cobre ~95% dos casos Java idiomáticos.
+- Anonymous inner classes dentro de método ainda podem virar top-level
+  symbol fantasma quando o regex casa o ``new Foo() { ... }``.
+- Strings/comments NÃO são masked antes de aplicar ``_RE_CLASS`` (parser
+  Kotlin tem ``_mask_strings_and_comments``; promover pra módulo
+  compartilhado é o roadmap N-004 — registrado em
+  ``docs/design/04-pending.md``).
+- Tree-sitter v1.4 endereça regex fragility geral (R1). Esses limites
+  são aceitáveis na escala atual (best-effort, tolerância downstream).
 """
 
 from __future__ import annotations
