@@ -477,11 +477,13 @@ def _run_detect_incremental(project_root: Path, file_args: list[str]) -> int:
 
     try:
         findings = detect_after_update(project_root, paths)
-    except Exception as exc:
+    except Exception:
         # N-009 (master review): mesma sanitização do _run_json_query.
         # detect-incremental roda em hook context — stderr é descartado
         # pelo hook bash, mas se algum consumer pegar isso (debug REPL,
         # forge ingest verbose), nao expomos internals.
+        # `exc_info=True` re-captura a current exception sem precisar
+        # bindar a variável (codereviewbot 3417876791 / PR16-FU).
         _logger.error(
             "forge graph detect-incremental failed for paths=%s",
             [str(p) for p in paths],
@@ -492,8 +494,6 @@ def _run_detect_incremental(project_root: Path, file_args: list[str]) -> int:
             "(set FORGE_DEBUG=1 pra detalhes).\n"
         )
         # Mantém exit 0 (contract: hook nunca falha edit do dev).
-        # exc usado intencionalmente pelo _logger.error acima.
-        del exc
         return 0
 
     if not findings:
