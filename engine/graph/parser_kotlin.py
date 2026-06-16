@@ -10,6 +10,7 @@ Switch to tree-sitter for v2 if accuracy bites.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,6 +23,11 @@ from engine.graph._body_text import (
     hash_body,
     tokens_to_json,
 )
+
+# P-N-012 / codereviewbot parser_kotlin:261 (REVIEW PR #16): parse failures
+# em _parse_function_tail são logged em DEBUG pra forensics; silencioso em
+# runtime default.
+_log = logging.getLogger(__name__)
 
 _RE_PACKAGE = re.compile(r"^\s*package\s+([\w\.]+)", re.MULTILINE)
 _RE_IMPORT = re.compile(r"^\s*import\s+([\w\.\*]+)(?:\s+as\s+\w+)?\s*$", re.MULTILINE)
@@ -316,9 +322,25 @@ def _parse_function_tail(
 ) -> tuple[Optional[str], Optional[str]]:
     """Walk past the function declaration to capture signature + body.
 
-    Returns ``(canonical_signature, body_text)``. Both may be ``None`` for
-    abstract functions, expression bodies (``fun foo() = ...``), or anything
-    the brace scanner can't close.
+    Returns ``(canonical_signature, body_text)``. Ambos podem ser ``None``
+    legitimamente em 4 cenários distintos:
+
+    1. **Abstract function** (no body): ``abstract fun foo()`` — sem ``{``,
+       termina em newline/EOF.
+    2. **Expression body**: ``fun foo() = bar`` — Kotlin idiom, ``=`` em vez
+       de ``{...}``.
+    3. **Interface method**: ``interface I { fun foo() }`` — declaração sem
+       corpo.
+    4. **Parse failure**: signature malformada que o regex achou mas o
+       scanner balanced-paren não conseguiu fechar. Logged em DEBUG via
+       ``_log.debug`` pra forensics.
+
+    Convenção: ``body_hash=None`` no symbol pode significar (1)/(2)/(3) —
+    "intencionalmente sem corpo" — OU (4) — "parse falhou". Downstream
+    consumers que precisam distinguir devem inspecionar ``signature`` (None
+    em (4), populated em (1)/(2)/(3) tipicamente).
+
+    P-N-013 / codereviewbot parser_kotlin:285 (REVIEW PR #16).
     """
     n = len(source)
     i = decl_end_offset
@@ -327,11 +349,17 @@ def _parse_function_tail(
         i += 1
 
     if i >= n or source[i] != "(":
+        _log.debug(
+            "_parse_function_tail: param-list ( ausente em offset %d", decl_end_offset
+        )
         return None, None
 
     params_start = i
     params_end = _scan_matching_paren(source, params_start)
     if params_end is None:
+        _log.debug(
+            "_parse_function_tail: param-list não fecha (offset %d)", params_start
+        )
         return None, None
 
     params_text = source[params_start + 1:params_end]
