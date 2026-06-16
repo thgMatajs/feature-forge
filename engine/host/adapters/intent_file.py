@@ -49,6 +49,8 @@ from engine.host.adapter import (
     HostAdapter,
     HostName,
     PausedForInputError,
+    UserCancelledError,
+    UserPausedError,
 )
 from engine.ui import intent_state
 from engine.ui.question import stable_intent_id
@@ -241,14 +243,33 @@ class IntentFileAdapter(HostAdapter):
             state_dir=self._state_dir,
         )
         if existing is not None:
+            # CR-001 / CR-003 — propagate pause/cancel intent as
+            # exceptions instead of silently coercing to AskResult.
+            # Pre-0.7c the adapter dropped these flags on the floor;
+            # question.py's post-delegate could not tell pause/cancel
+            # apart from a malformed response.
+            #
+            # State is left in place on these paths: the cleanup
+            # responsibility lives in ``engine.cli`` finally (CR-002 —
+            # forensic preservation across error paths). The
+            # consumed-intent log entry, if present, also remains so
+            # repeated re-entries are idempotent.
+            if existing.get("cancelled") is True:
+                raise UserCancelledError(
+                    f"user cancelled (intent-id={intent_id})"
+                )
+            if existing.get("paused") is True:
+                raise UserPausedError(
+                    f"user paused (intent-id={intent_id})"
+                )
+            # Happy path: return the value but DO NOT auto-clear state
+            # files. CR-002 — caller (cli.py finally) clears via
+            # ``intent_state.clear_intent_log_only`` (or equivalent)
+            # AFTER post-delegate validation has accepted the response.
+            # Clearing here would prevent question.py's
+            # ``value not in options`` rejection from preserving
+            # forensic state for inspection.
             value = existing.get("value")
-            # Per spec §3, the consumed response is cleared by the
-            # caller's success branch. The consumed-intent log
-            # (re-entry idempotency) survives — that is the contract
-            # of ``clear_intent_files(also_log=False)``.
-            intent_state.clear_intent_files(
-                self.project_root, state_dir=self._state_dir
-            )
             return AskResult(value=value, from_default=False, paused=False)
 
         # First entry: build canonical pending, detect_race, emit,

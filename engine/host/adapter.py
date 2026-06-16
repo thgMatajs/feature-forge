@@ -33,8 +33,30 @@ class PausedForInputError(Exception):
     """Engine sinaliza host pra pausar + emitir pending intent."""
 
 
+class UserPausedError(Exception):
+    """Sentinel raised by adapter when consumed response carries ``paused=true``.
+
+    Distinct from ``PausedForInputError`` (engine emitted fresh pending
+    awaiting response). ``UserPausedError`` fires when host wrote
+    ``response.paused=true``, signalling user explicitly paused via the
+    response. Both map to exit code 2 at the CLI boundary.
+
+    Co-exists temporarily with ``engine.ui.question.UserPausedError``
+    (parallel exception class on the legacy native path). Task 0.7b will
+    unify them by catching the host-adapter variant inside the question
+    delegate and re-raising as the question.* equivalent for backward
+    compat.
+    """
+
+
 class UserCancelledError(Exception):
-    """User abortou via Ctrl+C / 3-caminhos Path C."""
+    """User abortou via Ctrl+C / 3-caminhos Path C.
+
+    Also raised by the adapter when a consumed response carries
+    ``cancelled=true`` — distinct from ``KeyboardInterrupt`` so callers
+    can disambiguate "host signalled cancel via response" from "engine
+    received SIGINT mid-flight". Both map to exit code 130 (SIGINT parity).
+    """
 
 
 class HostAdapter(ABC):

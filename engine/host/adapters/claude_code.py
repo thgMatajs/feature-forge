@@ -60,6 +60,8 @@ from engine.host.adapter import (
     HostAdapter,
     HostName,
     PausedForInputError,
+    UserCancelledError,
+    UserPausedError,
 )
 from engine.ui import intent_state
 from engine.ui.question import stable_intent_id
@@ -237,13 +239,27 @@ class ClaudeCodeAdapter(HostAdapter):
             state_dir=self._state_dir,
         )
         if existing is not None:
+            # CR-001 / CR-003 — propagate pause/cancel intent as
+            # exceptions instead of silently coercing to AskResult.
+            # Same contract as ``IntentFileAdapter._ask_loop``; the CC
+            # response side of DRIFT-1 is identical regardless of how
+            # the pending was announced (stdout marker vs pending file).
+            #
+            # State is left in place on these paths: cleanup is
+            # ``engine.cli`` finally's job (CR-002 forensic preservation).
+            if existing.get("cancelled") is True:
+                raise UserCancelledError(
+                    f"user cancelled (intent-id={intent_id})"
+                )
+            if existing.get("paused") is True:
+                raise UserPausedError(
+                    f"user paused (intent-id={intent_id})"
+                )
+            # Happy path: return value, DO NOT auto-clear state. The
+            # caller (cli.py finally) handles cleanup AFTER
+            # post-delegate validation accepts the value — see CR-002
+            # rationale in the fallback adapter sibling.
             value = existing.get("value")
-            # Match the fallback adapter's success-path cleanup: clear
-            # the response/pending pair, keep the consumed log so the
-            # next re-entry on the same intent_id stays idempotent.
-            intent_state.clear_intent_files(
-                self.project_root, state_dir=self._state_dir
-            )
             return AskResult(value=value, from_default=False, paused=False)
 
         # First entry: emit the stdout marker (CC's pending channel),

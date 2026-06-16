@@ -261,3 +261,132 @@ def test_pending_includes_optional_fields_when_supplied(tmp_path):
     assert pending["validator-hint"] == "email"
     assert pending["min-selected"] == 2
     assert pending["paths-detail"] == paths_detail
+
+
+# ----------------------------------------------------------------------
+# Task 0.7c — pause/cancel propagation + CR-002 state preservation
+# ----------------------------------------------------------------------
+
+
+def test_ask_response_paused_raises_user_paused(tmp_path):
+    """Response with ``paused=true`` triggers ``UserPausedError``, NOT ``AskResult``.
+
+    CR-001: pre-0.7c the adapter swallowed ``response.paused=true`` and
+    returned ``AskResult(value=None, paused=False)``, hiding user intent.
+    The new contract surfaces pause as an exception so question.py
+    post-delegate can map it to exit code 2.
+    """
+    from engine.host.adapter import UserPausedError
+
+    state = forge_state_dir(tmp_path)
+    state.mkdir(parents=True, exist_ok=True)
+    adapter = IntentFileAdapter(project_root=tmp_path)
+    # Emit pending so an ``intent-id`` is materialised.
+    try:
+        adapter.ask(
+            kind=AskKind.ASK,
+            question="Q?",
+            options={"a": "A"},
+            default=None,
+            allow_pause=True,
+        )
+    except PausedForInputError:
+        pass
+    intent_id = json.loads((state / "forge-pending.json").read_text())["intent-id"]
+    intent_state.write_response(
+        tmp_path,
+        {"schema-version": 1, "intent-id": intent_id, "paused": True},
+        state_dir=state,
+    )
+    intent_state._reset_log_cache()
+    with pytest.raises(UserPausedError):
+        adapter.ask(
+            kind=AskKind.ASK,
+            question="Q?",
+            options={"a": "A"},
+            default=None,
+            allow_pause=True,
+        )
+
+
+def test_ask_response_cancelled_raises_user_cancelled(tmp_path):
+    """Response with ``cancelled=true`` triggers ``UserCancelledError``.
+
+    CR-003: same rationale as ``UserPausedError``, but for cancel —
+    maps to exit code 130 (SIGINT parity) at the CLI boundary. Pre-0.7c
+    this was indistinguishable from a malformed response.
+    """
+    from engine.host.adapter import UserCancelledError
+
+    state = forge_state_dir(tmp_path)
+    state.mkdir(parents=True, exist_ok=True)
+    adapter = IntentFileAdapter(project_root=tmp_path)
+    try:
+        adapter.ask(
+            kind=AskKind.ASK,
+            question="Q?",
+            options={"a": "A"},
+            default=None,
+            allow_pause=True,
+        )
+    except PausedForInputError:
+        pass
+    intent_id = json.loads((state / "forge-pending.json").read_text())["intent-id"]
+    intent_state.write_response(
+        tmp_path,
+        {"schema-version": 1, "intent-id": intent_id, "cancelled": True},
+        state_dir=state,
+    )
+    intent_state._reset_log_cache()
+    with pytest.raises(UserCancelledError):
+        adapter.ask(
+            kind=AskKind.ASK,
+            question="Q?",
+            options={"a": "A"},
+            default=None,
+            allow_pause=True,
+        )
+
+
+def test_ask_consume_preserves_state_files_cr_002(tmp_path):
+    """CR-002 — after happy-path consume, pending + response files remain on disk.
+
+    State cleanup is the responsibility of ``engine.cli`` finally (or
+    the caller), not the adapter. Auto-clearing here would prevent
+    post-delegate validation in question.py from preserving forensic
+    state when it rejects a malformed value (e.g. ``value not in options``).
+
+    Test ``test_invalid_response_preserves_state_files`` (question.py
+    suite) enforces the same invariant end-to-end.
+    """
+    state = forge_state_dir(tmp_path)
+    state.mkdir(parents=True, exist_ok=True)
+    adapter = IntentFileAdapter(project_root=tmp_path)
+    try:
+        adapter.ask(
+            kind=AskKind.ASK,
+            question="Q?",
+            options={"a": "A"},
+            default=None,
+            allow_pause=True,
+        )
+    except PausedForInputError:
+        pass
+    intent_id = json.loads((state / "forge-pending.json").read_text())["intent-id"]
+    intent_state.write_response(
+        tmp_path,
+        {"schema-version": 1, "intent-id": intent_id, "value": "a"},
+        state_dir=state,
+    )
+    intent_state._reset_log_cache()
+    result = adapter.ask(
+        kind=AskKind.ASK,
+        question="Q?",
+        options={"a": "A"},
+        default=None,
+        allow_pause=True,
+    )
+    assert result.value == "a"
+    # CR-002: state preserved across consume for forensic / caller cleanup.
+    assert (state / "forge-pending.json").exists(), "pending must survive consume"
+    assert (state / "forge-response.json").exists(), "response must survive consume"

@@ -292,3 +292,159 @@ def test_marker_includes_optional_attribs_when_supplied(tmp_path, capsys):
     assert attribs["min-selected"] == "2"
     # paths-detail is JSON-encoded on the wire (same encoding as ``options``).
     assert _json.loads(attribs["paths-detail"]) == paths_detail
+
+
+# ----------------------------------------------------------------------
+# Task 0.7c — pause/cancel propagation + CR-002 state preservation
+# ----------------------------------------------------------------------
+
+
+def test_ask_response_paused_raises_user_paused(tmp_path, capsys):
+    """Response with ``paused=true`` triggers ``UserPausedError``.
+
+    CR-001 parity with ``IntentFileAdapter``: even though CC's pending
+    channel is the stdout marker (not a pending file), the response
+    side of DRIFT-1 is identical — so pause/cancel propagation must
+    behave the same way.
+    """
+    from engine.host.adapter import UserPausedError
+    from engine.ui import intent_state
+    from engine.ui.question import _cli_command_context, stable_intent_id
+    from engine.utils.paths import forge_state_dir
+
+    state = forge_state_dir(tmp_path)
+    state.mkdir(parents=True, exist_ok=True)
+
+    kind = AskKind.ASK
+    question = "Q?"
+    options = {"a": "A"}
+
+    token = _cli_command_context.set(("test", []))
+    try:
+        intent_id = stable_intent_id(
+            kind.value,
+            question,
+            options,
+            extra={"default": None, "min-selected": None, "validator-hint": None},
+            command="test",
+            command_args=[],
+        )
+        intent_state.write_response(
+            tmp_path,
+            {"schema-version": 1, "intent-id": intent_id, "paused": True},
+            state_dir=state,
+        )
+        intent_state._reset_log_cache()
+
+        adapter = ClaudeCodeAdapter(project_root=tmp_path)
+        with pytest.raises(UserPausedError):
+            adapter.ask(
+                kind=kind,
+                question=question,
+                options=options,
+                default=None,
+                allow_pause=True,
+            )
+    finally:
+        _cli_command_context.reset(token)
+
+
+def test_ask_response_cancelled_raises_user_cancelled(tmp_path, capsys):
+    """Response with ``cancelled=true`` triggers ``UserCancelledError``.
+
+    CR-003 parity with the fallback adapter — maps to exit 130 at the
+    CLI boundary.
+    """
+    from engine.host.adapter import UserCancelledError
+    from engine.ui import intent_state
+    from engine.ui.question import _cli_command_context, stable_intent_id
+    from engine.utils.paths import forge_state_dir
+
+    state = forge_state_dir(tmp_path)
+    state.mkdir(parents=True, exist_ok=True)
+
+    kind = AskKind.ASK
+    question = "Q?"
+    options = {"a": "A"}
+
+    token = _cli_command_context.set(("test", []))
+    try:
+        intent_id = stable_intent_id(
+            kind.value,
+            question,
+            options,
+            extra={"default": None, "min-selected": None, "validator-hint": None},
+            command="test",
+            command_args=[],
+        )
+        intent_state.write_response(
+            tmp_path,
+            {"schema-version": 1, "intent-id": intent_id, "cancelled": True},
+            state_dir=state,
+        )
+        intent_state._reset_log_cache()
+
+        adapter = ClaudeCodeAdapter(project_root=tmp_path)
+        with pytest.raises(UserCancelledError):
+            adapter.ask(
+                kind=kind,
+                question=question,
+                options=options,
+                default=None,
+                allow_pause=True,
+            )
+    finally:
+        _cli_command_context.reset(token)
+
+
+def test_ask_consume_preserves_state_files_cr_002(tmp_path, capsys):
+    """CR-002 — after happy-path consume on CC adapter, response file
+    remains on disk for caller cleanup.
+
+    CC adapter doesn't write ``forge-pending.json`` (stdout marker is
+    the pending channel), so only ``forge-response.json`` is checked
+    here — the pending side never existed in this lifecycle.
+    """
+    from engine.ui import intent_state
+    from engine.ui.question import _cli_command_context, stable_intent_id
+    from engine.utils.paths import forge_state_dir
+
+    state = forge_state_dir(tmp_path)
+    state.mkdir(parents=True, exist_ok=True)
+
+    kind = AskKind.ASK
+    question = "Q?"
+    options = {"a": "A"}
+
+    token = _cli_command_context.set(("test", []))
+    try:
+        intent_id = stable_intent_id(
+            kind.value,
+            question,
+            options,
+            extra={"default": None, "min-selected": None, "validator-hint": None},
+            command="test",
+            command_args=[],
+        )
+        intent_state.write_response(
+            tmp_path,
+            {"schema-version": 1, "intent-id": intent_id, "value": "a"},
+            state_dir=state,
+        )
+        intent_state._reset_log_cache()
+
+        adapter = ClaudeCodeAdapter(project_root=tmp_path)
+        result = adapter.ask(
+            kind=kind,
+            question=question,
+            options=options,
+            default=None,
+            allow_pause=True,
+        )
+        assert result.value == "a"
+        # CR-002: response file preserved for forensic / caller cleanup.
+        assert (state / "forge-response.json").exists(), (
+            "response must survive consume — adapter no longer auto-clears"
+        )
+    finally:
+        _cli_command_context.reset(token)
