@@ -9,6 +9,7 @@ via body_hash) without the complexity of a full ObjC AST walker.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,6 +23,11 @@ from engine.graph._body_text import (
     hash_body,
     tokens_to_json,
 )
+
+# P-N-018 / codereviewbot parser_objc:158 (REVIEW PR #16): warnings de
+# ``@end`` faltando são logged em DEBUG (não printam em runtime default).
+# Permite forensics em CI mas não polui stderr em uso normal.
+_log = logging.getLogger(__name__)
 
 # H-010 coupling guard: ``"objc"`` precisa estar registrado em
 # ``_SUPPORTED_LANGS`` — senão ``extract_function_body(..., language="objc")``
@@ -83,20 +89,42 @@ _RE_METHOD_HEADER = re.compile(
     re.MULTILINE,
 )
 
-# Selector segment matcher — captura ``label:`` (com ou sem (type)param).
-# Usado pra reconstrução ObjC-canonical do selector composto.
-# C-002 (REVIEW v1.3.0).
+# Selector segment matcher — captura apenas ``label:`` (P-N-015 / gemini
+# parser_objc:61 / REVIEW PR #16).
+#
+# Antes: ``(\w+)\s*:\s*\([^)]+\)\s*\w+`` — exigia ``(type)param`` completo,
+# falhava com tipos parametrizados (``NSDictionary<NSString*, NSArray*>``),
+# block types (``void (^)(void)``), const-qualified, etc. ObjC selectors
+# usam só os labels antes do ``:`` — type/param annotations são opcionais
+# pra reconstrução do selector canonical.
+#
+# Padrão simplificado: identifier + ``:`` (lookahead pra que números/dois-pontos
+# em strings não casem). Para evitar casar ``ratio:1.0`` em literais ou
+# tipos com generics aninhados ("``NSArray<Foo:Bar>``" — não é válido ObjC
+# mas defensivo), exige whitespace, ``)`` ou início-de-rest antes do label.
 _RE_SEL_SEGMENT = re.compile(
-    r'(\w+)\s*:\s*\([^)]+\)\s*\w+',  # label:(type)param
+    r'(?:^|[\s)])(\w+)\s*:',
 )
 
 # Property: também aceita generics como ``NSArray<UserModel *> *users``.
 # L-002 (REVIEW v1.3.0). O separador entre tipo e nome aceita ``*`` (zero
 # ou mais), espaços, ou nenhum espaço quando ``*`` está colado no tipo
 # (``NSArray<UserModel *>*users``).
+#
+# P-N-016 / gemini parser_objc:74 (REVIEW PR #16): type group expandido pra
+# aceitar multi-token types e qualifiers:
+# - ``unsigned int``, ``long long`` (built-in compostos)
+# - ``const NSString``, ``__weak Foo`` (qualifiers)
+# - ``struct CGRect``, ``union Bar`` (C interop)
+# - generics aninhados (``NSArray<NSDictionary<NSString *, id> *>``)
+#
+# A captura group(1) acumula tokens via ``\w+(?:\s+\w+)*`` — fica greedy o
+# suficiente pra ``unsigned int`` colar, mas o separador final exigido
+# (``\s*\*+\s*`` ou ``\s+``) garante que o último token é tipo, e o group(2)
+# captura o nome.
 _RE_PROPERTY = re.compile(
     r'@property\s*(?:\([^)]*\))?\s*'
-    r'(\w+(?:\s*<[^>]+>)?)'             # 1: type (com generics opcional)
+    r'(\w+(?:\s+\w+)*(?:\s*<[^>]+>)?)'   # 1: type (multi-token + generics)
     r'(?:\s*\*+\s*|\s+)'                 # ponteiros OU whitespace
     r'(\w+)\s*;',                        # 2: name
     re.MULTILINE,
@@ -189,6 +217,10 @@ def _parse_objc(source: str) -> ObjcFileInfo:
         body = None
         if end_m:
             body = source[m.end():m.end() + end_m.start()]
+        else:
+            # P-N-018 (REVIEW PR #16): @end ausente → parsing truncado/malformed.
+            # Logged DEBUG pra forensics; body permanece None deterministicamente.
+            _log.debug("@end ausente para @interface %s na linha %d", name, line)
         # P-N-002 (REVIEW PR #16): ``is not None`` em vez de truthiness pra
         # alinhar com parser_java e preservar empty body (``@interface Foo\n@end``)
         # como hash distinto em vez de cair pra None.
@@ -208,7 +240,11 @@ def _parse_objc(source: str) -> ObjcFileInfo:
         name = m.group(1)
         line = source[:m.start()].count("\n") + 1
         end_m = re.search(r'@end', source[m.end():])
-        body = source[m.end():m.end() + end_m.start()] if end_m else None
+        if end_m:
+            body = source[m.end():m.end() + end_m.start()]
+        else:
+            body = None
+            _log.debug("@end ausente para @protocol %s na linha %d", name, line)
         # P-N-002 (REVIEW PR #16): truthiness → ``is not None``.
         body_hash = hash_body(body) if body is not None else None
         symbols.append(ObjcSymbolInfo(
@@ -225,7 +261,11 @@ def _parse_objc(source: str) -> ObjcFileInfo:
         name = m.group(1)
         line = source[:m.start()].count("\n") + 1
         end_m = re.search(r'@end', source[m.end():])
-        body = source[m.end():m.end() + end_m.start()] if end_m else None
+        if end_m:
+            body = source[m.end():m.end() + end_m.start()]
+        else:
+            body = None
+            _log.debug("@end ausente para @implementation %s na linha %d", name, line)
         # P-N-002 (REVIEW PR #16): truthiness → ``is not None``.
         body_hash = hash_body(body) if body is not None else None
         symbols.append(ObjcSymbolInfo(

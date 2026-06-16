@@ -141,6 +141,52 @@ def test_objc_protocol_body_hash_populated() -> None:
 # L-002 (REVIEW v1.3.0) — @property aceita generics no tipo (NSArray<UserModel *>).
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# P-N-016 / gemini parser_objc:74 (REVIEW PR #16) — type multi-token em
+# @property: ``unsigned int``, ``const NSString *``, ``struct CGRect``.
+# ---------------------------------------------------------------------------
+
+def test_objc_property_multi_token_types() -> None:
+    src = (
+        "@interface Foo\n"
+        "@property (nonatomic) unsigned int count;\n"
+        "@property (nonatomic, copy) const NSString *label;\n"
+        "@property (nonatomic) long long timestamp;\n"
+        "@end\n"
+    )
+    info = _parse_objc(src)
+    props = {s.name for s in info.symbols if s.kind == "property"}
+    assert "count" in props, (
+        f"unsigned int count perdido — P-N-016 regression. Props: {props}"
+    )
+    assert "label" in props, (
+        f"const NSString *label perdido — P-N-016 regression. Props: {props}"
+    )
+    assert "timestamp" in props, (
+        f"long long timestamp perdido — P-N-016 regression. Props: {props}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# P-N-015 / gemini parser_objc:61 (REVIEW PR #16) — selector com tipo
+# parametrizado (block type, generics aninhados) precisa funcionar.
+# ---------------------------------------------------------------------------
+
+def test_objc_selector_with_block_type() -> None:
+    """``- (void)runCompletion:(void (^)(NSError *))completion`` — block type no param."""
+    src = (
+        "@implementation Foo\n"
+        "- (void)runCompletion:(void (^)(NSError *))completion { }\n"
+        "@end\n"
+    )
+    info = _parse_objc(src)
+    methods = [s for s in info.symbols if s.kind == "method"]
+    assert len(methods) == 1
+    assert methods[0].name == "runCompletion:", (
+        f"Block type param quebrou selector — P-N-015 regression. Got: {methods[0].name!r}"
+    )
+
+
 def test_objc_property_with_generics() -> None:
     src = (
         "@interface Foo\n"
