@@ -7,6 +7,25 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (v1.3 Wave 0 — host abstraction + sub-namespace foundation, 2026-06-16)
+
+- **v1.3 Wave 0 — Host abstraction + sub-namespace foundation.** New `engine/host/`
+  module: adapter ABC (`HostAdapter`, `HostName`, `AskKind`, `AskResult`) + env
+  detectors (CLAUDECODE/OPENCODE_*/CODEX_*/CURSOR_*) + registry + host detection
+  with config>env>TTY>fallback precedence. Two adapters shipped: `IntentFileAdapter`
+  (DRIFT-1 fallback writing to `.claude/forge/state/`) + `ClaudeCodeAdapter`
+  (stdout `<FORGE_INTENT/>` marker for in-process Claude Code). Sub-namespace
+  `.claude/forge/` isolates forge-owned state from user's `.claude/`. New path
+  helpers in `engine/utils/paths.py`: `forge_dir`, `forge_config_path`,
+  `forge_state_dir`, `forge_cards_local_dir`, `forge_hooks_dir`. `engine/ui/question.py`
+  delegates `ask`/`ask_multi`/`ask_text` to host adapter while preserving
+  exception classes + `ask_three_paths` + `confirm`. 50+ callsites in engine/ +
+  validators/ migrated to new helpers. Validator renamed:
+  `validate_workflow_config.py` → `validate_forge_config.py` + class
+  `ValidateWorkflowConfig` → `ValidateForgeConfig` + schema bump 1.2 → 1.3.
+  `engine/init.py` writes greenfield projects under `.claude/forge/`. Total:
+  12 commits, 1509 rapid-lane tests (+57 new in W0), zero regressions.
+
 ### Fixed (master review PR #16 — Wave A + B + C remediation, 2026-06-16)
 
 Aplicação dos 60+ findings do master review PR #16 contra `feat/graph-ia-evolution`
