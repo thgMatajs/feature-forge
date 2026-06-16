@@ -277,9 +277,13 @@ def _parse_java(source: str) -> JavaFileInfo:
         # Body extraction — locate the opening brace inside ``full_match``
         # and resolve to an absolute offset in ``source``. If the match
         # ended with `;` (no body), leave body fields ``None``.
-        body: Optional[str] = None
-        body_hash: Optional[str] = None
-        body_tokens: Optional[str] = None
+        # C-001 (REVIEW PR #16): sem type-hints aqui — mypy reportava
+        # ``no-redef`` porque ``body``/``body_hash``/``body_tokens`` já
+        # foram declarados com type hint no loop anterior (linhas 187-191).
+        # Reatribuição simples preserva o tipo inferido + zera entre iters.
+        body = None
+        body_hash = None
+        body_tokens = None
         if not ends_with_semicolon:
             brace_start_in_match = full_match.rfind("{")
             if brace_start_in_match >= 0:
