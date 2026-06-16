@@ -45,6 +45,11 @@ def _install_hook_symlink(project_root: Path) -> Path:
 
     Mirrors o que ``.claude/bootstrap.sh`` faz: cria symlink relativo
     ``../../hooks/git-pre-commit`` e garante que o alvo existe.
+
+    Defesa em profundidade: remove ``link`` se já existir (arquivo OU
+    symlink, válido OU broken). ``tmp_path`` é fresco em cada teste, mas
+    o unlink defensivo cobre re-run em fixtures persistentes e evita o
+    ``FileExistsError`` que o codereviewbot apontou.
     """
     _seed_hook_source(project_root)
     git_hooks = project_root / ".git" / "hooks"
@@ -52,6 +57,10 @@ def _install_hook_symlink(project_root: Path) -> Path:
 
     target_rel = Path("..") / ".." / "hooks" / "git-pre-commit"
     link = git_hooks / "pre-commit"
+    # ``Path.exists()`` resolve symlinks (broken → False), por isso o
+    # OR com ``is_symlink()`` cobre o caso link-quebrado.
+    if link.exists() or link.is_symlink():
+        link.unlink()
     link.symlink_to(target_rel)
     return link
 
@@ -136,7 +145,19 @@ def test_check_bootstrap_state_skips_for_version_help(
 
     Mesmo sem ``.git/hooks/pre-commit`` symlink, esses subcommands precisam
     completar com exit 0 — usuário pode estar inspecionando antes do bootstrap.
+
+    T-N-002 fix: ``_seed_hook_source`` GARANTE que ``_check_bootstrap_state``
+    NÃO sai cedo via guard ``hooks/git-pre-commit not found``. Sem essa
+    seed, o check é skip independente da skip-list — o teste passaria
+    mesmo se ``--version`` estivesse fora da skip-list (vacuous). Com a
+    seed, o erro-path está armado e só não dispara porque a skip-list
+    EFETIVAMENTE cobre ``--version`` / ``--help``.
+
+    ``monkeypatch.chdir`` é auto-restaurado no teardown via
+    ``pytest.MonkeyPatch`` — não há leak entre testes (codereviewbot
+    apontou; revisão confirmou falso-positivo).
     """
+    _seed_hook_source(tmp_forge_project)
     monkeypatch.chdir(tmp_forge_project)
 
     # --version
@@ -144,10 +165,15 @@ def test_check_bootstrap_state_skips_for_version_help(
     assert rc == 0
     out = capsys.readouterr().out
     assert "forge" in out.lower()
+    # Skip-list efetiva: sem mensagem de bootstrap-missing em stderr.
+    err = capsys.readouterr().err
+    assert "bootstrap.sh" not in err
 
     # --help
     rc = cli.main(["--help"])
     assert rc == 0
+    err = capsys.readouterr().err
+    assert "bootstrap.sh" not in err
 
 
 def test_check_bootstrap_state_skips_for_bootstrap_subcommand(
@@ -161,7 +187,17 @@ def test_check_bootstrap_state_skips_for_bootstrap_subcommand(
     caso onde o subcommand é destinado a debuggar/operar sobre um repo
     ainda não bootstrap-ado. Usamos ``help`` porque é guaranteed-no-op
     sem precisar de project state real.
+
+    T-N-002 fix: ``_seed_hook_source`` arma o erro-path do
+    ``_check_bootstrap_state`` ANTES do dispatch. Sem essa seed, o check
+    nunca dispara (guard ``hooks/git-pre-commit not found`` retorna None
+    early) e o teste é vacuous. Com a seed, comprovamos que a skip-list
+    cobre o subcommand E que ``main()`` honra essa cobertura.
+
+    ``monkeypatch.chdir`` auto-restaura no teardown — falso-positivo do
+    codereviewbot apontado e validado em revisão prévia.
     """
+    _seed_hook_source(tmp_forge_project)
     monkeypatch.chdir(tmp_forge_project)
 
     rc = cli.main(["help"])
