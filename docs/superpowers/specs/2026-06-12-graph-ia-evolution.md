@@ -73,11 +73,18 @@ ACs com as tasks do plano.
 
 - **AC-2 — `symbols.body` contém texto-fonte cru com comentários
   preservados.** Para todas as linguagens com corpo delimitado por chaves
-  (Kotlin, Swift, TypeScript, Java, Objective-C), a coluna armazena o
-  texto entre `{` e `}` matched (inclusive comentários, whitespace, e
-  literais). Body extraction reusa `_body_text._SUPPORTED_LANGS` registry.
-  XML não tem corpo textual com a mesma semântica — para símbolos XML o
-  campo é `NULL` (ver §Risks & Limitations).
+  (Kotlin, Swift, TypeScript, JavaScript, Java, Objective-C), a coluna
+  armazena o texto entre `{` e `}` matched (inclusive comentários,
+  whitespace, e literais). Body extraction reusa `_body_text._SUPPORTED_LANGS`
+  registry. XML não tem corpo textual com a mesma semântica — para símbolos
+  XML o campo é `NULL` (ver §Risks & Limitations).
+
+  **Nota pós-fix-pack (PR #16, T-N-020):** o registry canônico após Wave A
+  é `_SUPPORTED_LANGS = {kotlin, swift, typescript, javascript, java, objc}`
+  (XML fora por design — body extraction brace-matched não se aplica a
+  markup). Antes da Wave A, `_mask_strings_and_comments` vivia em
+  `parser_objc.py` e Java/Kotlin re-implementavam variantes; P-N-004
+  promoveu pra `_body_text.py` consolidando a máscara em todos os parsers.
 
 - **AC-3 — `forge graph --json <query>` retorna JSON estruturado em stdout
   sem prompt interactivo.** A flag `--json` é reconhecida ao lado do
@@ -124,10 +131,19 @@ ACs com as tasks do plano.
   exemplos canônicos de uso.
 
 - **AC-9 — pytest baseline mantida com cobertura nova.** Suite completa
-  passa com count `≥ baseline pré-impl + 35 tests novos`
-  (Java 7 + XML 5 + ObjC 6 + bootstrap 4 + lazy 4 + json 9). Nenhum
-  test pré-existente é removido sem justificativa explícita no commit
-  body.
+  passa com count `≥ baseline pré-impl + 84 tests novos em arquivos novos
+  do PR` (Java 19 + ObjC 25 + XML 13 + bootstrap 6 + lazy 6 + json 9 +
+  migrations 5 + integration 1). Nenhum test pré-existente é removido sem
+  justificativa explícita no commit body.
+
+  **Nota pós-fix-pack (PR #16 master review, 2026-06-16):** o número
+  declarado originalmente nesta AC era "+35 tests novos" — contagem
+  imprecisa carregada do plano. Validação `grep -c '^def test_'` nos 8
+  arquivos novos do PR confirma 84 testes. Wave A+B+C fix-pack pós-review
+  somou cobertura nova em arquivos preexistentes (`test_parser_objc.py`
+  14 → 25, `test_parser_xml.py` 7 → 13, `test_parser_java.py` 9 → 19,
+  `test_migrations.py` 2 → 5), levando a delta full suite de
+  +71 (1548 → 1619). Este texto agora reflete o pin correto pós-fix-pack.
 
 - **AC-10 — `forge verify` passa cascade sem hard fails.** Validators
   canônicos rodam contra o repositório modificado e a cascade sai green.
@@ -202,6 +218,6 @@ para detalhe dos steps):
 | AC-6 (ObjC parser, sem call graph) | Task 6 (parser + tests) |
 | AC-7 (extensões registradas) | Task 7.1–7.9 (builder, incremental, ingest, _body_text, hook) |
 | AC-8 (instrução pro modelo) | Task 8 (AGENTS.md/CLAUDE.md) |
-| AC-9 (pytest baseline + 35 tests novos: Java 7 + XML 5 + ObjC 6 + bootstrap 4 + lazy 4 + json 9) | Task 10.1 |
+| AC-9 (pytest baseline + 84 tests novos em arquivos novos do PR: Java 19 + ObjC 25 + XML 13 + bootstrap 6 + lazy 6 + json 9 + migrations 5 + integration 1; full suite +71 pós Wave A+B+C) | Task 10.1 |
 | AC-10 (forge verify cascade green) | Task 10 (full verification + doc-sync gates) |
 | AC-11 (onboarding UX — bootstrap detection + lazy graph build) | Task 9.5 |
