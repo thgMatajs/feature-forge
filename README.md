@@ -2,7 +2,7 @@
 
 A standalone CLI skill that orchestrates end-to-end planning + implementation of mobile features across Android, iOS, KMP, and Web. Backend-agnostic (Firebase, REST, GraphQL, local-only).
 
-> **State:** v1.3 Wave 4 · 2026-06-17 · rapid 1565 / integration 162 / e2e 27 passed (install.sh curl one-liner + forge upgrade + bash 3.2 portável; Wave 3 bug-fix sprint; Wave 2 host-aware execution; graph-ia-evolution ✅ shipped; PR #16 master review fix-pack Wave A+B+C aplicado integralmente) · 25 validators · 14 comandos · 29 cards · 4 bundles · 6 parsers (kotlin/swift/typescript + java/xml/objc) · ~400 arquivos · ~52.5K LOC
+> **State:** 1.4.0 pilot-ready · 2026-06-17 · rapid 1565 / integration 162 / e2e 27 passed (install.sh curl one-liner + forge upgrade + bash 3.2 portável; Wave 3 bug-fix sprint; Wave 2 host-aware execution; graph-ia-evolution ✅ shipped; PR #16 master review fix-pack Wave A+B+C aplicado integralmente) · 25 validators · 14 comandos · 29 cards · 4 bundles · 6 parsers (kotlin/swift/typescript + java/xml/objc) · ~400 arquivos · ~52.5K LOC
 
 ## What it is
 
@@ -140,7 +140,7 @@ Instala em `~/.local/share/feature-forge/` (XDG default; respeita `$XDG_DATA_HOM
 
 ```bash
 # Após instalar
-forge --version  # → forge 1.3.0
+forge --version  # → forge 1.4.0
 
 # Init num projeto
 cd ~/code/my-project

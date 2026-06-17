@@ -9,7 +9,9 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 (nada ainda)
 
-## [v1.3.0] - 2026-06-17
+## [1.4.0] - 2026-06-17
+
+Esforço codinome v1.3-pilot-ready; shipa como 1.4.0 (1.3.0 = graph-ia, já em main).
 
 Release piloto: host abstraction completa, adapters para os 4 contextos de
 execução (Claude Code / TTY / Opencode / IntentFile), init brownfield-safe,
