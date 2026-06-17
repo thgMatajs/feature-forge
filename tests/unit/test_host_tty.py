@@ -241,6 +241,132 @@ def test_tty_ask_multi_pause_token_raises(tmp_path):
             )
 
 
+# ── ask_three_paths — in-process via _stdin_prompt (cross-AI review HIGH) ────
+
+
+_THREE_PATHS_DETAIL = [
+    {"key": "a", "label": "Refatorar", "motive": "reduz complexidade"},
+    {"key": "b", "label": "Reverter", "motive": "desfaz o commit"},
+    {"key": "c", "label": "Override-justify", "motive": "documenta no commit"},
+]
+
+
+def test_tty_three_paths_reads_key(tmp_path):
+    adapter = TtyAdapter(project_root=tmp_path)
+    with patch("sys.stdin", _stdin("b\n")):
+        result = adapter.ask(
+            kind=AskKind.ASK_THREE_PATHS,
+            question="Qual caminho para 'cc-gate'?",
+            options={"a": "Refatorar", "b": "Reverter", "c": "Override-justify"},
+            default=None,
+            allow_pause=True,
+            paths_detail=_THREE_PATHS_DETAIL,
+        )
+    assert isinstance(result, AskResult)
+    assert result.value == "b"
+
+
+def test_tty_three_paths_writes_no_pending_file(tmp_path):
+    adapter = TtyAdapter(project_root=tmp_path)
+    with patch("sys.stdin", _stdin("a\n")):
+        adapter.ask(
+            kind=AskKind.ASK_THREE_PATHS,
+            question="Qual caminho?",
+            options={"a": "A", "b": "B", "c": "C"},
+            default=None,
+            allow_pause=True,
+            paths_detail=_THREE_PATHS_DETAIL,
+        )
+    pending = tmp_path / ".claude" / "forge" / "state" / "forge-pending.json"
+    assert not pending.exists()
+
+
+def test_tty_three_paths_pause_token_raises(tmp_path):
+    adapter = TtyAdapter(project_root=tmp_path)
+    with patch("sys.stdin", _stdin("para\n")):
+        with pytest.raises(UserPausedError):
+            adapter.ask(
+                kind=AskKind.ASK_THREE_PATHS,
+                question="Qual caminho?",
+                options={"a": "A", "b": "B", "c": "C"},
+                default=None,
+                allow_pause=True,
+                paths_detail=_THREE_PATHS_DETAIL,
+            )
+
+
+# ── confirm — in-process via _stdin_prompt (cross-AI review HIGH) ─────────────
+
+
+def test_tty_confirm_reads_sim(tmp_path):
+    adapter = TtyAdapter(project_root=tmp_path)
+    with patch("sys.stdin", _stdin("s\n")):
+        result = adapter.ask(
+            kind=AskKind.CONFIRM,
+            question="Aplicar?",
+            options={"s": "sim", "n": "não"},
+            default="n",
+            allow_pause=True,
+        )
+    assert isinstance(result, AskResult)
+    # confirm value é bool via _stdin_prompt._build_value.
+    assert result.value is True
+
+
+def test_tty_confirm_reads_nao(tmp_path):
+    adapter = TtyAdapter(project_root=tmp_path)
+    with patch("sys.stdin", _stdin("n\n")):
+        result = adapter.ask(
+            kind=AskKind.CONFIRM,
+            question="Aplicar?",
+            options={"s": "sim", "n": "não"},
+            default="s",
+            allow_pause=True,
+        )
+    assert result.value is False
+
+
+def test_tty_confirm_empty_with_default(tmp_path):
+    adapter = TtyAdapter(project_root=tmp_path)
+    with patch("sys.stdin", _stdin("\n")):
+        result = adapter.ask(
+            kind=AskKind.CONFIRM,
+            question="Aplicar?",
+            options={"s": "sim", "n": "não"},
+            default="n",
+            allow_pause=True,
+        )
+    # Linha vazia → resolve pro default "n" → bool False.
+    assert result.value is False
+
+
+def test_tty_confirm_writes_no_pending_file(tmp_path):
+    adapter = TtyAdapter(project_root=tmp_path)
+    with patch("sys.stdin", _stdin("s\n")):
+        adapter.ask(
+            kind=AskKind.CONFIRM,
+            question="Aplicar?",
+            options={"s": "sim", "n": "não"},
+            default="n",
+            allow_pause=True,
+        )
+    pending = tmp_path / ".claude" / "forge" / "state" / "forge-pending.json"
+    assert not pending.exists()
+
+
+def test_tty_confirm_pause_token_raises(tmp_path):
+    adapter = TtyAdapter(project_root=tmp_path)
+    with patch("sys.stdin", _stdin("pausa\n")):
+        with pytest.raises(UserPausedError):
+            adapter.ask(
+                kind=AskKind.CONFIRM,
+                question="Aplicar?",
+                options={"s": "sim", "n": "não"},
+                default="n",
+                allow_pause=True,
+            )
+
+
 # ── no pending.json written (in-process invariant) ──────────────────────────
 
 

@@ -805,28 +805,59 @@ def ask_three_paths(
         }
         for i in range(3)
     ]
+    question_text = f"Qual caminho para resolver '{gate_name}'?"
+
+    # Resolve the I/O anchor with the same fallback ``ask`` uses, so the
+    # public signature ``ask_three_paths(gate_name, paths)`` stays intact
+    # — no callsite needs to thread ``project_root`` through.
+    project_root = _project_root_for_io()
+
+    # In-process intent payload for ``PausedForInputError.intent`` parity
+    # (the adapter writes its own identical-shape pending to disk).
     intent = _build_pending(
         kind="ask_three_paths",
-        question_text=f"Qual caminho para resolver '{gate_name}'?",
+        question_text=question_text,
         options=options,
         default=None,
         allow_pause=True,
         paths_detail=paths_detail,
     )
 
-    response = _consume_response_or_none(intent["intent-id"])
-    if response is None:
-        _emit_pending_and_raise(intent)
+    from engine.host.adapter import (
+        AskKind,
+        PausedForInputError as _AdapterPaused,
+        UserPausedError as _AdapterUserPaused,
+        UserCancelledError as _AdapterUserCancelled,
+    )
 
-    _check_pause_response(response, allow_pause=True)
+    try:
+        result = _resolve_adapter(project_root).ask(
+            kind=AskKind.ASK_THREE_PATHS,
+            question=question_text,
+            options=dict(options),
+            default=None,
+            allow_pause=True,
+            paths_detail=paths_detail,
+        )
+    except _AdapterPaused:
+        # First entry — re-hydrate ``.intent`` from the adapter's on-disk
+        # pending so the surfaced intent-id matches what the host sees.
+        raise PausedForInputError(
+            intent=_read_adapter_pending_or_fallback(project_root, intent)
+        )
+    except _AdapterUserPaused:
+        raise UserPausedError("user paused via response")
+    except _AdapterUserCancelled:
+        raise UserCancelledError("user cancelled via response")
 
-    value = response.get("value")
+    value = result.value
     if not isinstance(value, str) or value not in options:
-        # CR-002: preserve forensics on invalid path key.
+        # CR-002: state remains on disk for forensic inspection; cli.py
+        # finally clears on terminal error paths.
         raise ValueError(
             f"ask_three_paths response value {value!r} is not one of 'a'/'b'/'c'"
         )
-    _clear_state()
+    # Happy path — caller (cli.py finally) clears state. CR-002 invariant.
     return value
 
 
@@ -850,6 +881,13 @@ def confirm(question: str, *, default: bool = False, allow_pause: bool = True) -
     default_key = "s" if default else "n"
     options = {"s": "sim", "n": "não"}
 
+    # Resolve the I/O anchor with the same fallback ``ask`` uses, keeping
+    # the public signature ``confirm(question, *, default, allow_pause)``
+    # intact — no callsite threads ``project_root`` through.
+    project_root = _project_root_for_io()
+
+    # In-process intent payload for ``PausedForInputError.intent`` parity
+    # (the adapter writes its own identical-shape pending to disk).
     intent = _build_pending(
         kind="confirm",
         question_text=question,
@@ -858,23 +896,45 @@ def confirm(question: str, *, default: bool = False, allow_pause: bool = True) -
         allow_pause=allow_pause,
     )
 
-    response = _consume_response_or_none(intent["intent-id"])
-    if response is None:
-        _emit_pending_and_raise(intent)
+    from engine.host.adapter import (
+        AskKind,
+        PausedForInputError as _AdapterPaused,
+        UserPausedError as _AdapterUserPaused,
+        UserCancelledError as _AdapterUserCancelled,
+    )
 
-    _check_pause_response(response, allow_pause=allow_pause)
+    try:
+        result = _resolve_adapter(project_root).ask(
+            kind=AskKind.CONFIRM,
+            question=question,
+            options=dict(options),
+            default=default_key,
+            allow_pause=allow_pause,
+        )
+    except _AdapterPaused:
+        raise PausedForInputError(
+            intent=_read_adapter_pending_or_fallback(project_root, intent)
+        )
+    except _AdapterUserPaused:
+        if not allow_pause:
+            # Legacy semantic preserved: pause forbidden in this context.
+            # State files remain on disk (CR-002) for forensic inspection.
+            raise ValueError(
+                "pause not allowed in this context, but response was paused"
+            )
+        raise UserPausedError("user paused via response")
+    except _AdapterUserCancelled:
+        raise UserCancelledError("user cancelled via response")
 
-    value = response.get("value")
+    value = result.value
     if isinstance(value, bool):
-        _clear_state()
+        # Happy path — caller (cli.py finally) clears state. CR-002 invariant.
         return value
     if isinstance(value, str):
         normalized = value.strip().lower()
         if normalized in {"s", "sim", "y", "yes", "true"}:
-            _clear_state()
             return True
         if normalized in {"n", "não", "nao", "no", "false"}:
-            _clear_state()
             return False
     # CR-002: preserve forensics on unrecognised confirm value.
     raise ValueError(

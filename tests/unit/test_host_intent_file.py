@@ -138,6 +138,129 @@ def test_emit_progress_does_not_raise(tmp_path):
 
 
 # ----------------------------------------------------------------------
+# Cross-AI review HIGH — ask_three_paths + confirm on the file channel
+# ----------------------------------------------------------------------
+
+
+def test_three_paths_emits_pending_with_paths_detail(tmp_path):
+    """``ASK_THREE_PATHS`` first-entry writes a pending carrying the
+    canonical 3-caminhos shape (options a/b/c + paths-detail).
+    """
+    adapter = IntentFileAdapter(project_root=tmp_path)
+    paths_detail = [
+        {"key": "a", "label": "Refatorar", "motive": "reduz complexidade"},
+        {"key": "b", "label": "Reverter", "motive": "desfaz o commit"},
+        {"key": "c", "label": "Override-justify", "motive": "documenta no commit"},
+    ]
+    with pytest.raises(PausedForInputError):
+        adapter.ask(
+            kind=AskKind.ASK_THREE_PATHS,
+            question="Qual caminho para 'cc-gate'?",
+            options={"a": "Refatorar", "b": "Reverter", "c": "Override-justify"},
+            default=None,
+            allow_pause=True,
+            paths_detail=paths_detail,
+        )
+    pending = json.loads(
+        (forge_state_dir(tmp_path) / "forge-pending.json").read_text()
+    )
+    assert pending["kind"] == "ask_three_paths"
+    assert pending["options"] == {
+        "a": "Refatorar",
+        "b": "Reverter",
+        "c": "Override-justify",
+    }
+    assert pending["paths-detail"] == paths_detail
+
+
+def test_three_paths_consumes_choice_key_on_reentry(tmp_path):
+    """Re-entry returns the picked key the host wrote."""
+    adapter = IntentFileAdapter(project_root=tmp_path)
+    paths_detail = [
+        {"key": "a", "label": "A", "motive": "ma"},
+        {"key": "b", "label": "B", "motive": "mb"},
+        {"key": "c", "label": "C", "motive": "mc"},
+    ]
+    try:
+        adapter.ask(
+            kind=AskKind.ASK_THREE_PATHS,
+            question="Qual caminho?",
+            options={"a": "A", "b": "B", "c": "C"},
+            default=None,
+            allow_pause=True,
+            paths_detail=paths_detail,
+        )
+    except PausedForInputError:
+        pass
+    state = forge_state_dir(tmp_path)
+    intent_id = json.loads((state / "forge-pending.json").read_text())["intent-id"]
+    intent_state._reset_log_cache()
+    intent_state.write_response(
+        tmp_path,
+        {"schema-version": 1, "intent-id": intent_id, "value": "c"},
+        state_dir=state,
+    )
+    result = adapter.ask(
+        kind=AskKind.ASK_THREE_PATHS,
+        question="Qual caminho?",
+        options={"a": "A", "b": "B", "c": "C"},
+        default=None,
+        allow_pause=True,
+        paths_detail=paths_detail,
+    )
+    assert result.value == "c"
+
+
+def test_confirm_emits_pending_with_confirm_kind(tmp_path):
+    """``CONFIRM`` first-entry writes a pending with s/n options + default."""
+    adapter = IntentFileAdapter(project_root=tmp_path)
+    with pytest.raises(PausedForInputError):
+        adapter.ask(
+            kind=AskKind.CONFIRM,
+            question="Aplicar?",
+            options={"s": "sim", "n": "não"},
+            default="n",
+            allow_pause=True,
+        )
+    pending = json.loads(
+        (forge_state_dir(tmp_path) / "forge-pending.json").read_text()
+    )
+    assert pending["kind"] == "confirm"
+    assert pending["options"] == {"s": "sim", "n": "não"}
+    assert pending["default"] == "n"
+
+
+def test_confirm_consumes_bool_response_on_reentry(tmp_path):
+    adapter = IntentFileAdapter(project_root=tmp_path)
+    try:
+        adapter.ask(
+            kind=AskKind.CONFIRM,
+            question="Aplicar?",
+            options={"s": "sim", "n": "não"},
+            default="n",
+            allow_pause=True,
+        )
+    except PausedForInputError:
+        pass
+    state = forge_state_dir(tmp_path)
+    intent_id = json.loads((state / "forge-pending.json").read_text())["intent-id"]
+    intent_state._reset_log_cache()
+    intent_state.write_response(
+        tmp_path,
+        {"schema-version": 1, "intent-id": intent_id, "value": True},
+        state_dir=state,
+    )
+    result = adapter.ask(
+        kind=AskKind.CONFIRM,
+        question="Aplicar?",
+        options={"s": "sim", "n": "não"},
+        default="n",
+        allow_pause=True,
+    )
+    assert result.value is True
+
+
+# ----------------------------------------------------------------------
 # Task 0.7a — parity with question._build_pending
 # ----------------------------------------------------------------------
 

@@ -198,3 +198,190 @@ def test_ask_multi_wraps_adapter_user_cancelled(tmp_path):
             question.ask_multi(
                 "Choose?", {"a": "A", "b": "B"}, project_root=tmp_path,
             )
+
+
+# --- ask_three_paths (cross-AI review HIGH — delega ao host adapter) --------
+
+
+_THREE_PATHS = [
+    {"label": "Refatorar", "motive": "reduz complexidade"},
+    {"label": "Reverter", "motive": "desfaz o commit"},
+    {"label": "Override-justify", "motive": "documenta no corpo do commit"},
+]
+
+
+def test_ask_three_paths_delegates_to_resolved_adapter(monkeypatch, tmp_path):
+    """Happy path: ``ask_three_paths`` chama ``adapter.ask`` com
+    ``kind=ASK_THREE_PATHS``, opções a/b/c e ``paths_detail`` — e mapeia
+    ``AskResult.value`` de volta pra chave escolhida.
+    """
+    monkeypatch.setattr(question, "_project_root_for_io", lambda: tmp_path)
+    mock_adapter = MagicMock()
+    mock_adapter.ask.return_value = AskResult(value="b")
+    with patch.object(question, "_resolve_adapter", return_value=mock_adapter):
+        result = question.ask_three_paths("cc-gate", paths=_THREE_PATHS)
+    mock_adapter.ask.assert_called_once()
+    call_kwargs = mock_adapter.ask.call_args.kwargs
+    assert call_kwargs["kind"] == AskKind.ASK_THREE_PATHS
+    assert call_kwargs["options"] == {
+        "a": "Refatorar",
+        "b": "Reverter",
+        "c": "Override-justify",
+    }
+    assert "cc-gate" in call_kwargs["question"]
+    # paths_detail carrega label + motive pra render canônico (discipline §1).
+    detail = {item["key"]: item for item in call_kwargs["paths_detail"]}
+    assert detail["a"]["motive"] == "reduz complexidade"
+    assert result == "b"
+
+
+def test_ask_three_paths_wraps_adapter_paused(monkeypatch, tmp_path):
+    monkeypatch.setattr(question, "_project_root_for_io", lambda: tmp_path)
+    mock_adapter = MagicMock()
+    mock_adapter.ask.side_effect = AdapterPaused("paused")
+    with patch.object(question, "_resolve_adapter", return_value=mock_adapter):
+        with pytest.raises(question.PausedForInputError) as exc_info:
+            question.ask_three_paths("cc-gate", paths=_THREE_PATHS)
+    assert exc_info.value.intent["kind"] == "ask_three_paths"
+
+
+def test_ask_three_paths_wraps_adapter_user_paused(monkeypatch, tmp_path):
+    monkeypatch.setattr(question, "_project_root_for_io", lambda: tmp_path)
+    mock_adapter = MagicMock()
+    mock_adapter.ask.side_effect = AdapterUserPaused("paused")
+    with patch.object(question, "_resolve_adapter", return_value=mock_adapter):
+        with pytest.raises(question.UserPausedError):
+            question.ask_three_paths("cc-gate", paths=_THREE_PATHS)
+
+
+def test_ask_three_paths_wraps_adapter_cancelled(monkeypatch, tmp_path):
+    monkeypatch.setattr(question, "_project_root_for_io", lambda: tmp_path)
+    mock_adapter = MagicMock()
+    mock_adapter.ask.side_effect = AdapterUserCancelled("cancelled")
+    with patch.object(question, "_resolve_adapter", return_value=mock_adapter):
+        with pytest.raises(question.UserCancelledError):
+            question.ask_three_paths("cc-gate", paths=_THREE_PATHS)
+
+
+def test_ask_three_paths_rejects_value_outside_abc(monkeypatch, tmp_path):
+    """CR-002 preservado: valor fora de a/b/c → ValueError no delegate."""
+    monkeypatch.setattr(question, "_project_root_for_io", lambda: tmp_path)
+    mock_adapter = MagicMock()
+    mock_adapter.ask.return_value = AskResult(value="zz")
+    with patch.object(question, "_resolve_adapter", return_value=mock_adapter):
+        with pytest.raises(ValueError):
+            question.ask_three_paths("cc-gate", paths=_THREE_PATHS)
+
+
+def test_ask_three_paths_still_requires_exactly_three(monkeypatch, tmp_path):
+    """A validação de aridade roda ANTES de tocar o adapter."""
+    monkeypatch.setattr(question, "_project_root_for_io", lambda: tmp_path)
+    mock_adapter = MagicMock()
+    with patch.object(question, "_resolve_adapter", return_value=mock_adapter):
+        with pytest.raises(ValueError):
+            question.ask_three_paths(
+                "gate",
+                paths=[{"label": "A", "motive": ""}, {"label": "B", "motive": ""}],
+            )
+    mock_adapter.ask.assert_not_called()
+
+
+# --- confirm (cross-AI review HIGH — delega ao host adapter) ----------------
+
+
+def test_confirm_delegates_to_resolved_adapter(monkeypatch, tmp_path):
+    """Happy path: ``confirm`` chama ``adapter.ask`` com ``kind=CONFIRM``,
+    opções s/n e default mapeado pra chave.
+    """
+    monkeypatch.setattr(question, "_project_root_for_io", lambda: tmp_path)
+    mock_adapter = MagicMock()
+    mock_adapter.ask.return_value = AskResult(value=True)
+    with patch.object(question, "_resolve_adapter", return_value=mock_adapter):
+        result = question.confirm("Aplicar?", default=False)
+    mock_adapter.ask.assert_called_once()
+    call_kwargs = mock_adapter.ask.call_args.kwargs
+    assert call_kwargs["kind"] == AskKind.CONFIRM
+    assert call_kwargs["options"] == {"s": "sim", "n": "não"}
+    assert call_kwargs["default"] == "n"
+    assert result is True
+
+
+def test_confirm_normalizes_bool_value(monkeypatch, tmp_path):
+    monkeypatch.setattr(question, "_project_root_for_io", lambda: tmp_path)
+    mock_adapter = MagicMock()
+    mock_adapter.ask.return_value = AskResult(value=False)
+    with patch.object(question, "_resolve_adapter", return_value=mock_adapter):
+        assert question.confirm("Aplicar?") is False
+
+
+def test_confirm_normalizes_string_tokens(monkeypatch, tmp_path):
+    """Backward-compat: ``value`` pode vir como "s"/"sim"/"n"/"não"."""
+    monkeypatch.setattr(question, "_project_root_for_io", lambda: tmp_path)
+    for token, expected in (
+        ("s", True),
+        ("sim", True),
+        ("y", True),
+        ("yes", True),
+        ("true", True),
+        ("n", False),
+        ("não", False),
+        ("nao", False),
+        ("no", False),
+        ("false", False),
+    ):
+        mock_adapter = MagicMock()
+        mock_adapter.ask.return_value = AskResult(value=token)
+        with patch.object(question, "_resolve_adapter", return_value=mock_adapter):
+            assert question.confirm("Aplicar?") is expected, token
+
+
+def test_confirm_rejects_unrecognised_value(monkeypatch, tmp_path):
+    """CR-002 preservado: token irreconhecível → ValueError."""
+    monkeypatch.setattr(question, "_project_root_for_io", lambda: tmp_path)
+    mock_adapter = MagicMock()
+    mock_adapter.ask.return_value = AskResult(value="talvez")
+    with patch.object(question, "_resolve_adapter", return_value=mock_adapter):
+        with pytest.raises(ValueError):
+            question.confirm("Aplicar?")
+
+
+def test_confirm_wraps_adapter_paused(monkeypatch, tmp_path):
+    monkeypatch.setattr(question, "_project_root_for_io", lambda: tmp_path)
+    mock_adapter = MagicMock()
+    mock_adapter.ask.side_effect = AdapterPaused("paused")
+    with patch.object(question, "_resolve_adapter", return_value=mock_adapter):
+        with pytest.raises(question.PausedForInputError) as exc_info:
+            question.confirm("Aplicar?")
+    assert exc_info.value.intent["kind"] == "confirm"
+
+
+def test_confirm_wraps_adapter_user_paused(monkeypatch, tmp_path):
+    monkeypatch.setattr(question, "_project_root_for_io", lambda: tmp_path)
+    mock_adapter = MagicMock()
+    mock_adapter.ask.side_effect = AdapterUserPaused("paused")
+    with patch.object(question, "_resolve_adapter", return_value=mock_adapter):
+        with pytest.raises(question.UserPausedError):
+            question.confirm("Aplicar?")
+
+
+def test_confirm_user_paused_with_allow_pause_false_raises_value_error(
+    monkeypatch, tmp_path
+):
+    """``allow_pause=False`` + adapter UserPaused → ValueError (semântica
+    legada "pause forbidden" preservada pelo wrapper do delegate).
+    """
+    monkeypatch.setattr(question, "_project_root_for_io", lambda: tmp_path)
+    mock_adapter = MagicMock()
+    mock_adapter.ask.side_effect = AdapterUserPaused("paused")
+    with patch.object(question, "_resolve_adapter", return_value=mock_adapter):
+        with pytest.raises(ValueError, match="pause not allowed"):
+            question.confirm("Aplicar?", allow_pause=False)
+
+
+def test_confirm_wraps_adapter_cancelled(monkeypatch, tmp_path):
+    monkeypatch.setattr(question, "_project_root_for_io", lambda: tmp_path)
+    mock_adapter = MagicMock()
+    mock_adapter.ask.side_effect = AdapterUserCancelled("cancelled")
+    with patch.object(question, "_resolve_adapter", return_value=mock_adapter):
+        with pytest.raises(question.UserCancelledError):
+            question.confirm("Aplicar?")

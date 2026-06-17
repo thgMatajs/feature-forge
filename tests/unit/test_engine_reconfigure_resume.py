@@ -133,6 +133,27 @@ def test_resume_from_checkpoint(
     _seed_workflow_config(tmp_forge_project)
     monkeypatch.chdir(tmp_forge_project)
 
+    # Cross-AI review HIGH (2026-06-17): ``question.confirm`` agora delega
+    # ao host adapter resolvido (antes ele ignorava a detecção de host e
+    # ia direto no native path). Para manter este teste de resume
+    # file-based determinístico, fixamos ``host: intent-file`` — sem isso o
+    # suite (rodando sob CLAUDECODE=1) resolveria o ClaudeCodeAdapter, que
+    # emite marker no stdout e NÃO escreve forge-pending.json. Espelha o
+    # padrão de ``tests/unit/test_ui_question_intent.py`` + MEMORY
+    # subprocess-env-scrub ("pin host: intent-file pra testes
+    # determinísticos").
+    forge_dir = tmp_forge_project / ".claude" / "forge"
+    forge_dir.mkdir(parents=True, exist_ok=True)
+    (forge_dir / "forge-config.yaml").write_text(
+        "host: intent-file\n", encoding="utf-8"
+    )
+    from engine.host import detect as _host_detect
+
+    _host_detect._clear_cache()
+    from engine.ui import intent_state as _intent_state
+
+    _intent_state._reset_log_cache()
+
     # Stage 1 — calcula o intent-id deterministico do draft-confirm.
     # Argumentos seguem o callsite em engine/reconfigure.py:108.
     # question.confirm internamente vira intent kind="confirm" com
@@ -221,8 +242,16 @@ def test_resume_from_checkpoint(
         "reconfigure.run nao avancou apos consumir o draft-confirm response"
     )
 
-    # Resume contract: response.json original do draft-confirm foi
-    # consumido por _clear_state ao retornar valor matched.
-    assert not (state_dir / "forge-response.json").exists(), (
-        "response file should be consumed/cleared after successful resume"
+    # Resume contract (cross-AI review HIGH, 2026-06-17): com ``confirm``
+    # delegando ao host adapter, o consume da response NÃO auto-limpa o
+    # state em disco — a limpeza terminal é responsabilidade do
+    # ``cli.main`` finally (e mesmo lá SPEC §3 preserva pending/response
+    # forensicamente, limpando só o intent-log). Isso unifica ``confirm``
+    # com ``ask``/``ask_text``/``ask_multi`` (CR-002). O que prova o resume
+    # bem-sucedido é o re-pause num intent-id NOVO (asserção acima), não a
+    # ausência do arquivo. Espelha
+    # ``test_ask_with_matching_response_returns_value_and_preserves_files``.
+    assert (state_dir / "forge-response.json").exists(), (
+        "response file must survive consume after delegation (CR-002 — "
+        "cleanup is cli.main finally's job, not the per-prompt consume)"
     )

@@ -154,6 +154,111 @@ def test_marker_xml_escapes_special_chars(tmp_path, capsys):
 
 
 # ----------------------------------------------------------------------
+# Cross-AI review HIGH — ask_three_paths + confirm on the CC channel
+# ----------------------------------------------------------------------
+
+
+def test_three_paths_emits_marker_and_pauses(tmp_path, capsys):
+    """``ASK_THREE_PATHS`` first-entry emits the stdout marker (paths-detail
+    JSON-encoded) and raises paused — the CC channel renders the
+    3-caminhos block from the marker.
+    """
+    import json as _json
+
+    adapter = ClaudeCodeAdapter(project_root=tmp_path)
+    paths_detail = [
+        {"key": "a", "label": "Refatorar", "motive": "reduz complexidade"},
+        {"key": "b", "label": "Reverter", "motive": "desfaz o commit"},
+        {"key": "c", "label": "Override-justify", "motive": "documenta no commit"},
+    ]
+    with pytest.raises(PausedForInputError):
+        adapter.ask(
+            kind=AskKind.ASK_THREE_PATHS,
+            question="Qual caminho para 'cc-gate'?",
+            options={"a": "Refatorar", "b": "Reverter", "c": "Override-justify"},
+            default=None,
+            allow_pause=True,
+            paths_detail=paths_detail,
+        )
+    out = capsys.readouterr().out
+    assert "<FORGE_INTENT" in out
+    assert 'kind="ask_three_paths"' in out
+    # Marker must remain well-formed XML and surface paths-detail.
+    from xml.etree import ElementTree as ET
+
+    marker_line = next(
+        line for line in reversed(out.splitlines())
+        if line.strip().startswith("<FORGE_INTENT")
+    )
+    attribs = ET.fromstring(marker_line).attrib
+    assert _json.loads(attribs["paths-detail"]) == paths_detail
+    # CC channel never writes pending.json — stdout marker is the channel.
+    pending = tmp_path / ".claude" / "forge" / "state" / "forge-pending.json"
+    assert not pending.exists()
+
+
+def test_confirm_emits_marker_and_pauses(tmp_path, capsys):
+    """``CONFIRM`` first-entry emits the stdout marker with s/n options."""
+    adapter = ClaudeCodeAdapter(project_root=tmp_path)
+    with pytest.raises(PausedForInputError):
+        adapter.ask(
+            kind=AskKind.CONFIRM,
+            question="Aplicar?",
+            options={"s": "sim", "n": "não"},
+            default="n",
+            allow_pause=True,
+        )
+    out = capsys.readouterr().out
+    assert "<FORGE_INTENT" in out
+    assert 'kind="confirm"' in out
+    pending = tmp_path / ".claude" / "forge" / "state" / "forge-pending.json"
+    assert not pending.exists()
+
+
+def test_confirm_consumes_bool_response_on_reentry(tmp_path):
+    """Re-entry on ``CONFIRM`` returns the bool value the host wrote."""
+    from engine.ui import intent_state
+    from engine.ui.question import _cli_command_context, stable_intent_id
+    from engine.utils.paths import forge_state_dir
+
+    state = forge_state_dir(tmp_path)
+    state.mkdir(parents=True, exist_ok=True)
+
+    kind = AskKind.CONFIRM
+    question = "Aplicar?"
+    options = {"s": "sim", "n": "não"}
+
+    token = _cli_command_context.set(("test", []))
+    try:
+        intent_id = stable_intent_id(
+            kind.value,
+            question,
+            options,
+            extra={"default": "n", "min-selected": None, "validator-hint": None},
+            command="test",
+            command_args=[],
+        )
+        intent_state.write_response(
+            tmp_path,
+            {"schema-version": 1, "intent-id": intent_id, "value": True},
+            state_dir=state,
+        )
+        intent_state._reset_log_cache()
+
+        adapter = ClaudeCodeAdapter(project_root=tmp_path)
+        result = adapter.ask(
+            kind=kind,
+            question=question,
+            options=options,
+            default="n",
+            allow_pause=True,
+        )
+        assert result.value is True
+    finally:
+        _cli_command_context.reset(token)
+
+
+# ----------------------------------------------------------------------
 # Task 0.7a — parity with question._build_pending
 # ----------------------------------------------------------------------
 

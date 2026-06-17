@@ -20,6 +20,7 @@ class AskKind(str, Enum):
     ASK_THREE_PATHS = "ask_three_paths"
     ASK_MULTI = "ask_multi"
     ASK_TEXT = "ask_text"
+    CONFIRM = "confirm"
 
 
 @dataclass(frozen=True)
