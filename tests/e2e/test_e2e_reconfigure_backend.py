@@ -24,19 +24,15 @@ Skipped por default; ativa com ``RUN_E2E=1`` no env.
 
 from __future__ import annotations
 
-import json
 import os
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from tests.e2e.conftest import (
-    clear_response,
     drive_intent_loop,
     read_pending,
     run_forge,
-    write_response,
 )
 
 _RUN_E2E = os.environ.get("RUN_E2E") == "1"
@@ -123,65 +119,35 @@ def test_forge_reconfigure_emits_category_menu_pending(tmp_path: Path) -> None:
     )
 
 
-def _prime_intent_log(project_root: Path, intent_id: str, value: object) -> None:
-    """Escreve uma entrada no consumed-intent log antes da próxima invocação.
-
-    Permite que o engine "pule" um prompt já respondido (branch 1 de
-    ``intent_state.read_response``) sem precisar de um response.json para
-    esse intent-id. Uso legítimo em testes multi-intent onde o engine
-    precisa avançar além do primeiro prompt sem causar ``IntentMismatchError``
-    ao chegar no segundo prompt antes de haver response para ele no disco.
-
-    Formato JSONL conforme ``engine/ui/intent_state.py:_append_intent_log``:
-    ``{"intent-id": "...", "response": {...}, "consumed-at": "..."}``.
-
-    O log sobrevive ao exit 2 (``PausedForInputError``) — a CLI limpa o log
-    apenas em exits terminais (0, 1, 130). Portanto é seguro primá-lo
-    após uma invocação que pausou e antes da próxima re-invocação.
-    """
-    state_dir = project_root / ".claude" / "forge" / "state"
-    state_dir.mkdir(parents=True, exist_ok=True)
-    entry = {
-        "intent-id": intent_id,
-        "response": {
-            "schema-version": 1,
-            "intent-id": intent_id,
-            "kind": "ask_multi",
-            "value": value,
-            "answered-at": "2026-06-16T12:00:00Z",
-        },
-        "consumed-at": datetime.now(timezone.utc).isoformat(),
-    }
-    log_path = state_dir / "forge-intent-log.jsonl"
-    with log_path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(entry) + "\n")
-
-
 def _reconfigure_backend_response_provider(pending: dict) -> object:
     """Response provider pra test_forge_reconfigure_backend_response_advances.
 
-    Após o consumed-log ter sido primado com a resposta do category picker
-    (intent-id do category-menu), o drive_intent_loop invoca o engine. O
-    engine lê o category picker do log (branch 1 — re-entry idempotency),
-    avança pro backend submenu, e emite o pending do submenu (ask_multi
-    "Quais cells?"). O provider recebe esse pending e retorna None pra parar
-    o loop ali — o teste assere sobre o pending final.
+    Fluxo natural pós engine-fix (read_response trata file stale-consumido
+    como None em vez de raise):
 
-    Casos adicionais:
-    - Category picker re-emitido (log foi limpo por algum exit terminal
-      inesperado): retorna ["backend"] pra responder normalmente.
-    - Qualquer outro pending: retorna None (parar o loop).
+    - Cycle 1: o engine emite o category picker (ask_multi com "backend"
+      nas options). O provider responde ``["backend"]``.
+    - Cycle 2: re-invocado, o engine lê a resposta do category picker do
+      response.json (match → consumed-log), avança pro backend submenu, e
+      emite o pending do submenu (ask_multi "Quais cells?"). O response.json
+      ainda carrega a resposta do category picker — mas o id dela já está no
+      consumed-log, então ``read_response`` pro intent-id do submenu retorna
+      None (stale-consumido) em vez de levantar IntentMismatchError. O engine
+      emite o pending do submenu + exit 2 limpo.
+    - O provider recebe esse pending de submenu e retorna None pra parar o
+      loop — o teste assere sobre esse pending final.
+
+    Sem _prime_intent_log, sem acoplamento ao formato JSONL interno: o
+    drive_intent_loop limpo dirige o handshake ponta-a-ponta.
     """
     kind = pending.get("kind", "")
     options = pending.get("options") or {}
 
-    # Category picker: ask_multi com "backend" nas options.
-    # Normalmente não chega aqui (log já pre-primado), mas como fallback
-    # de segurança respondemos corretamente.
+    # Category picker: ask_multi com "backend" nas options → responde.
     if kind == "ask_multi" and "backend" in options:
         return ["backend"]
 
-    # Qualquer outro pending (submenu backend ou terminal): parar o loop.
+    # Submenu backend (ou qualquer outro pending) → parar o loop.
     return None
 
 
@@ -190,21 +156,17 @@ def _reconfigure_backend_response_provider(pending: dict) -> object:
 def test_forge_reconfigure_backend_response_advances(tmp_path: Path) -> None:
     """AC-8 wiring: selecionar ``backend`` no menu top-level avança pro submenu.
 
-    Usa drive_intent_loop com pre-prime do consumed-intent log para tratar a
-    limitação do ciclo multi-intent do reconfigure: o engine salva um
-    ``.reconfigure-checkpoint.yaml`` antes do category-menu; ao ser re-invocado
-    com a resposta do category picker no response.json, o engine avança pro
-    backend submenu e emite um segundo intent (ask_multi "Quais cells?") sem
-    ter response para ele — causando ``IntentMismatchError`` com o response.json
-    ainda apontando para o category picker.
+    Usa drive_intent_loop limpo (mesmo padrão de
+    ``test_e2e_greenfield_init::*_response_handshake``). Pós engine-fix
+    (read_response trata file stale-consumido como None), o ciclo multi-intent
+    do reconfigure funciona via fluxo natural — sem pre-prime do consumed-log.
 
-    O pre-prime resolve isso: antes de chamar drive_intent_loop, registramos a
-    resposta do category picker no consumed-intent log
-    (``forge-intent-log.jsonl``). O log sobrevive a exits 2
-    (``PausedForInputError``) per DRIFT-1 spec §3. Na invocação do loop, o
-    engine lê o category picker do log (branch 1 de ``read_response``), avança
-    pro backend submenu sem mismatch, e emite o pending do submenu — onde o
-    provider retorna None pra parar o loop e o teste assere.
+    Ciclo:
+    - Cycle 1: engine emite o category picker; provider responde ["backend"].
+    - Cycle 2: engine lê o category picker do response.json, avança pro
+      backend submenu, e emite o pending do submenu. O response.json stale
+      (id já no consumed-log) NÃO causa IntentMismatchError — read_response
+      retorna None pro intent-id do submenu. Provider retorna None → loop para.
 
     Asserções (AC-8):
     - Sem mismatch error: handshake funcionou.
@@ -214,37 +176,6 @@ def test_forge_reconfigure_backend_response_advances(tmp_path: Path) -> None:
     """
     _seed_project_with_config(tmp_path)
 
-    # Invocação inicial pra obter o intent-id do category picker.
-    # Exit 2 (PausedForInputError) — log não é limpo pela CLI.
-    result_init = run_forge(["reconfigure"], cwd=tmp_path, timeout=60)
-    assert result_init.returncode == 2, (
-        f"invocação inicial: esperava exit 2 no category menu, "
-        f"got {result_init.returncode}.\nstderr: {result_init.stderr[-400:]}"
-    )
-    pending_init = read_pending(tmp_path)
-    assert pending_init is not None, "invocação inicial: pending ausente."
-    intent_id_category = pending_init["intent-id"]
-    assert pending_init.get("kind") == "ask_multi", (
-        f"esperava kind=ask_multi no category picker, got {pending_init.get('kind')!r}"
-    )
-    assert "backend" in (pending_init.get("options") or {}), (
-        "category 'backend' ausente do pending inicial — W7.3 wiring quebrado."
-    )
-
-    # Pre-prime: registra a resposta do category picker no consumed-intent log
-    # ANTES de chamar drive_intent_loop. O engine vai ler do log (re-entry
-    # idempotency branch 1) e avançar pro submenu backend sem mismatch.
-    _prime_intent_log(tmp_path, intent_id_category, value=["backend"])
-
-    # Limpa o pending.json deixado pela invocação inicial — o drive_intent_loop
-    # começa com uma nova invocação e o engine detectaria o pending como race
-    # condition se ele ainda estiver no disco.
-    pending_path = tmp_path / ".claude" / "forge" / "state" / "forge-pending.json"
-    pending_path.unlink(missing_ok=True)
-
-    # drive_intent_loop: engine avança do category picker (lido do log) pro
-    # backend submenu e emite o pending do submenu. O provider retorna None
-    # pra parar o loop nesse ponto.
     final_result = drive_intent_loop(
         ["reconfigure"],
         cwd=tmp_path,
@@ -254,7 +185,8 @@ def test_forge_reconfigure_backend_response_advances(tmp_path: Path) -> None:
     )
 
     # Asserção principal: sem mismatch error — handshake do intent protocol
-    # funcionou (response do category picker foi consumido pelo engine).
+    # funcionou (response do category picker foi consumido pelo engine sem
+    # que o stale response.json levantasse IntentMismatchError no submenu).
     stderr_lc = final_result.stderr.lower()
     assert "mismatch" not in stderr_lc, (
         f"intent mismatch detectado — handshake falhou.\n"
@@ -281,7 +213,10 @@ def test_forge_reconfigure_backend_response_advances(tmp_path: Path) -> None:
             f"pending final.command esperado 'reconfigure', "
             f"got {pending_final['command']!r}"
         )
-        assert pending_final["intent-id"] != intent_id_category, (
-            "pending final tem mesmo intent-id do category picker — "
-            "engine não avançou pro submenu backend."
+        # O pending final é o submenu backend — kind ask/ask_multi, mas NÃO o
+        # category picker (que tinha "backend" nas options de top-level).
+        final_options = pending_final.get("options") or {}
+        assert "backend" not in final_options, (
+            "pending final ainda é o category picker (tem 'backend' nas "
+            "options) — engine não avançou pro submenu backend."
         )
