@@ -72,10 +72,58 @@ python3 -m venv "$FORGE_HOME/.venv"
 echo "instalando dependências..."
 "$FORGE_HOME/.venv/bin/pip" install --quiet -e "$FORGE_HOME"
 
+# ── Alias / binary conflict detection ────────────────────────────────────────
+#
+# Verifica se já existe um binário chamado 'forge' no PATH.
+# Se sim, oferece 3-caminhos mentor-calmo:
+#   A) Prosseguir — o symlink novo sobrescreve/ofusca o existente
+#   B) Instalar como 'forge-cli' em vez de 'forge' (mantém ambos)
+#   C) Abortar (exit 130)
+
+BIN_NAME="forge"
+
+if command -v forge >/dev/null 2>&1; then
+  EXISTING_FORGE="$(command -v forge)"
+  echo ""
+  echo "🔨 forge: já existe binário 'forge' em $EXISTING_FORGE."
+  echo ""
+  echo "Três caminhos:"
+  echo "  A) Prosseguir — instala feature-forge 'forge' (sobrescreve/ofusca o existente)"
+  echo "  B) Instalar como 'forge-cli' em vez de 'forge' (mantém ambos disponíveis)"
+  echo "  C) Abortar"
+  echo ""
+
+  _choice_conflict=""
+  if [[ -t 0 ]]; then
+    read -r -p "Escolha [A/B/C]: " _choice_conflict
+  else
+    read -r -p "Escolha [A/B/C]: " _choice_conflict </dev/tty
+  fi
+
+  case "${_choice_conflict,,}" in
+    a)
+      BIN_NAME="forge"
+      echo "prosseguindo — 'forge' será instalado em ~/.local/bin/forge."
+      ;;
+    b)
+      BIN_NAME="forge-cli"
+      echo "instalando como 'forge-cli' — use 'forge-cli' para invocar feature-forge."
+      ;;
+    c)
+      echo "abortado."
+      exit 130
+      ;;
+    *)
+      echo "escolha inválida — abortando."
+      exit 4
+      ;;
+  esac
+fi
+
 # ── Symlink em ~/.local/bin ───────────────────────────────────────────────────
 
 mkdir -p "$HOME/.local/bin"
-ln -sf "$FORGE_HOME/bin/forge" "$HOME/.local/bin/forge"
+ln -sf "$FORGE_HOME/bin/forge" "$HOME/.local/bin/${BIN_NAME}"
 
 # ── PATH detection + 3-caminhos ──────────────────────────────────────────────
 #
