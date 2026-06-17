@@ -371,6 +371,43 @@ def _is_valid_slug(value: str) -> bool:
     return bool(_SLUG_PATTERN.match(value))
 
 
+# Front-door (spec §4 C3): slug derivado de ticket/frase vive na casa
+# canônica `engine.utils.slug`. Re-exportado com o nome interno usado por
+# `run()`/`_elicit_slug`. Reuso no nível do módulo compartilhado (Mandamento 3) —
+# mesma casa que `kebabify`, mas char-level (ver nota de divergência em slug.py).
+from engine.utils.slug import derive_slug as _derive_slug  # noqa: E402
+
+
+def _looks_like_ticket(text: str) -> bool:
+    """True quando o argv contém um ticket-id (ex.: IN-37234).
+
+    Reusa `_TICKET_PATTERN` (~L163) — mesma fonte de verdade que o
+    subtype-detection já usa; nenhum regex paralelo (Mandamento 3).
+    """
+    return _TICKET_PATTERN.search(text or "") is not None
+
+
+def _source_tokens_for(argv_slug: Optional[str]) -> dict[str, str]:
+    """Tokens de source pro intake (spec §4 C3), computados do argv CRU.
+
+    Sempre devolve `{{source_type}}` + `{{source_ref_or_none}}` preenchidos —
+    isso mata o vazamento do token cru universalmente (mesmo quando o argv já
+    é slug válido ou veio do prompt interativo). `argv_slug` é o valor cru
+    (nunca reescrito em `run()`):
+
+      - frase   → type=phrase,      ref=<texto cru>
+      - ticket  → type=ticket,      ref=<ticket cru>
+      - slug    → type=slug,        ref=none
+      - sem argv→ type=interactive, ref=none
+    """
+    if not argv_slug:
+        return {"{{source_type}}": "interactive", "{{source_ref_or_none}}": "none"}
+    if _is_valid_slug(argv_slug):
+        return {"{{source_type}}": "slug", "{{source_ref_or_none}}": "none"}
+    source_type = "ticket" if _looks_like_ticket(argv_slug) else "phrase"
+    return {"{{source_type}}": source_type, "{{source_ref_or_none}}": argv_slug}
+
+
 def _forge_home() -> Path:
     from engine.utils.paths import forge_home as _fh
 
@@ -381,12 +418,24 @@ def _templates_dir() -> Path:
     return _forge_home() / _TEMPLATES_SUBDIR
 
 
-def _render_template(template_name: str, target: Path, slug: str) -> bool:
+def _render_template(
+    template_name: str,
+    target: Path,
+    slug: str,
+    *,
+    extra_tokens: Optional[dict[str, str]] = None,
+) -> bool:
     """Copy `templates/{template_name}` to `target`. Returns True if newly created.
 
-    Lightweight templating: replaces {{FEATURE_SLUG}} occurrences. Anything
-    else stays verbatim — full template population is the user's (or Claude's)
-    job between waves.
+    Templating leve: substitui os tokens que o engine conhece de forma
+    confiável — slug (lowercase `{{feature_slug}}`, como os templates usam,
+    74×; uppercase `{{FEATURE_SLUG}}` preservado p/ compat), timestamp, e —
+    via `extra_tokens` — a origem (`{{source_type}}`/`{{source_ref_or_none}}`).
+    Tudo o mais fica verbatim — a população completa é trabalho do host entre
+    as waves. `extra_tokens` é kw-only com default None (backward-compat); os
+    tokens de source só existem no intake — `.replace` é no-op nos demais
+    templates (inofensivo). O guard `target.exists()` mantém o once-only no
+    resume (não re-renderiza/re-preenche).
     """
     src = _templates_dir() / template_name
     if not src.is_file():
@@ -398,7 +447,15 @@ def _render_template(template_name: str, target: Path, slug: str) -> bool:
         return False
     ensure_dir(target.parent)
     raw = src.read_text(encoding="utf-8")
-    raw = raw.replace("{{FEATURE_SLUG}}", slug)
+    substitutions: dict[str, str] = {
+        "{{feature_slug}}": slug,
+        "{{FEATURE_SLUG}}": slug,  # legacy uppercase — preservado p/ compat
+        "{{generated_at_iso8601}}": utc_now_iso(),
+    }
+    if extra_tokens:
+        substitutions.update(extra_tokens)
+    for token, value in substitutions.items():
+        raw = raw.replace(token, value)
     target.write_text(raw, encoding="utf-8")
     return True
 
@@ -495,14 +552,22 @@ def _run_static_wave(
     slug: str,
     project_root: Path,
     feature_path: Path,
+    *,
+    extra_tokens: Optional[dict[str, str]] = None,
 ) -> WaveResult:
-    """Render a wave's templates, narrate, then block on continuar/pausar."""
+    """Render a wave's templates, narrate, then block on continuar/pausar.
+
+    `extra_tokens` (kw-only, default None) é repassado a `_render_template` —
+    a Wave A usa pra preencher os tokens de source no intake (spec §4 C3).
+    """
     renderer.write("")
     renderer.write(renderer.bold(f"⚡ Wave {label}"))
     created: list[Path] = []
     for template_name, output_name in templates:
         target = feature_path / output_name
-        was_new = _render_template(template_name, target, slug)
+        was_new = _render_template(
+            template_name, target, slug, extra_tokens=extra_tokens
+        )
         marker = "NEW " if was_new else "EXIST"
         renderer.write(f"  ├ {marker}  {target.relative_to(project_root)}")
         created.append(target)
@@ -1077,12 +1142,27 @@ def _handle_done_feature_branch(
 
 def _elicit_slug(argv_slug: Optional[str], project_root: Optional[Path] = None) -> str:
     if argv_slug:
-        if not _is_valid_slug(argv_slug):
-            raise SystemExit(
-                f"forge plan: slug '{argv_slug}' invalid. "
-                "kebab-case lowercase, 2..50 chars, [a-z0-9-]."
+        if _is_valid_slug(argv_slug):
+            return argv_slug
+        # Não é slug válido → trata como ticket/frase: deriva + confirma.
+        # Front-door (spec §4 C3) · Decisão 10: argv posicional, sem flag.
+        # Slug-derivável NÃO é erro — só vira exit 1 se realmente impossível.
+        try:
+            derived = _derive_slug(argv_slug)
+        except ValueError:
+            sys.stderr.write(
+                f"forge plan: não consegui derivar um slug de {argv_slug!r}. "
+                "Tente uma frase com ao menos uma letra (ex.: 'lembrete de rega').\n"
             )
-        return argv_slug
+            raise SystemExit(1)
+        return question.ask_text(
+            f"Derivei '{derived}' do que você passou — confirma ou ajusta?",
+            default=derived,
+            validator=_is_valid_slug,
+            validator_hint=(
+                "kebab-case lowercase, 2..50 chars, deve começar com letra."
+            ),
+        )
 
     # DRIFT-1 W2.T3b — persist checkpoint com intent-id determinado da
     # pergunta de slug ANTES de invocar ``question.ask_text``. On exit-2 +
@@ -1332,6 +1412,7 @@ def _run_waves_for_subtype(
     feature_path: Path,
     *,
     wave_b_required: Optional[bool] = None,
+    intake_tokens: Optional[dict[str, str]] = None,
 ) -> int:
     """Dispatch waves according to subtype. Returns exit code (0 ok, 130 paused).
 
@@ -1359,8 +1440,16 @@ def _run_waves_for_subtype(
 
     for wave_label in order[start_idx:]:
         if wave_label == "A":
+            # Wave A renderiza o feature-intake.md — único ponto onde os
+            # tokens de source (spec §4 C3) são preenchidos. B/C/D/E não
+            # recebem (os tokens só existem no intake).
             result = _run_static_wave(
-                "A", wave_a_templates, slug, project_root, feature_path
+                "A",
+                wave_a_templates,
+                slug,
+                project_root,
+                feature_path,
+                extra_tokens=intake_tokens,
             )
         elif wave_label == "B":
             result = _run_static_wave(
@@ -1523,6 +1612,11 @@ def run(argv: list[str]) -> int:
         )
         append_history(slug, project_root, {"event": "plan-resumed", "wave": starting_wave})
 
+    # Front-door (spec §4 C3): tokens de source preenchidos no intake da
+    # Wave A. Computados do `argv_slug` CRU (nunca reescrito) — sempre
+    # presentes, matando o vazamento do token cru universalmente.
+    intake_tokens = _source_tokens_for(argv_slug)
+
     # Wave dispatch loop (subtype-aware; bugfix branches on wave_b_required).
     try:
         rc = _run_waves_for_subtype(
@@ -1532,6 +1626,7 @@ def run(argv: list[str]) -> int:
             project_root,
             feature_path,
             wave_b_required=wave_b_required,
+            intake_tokens=intake_tokens,
         )
         if rc != 0:
             return rc
