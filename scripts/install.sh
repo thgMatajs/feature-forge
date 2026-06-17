@@ -262,4 +262,5 @@ if "$FORGE_HOME/bin/forge" --version >/dev/null 2>&1; then
 else
   echo "aviso: instalação concluída mas smoke test falhou."
   echo "Tente: $FORGE_HOME/bin/forge --version"
+  exit 1
 fi

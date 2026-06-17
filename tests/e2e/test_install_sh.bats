@@ -236,6 +236,45 @@ $alias_block"
     [ "$status" -eq 130 ]
 }
 
+@test "smoke falho: instalação quebrada sai com exit != 0" {
+    # Stub 'forge' que sempre falha em --version (instalação quebrada)
+    mkdir -p "$TMP/forge_home/bin"
+    printf '#!/bin/bash\nexit 3\n' > "$TMP/forge_home/bin/forge"
+    chmod +x "$TMP/forge_home/bin/forge"
+
+    local smoke_block
+    smoke_block="$(sed -n '/^# ── Smoke/,$p' "$INSTALL_SH")"
+    _write_patched_section "$TMP/scripts/smoke_test.sh" \
+        "export HOME='$HOME'
+FORGE_HOME='$TMP/forge_home'
+$smoke_block"
+
+    run bash "$TMP/scripts/smoke_test.sh"
+
+    # Cross-AI review HIGH: smoke falho NÃO pode terminar com exit 0
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"smoke test falhou"* ]]
+}
+
+@test "smoke OK: instalação saudável sai com exit 0" {
+    # Stub 'forge' que responde --version com sucesso
+    mkdir -p "$TMP/forge_home/bin"
+    printf '#!/bin/bash\necho "forge 1.4.0"\nexit 0\n' > "$TMP/forge_home/bin/forge"
+    chmod +x "$TMP/forge_home/bin/forge"
+
+    local smoke_block
+    smoke_block="$(sed -n '/^# ── Smoke/,$p' "$INSTALL_SH")"
+    _write_patched_section "$TMP/scripts/smoke_test.sh" \
+        "export HOME='$HOME'
+FORGE_HOME='$TMP/forge_home'
+$smoke_block"
+
+    run bash "$TMP/scripts/smoke_test.sh"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"instalado"* ]]
+}
+
 @test "fish shell: _forge_setup_path usa fish_add_path" {
     mkdir -p "$HOME/.config/fish"
     touch "$HOME/.config/fish/config.fish"
