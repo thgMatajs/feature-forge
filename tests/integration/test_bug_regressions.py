@@ -280,8 +280,10 @@ def test_bug2_stale_response_does_not_poison_fresh_command(tmp_path: Path) -> No
     )
 
     # Simula que stale_id já está no log (foi consumido neste lifecycle).
-    intent_state._reset_log_cache()
-    intent_state._append_intent_log(
+    # Usa o helper público canônico (cross-AI review LOW) em vez dos
+    # internos _reset_log_cache + _append_intent_log — o teste prova
+    # COMPORTAMENTO (o stale-consumed guard) sem acoplar ao storage do log.
+    intent_state.seed_consumed_log(
         project_root,
         intent_id=stale_id,
         response=stale_response,

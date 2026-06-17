@@ -300,6 +300,51 @@ def _append_intent_log(
         cached[intent_id] = response
 
 
+# --- seed_consumed_log (test affordance, public) ---------------------------
+
+
+def seed_consumed_log(
+    project_root: Path,
+    *,
+    intent_id: str,
+    response: dict[str, Any],
+    state_dir: Path | None = None,
+    reset_cache: bool = True,
+) -> None:
+    """Pré-semeia uma response JÁ consumida no log — forma canônica em testes.
+
+    Esta é a porta PÚBLICA pra testes que precisam simular "uma pergunta
+    anterior deste lifecycle já foi respondida e registrada no log". O caso
+    de uso é exercitar o stale-consumed guard de ``read_response`` /
+    ``detect_race`` sem depender dos internos ``_append_intent_log`` +
+    ``_reset_log_cache`` diretamente — assim o teste prova COMPORTAMENTO
+    (o guard funciona) e não acopla ao formato de storage do log.
+
+    Wrapper fino sobre ``_append_intent_log``. Por padrão zera o cache de
+    log antes do append (``reset_cache=True``) porque fixtures que reusam o
+    mesmo ``project_root`` entre invocações simuladas podem carregar entries
+    fantasma de um teste anterior — o reset garante determinismo. Passe
+    ``reset_cache=False`` quando estiver semeando múltiplas entries em
+    sequência e quiser preservar as anteriores.
+
+    Args:
+      project_root: raiz do projeto que ancora ``.claude/forge/state/``.
+      intent_id: o intent-id a marcar como consumido.
+      response: o dict de response a cachear pra esse intent-id.
+      state_dir: override do anchor de state (mesma semântica dos demais
+        helpers); ``None`` resolve pro sub-namespace canônico v1.3.
+      reset_cache: zera o cache de log antes do append (default ``True``).
+    """
+    if reset_cache:
+        _reset_log_cache()
+    _append_intent_log(
+        project_root,
+        intent_id=intent_id,
+        response=response,
+        state_dir=state_dir,
+    )
+
+
 # --- write_pending ---------------------------------------------------------
 
 
