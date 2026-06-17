@@ -8,10 +8,10 @@ a canonical pending intent to ``.claude/state/forge-pending.json`` and
 raises ``PausedForInputError``. The top-level handler in ``engine.cli``
 maps that sentinel to exit code 2.
 
-stdin reading lives in ``engine.ui.tty_bridge`` (W3), which loops over
-``engine.cli`` in subprocess mode whenever the dispatcher detects a real
-terminal (sub-Q **Sd** of the spec). No subcommand calls stdin directly —
-this module is the single point of input.
+In the TTY path stdin is read in-process by ``engine.host.adapters.tty``
+(``TtyAdapter``); in the agentic path the engine emits intent files and the
+host (Claude Code / opencode) writes responses to disk. No subcommand calls
+stdin directly — this module is the single point of input.
 
 Invariants honoured here (the refactor preserves them bit-a-bit):
 
@@ -93,8 +93,9 @@ class PausedForInputError(Exception):
     """Sentinel raised by the chokepoint when no response is available yet.
 
     ``intent`` carries the dict that was just written to
-    ``.claude/state/forge-pending.json`` — the host caller (Claude Code
-    or ``engine.ui.tty_bridge``) reads that file and writes a response;
+    ``.claude/state/forge-pending.json`` — the host (Claude Code,
+    opencode, or ``TtyAdapter`` in the TTY path) reads that file and
+    writes a response;
     the engine is then re-invoked with the same argv and consumes the
     response on its way back through this module.
 
@@ -171,7 +172,8 @@ _cli_command_context: ContextVar[tuple[str, list[str]] | None] = ContextVar(
 )
 
 
-# stdin reading lives in engine.ui.tty_bridge; this module never reads stdin.
+# stdin is read in-process by TtyAdapter (engine/host/adapters/tty.py) on the
+# TTY path; this module never reads stdin directly.
 
 
 # --- Intent-id derivation --------------------------------------------------
@@ -775,9 +777,10 @@ def ask_three_paths(
     """Render the 3-caminhos prompt (discipline §1) and return the picked key.
 
     ``paths`` MUST be exactly 3 entries, each with ``label`` + ``motive``.
-    The visual block itself is rendered by the host (Claude Code or
-    ``engine.ui.tty_bridge``) using the intent payload; this entrypoint
-    only assembles the intent and consumes the response.
+    The visual block itself is rendered by the host (Claude Code,
+    opencode, or ``TtyAdapter`` on the TTY path) using the intent
+    payload; this entrypoint only assembles the intent and consumes the
+    response.
     """
     if len(paths) != 3:
         raise ValueError(

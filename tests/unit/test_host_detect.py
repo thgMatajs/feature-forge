@@ -34,3 +34,38 @@ def test_detect_cache_same_process(tmp_path, monkeypatch):
     monkeypatch.delenv("CLAUDECODE")
     second = detect_host(tmp_path)
     assert first == second  # cache survives env change
+
+
+# --- FORGE_FORCE_INTENT_MODE escape-hatch (drift-1 spec §439) ---------------
+
+
+def test_force_intent_mode_overrides_tty(tmp_path, monkeypatch):
+    """FORGE_FORCE_INTENT_MODE=1 + isatty True → INTENT_FILE, não TTY."""
+    for v in ("CLAUDECODE", "OPENCODE_VERSION", "CODEX_CLI", "CURSOR_AGENT"):
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.setenv("FORGE_FORCE_INTENT_MODE", "1")
+    monkeypatch.setattr("sys.stdin", type("_FakeTTY", (), {"isatty": lambda self: True})())
+    _clear_cache()
+    assert detect_host(tmp_path) == HostName.INTENT_FILE
+
+
+def test_force_intent_mode_config_still_wins(tmp_path, monkeypatch):
+    """Config explícito `host: tty` vence sobre FORGE_FORCE_INTENT_MODE."""
+    for v in ("CLAUDECODE", "OPENCODE_VERSION", "CODEX_CLI", "CURSOR_AGENT"):
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.setenv("FORGE_FORCE_INTENT_MODE", "1")
+    cfg = tmp_path / ".claude" / "forge" / "forge-config.yaml"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text("host: tty\n")
+    _clear_cache()
+    assert detect_host(tmp_path) == HostName.TTY
+
+
+def test_force_intent_mode_absent_preserves_tty(tmp_path, monkeypatch):
+    """Sem FORGE_FORCE_INTENT_MODE + isatty True → TTY (comportamento normal)."""
+    for v in ("CLAUDECODE", "OPENCODE_VERSION", "CODEX_CLI", "CURSOR_AGENT",
+              "FORGE_FORCE_INTENT_MODE"):
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.setattr("sys.stdin", type("_FakeTTY", (), {"isatty": lambda self: True})())
+    _clear_cache()
+    assert detect_host(tmp_path) == HostName.TTY

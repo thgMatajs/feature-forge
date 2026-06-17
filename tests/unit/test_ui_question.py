@@ -1,16 +1,16 @@
 """Unit tests — engine.ui.question (legacy stdin path, mostly migrated).
 
 Pre DRIFT-1 W2 these tests drove the interactive prompt API by stubbing
-``sys.stdin``. The W2 refactor moved stdin handling to
-``engine.ui.tty_bridge`` (W3) — the engine itself now emits intent files
-and never reads stdin (SPEC §1).
+``sys.stdin``. The W2 refactor moved stdin handling in-process to
+``TtyAdapter`` (``engine/host/adapters/tty.py``) — the engine itself now
+emits intent files and never reads stdin (SPEC §1).
 
 The 11 stdin-based tests below are skipped with a reason pointing at
 their successor module. ``test_ui_question_intent.py`` covers each one's
 semantics on the new protocol side (matching response → returned value,
-pause token via response → ``PromptAbortedError``, etc.). When
-``test_tty_bridge.py`` lands in W3 it will cover the stdin half of the
-loop.
+pause token via response → ``PromptAbortedError``, etc.). The TTY stdin
+path is exercised by ``tests/unit/test_host_tty.py`` and
+``tests/integration/test_tty_adapter_pty.py``.
 
 Two checks survive untouched — they exercise validation that fires
 before any input is read (and therefore before any stdin / intent
@@ -32,9 +32,9 @@ import pytest
 from engine.ui import question
 
 _LEGACY_SKIP_REASON = (
-    "legacy stdin path migrated to tty_bridge — see tests/unit/test_ui_question_intent.py "
-    "for the intent-protocol equivalent and (W3) tests/unit/test_ui_tty_bridge.py for the "
-    "stdin half of the loop."
+    "legacy stdin path migrated to TtyAdapter — see tests/unit/test_ui_question_intent.py "
+    "for the intent-protocol equivalent and tests/unit/test_host_tty.py / "
+    "tests/integration/test_tty_adapter_pty.py for the TTY stdin half."
 )
 
 
