@@ -141,16 +141,23 @@ def test_corrupt_settings_json_backed_up_and_warned(tmp_path, capsys):
 
 
 @pytest.mark.integration
-def test_unreadable_settings_json_warns_and_proceeds(tmp_path, capsys, monkeypatch):
-    """OSError ao ler settings.json → WARN best-effort, sem backup, prossegue.
+def test_unreadable_settings_json_warns_and_backs_up(tmp_path, capsys, monkeypatch):
+    """OSError ao PARSEAR settings.json → WARN + backup byte-copy, prossegue.
 
-    Quando o arquivo existe mas nem pode ser lido (OSError), não há conteúdo
-    legível para backup. Init não falha: avisa e segue com as forge additions.
+    HI-001: o cenário real é "arquivo íntegro, mas a leitura de parse falhou
+    transientemente" (EACCES, lock, EINTR). A função grava settings.json
+    incondicionalmente em seguida; sem backup isso DESTRUIRIA as settings do
+    usuário. ``backup_file`` copia bytes (shutil.copy2), não depende do
+    ``read_text`` que falhou — então o backup É criado mesmo aqui.
+
+    O mock falha ``Path.read_text`` apenas uma vez (a leitura de parse),
+    deixando a cópia de bytes do backup funcionar contra o arquivo íntegro
+    no disco — exatamente o cenário transiente.
     """
     proj = tmp_path / "project"
     (proj / ".claude").mkdir(parents=True)
     settings_path = proj / ".claude" / "settings.json"
-    settings_path.write_text('{"hooks": {}}')
+    settings_path.write_text('{"theme": "dark", "hooks": {}}')
 
     real_read_text = Path.read_text
     state = {"raised": False}
@@ -176,11 +183,14 @@ def test_unreadable_settings_json_warns_and_proceeds(tmp_path, capsys, monkeypat
     ]
     assert any("session-start-drift-check" in c for c in forge_session_cmds)
 
-    # WARN foi emitido; nenhum backup (não havia conteúdo legível)
+    # WARN foi emitido E o backup byte-copy foi criado (HI-001).
     captured = capsys.readouterr()
     assert "warn:" in captured.out
     bak = settings_path.with_suffix(settings_path.suffix + ".bak")
-    assert not bak.exists(), "sem conteúdo legível → sem backup"
+    assert bak.exists(), "arquivo íntegro + read transiente falho → backup byte-copy"
+    # O backup preserva o conteúdo original do usuário, não a base vazia.
+    backed_up = json.loads(bak.read_text())
+    assert backed_up.get("theme") == "dark", "backup deve preservar settings do usuário"
 
 
 @pytest.mark.integration

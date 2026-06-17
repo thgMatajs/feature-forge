@@ -804,15 +804,38 @@ def _merge_forge_hooks_into_settings(project_root: Path) -> None:
                 ))
             existing = {}
         except OSError:
-            # Não conseguimos sequer ler o arquivo — best-effort: avisamos e
-            # seguimos com as forge additions. Sem backup (não há conteúdo
-            # legível). Init não falha.
-            renderer.write(renderer.colored(
-                "warn: não consegui ler o .claude/settings.json existente; "
-                "seguindo com as adições do forge (suas settings não foram "
-                "tocadas em disco até a próxima gravação).",
-                "yellow",
-            ))
+            # Não conseguimos PARSEAR o arquivo via read_text (EACCES
+            # transiente, lock momentâneo, EINTR) — mas o arquivo pode estar
+            # fisicamente íntegro no disco. A função grava settings.json
+            # incondicionalmente logo abaixo; sem backup isso DESTRÓI as
+            # settings do usuário silenciosamente (HI-001).
+            #
+            # backup_file copia BYTES (shutil.copy2), não depende do read que
+            # falhou — então funciona mesmo aqui. Tentamos preservar antes de
+            # seguir com base vazia. Se nem a cópia der (disco realmente
+            # inacessível), avisamos best-effort e seguimos: init não falha.
+            from engine.utils.yaml_io import backup_file as _backup_file
+
+            bak = None
+            try:
+                bak = _backup_file(settings_path)
+            except OSError:
+                bak = None
+            if bak is not None:
+                renderer.write(renderer.colored(
+                    f"warn: não consegui parsear o .claude/settings.json "
+                    f"existente; original preservado em {bak}. Seguindo com "
+                    f"as adições do forge sobre uma base vazia — revise e "
+                    f"reintegre suas settings a partir do backup.",
+                    "yellow",
+                ))
+            else:
+                renderer.write(renderer.colored(
+                    "warn: não consegui ler nem preservar o "
+                    ".claude/settings.json existente em backup; seguindo com "
+                    "as adições do forge sobre uma base vazia.",
+                    "yellow",
+                ))
             existing = {}
     else:
         settings_path.parent.mkdir(parents=True, exist_ok=True)
