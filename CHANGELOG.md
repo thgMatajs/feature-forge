@@ -7,6 +7,44 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed (v1.3 Wave 3 — bug-fix sprint, 2026-06-17)
+
+Sete bugs do relatório MeoBonsai fechados em 6 commits (`edfd20c..752b0fd`)
+sobre `feat/v1.3-pilot-ready`. Regression suite consolida cobertura dos
+3 bugs críticos + 4 utilitários numa suite integration-level nova.
+
+- **Bug U1 — exit codes unificados** (`edfd20c`): `forge graph`, `forge
+  memory`, e `forge reconfigure` invocados antes de `forge init`
+  (pre-init) agora retornam exit 1. Antes retornavam exit 2
+  (intent-pause), violando o contrato `pre-init=1 / intent-pause=2 /
+  cancel=130`. `test_exit_codes.py` cobre o contrato completo.
+- **Bug U2 — WARN de cleanup de intent-log suprimido em --help/-h/sem-args**
+  (`d9d3bb5`): guard `is_help` adicionado no bloco `finally` de
+  `engine/cli.py`; invocações de ajuda e entrada sem argumentos não
+  emitem mais o aviso de cleanup de log.
+- **Bug U4 — `forge qa` sem args apresenta 3-caminhos** (`137a993`):
+  guard adicionado em `_qa_run` antes de `resolve_scope`; ao ser invocado
+  sem argumentos, exibe bloco mentor-calmo de 3-caminhos em stdout com
+  exit 0, sem `ValueError` nem traceback.
+- **Bug #3 — TtyAdapter guard non-TTY com mensagem DEPRECATED** (`00dad0d`):
+  `engine/host/adapters/tty.py` detecta stdin piped (non-TTY interativo)
+  e emite mensagem `DEPRECATED v1.3` orientando ao uso do harness agentic
+  ou terminal real, em vez de travar aguardando input que nunca chega.
+- **Residual U2 — WARN de cleanup suprimido pós comando pre-init**
+  (`b0fcb35`): bloco `finally` de `engine/cli.py` captura
+  `ProjectRootNotFoundError` silenciosamente, impedindo que o WARN de
+  cleanup seja emitido em contextos onde `project_root` é ausente
+  (ex.: comando pre-init em diretório sem `forge init`).
+- **Regression suite** (`752b0fd`): `tests/integration/test_bug_regressions.py`
+  cobre 7 cenários integration-level — 3 críticos (bug #1 intent-id
+  mismatch, bug #2 stale response poisoning, bug #3 piped stdin) + 4
+  utilitários (U1 exit codes, U2 WARN, U3 ASCII fallback, U4 qa
+  sem-args). Bugs #1, #2 e U3 foram fechados na Wave 2 (DRIFT-1 fix
+  + renderer ASCII); esta suite consolida a cobertura de regressão.
+
+Test counts pós-Wave 3: rapid **1561 passed**, integration **162 passed**,
+e2e **23 passed**, 0 falhas.
+
 ### Added (v1.3 Wave 2 — opencode+TTY adapters, 2026-06-16)
 
 - **TtyAdapter in-process** — `engine/host/adapters/tty.py` implementa o
