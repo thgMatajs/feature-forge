@@ -100,7 +100,8 @@ if command -v forge >/dev/null 2>&1; then
     read -r -p "Escolha [A/B/C]: " _choice_conflict </dev/tty
   fi
 
-  case "${_choice_conflict,,}" in
+  _lc_conflict=$(printf '%s' "$_choice_conflict" | tr '[:upper:]' '[:lower:]')
+  case "$_lc_conflict" in
     a)
       BIN_NAME="forge"
       echo "prosseguindo — 'forge' será instalado em ~/.local/bin/forge."
@@ -191,7 +192,8 @@ _forge_setup_path() {
     read -r -p "Escolha [A/B/C]: " choice </dev/tty
   fi
 
-  case "${choice,,}" in
+  _lc_choice=$(printf '%s' "$choice" | tr '[:upper:]' '[:lower:]')
+  case "$_lc_choice" in
     a)
       if [[ -n "$rc_file" ]]; then
         # Idempotência: só adiciona se o marker ainda não existe
