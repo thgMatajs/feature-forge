@@ -103,7 +103,7 @@ def test_tty_ask_non_tty_raises(tmp_path):
     buf = StringIO("a\n")
     buf.isatty = lambda: False  # type: ignore[method-assign]
     with patch("sys.stdin", buf):
-        with pytest.raises(RuntimeError, match="non-TTY"):
+        with pytest.raises(RuntimeError) as exc_info:
             adapter.ask(
                 kind=AskKind.ASK,
                 question="Qual?",
@@ -111,6 +111,15 @@ def test_tty_ask_non_tty_raises(tmp_path):
                 default=None,
                 allow_pause=True,
             )
+    # v1.3: mensagem documenta deprecacao de piped stdin interativo.
+    msg = str(exc_info.value)
+    assert "DEPRECATED" in msg, (
+        f"mensagem do guard nao contem 'DEPRECATED' — v1.3 deprecou piped "
+        f"stdin interativo: {msg!r}"
+    )
+    assert "piped stdin" in msg, (
+        f"mensagem do guard nao contem 'piped stdin': {msg!r}"
+    )
 
 
 def test_tty_ask_pause_token_raises_user_paused(tmp_path):

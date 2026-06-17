@@ -181,8 +181,11 @@ class TtyAdapter(HostAdapter):
         """
         if not sys.stdin.isatty():
             raise RuntimeError(
-                "TtyAdapter chamado em non-TTY context — "
-                "use intent_file fallback"
+                "TtyAdapter chamado em non-TTY context. v1.3: piped stdin "
+                "interativo e DEPRECATED — use harness agentico (CLAUDECODE=1, "
+                "opencode) ou rode em terminal real. Ver "
+                "docs/superpowers/specs/2026-06-16-v1-3-pilot-ready-design.md "
+                "§3 A.5."
             )
 
     def _build_intent(
