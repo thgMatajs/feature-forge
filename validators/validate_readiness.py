@@ -67,16 +67,39 @@ def _extract_verdict(text: str) -> dict[str, Any] | None:
     return None
 
 
-# Contract specs onde needs-elicitation não-promovido é block-severity.
-_CONTRACT_GLOBS = ("*-spec.yaml", "tasks/task-*.md", "*-contract*.yaml")
+# Contract specs (artefatos YAML estruturados) onde needs-elicitation
+# não-promovido é block-severity. Os nomes batem com o que engine/plan.py
+# renderiza: os 5 `*-spec.yaml` (Wave B), `task-breakdown.yaml` (Wave D head)
+# e os task contracts `tasks/TASK-NNNN.yaml` (Wave D, uppercase `.yaml`).
+# NÃO globamos narrativa `.md` (PRD/intake/tech-spec) — narrativa é warning
+# do prompt readiness-reviewer, não block do validator (spec C5). Converge
+# com o `grep .../tasks/` do prompt — os dois enforcement-points alinhados.
+_CONTRACT_GLOBS = ("*-spec.yaml", "task-breakdown.yaml", "tasks/*.yaml")
+
+# Marker ATIVO (não prose/comentário). Duas formas estruturadas:
+#   - forma-valor:  `campo: needs-elicitation`  (o conductor ainda não preencheu)
+#   - forma-chave:  `needs-elicitation: <truthy>` (flag explícito ligado)
+# A prose instrucional dos templates (ui-state-spec.template.yaml L11/L15, que
+# menciona a palavra em COMENTÁRIO) vive depois do `#` — stripada antes do match,
+# então não dispara false-positive. `needs-elicitation: false` (já resolvido)
+# não casa a forma-chave (só truthy: true/yes/1).
+_NEEDS_ELICIT_RE = re.compile(
+    r":\s*['\"]?needs-elicitation\b"  # campo: needs-elicitation
+    r"|^\s*-?\s*needs-elicitation\s*:\s*(true|yes|1)\b",  # needs-elicitation: true
+    re.IGNORECASE,
+)
 
 
 def _scan_needs_elicitation(f_root: Path) -> list[str]:
-    """Retorna `arquivo:linha` com `needs-elicitation` ativo em contract specs.
+    """Retorna `arquivo:linha` com `needs-elicitation` ATIVO em contract specs.
 
     spec §4 C5 — fecha o ponto-cego "thin-but-structurally-complete": um campo
     `needs-elicitation` que o conductor não promoveu a `blocking: true` open
     question pode escapar como ready se a cadeia story→task fecha nominalmente.
+
+    O match é estruturado (campo/valor YAML), não substring: a prose dos
+    templates (comentários `# … needs-elicitation …`) é stripada antes, então
+    um spec real renderizado não gera false-positive.
     """
     hits: list[str] = []
     for pattern in _CONTRACT_GLOBS:
@@ -86,7 +109,10 @@ def _scan_needs_elicitation(f_root: Path) -> list[str]:
             for lineno, line in enumerate(
                 path.read_text(encoding="utf-8").splitlines(), start=1
             ):
-                if "needs-elicitation" in line:
+                # Dropa o comentário YAML (onde a prose instrucional dos
+                # templates vive) antes de testar o marker.
+                code = line.split("#", 1)[0]
+                if _NEEDS_ELICIT_RE.search(code):
                     rel = path.relative_to(f_root)
                     hits.append(f"{rel}:{lineno}")
     return hits
@@ -109,10 +135,15 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
     # verdict (um verdict 'ready' não pode mascarar campo não-elicitado).
     elicitation_hits = _scan_needs_elicitation(f_root)
     if elicitation_hits:
+        # `where` mostra até 5 locais; o sufixo (+N more) mantém honesto quando
+        # há 6+ (a contagem total já está no message).
+        shown = "; ".join(elicitation_hits[:5])
+        extra = len(elicitation_hits) - 5
+        where = f"{shown} (+{extra} more)" if extra > 0 else shown
         return result_fail(
             f"needs-elicitation não-promovido em {len(elicitation_hits)} contract spec(s)",
             what_failed="needs-elicitation: true sobreviveu em contract spec",
-            where="; ".join(elicitation_hits[:5]),
+            where=where,
             why=[
                 "Campo needs-elicitation deve virar blocking:true open-question, não escapar como ready.",
                 "Fecha o ponto-cego thin-but-structurally-complete (spec C5).",
@@ -120,10 +151,10 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
             paths=make_paths(
                 "Promover cada needs-elicitation a blocking:true em open-questions.yaml",
                 "O conductor elicita na próxima rodada de Phase 3.",
-                "Resolver inline se o valor já é conhecido",
-                "Se foi marcado por engano e o default é claro.",
                 "Reverter pra antes do plan — `forge undo`",
-                "Se o escopo da feature mudou.",
+                "Se o escopo da feature mudou e o campo deixou de fazer sentido.",
+                "Resolver inline se o valor já é conhecido — ou escalar pro user",
+                "Marcado por engano com default claro, ou decisão precisa de humano.",
             ),
         )
 
