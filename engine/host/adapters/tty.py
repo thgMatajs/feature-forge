@@ -133,6 +133,12 @@ class TtyAdapter(HostAdapter):
         min_selected: int | None = None,
     ) -> list[str]:
         self._guard_tty()
+        # Bound efetivo: ``min_selected`` (nome wire-canônico que
+        # ``question.ask_multi`` valida) tem precedência; quando ausente,
+        # cai pro ``min`` posicional do ABC. Espelha exatamente o critério
+        # do validador outer (``len(result) < min_selected``) pra que o
+        # re-prompt do TTY recuse o MESMO que estouraria fora do loop.
+        effective_min = min_selected if min_selected is not None else min
         intent = self._build_intent(
             kind=AskKind.ASK_MULTI,
             question=question,
@@ -140,6 +146,9 @@ class TtyAdapter(HostAdapter):
             default=None,
             min_selected=min_selected,
         )
+        intent["min-count"] = effective_min
+        if max is not None:
+            intent["max-count"] = max
         value = self._run_loop(intent, allow_pause=True)
         if isinstance(value, list):
             return value

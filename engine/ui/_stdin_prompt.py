@@ -163,6 +163,36 @@ def _is_valid_token(intent: dict[str, Any], raw: str) -> bool:
     return True
 
 
+def _multi_bounds_error(intent: dict[str, Any], selection: list[str]) -> str | None:
+    """Mensagem de re-prompt se a seleção ``ask_multi`` viola min/max.
+
+    Retorna ``None`` quando a seleção está dentro do range (ou quando não
+    há bound configurado). Caso contrário devolve uma mensagem mentor-calmo
+    explicando o range esperado — o ``_prompt_loop`` re-pergunta em vez de
+    aceitar e deixar o ``question.ask_multi`` estourar ``ValueError`` fora.
+
+    O critério espelha o validador outer (``len(result) < min_selected``):
+    ``min-count`` carrega o mínimo efetivo (``min_selected`` quando dado,
+    senão o ``min`` posicional do ABC) e ``max-count`` o teto opcional.
+    """
+    count = len(selection)
+    min_count = intent.get("min-count") or 0
+    max_count = intent.get("max-count")
+    if count < min_count:
+        return (
+            f"Escolha ao menos {min_count} "
+            f"{'opção' if min_count == 1 else 'opções'} — "
+            f"você marcou {count}."
+        )
+    if max_count is not None and count > max_count:
+        return (
+            f"Escolha no máximo {max_count} "
+            f"{'opção' if max_count == 1 else 'opções'} — "
+            f"você marcou {count}."
+        )
+    return None
+
+
 def _resolve_token_to_key(intent: dict[str, Any], raw: str) -> str:
     """Resolve um token cru pra chave de opção (pra ``ask``/``ask_three_paths``).
 
@@ -282,7 +312,20 @@ def _prompt_loop(intent: dict[str, Any]) -> Any:
                 return _build_value(intent, str(intent["default"]))
             if kind in {"ask", "ask_three_paths"}:
                 return _resolve_token_to_key(intent, raw)
-            return _build_value(intent, raw)
+            value = _build_value(intent, raw)
+            if kind == "ask_multi" and isinstance(value, list):
+                # Bound min/max é validado AQUI (não em _is_valid_token, que
+                # roda por-token): o critério é sobre a seleção inteira.
+                # Fora do range → re-pergunta no mesmo loop em vez de deixar
+                # o ValueError do question.ask_multi estourar fora.
+                bounds_msg = _multi_bounds_error(intent, value)
+                if bounds_msg is not None:
+                    renderer.write(
+                        f"{bounds_msg} (tentativa {attempt}/{_MAX_INVALID_ATTEMPTS})",
+                        stream=sys.stderr,
+                    )
+                    continue
+            return value
         valid = _valid_tokens_for(intent)
         hint = ", ".join(valid) if valid else "uma resposta válida"
         renderer.write(

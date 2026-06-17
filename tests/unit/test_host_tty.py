@@ -241,6 +241,80 @@ def test_tty_ask_multi_pause_token_raises(tmp_path):
             )
 
 
+# ── ask_multi — min/max bounds re-prompt (cross-AI review LOW) ───────────────
+
+
+def test_tty_ask_multi_below_min_reprompts(tmp_path):
+    """Seleção abaixo do mínimo RE-PROMPTA — não estoura ValueError fora.
+
+    Primeira linha escolhe 1 item (< min=2). O loop do TTY deve recusar e
+    re-perguntar; a segunda linha escolhe 2 itens válidos → retorna a
+    seleção. Antes do fix, a 1ª linha era aceita e o ValueError do
+    ``question.ask_multi`` estourava fora do loop (UX de terminal ruim).
+    """
+    adapter = TtyAdapter(project_root=tmp_path)
+    with patch("sys.stdin", _stdin("a\na, b\n")):
+        result = adapter.ask_multi(
+            question="Quais?",
+            options={"a": "A", "b": "B", "c": "C"},
+            min=2,
+            min_selected=2,
+        )
+    assert result == ["a", "b"]
+
+
+def test_tty_ask_multi_above_max_reprompts(tmp_path):
+    """Seleção acima do máximo RE-PROMPTA — não aceita excesso.
+
+    Primeira linha escolhe 3 itens (> max=2). O loop recusa e re-pergunta;
+    a segunda linha escolhe 2 → retorna. Mantém o critério do bound
+    superior no mesmo lugar que a validação outer aplicaria.
+    """
+    adapter = TtyAdapter(project_root=tmp_path)
+    with patch("sys.stdin", _stdin("a, b, c\na, c\n")):
+        result = adapter.ask_multi(
+            question="Quais?",
+            options={"a": "A", "b": "B", "c": "C"},
+            max=2,
+        )
+    assert result == ["a", "c"]
+
+
+def test_tty_ask_multi_within_bounds_unchanged(tmp_path):
+    """Entrada válida na 1ª tentativa retorna idêntico — sem regressão.
+
+    Com min/max definidos mas a seleção dentro do range, o comportamento
+    é o de sempre: retorna a seleção sem re-prompt.
+    """
+    adapter = TtyAdapter(project_root=tmp_path)
+    with patch("sys.stdin", _stdin("a, b\n")):
+        result = adapter.ask_multi(
+            question="Quais?",
+            options={"a": "A", "b": "B", "c": "C"},
+            min=1,
+            max=2,
+            min_selected=1,
+        )
+    assert result == ["a", "b"]
+
+
+def test_tty_ask_multi_below_min_three_times_cancels(tmp_path):
+    """Esgotar o limite de tentativas inválidas → UserCancelledError.
+
+    Três linhas seguidas abaixo do mínimo esgotam ``_MAX_INVALID_ATTEMPTS``
+    e o adapter mapeia pra cancel (mesmo contrato dos demais inválidos).
+    """
+    adapter = TtyAdapter(project_root=tmp_path)
+    with patch("sys.stdin", _stdin("a\na\na\n")):
+        with pytest.raises(UserCancelledError):
+            adapter.ask_multi(
+                question="Quais?",
+                options={"a": "A", "b": "B", "c": "C"},
+                min=2,
+                min_selected=2,
+            )
+
+
 # ── ask_three_paths — in-process via _stdin_prompt (cross-AI review HIGH) ────
 
 
