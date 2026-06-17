@@ -181,6 +181,41 @@ Depois do `forge init`, seu projeto ganha uma estrutura nova dentro de
 
 ---
 
+## Como o forge fala com seu host AI
+
+O forge não tem interface gráfica nem prompts próprios de terminal quando
+roda dentro de um host AI (Claude Code, opencode). Em vez disso, ele **ensina
+o host a dirigi-lo**. No `forge init`, dois artefatos são instalados no seu
+projeto (brownfield-safe — se você já tem os seus, o forge anexa sem
+sobrescrever):
+
+| Artefato | Host | Onde |
+|---|---|---|
+| `SKILL.md` | Claude Code | `.claude/skills/feature-forge/SKILL.md` |
+| `AGENTS.md` | opencode | raiz do projeto (bloco anexado) |
+
+Os dois explicam ao host o **intent loop** — o jeito conversacional que o forge
+usa pra coletar decisões sem flags:
+
+1. Você (ou o host) roda um comando, ex.: `forge plan "lembrete de rega"`.
+2. Quando o forge precisa de uma decisão sua, ele **pausa** — sai com um código
+   especial e escreve a pergunta (com as opções) num lugar combinado.
+3. O host te apresenta a pergunta com os botões/opções e espera sua escolha.
+4. O host grava a sua resposta e **re-invoca o forge** do ponto onde parou.
+5. Isso se repete até o forge terminar.
+
+Na prática você só responde perguntas — o host cuida de pausar, ler e re-invocar
+sozinho. É por isso que o `forge plan` aceita uma frase ou um ticket direto
+(ex.: `forge plan "IN-37234"`): o forge deriva um slug, te mostra pra confirmar,
+e segue. Se a feature é de UI, você pode passar o caminho de um screenshot na
+conversa — o forge guarda a imagem e registra a referência, sem nenhuma flag.
+
+> Nada disso exige configuração extra: o `forge init` já deixa o driver no lugar.
+> Se você usa um host diferente, o mesmo protocolo vale — o forge sempre pausa,
+> pergunta, e espera a resposta antes de continuar.
+
+---
+
 ## Como um time de 10 devs adota
 
 ### Dev 1: setup inicial

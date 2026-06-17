@@ -3,6 +3,25 @@
 What still needs to be drafted, in dependency order. Use this as the
 checklist for next sessions.
 
+## Fechado nesta wave (AI-first Wave 1, 2026-06-17)
+
+Dois pontos vieram do spec `2026-06-17-ai-first-interaction-layer-design.md`
+(não eram gaps tracked aqui) — registrados como closures pra deixar o
+histórico honesto, sem strike-through de item inexistente.
+
+- **AMBIGUITY-DEAD** — o engine recebia o pedido sem nunca interrogar a
+  ambiguidade: aceitava o slug e seguia, e nada confrontava o pedido contra o
+  que já existia no projeto. Fechado em duas frentes: (1) front-door
+  ticket/frase no `forge plan` (Task 1) deriva o slug + semeia o texto cru no
+  intake pra o conductor refinar; (2) grounded-challenge Phase 2.5 no
+  `planning-conductor.md` (Task 4) confronta o pedido contra grafo/inventory/L2
+  antes de elicitar, transformando conflito em pergunta (D3 — confronta +
+  humano decide).
+- **CASING-BUG** — `_render_template` só substituía o token `{{FEATURE_SLUG}}`
+  uppercase, mas os templates carregam `{{feature_slug}}` lowercase (74×); o
+  token sobrava cru nos artefatos gerados. Fechado na Task 1: o renderer
+  preenche o token lowercase + os tokens de origem, single-pass.
+
 ## Fechado em [1.3.0] — graph-ia-evolution (2026-06-15)
 
 - **Expansão de cobertura de linguagem** — Java / XML / ObjC ganharam
@@ -197,6 +216,51 @@ v1.3 ship completo cobrindo A+B+C+D — 6 waves entregues:
   `[Unreleased]`. Spec: `docs/superpowers/specs/2026-06-04-plan-auditor-design.md`.
 
 ## Open — pós v1.3
+
+### Follow-ups OUT da Wave 1 AI-first (do spec §8, 2026-06-17)
+
+Escopo declarado OUT desta wave — registrados aqui como norte, não como
+trabalho pendente da Wave 1.
+
+- **MCP server** — norte estratégico (D1): expor o forge como servidor MCP em
+  vez de (ou além de) driver SKILL.md/AGENTS.md. É a evolução do mecanismo de
+  driver, não uma correção. Critério de reentrada: piloto reportar fricção no
+  intent loop file-based OR host adicional sem suporte a AskUserQuestion nativo.
+- **EXIT-2-COLLISION (amplo)** — wave de robustez. A Wave 1 trata o intent loop
+  pelo contract atual (exit 2 = pausa); a colisão ampla de exit 2 com outros
+  significados de saída fica pra uma wave dedicada. Critério: primeiro caso
+  real de exit-2 ambíguo observado.
+- **DEAD-VERIFY** — wave de hooks. Detecção de verificação que "passa" sem ter
+  rodado nada útil. Cross-cutting com o sistema de hooks. Critério: wave de
+  hardening de hooks.
+- **CONC-1** — wave de concorrência. Múltiplos drivers/sessões dirigindo o
+  mesmo `forge` concorrentemente (state file race além do já coberto por
+  DRIFT-1). Critério: piloto multi-dev na mesma feature.
+- **TOKEN-BLIND / `--json` / manifesto / `forge status` router** — wave de
+  token economy. Saídas estruturadas pro host consumir sem reparse caro +
+  roteador de status. Critério: wave dedicada a economia de token no driver.
+
+### Follow-ups NOVOS descobertos na Wave 1 AI-first (2026-06-17)
+
+- **FORGE_HOME-carries-skills** — não há teste positivo nem categoria
+  `forge doctor` asserindo que o FORGE_HOME carrega
+  `skills/feature-forge/SKILL.md`. Um clone parcial/sparse deixaria o driver
+  dormente (o install já emite warning quando a fonte falta, mas não há gate
+  de saúde). Candidato: nova categoria de `forge doctor` espelhando a de
+  `hooks/`. Critério: hardening de `forge doctor` OR primeiro relato de driver
+  ausente pós-install.
+- **question.py stale `.claude/state/` docstrings** — docstrings em
+  `engine/ui/question.py` ainda citam o anchor legado `.claude/state/`
+  (cleanup "Task 0.7b"). Confundem leitura/auditoria, mas não afetam runtime:
+  o path canônico é `.claude/forge/state/` via adapters. Cosmético/doc. Critério:
+  próxima passada de cleanup em `engine/ui/`.
+- **validate_readiness non-product blind** — `validate()` resolve o diretório
+  da feature via `feature_dir` (hardcoded `features/`), mas feature non-product
+  vive em `non-product/{slug}/` (`feature_path`). O needs-elicitation scan novo
+  (Task 5) — e os demais checks — varrem dir vazio pra features non-product.
+  Pré-existente + cross-cutting (afeta todo o validator, não só o scan novo).
+  Critério: wave que unifique a resolução de path product vs non-product no
+  validate_readiness.
 
 - **Sem migrator v1.2 → v1.3** — clean-break deliberado. Projetos
   experimentais em v1.2 (pré-production) limpam `.claude/` e re-rodam
