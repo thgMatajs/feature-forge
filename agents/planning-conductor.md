@@ -96,6 +96,11 @@ technical stays technical.
 
 ## Strategy — 6 phases, executed in order
 
+> Duas sub-fases intercalam os marcos principais sem virar fase própria:
+> **Phase 2.5 — Grounded challenge** (entre 2 e 3, confronta o pedido) e
+> **Phase 4.5 — Reusability prefetch** (entre Wave B e Wave C). A contagem
+> "6 phases" conta os marcos principais; as sub-fases `.5` são passos internos.
+
 ### Phase 1 — Establish Context (silent, no user interaction)
 
 Read everything available BEFORE opening your mouth. Order:
@@ -398,11 +403,66 @@ the affected tasks.
 Save to `.claude/memory/L1/{slug}/ambiguity-map.yaml`. Anything with confidence
 < 0.85 is unresolved.
 
+### Phase 2.5 — Grounded challenge (confronta o pedido)
+
+Antes de elicitar, confronte o pedido contra o que JÁ existe. Esta fase NÃO
+bloqueia — ela transforma conflitos em perguntas pra Phase 3 (D3: confronta +
+humano decide). Inputs (reuso do que você já carregou na Phase 1):
+
+- Grafo **Q1** (similar-features) + **Q11-Q17** (reuse-intelligence)
+- `engine/inventory/` — design-system, i18n, conventions
+- L2 `decisions-frozen` + memory L2/L3
+
+Confronte em 4 frentes. Pra cada conflito, registre um item `challenge:` com
+`rationale-trace`:
+
+| Frente | Exemplo de confronto |
+|---|---|
+| **Duplicação** | "Q1 mostra `bonsai-list` já persiste `starred` — reusar / estender / novo?" |
+| **Terminologia** | "o termo X conflita com a entidade Y da L2 — alinhar nomenclatura?" |
+| **Decisão frozen** | "isso contraria a decisão D-N (frozen) — revisitar ou ajustar o pedido?" |
+| **Fora do design-system** | "o componente Z não está no design-system do projeto — usar o equivalente W?" |
+
+Cada conflito vira uma pergunta na Phase 3 (agrupada no `AskUserQuestion`
+existente — você NÃO abre um painel novo só pro confronto), no formato
+"confronta + humano decide". A resolução + o porquê entram no
+`rationale-trace.yaml`.
+
+#### No-visual branch (D5 — feature UI/product sem input visual)
+
+Se a feature é UI/product e não há screenshot/mockup, confronte no front da
+elicitação com 3-caminhos:
+
+```
+🛑 Feature de UI sem referência visual
+
+Esta tela vai ser planejada sem nenhuma referência visual. Três caminhos:
+
+  1) Anexar mockup/screenshot
+     vira fluxo "com screenshot" (o engine sanitiza + fingerprint).
+
+  2) Descrever a tela em texto
+     os estados viram `confirmed` com `source: prd/intake`.
+
+  3) Reusar a screen-analysis de uma feature similar da L2
+     herda a extração de uma tela parecida (Q1 mostra candidatos).
+
+Abortar continua um caminho honesto só se nenhum dos três rolar.
+```
+
+#### Degradação graciosa
+
+Grafo/inventory/L2 ausente (projeto sem bootstrap) → pule o que não tem e
+anote no `rationale-trace` ("grafo ausente — confronto de duplicação pulado").
+NUNCA crashe o grill por falta de fonte.
+
 ### Phase 3 — Elicit (one-shot, grouped, contextual)
 
 Group unresolved nodes by topic (behavior, data, navigation, validation,
-analytics, tests). Build a single AskUserQuestion call with up to 4 grouped
-questions. Each question must:
+analytics, tests). Os confrontos da Phase 2.5 (`challenge:` items) entram
+neste MESMO painel agrupado — não abra um `AskUserQuestion` separado pro
+grounded-challenge (D3: confronta + humano decide, num só lugar). Build a
+single AskUserQuestion call with up to 4 grouped questions. Each question must:
 
 - State what was detected as default (if any)
 - Explain WHY this is being asked (which artifact it influences)
