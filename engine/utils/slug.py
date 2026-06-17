@@ -33,11 +33,17 @@ def derive_slug(text: str) -> str:
     """Deriva slug kebab-case determinístico de ticket/frase livre.
 
     Regras (spec §4 C3): NFKD strip de acentos · lowercase · não-alfanum →
-    hífen · colapsa hífens · trunca pra 2..50 chars · garante início com letra
+    hífen · colapsa hífens · trunca pra 3..50 chars · garante início com letra
     (prefixa ``f-`` quando começa com dígito). Char-level por design — preserva
     chars isolados e a letra após dígito, ao contrário do ``kebabify``
     token-based deste mesmo módulo (ver docstring do módulo). Levanta
     ``ValueError`` quando nada derivável (string vazia ou só pontuação).
+
+    Invariante: pra qualquer input que não levante ``ValueError``, o slug
+    devolvido SEMPRE satisfaz ``engine.plan._SLUG_PATTERN``
+    (``^[a-z][a-z0-9-]{1,48}[a-z0-9]$`` — piso de 3 chars). Por isso o pad
+    abaixo é ``< 3`` e não ``< 2``: um piso de 2 escaparia o validador e o
+    front-door (``_elicit_slug``) recusaria o próprio default derivado.
     """
     normalized = _unicodedata.normalize("NFKD", text or "")
     ascii_text = normalized.encode("ascii", "ignore").decode("ascii").lower()
@@ -50,6 +56,8 @@ def derive_slug(text: str) -> str:
     if not collapsed[0].isalpha():
         collapsed = f"f-{collapsed}"
     collapsed = collapsed[:50].rstrip("-")
-    if len(collapsed) < 2:
+    # Piso 3 (não 2): casa _SLUG_PATTERN (1 âncora + ≥1 meio + 1 âncora). Um
+    # piso de 2 deixaria "ab" escapar como slug que _is_valid_slug recusa.
+    if len(collapsed) < 3:
         collapsed = f"{collapsed}-x"[:50]
     return collapsed

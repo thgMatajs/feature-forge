@@ -379,12 +379,32 @@ from engine.utils.slug import derive_slug as _derive_slug  # noqa: E402
 
 
 def _looks_like_ticket(text: str) -> bool:
-    """True quando o argv contém um ticket-id (ex.: IN-37234).
+    """True quando o argv INTEIRO é um ticket-id (ex.: `IN-37234`).
 
     Reusa `_TICKET_PATTERN` (~L163) — mesma fonte de verdade que o
-    subtype-detection já usa; nenhum regex paralelo (Mandamento 3).
+    subtype-detection já usa; nenhum regex paralelo (Mandamento 3). Usa
+    `fullmatch` (não `search`): uma frase que só MENCIONA um ticket (ex.:
+    `"fix IN-123 agora"`) é frase livre, não um ticket-id — vira `text`, não
+    `ticket`. Assim o `source-ref` do intake só carrega `ticket` quando o
+    argv é, de fato, uma referência verificável.
     """
-    return _TICKET_PATTERN.search(text or "") is not None
+    return _TICKET_PATTERN.fullmatch((text or "").strip()) is not None
+
+
+def _yaml_double_quote_safe(value: str) -> str:
+    """Sanitiza `value` pra entrar num scalar YAML *double-quoted* do template.
+
+    O `feature-intake.md` declara `source-ref: "{{source_ref_or_none}}"` (scalar
+    entre aspas duplas, source-of-truth do conductor). Um valor cru com `"` ou
+    newline fecharia o scalar e malformaria o frontmatter — ou pior, injetaria
+    uma chave YAML nova (`"\\n<key>: <val>`). Colapsa runs de whitespace (incl.
+    newlines) em um único espaço, faz strip, e escapa `\\` → `\\\\` depois `"`
+    → `\\"` (nessa ordem — barra primeiro pra não duplicar o escape das aspas).
+    Resultado: `source-ref: "<retorno>"` parseia como YAML válido pra QUALQUER
+    argv.
+    """
+    collapsed = re.sub(r"\s+", " ", value).strip()
+    return collapsed.replace("\\", "\\\\").replace('"', '\\"')
 
 
 def _source_tokens_for(argv_slug: Optional[str]) -> dict[str, str]:
@@ -393,19 +413,29 @@ def _source_tokens_for(argv_slug: Optional[str]) -> dict[str, str]:
     Sempre devolve `{{source_type}}` + `{{source_ref_or_none}}` preenchidos —
     isso mata o vazamento do token cru universalmente (mesmo quando o argv já
     é slug válido ou veio do prompt interativo). `argv_slug` é o valor cru
-    (nunca reescrito em `run()`):
+    (nunca reescrito em `run()`).
 
-      - frase   → type=phrase,      ref=<texto cru>
-      - ticket  → type=ticket,      ref=<ticket cru>
-      - slug    → type=slug,        ref=none
-      - sem argv→ type=interactive, ref=none
+    `source-type` casa o enum do template (`feature-intake.template.md` L12:
+    `ticket | text | screenshot | mixed`):
+
+      - ticket            → type=ticket, ref=<ticket cru, YAML-safe>
+      - frase / slug      → type=text,   ref=<texto cru, YAML-safe> | none
+      - sem argv (interativo) → type=text, ref=none
+
+    (`screenshot`/`mixed` ficam pra Task 2 — entrada visual.) O `source-ref`
+    passa por `_yaml_double_quote_safe` porque o template quota o campo e o
+    argv é frase livre do usuário/host (sem isso, `"`/newline malformam o
+    frontmatter que o conductor consome — spec §6).
     """
     if not argv_slug:
-        return {"{{source_type}}": "interactive", "{{source_ref_or_none}}": "none"}
+        return {"{{source_type}}": "text", "{{source_ref_or_none}}": "none"}
     if _is_valid_slug(argv_slug):
-        return {"{{source_type}}": "slug", "{{source_ref_or_none}}": "none"}
-    source_type = "ticket" if _looks_like_ticket(argv_slug) else "phrase"
-    return {"{{source_type}}": source_type, "{{source_ref_or_none}}": argv_slug}
+        return {"{{source_type}}": "text", "{{source_ref_or_none}}": "none"}
+    source_type = "ticket" if _looks_like_ticket(argv_slug) else "text"
+    return {
+        "{{source_type}}": source_type,
+        "{{source_ref_or_none}}": _yaml_double_quote_safe(argv_slug),
+    }
 
 
 def _forge_home() -> Path:
