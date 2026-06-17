@@ -13,14 +13,20 @@ prompt criado tem **um lugar pré-definido**, sem improviso.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ 1. CANONICAL                                                │
-│    ~/Documents/feature-forge/                               │
+│ 1. CANONICAL (v1.3 — XDG install layout)                   │
+│    ~/.local/share/feature-forge/                            │
 │    Source of truth. Onde a skill vive de verdade.          │
 │    Versionado em git próprio.                               │
+│    Symlink: ~/.local/bin/forge → canonical/bin/forge        │
+│                                                             │
+│    Fallback / legacy dev path:                              │
+│    ~/Documents/feature-forge/                               │
+│    (usada em dev direto — ver §1 abaixo)                    │
 ├─────────────────────────────────────────────────────────────┤
 │ 2. PER-PROJECT INSTALL                                      │
-│    {project}/.claude/                                       │
+│    {project}/.claude/forge/                                 │
 │    O que `forge init` cria em cada projeto.                │
+│    Sub-namespace v1.3 — forge não toca .claude/ raiz       │
 │    Versionado no git do projeto (com exceções).            │
 ├─────────────────────────────────────────────────────────────┤
 │ 3. FEATURE PACKAGES                                         │
@@ -32,10 +38,20 @@ prompt criado tem **um lugar pré-definido**, sem improviso.
 
 ---
 
-## 1. Canonical repo — `~/Documents/feature-forge/`
+## 1. Canonical repo — `~/.local/share/feature-forge/` (v1.3 XDG install)
 
 ```
-~/Documents/feature-forge/
+~/.local/share/feature-forge/           ← XDG canonical path (Revisita Decisão 18, v1.3)
+│                                         scripts/install.sh clona aqui por default
+│                                         FORGE_HOME env var pode sobrescrever
+│
+│  Acesso principal: ~/.local/bin/forge  → .../bin/forge  (symlink criado pelo install.sh)
+│
+│  Durante desenvolvimento (worktree direto):
+│     ~/Documents/feature-forge/         ← caminho histórico, ainda funciona
+│     forge --version funciona se FORGE_HOME ou PATH apontar pra cá
+│
+~/Documents/feature-forge/    ← (legacy dev / worktree direto — mesmo layout abaixo)
 │
 ├── README.md                              top-level entrypoint
 ├── INFLUENCES.md                          attribution table
@@ -250,7 +266,7 @@ prompt criado tem **um lugar pré-definido**, sem improviso.
 │   ├── lifecycle/
 │   │   └── memory-and-graph.md            ✅ pronto
 │   └── schemas/
-│       ├── workflow-config.md             ✅
+│       ├── forge-config.md                ✅  (era workflow-config.md; renomeado v1.3)
 │       ├── card.md                        ✅
 │       ├── inventories.md                 ✅
 │       ├── memory.md                      ✅
@@ -292,19 +308,42 @@ prompt criado tem **um lugar pré-definido**, sem improviso.
 
 ---
 
-## 2. Per-project install — `{project}/.claude/`
+## 2. Per-project install — `{project}/.claude/forge/` (v1.3 sub-namespace)
 
 What `forge init` writes when run inside a project:
 
 ```
 {project}/
 ├── .claude/
-│   ├── workflow-config.yaml               main config — committed
-│   ├── .gitignore                         auto-created
-│   │                                      ignores: graph.db, memory/L1/, *.bak
+│   │
+│   │   NOTE v1.3: forge usa sub-namespace .claude/forge/ — não polui
+│   │   a raiz .claude/ de outros tools (Claude Code, etc.)
+│   │
+│   ├── forge/                             NOVO em v1.3 (era .claude/ raiz)
+│   │   ├── forge-config.yaml              main config — committed
+│   │   │                                  (era workflow-config.yaml em v1.x)
+│   │   ├── state/                         runtime state files (forge-pending.json, etc.)
+│   │   ├── hooks/                         Bash shims — copied from canonical
+│   │   │   ├── post-edit-codebase-graph.sh
+│   │   │   ├── post-write-feature-artifact.sh
+│   │   │   ├── pre-commit-feature-forge.sh
+│   │   │   ├── post-subagent-validate.sh
+│   │   │   └── session-start-drift-check.sh
+│   │   └── cards/local/                   ← overlay versionado (Gap 5)
+│   │       └── <local-card-name>/
+│   │           ├── card.yaml
+│   │           ├── README.md
+│   │           └── detection/signals.yaml
+│   │
+│   ├── settings.json                      APPEND-ONLY merge pelo forge (não sobrescreve)
+│   │                                      hook registrations adicionadas, não substituídas
+│   │
+│   ├── .gitignore                         auto-created in .claude/forge/
+│   │                                      ignores: state/, graph.db, memory/L1/, *.bak
 │   │
 │   ├── cards/                             snapshots from canonical
-│   │   ├── kotlin-language/               (sha256 recorded in workflow-config)
+│   │   │                                  (sha256 recorded in forge-config.yaml)
+│   │   ├── kotlin-language/
 │   │   ├── kmp-shared/
 │   │   ├── compose-screens/
 │   │   ├── swiftui-screens/
@@ -315,12 +354,7 @@ What `forge init` writes when run inside a project:
 │   │   ├── firebase-auth/
 │   │   ├── firebase-firestore/
 │   │   ├── firebase-storage/
-│   │   ├── crashlytics/
-│   │   └── local/                         ← overlay versionado (Gap 5)
-│   │       └── <local-card-name>/
-│   │           ├── card.yaml
-│   │           ├── README.md
-│   │           └── detection/signals.yaml
+│   │   └── crashlytics/
 │   │
 │   ├── inventory/                         factual snapshot — committed
 │   │   ├── design-system.yaml
@@ -347,32 +381,30 @@ What `forge init` writes when run inside a project:
 │   │
 │   ├── graph.db                           SQLite — NOT committed (rebuildable)
 │   │
-│   ├── hooks/                             Bash shims, copied from canonical
-│   │   ├── post-edit-codebase-graph.sh
-│   │   ├── post-write-feature-artifact.sh
-│   │   ├── pre-commit-feature-forge.sh
-│   │   ├── post-subagent-validate.sh
-│   │   └── session-start-drift-check.sh
+│   ├── forge-version-lock.yaml            forge version pinned here — committed
 │   │
-│   ├── workflow-config-history.jsonl      reconfigure history — committed
-│   ├── proposed-evolutions.yaml           evolve queue — committed
-│   └── forge-version-lock.yaml            forge version pinned here
+│   ├── skills/                            USER-MANAGED — forge NEVER touches this
+│   │   └── (other skill snapshots)
+│   │
+│   └── agents/                            USER-MANAGED — forge NEVER touches this
+│       └── (custom agent overrides)
 │
 ├── .git/
 │   └── hooks/                             installed by forge init
-│       ├── pre-commit                     → calls .claude/hooks/git-pre-commit
-│       ├── post-commit                    → calls .claude/hooks/git-post-commit
-│       └── pre-push                       → calls .claude/hooks/git-pre-push
+│       ├── pre-commit                     → calls .claude/forge/hooks/git-pre-commit
+│       ├── post-commit                    → calls .claude/forge/hooks/git-post-commit
+│       └── pre-push                       → calls .claude/forge/hooks/git-pre-push
 │
 └── .github/                               (only if user opts into CI)
     └── workflows/
         └── feature-forge-pr-ingest.yml    posted on init with --ci flag
 ```
 
-### `.claude/.gitignore` (auto-created)
+### `.claude/forge/.gitignore` (auto-created)
 
 ```gitignore
 # feature-forge — auto-managed
+state/
 graph.db
 graph.db-journal
 graph.db-wal
@@ -511,20 +543,18 @@ planned → active → done → archived
 
 ### ✅ Always commit (canonical repo)
 
-Everything in `~/Documents/feature-forge/` except `.bak`, `tests/_tmp/`,
+Everything in `~/.local/share/feature-forge/` except `.bak`, `tests/_tmp/`,
 `examples/*/.claude/` (test fixtures).
 
-### ✅ Always commit (per project)
+### ✅ Always commit (per project) — v1.3 sub-namespace
 
 ```
-.claude/workflow-config.yaml
+.claude/forge/forge-config.yaml             main config (era workflow-config.yaml)
+.claude/forge/hooks/                        Bash shims
 .claude/cards/                              entire snapshot
 .claude/inventory/
 .claude/memory/L2-project.yaml
 .claude/memory/L1/archived/                 only archived summaries
-.claude/hooks/
-.claude/workflow-config-history.jsonl
-.claude/proposed-evolutions.yaml
 .claude/forge-version-lock.yaml
 .git/hooks/                                 git-managed; shims only
 .github/workflows/feature-forge-*.yml       if CI used
@@ -534,6 +564,7 @@ docs/feature-implementation-workflow/        complete tree
 ### ❌ Never commit (per project)
 
 ```
+.claude/forge/state/                        runtime state files
 .claude/graph.db                            rebuildable
 .claude/graph.db-*                          SQLite working files
 .claude/memory/L1/{active-features}/        WIP, per-developer
@@ -546,6 +577,7 @@ docs/feature-implementation-workflow/        complete tree
 
 ```gitignore
 # feature-forge
+.claude/forge/state/
 .claude/graph.db
 .claude/graph.db-*
 .claude/memory/L1/*
@@ -564,13 +596,13 @@ policy.
 
 | File | Owner | Notes |
 |---|---|---|
-| Everything in `~/Documents/feature-forge/` | feature-forge maintainers | Released as semver; consumed via snapshot |
+| Everything in `~/.local/share/feature-forge/` | feature-forge maintainers | Released as semver; consumed via snapshot |
 
 ### Per-project install files
 
 | File | Created by | Updated by | Read by | Git |
 |---|---|---|---|---|
-| `workflow-config.yaml` | `forge init` | `forge reconfigure`, hooks (last-doctor-run) | all engine modules | ✅ |
+| `.claude/forge/forge-config.yaml` | `forge init` | `forge reconfigure`, hooks (last-doctor-run) | all engine modules | ✅ |
 | `.gitignore` (in `.claude/`) | `forge init` | rarely | git | ✅ |
 | `cards/{name}/` | `forge init` / `forge reconfigure` (menu "adicionar card") | `forge reconfigure` (menu "atualizar card do canonical") | resolver, merger | ✅ |
 | `inventory/design-system.yaml` | `forge init` | hooks (incremental) | DS-related cards, screen-analysis-agent | ✅ |
@@ -580,7 +612,8 @@ policy.
 | `memory/L1/archived/*.yaml` | retrospective-agent (on done) | never | future planning-conductor for context | ✅ |
 | `memory/L2-project.yaml` | `forge init` (seed) | retrospective-agent (proposes), `forge evolve` (applies) | planning-conductor, all agents | ✅ |
 | `graph.db` | `forge init` (full build) | hooks (incremental), `forge reconfigure` (rebuild) | `forge graph query` | ❌ |
-| `hooks/*.sh` | `forge init` | `forge reconfigure` | git/Claude hooks/CI | ✅ |
+| `.claude/forge/hooks/*.sh` | `forge init` | `forge reconfigure` | git/Claude hooks/CI | ✅ |
+| `.claude/forge/state/` | `forge` runtime | each invocation | `forge` (intent protocol) | ❌ |
 | `workflow-config-history.jsonl` | every `forge reconfigure` | append-only | `forge doctor`, debugging | ✅ |
 | `proposed-evolutions.yaml` | retrospective-agent | `forge evolve` (consumes) | user via `forge evolve` | ✅ |
 | `forge-version-lock.yaml` | `forge init` | `forge upgrade` | `forge doctor` | ✅ |
@@ -699,18 +732,19 @@ docs/feature-implementation-workflow/features/lembrete-rega/
 ## 8. Total artifact inventory (v1 estimate)
 
 ```
-Per-project install (after forge init):
-  • workflow-config.yaml                                       1 file
-  • .gitignore                                                  1 file
-  • cards/*/{card.yaml, README, templates, validators, ...}  ~80 files
-  • inventory/*.yaml                                            3 files
-  • memory/L2-project.yaml                                      1 file
-  • memory/L1/{slug}/ (per active feature)                   6/feature
-  • graph.db                                                    1 file
-  • hooks/*.sh                                                  9 files
+Per-project install (after forge init) — v1.3 layout:
+  • .claude/forge/forge-config.yaml                            1 file
+  • .claude/forge/.gitignore                                    1 file
+  • .claude/forge/hooks/*.sh                                    5 files
+  • .claude/forge/state/                               runtime, not committed
+  • .claude/cards/*/{card.yaml, README, templates, ...}      ~80 files
+  • .claude/inventory/*.yaml                                    3 files
+  • .claude/memory/L2-project.yaml                              1 file
+  • .claude/memory/L1/{slug}/ (per active feature)          6/feature
+  • .claude/graph.db                                            1 file (not committed)
+  • .claude/forge-version-lock.yaml                             1 file
   • workflow-config-history.jsonl                               1 file
   • proposed-evolutions.yaml                                    1 file
-  • forge-version-lock.yaml                                     1 file
                                                           ─────────────
   Baseline after init:                                     ~95 files
 
