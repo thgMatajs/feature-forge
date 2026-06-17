@@ -293,6 +293,12 @@ def main(argv: list[str] | None = None) -> int:
     # cases never leak context across each other.
     token = _cli_command_context.set((cmd, list(rest)))
 
+    # Bug U2 — suppress intent-log cleanup WARN for help/no-args paths.
+    # These paths return before reaching the try…finally, but we record the
+    # sentinel here so that if the control flow ever changes the finally
+    # stays silent. The check mirrors the early-return conditions above.
+    is_help_path = not argv or argv[0] in ("-h", "--help", "help", "-v", "--version")
+
     # Track the terminating exception so the ``finally`` block can decide
     # whether to wipe the consumed-intent log. Only ``PausedForInputError``
     # (exit 2, engine asked the caller for input) preserves the log so the
@@ -375,7 +381,7 @@ def main(argv: list[str] | None = None) -> int:
         # Failure to clear is silent: the delete is best-effort and any
         # IO error here is less harmful than the original engine failure
         # that we are trying to surface cleanly.
-        if paused_exc is None:
+        if paused_exc is None and not is_help_path:
             try:
                 from engine.utils.paths import find_project_root
 
