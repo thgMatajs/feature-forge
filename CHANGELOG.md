@@ -122,6 +122,7 @@ Test counts finais (pós-Wave 4 + pilot-blocker fix): rapid **1568 passed**, int
 
 ### Changed
 
+- **install.sh + forge upgrade agora baseiam-se na última release tag** (não no main bleeding-edge). `scripts/install.sh` descobre a última tag `v*` (`git ls-remote --tags --sort=-v:refname`) e clona ela (`--branch <tag>`, detached HEAD na release; fallback main se não há tags). `forge upgrade` faz `git fetch --tags` + checkout da última tag (rollback pra tag/sha anterior em smoke fail). Garante que instalações e upgrades rodem releases estáveis, não commits intermediários de main.
 - **`validate_workflow_config.py` → `validate_forge_config.py`** — validator
   renomeado + classe `ValidateWorkflowConfig` → `ValidateForgeConfig` + schema
   bump 1.2 → 1.3. Wave 0.
