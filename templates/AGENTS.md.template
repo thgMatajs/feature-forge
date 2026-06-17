@@ -1,0 +1,20 @@
+# feature-forge — driver (opencode)
+
+Você dirige o `forge`. O engine emite intenções e pausa; você responde e re-invoca.
+
+## Protocolo do intent loop (opencode)
+
+Ao rodar um `forge` que sai com **exit 2** + linha `<FORGE_INTENT .../>`:
+
+1. Leia o pending em `.claude/forge/state/forge-pending.json`.
+2. Pergunte ao usuário (mecanismo opencode) com `question` + `options`.
+3. Escreva `.claude/forge/state/forge-response.json` com o **mesmo `intent-id`**
+   (schema: `docs/schemas/intent-protocol.md`).
+4. Re-invoque o `forge` com **argv idêntico**.
+5. Repita até exit 0/1/130. Legenda: 0=ok · 1=erro · 2=pausado · 130=cancelado.
+
+## Workflow
+
+Ao rodar `forge plan`, dispatch `agents/planning-conductor.md` (do FORGE_HOME)
+e dirija a elicitação. Screenshot entra conversacionalmente (path na
+source-inquiry), sem flag.
