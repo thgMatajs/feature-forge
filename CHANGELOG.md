@@ -41,7 +41,10 @@ Clean-break deliberado frente a v1.2.x — projetos experimentais reinicializam.
   adapter in-process: stdout de subprocess não é interceptado em tempo real e
   não existe env var oficial confiável. Veredito B: opencode usa
   `IntentFileAdapter` como fallback, sem execução in-process de tools.
-  Spec R1 success criterion #4 atendido. Wave 2.
+  Spec R1 success criterion #4 atendido. `engine/host/detect.py::detect_opencode`
+  permanece documentado como **aspiracional/inativo** — não há env var oficial
+  confiável pra opencode, então a resolução cai no fallback intent-file por
+  design (clarificação cross-AI review PR #17). Wave 2.
 - **Sub-namespace `.claude/forge/`** — isola state e hooks do forge do
   `.claude/` do usuário. Novos helpers em `engine/utils/paths.py`:
   `forge_dir`, `forge_config_path`, `forge_state_dir`, `forge_cards_local_dir`,
@@ -117,8 +120,9 @@ Clean-break deliberado frente a v1.2.x — projetos experimentais reinicializam.
   response poisoning, bug #3 piped stdin) + 4 utilitários (U1 exit codes,
   U2 WARN, U3 ASCII fallback, U4 qa sem-args). Wave 3.
 
-Test counts finais (pós-Wave 4 + pilot-blocker fix): rapid **1568 passed**, integration
-**162 passed**, e2e **30 passed**, 0 falhas.
+Test counts finais (pós-Wave 4 + pilot-blocker fix + remediação cross-AI review
+PR #17): rapid **1611 passed**, integration **168 passed**, e2e **30 passed**,
+0 falhas.
 
 ### Changed
 
@@ -127,8 +131,21 @@ Test counts finais (pós-Wave 4 + pilot-blocker fix): rapid **1568 passed**, int
   renomeado + classe `ValidateWorkflowConfig` → `ValidateForgeConfig` + schema
   bump 1.2 → 1.3. Wave 0.
 - **`engine/ui/question.py` delega ao host adapter** — `ask` / `ask_multi` /
-  `ask_text` delegam ao adapter registrado, preservando exception classes +
-  `ask_three_paths` + `confirm`. Wave 0.
+  `ask_text` / `ask_three_paths` / `confirm` delegam ao adapter registrado,
+  preservando exception classes, normalização de tokens e semântica de
+  pause/cancel. `ask_three_paths` e `confirm` foram migrados pro adapter na
+  remediação cross-AI review (eram os últimos consumidores nativos), fechando
+  a unificação de todos os caminhos de prompt sob o host. Wave 0 + remediação
+  PR #17.
+- **Resolução de config ativa unificada (`active_config_path`)** — todos os
+  comandos passam a resolver a config via `engine/utils/paths.py::active_config_path`,
+  com precedência primário `.claude/forge/forge-config.yaml` (se existe) →
+  legado `.claude/workflow-config.yaml` (se existe) → primário como destino de
+  escrita canônico quando nenhum existe. Antes, vários comandos liam apenas o
+  legado. Migrados: `status` / `verify` / `reconfigure` / `cli` / `doctor` /
+  `implement` / `evolve` / `memory` / `ingest` / `undo` / `raw` + a resolução de
+  feature-roots. Leitura e escrita caem no mesmo path resolvido (sem split).
+  Remediação cross-AI review PR #17.
 - **`bin/forge` dispatcher simplificado** — `exec python -m engine.cli`
   diretamente em todos os casos; detecção de host (TTY, ClaudeCode, opencode,
   intent-file) 100% no lado Python via `detect_host()`. Branch
@@ -172,6 +189,45 @@ Test counts finais (pós-Wave 4 + pilot-blocker fix): rapid **1568 passed**, int
 
 ### Fixed
 
+- **CLI lifecycle — `cli.main` limpa pending/response no exit de sucesso**
+  (remediação cross-AI review PR #17, BL-001) — no terminal exit de SUCESSO
+  (exit 0, não-paused, não-erro), `engine/cli.py::main` agora chama
+  `clear_intent_files` (apaga `forge-pending.json` + `forge-response.json`),
+  além de limpar o intent-log. Os paths de erro (mismatch / race / schema)
+  continuam preservando pending+response pra forense (SPEC §3). Corrige
+  `IntentMismatchError` espúrio no comando seguinte a um comando terminado em
+  `confirm` / `ask_three_paths`: o stale `forge-response.json` de um comando já
+  concluído não envenena mais o próximo. Honra o contrato documentado em
+  `clear_intent_log_only` sem reintroduzir cleanup per-prompt. Afeta
+  IntentFileAdapter (fallback opencode + harnesses disk-based) e
+  ClaudeCodeAdapter; TTY é imune (sem state em disco). Regression test cobre
+  invocação-3-após-confirm.
+- **`install.sh` — smoke falho sai com exit≠0** (remediação cross-AI review
+  PR #17, HIGH) — `scripts/install.sh` falha explicitamente (exit 1) quando o
+  smoke pós-instalação (`forge --version`) não passa, em vez de aparentar
+  sucesso. Além disso valida `LATEST_TAG` como semver (`case` + `printf | grep
+  -Eq` ancorado, bash 3.2 portável) antes de `git clone --branch <tag>`; tag
+  malformada cai no fallback `main` com aviso. e2e `test_install_sh_real.bats`
+  roda o script íntegro contra um remote `file://` fake, cobrindo tag válida E
+  `vGARBAGE` → fallback.
+- **`forge init` — `.claude/settings.json` corrompido/ilegível vira backup**
+  (remediação cross-AI review PR #17, HI-001) — `engine/init.py` faz backup
+  `.bak` + warn em vez de sobrescrever silenciosamente quando o settings.json
+  do usuário não pode ser lido. O caso JSON inválido (`ValueError`) e o caso de
+  leitura falha (`OSError`) tentam `backup_file` antes de prosseguir; se o
+  backup também falha, o merge não escreve por cima (preserva o arquivo
+  intacto). Brownfield-safe: zero perda silenciosa de config do usuário.
+- **`forge upgrade` — rollback re-roda o venv refresh** (remediação cross-AI
+  review PR #17) — quando o `pip install` do upgrade falha, o rollback de
+  `engine/upgrade.py` agora re-executa `_pip_refresh` na revisão restaurada,
+  simétrico ao path de smoke-fail. Antes restaurava só o código (git reset),
+  deixando as deps no estado pós-falha; agora restaura código E deps.
+  `CalledProcessError` no re-refresh é surfado ("rollback ou pip re-refresh
+  falhou — estado pode estar inconsistente"), não mascarado.
+- **TTY — `ask_multi` re-prompta seleção fora dos limites** (remediação cross-AI
+  review PR #17) — `engine/host/adapters/tty.py` re-pergunta (dentro do budget
+  de tentativas) quando a seleção viola `min_selected`, em vez de estourar.
+  Espelha exatamente o `len(result) < min_selected` de `question.ask_multi`.
 - **Bug #1 — intent-id mismatch (DRIFT-1 multi-pergunta-por-ciclo)** —
   `engine/ui/intent_state.py::read_response` e `detect_race` agora tratam
   `intent-id` já presente no consumed-log como stale-leftover (resposta de

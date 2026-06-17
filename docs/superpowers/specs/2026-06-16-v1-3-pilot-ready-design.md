@@ -7,6 +7,14 @@
 **Onda produto:** parte 1 da Onda 1 ([`03-roadmap.md`](../../product/03-roadmap.md) §2 — "Autopilot completo" v1.3 → v1.4)
 **Branch precondition (W0):** `feat/v1.3-pilot-ready` criada a partir de `main` 100% sincronizada com `origin/main` via `git pull --ff-only`
 
+> **Nota de versão (pós-ship):** este esforço — codinome de planejamento
+> **v1.3-pilot-ready** — shipa como **1.4.0**. O número 1.3.0 já foi atribuído
+> ao graph-ia-evolution (em `main` desde 2026-06-15), então a foundation
+> pilot-ready ficou com o próximo minor. Onde este documento diz "v1.3.0" como
+> a versão a entregar, leia **1.4.0**. As referências históricas (ex.: "1.3.0 =
+> graph-ia") e de roadmap ("v1.3 → v1.4") permanecem corretas como estão — são
+> sobre marcos distintos, não sobre o número de ship deste esforço.
+
 ---
 
 ## §1 — Goal + Escopo
@@ -523,7 +531,7 @@ forge upgrade  # → "já no latest"
 
 ### Success criteria ("v1.3 done")
 
-1. `curl -fsSL <github-raw-URL>/scripts/install.sh | bash` instala fresh em macOS limpo + Linux limpo → `forge --version` mostra `v1.3.0` em terminal novo, sem intervenção manual além das 3-caminhos do install.sh.
+1. `curl -fsSL <github-raw-URL>/scripts/install.sh | bash` instala fresh em macOS limpo + Linux limpo → `forge --version` mostra `1.4.0` em terminal novo, sem intervenção manual além das 3-caminhos do install.sh.
 2. `forge init` em MeoBonsai-class fixture (`.claude/` com 5 skills + 3 agents + 2 hooks + settings.json populated) completa sem tocar nada além de `.claude/forge/` → diff `find .claude -type f -newer <init-start>` mostra apenas paths sob `.claude/forge/`.
 3. `forge plan IN-test` end-to-end sob Claude Code (CLAUDECODE=1) — Wave A→E completa sem `forge-pending.json`/`forge-response.json` visíveis ao user; perguntas aparecem via AskUserQuestion nativa.
 4. `forge plan IN-test` end-to-end sob opencode — Wave A→E completa via adapter opencode ou fallback intent_file (decisão dependente de R1 — fallback aceitável com nota explícita em CHANGELOG se opencode incompatível).
