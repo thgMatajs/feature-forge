@@ -56,7 +56,7 @@ import sys
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping, NoReturn, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from engine.ui import intent_state
 from engine.utils.paths import try_find_project_root
@@ -84,8 +84,9 @@ class NonInteractiveError(RuntimeError):
     Kept for API stability — callers may still ``except NonInteractiveError``.
     DRIFT-1 superseded the stdin-EOF path that used to raise it; the
     sentinel is now reached via ``allow_pause=False`` + ``paused: true``
-    on the response (which raises ``ValueError`` directly — see
-    ``_check_pause_response``).
+    on the response, which the host adapter resolves to a ``ValueError``
+    (pause forbidden in this context) — see the pause/cancel handling in
+    ``engine/host/adapter.py``.
     """
 
 
@@ -375,74 +376,17 @@ def _build_pending(
     return intent
 
 
-def _emit_pending_and_raise(intent: dict[str, Any]) -> NoReturn:
-    """Write the pending file (after race detection) and raise the sentinel.
-
-    Race detection consults ``.claude/state/forge-pending.json``; a recent
-    pending with a different intent-id raises ``RaceDetectedError`` from
-    ``intent_state`` (caught upstream and mapped to exit 1 by spec §3).
-
-    The ``NoReturn`` annotation (LO-002 fix) lets type checkers — and
-    static-analysis readers — know that control never returns from this
-    function; the downstream entrypoints rely on that to keep their
-    happy-path branches readable without defensive guards.
-    """
-    project_root = _project_root_for_io()
-    intent_state.detect_race(project_root, new_intent_id=intent["intent-id"])
-    intent_state.write_pending(intent, project_root)
-    raise PausedForInputError(intent=intent)
-
-
-def _consume_response_or_none(intent_id: str) -> dict[str, Any] | None:
-    """Read the response file if it exists and its intent-id matches."""
-    project_root = _project_root_for_io()
-    return intent_state.read_response(project_root, intent_id=intent_id)
-
-
-def _clear_state() -> None:
-    intent_state.clear_intent_files(_project_root_for_io())
-
-
-def _check_pause_response(
-    response: dict[str, Any],
-    *,
-    allow_pause: bool,
-) -> None:
-    """Apply the pause / cancel semantics to a response.
-
-    Resolution order (MD-002 fix from W2 review): cancel is checked
-    BEFORE pause because cancellation is the stronger semantic. A
-    malformed host response carrying both ``"cancelled": true`` and
-    ``"paused": true`` resolves to cancellation — the user wants out
-    entirely, not a resumable pause.
-
-    Outcomes (each maps cleanly via ``engine.cli::main()``):
-
-    - ``cancelled: true`` → ``_clear_state()`` then raise
-      ``UserCancelledError`` (cli maps to exit 130, SPEC §8).
-    - ``paused: true`` + ``allow_pause=True`` → ``_clear_state()`` then
-      raise ``UserPausedError`` (cli maps to exit 2). This is the
-      user-initiated pause channel — distinct from
-      ``PausedForInputError`` (which fires when the engine emits a
-      fresh pending and is still waiting for a first response).
-    - ``paused: true`` + ``allow_pause=False`` → raise ``ValueError``
-      (pause forbidden in this context). State files are NOT cleared:
-      this is an invalid pause attempt, so the response is preserved
-      forensically per SPEC §3.
-
-    No ``RuntimeError`` ladder catches the new sentinels — they are
-    plain ``Exception`` siblings of ``PausedForInputError``, so legacy
-    ``except PromptAbortedError`` / ``except RuntimeError`` clauses in
-    callsite modules cannot silently swallow user-initiated termination.
-    """
-    if response.get("cancelled"):
-        _clear_state()
-        raise UserCancelledError("user cancelled via response")
-    if response.get("paused"):
-        if allow_pause:
-            _clear_state()
-            raise UserPausedError("user paused via response")
-        raise ValueError("pause not allowed in this context, but response was paused")
+# NOTE (BL-001 / MD-001): a antiga geração de helpers nativos do
+# chokepoint — ``_emit_pending_and_raise``, ``_consume_response_or_none``,
+# ``_clear_state`` e ``_check_pause_response`` — foi removida quando
+# ``ask``/``ask_multi``/``ask_text`` e, por fim, ``confirm``/
+# ``ask_three_paths`` passaram a delegar pro ``HostAdapter`` (Task 0.7b +
+# série de remediação PR #17). A semântica de pause/cancel/clear hoje vive
+# no adapter (ver ``engine/host/adapter.py`` e o loop em
+# ``IntentFileAdapter``); o cleanup terminal de pending/response/log é
+# responsabilidade do ``finally`` de ``engine/cli.py::main`` (BL-001).
+# Mantê-los aqui como código morto só desorientava o próximo leitor sobre
+# quem limpa o quê.
 
 
 # --- Adapter resolution (Task 0.7b) ----------------------------------------

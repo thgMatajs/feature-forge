@@ -184,6 +184,12 @@ def _multi_bounds_error(intent: dict[str, Any], selection: list[str]) -> str | N
             f"{'opção' if min_count == 1 else 'opções'} — "
             f"você marcou {count}."
         )
+    # LO-001: branch defensivo/future-proof. ``question.ask_multi`` só
+    # propaga ``min-selected`` pro adapter — nunca um teto ``max``. Logo
+    # ``max-count`` nunca é setado pelo caminho de produção e esta branch
+    # fica dormant (alcançável só se alguém chamar ``TtyAdapter.ask_multi(
+    # max=...)`` diretamente). Mantida espelhando o ``min`` pra que, quando
+    # ``question.ask_multi`` expuser ``max``, a simetria já esteja pronta.
     if max_count is not None and count > max_count:
         return (
             f"Escolha no máximo {max_count} "

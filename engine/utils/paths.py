@@ -248,7 +248,12 @@ def forge_config_path(project_root: Path) -> Path:
 
 
 def active_config_path(project_root: Path) -> Path:
-    """Resolve a config ativa do projeto, com precedência primário → legado.
+    """Resolve a config ativa do projeto.
+
+    Precedência completa: primário (se existe) → legado (se existe) →
+    primário (destino de escrita canônico quando nenhum dos dois existe
+    ainda). O terceiro termo é o que evita o split read/write descrito
+    abaixo — não é só "primário → legado".
 
     Há dois lugares onde a config de um projeto pode viver, e este módulo já
     documenta a intenção dual-path (ver docstrings de `_is_project_root` e
