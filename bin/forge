@@ -29,43 +29,27 @@ PYTHON="${FORGE_PYTHON:-python3}"
 FORGE_VERSION="$("$PYTHON" -c 'from engine import __version__; print(__version__)' 2>/dev/null || echo unknown)"
 export FORGE_VERSION
 
-# DRIFT-1 dispatch (SPEC §6 sub-Q Sd): route between intent-only mode
-# (engine.cli) and TTY-fallback bridge (engine.ui.tty_bridge) based on
-# host context. Intent-only is the canonical path when Claude Code or
-# any other harness fronts stdin/stdout; the bridge only runs against a
-# real terminal where the legacy interactive prompts must keep working.
+# DRIFT-1 dispatch (SPEC §6 sub-Q Sd): the dispatcher always execs
+# engine.cli. Host context (Claude Code harness vs. real terminal) is
+# resolved IN-PROCESS by engine.ui.question through the host adapter
+# registry — the dispatcher no longer branches on it.
 #
-# Detection signals (in priority order, any one trips intent-only mode):
-#   - CLAUDECODE set             — set to "1" by Claude Code (verified vs
-#                                  2.1.153); also see CLAUDE_CODE_ENTRYPOINT/
-#                                  SESSION_ID/EXECPATH companions. Early-
-#                                  detection bonus; the TTY checks below
-#                                  remain the load-bearing fallback if
-#                                  Claude Code ever renames this.
-#   - stdin or stdout not a TTY  — CI, redirect, subprocess. Canonical
-#                                  Unix non-interactive signal.
-#   - FORGE_FORCE_INTENT_MODE=1  — explicit override for tests / debug.
+#   - Harness / non-TTY (Claude Code, CI, pipes, subprocess) → the
+#     intent-only adapter emits .claude/forge/state/forge-pending.json
+#     and exits 2; the host reads it, writes a response, and re-invokes
+#     with the same argv.
+#   - Real interactive terminal → TtyAdapter reads stdin directly,
+#     single-pass, in-process. No subprocess bridge, no state files.
 #
-# Anything else falls through to the bridge (real terminal). The bridge
-# itself execs engine.cli as a subprocess and intercepts exit 2; see
-# engine/ui/tty_bridge.py docstring for the protocol contract.
+# Wave 2 clean break: the old engine.ui.tty_bridge subprocess-loop is
+# gone. Terminal-real prompting now lives in TtyAdapter
+# (engine/host/adapters/tty.py), wired through question._resolve_adapter.
+# The dispatcher dropped the force-tty override branch and the default
+# bridge fallthrough — there is a single exec target.
 #
-# Precedência:
-#   1. FORGE_FORCE_TTY_MODE=1   — override explícito pra bridge (vence
-#                                  até detecção automática de Claude Code
-#                                  ou non-TTY; útil pra debug do bridge
-#                                  rodando dentro de harness).
-#   2. Sinais de intent-mode    — CLAUDECODE / non-TTY / FORGE_FORCE_INTENT_MODE.
-#   3. Fallback default          — bridge (terminal real interativo).
+# Detection signals (CLAUDECODE / non-TTY / FORGE_FORCE_INTENT_MODE) still
+# matter, but they are honoured on the Python side by the adapter registry,
+# not here. The dispatcher stays boring: resolve env, exec.
 #
 # exec so Ctrl+C goes straight to the engine (Decision 27: pause vs abort).
-if [[ -n "${FORGE_FORCE_TTY_MODE:-}" ]]; then
-  exec "$PYTHON" -m engine.ui.tty_bridge engine.cli "$@"
-elif [[ -n "${CLAUDECODE:-}" ]] \
-   || [[ ! -t 0 ]] \
-   || [[ ! -t 1 ]] \
-   || [[ -n "${FORGE_FORCE_INTENT_MODE:-}" ]]; then
-  exec "$PYTHON" -m engine.cli "$@"
-else
-  exec "$PYTHON" -m engine.ui.tty_bridge engine.cli "$@"
-fi
+exec "$PYTHON" -m engine.cli "$@"

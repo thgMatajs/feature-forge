@@ -305,7 +305,7 @@ def main(argv: list[str] | None = None) -> int:
             result = handler(rest)
         except PausedForInputError as exc:
             # DRIFT-1 §8 — chokepoint emitted .claude/state/forge-pending.json.
-            # The caller (Claude Code host or engine.ui.tty_bridge) is expected
+            # The caller (Claude Code host or the in-process TtyAdapter) is expected
             # to read that file, write a response, and re-invoke us with the
             # same argv. No traceback, no message on stdout — the host renders
             # whatever it needs to from the intent payload itself.

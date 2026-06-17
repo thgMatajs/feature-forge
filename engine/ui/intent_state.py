@@ -3,8 +3,11 @@
 Single chokepoint for ``.claude/forge/state/forge-pending.json`` and
 ``.claude/forge/state/forge-response.json``. Engine reads/writes go
 through this module; ``question.py`` stays thin (sentinel + dispatch).
-The ``tty_bridge`` (W3) also lands here for the read-pending +
-write-response half of the loop.
+The host (Claude Code adapter) consumes the read-pending + write-response
+half of the loop. The in-process ``TtyAdapter`` (Wave 2) does NOT touch
+this module — it reads stdin directly and never writes state files; the
+old ``tty_bridge`` subprocess-loop that used to land here was removed in
+the same clean break.
 
 State directory canonical (v1.3 clean break, spec §5):
 The default ``state_dir`` resolves to ``forge_state_dir(project_root)``
@@ -33,11 +36,11 @@ Surface delivered in W1.T3 (foundation):
   ``RaceDetectedError`` if a recent pending with a different intent-id
   is still parked
 
-Companion helpers added in W3 (caller-side of the loop, consumed by
-``engine.ui.tty_bridge``):
+Companion helpers added in W3 (caller-side of the loop, consumed by the
+host adapter that fronts the engine — the Claude Code host):
 
 - ``read_pending(project_root)`` — None if absent, dict otherwise.
-  Counterpart to ``read_response`` from the bridge's perspective.
+  Counterpart to ``read_response`` from the host's perspective.
 - ``write_response(project_root, response)`` — atomic emit using the
   same tempfile-rename strategy.
 
@@ -329,7 +332,7 @@ def read_pending(
     """Read ``.claude/forge/state/forge-pending.json`` if present.
 
     Mirrors ``read_response`` but for the engine→caller direction: the
-    ``tty_bridge`` loop calls this whenever the subprocess exits with
+    host (Claude Code adapter) calls this whenever the engine exits with
     code 2, to discover what input the engine is asking for.
 
     Returns:
@@ -364,9 +367,9 @@ def write_response(
 
     Counterpart to ``write_pending``: same tempfile-rename strategy via
     ``engine.utils.json_io.write_json``, same trust contract (the caller
-    formed a schema-compliant dict). Used by ``tty_bridge`` after the
-    user supplies input via stdin; the engine then consumes it through
-    ``read_response`` on the next invocation.
+    formed a schema-compliant dict). Used by the host (Claude Code
+    adapter) after the user supplies input; the engine then consumes it
+    through ``read_response`` on the next invocation.
 
     ``state_dir`` (Task 0.5) overrides the default anchor.
     """
