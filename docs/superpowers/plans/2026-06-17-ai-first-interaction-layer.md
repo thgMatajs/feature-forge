@@ -23,14 +23,23 @@
 
 Slugify determinístico + aceitar ticket/frase no argv com confirmação conversacional + semear intake + trocar `SystemExit` por mensagem mentor-calmo + corrigir o CASING-BUG do `_render_template`.
 
+**Reuse-check (grep engine/):** `_kebabify` (`engine/graph/reuse_apply.py:158`) promovido pra `engine/utils/slug.py` como leaf util `kebabify`; `_TICKET_PATTERN` (`engine/plan.py:163`) reusado por `_looks_like_ticket`; `_seed_intake_source`/`_ingest_screenshot`/`_scan_needs_elicitation` sem precedente — criados novos.
+
 **Files:**
-- Modify `engine/plan.py` — adicionar `_derive_slug` (perto de `_is_valid_slug`, ~L369); reescrever `_elicit_slug` (~L1078-1120); ajustar `run()` (~L1387-1416, ponto pós-slug); corrigir `_render_template` (~L384-403); adicionar `_seed_intake_source` helper.
+- Create `engine/utils/slug.py` — casa canônica do slug: promove `kebabify(text: str) -> str` (leaf util, ex-`_kebabify` de `reuse_apply.py`, move puro) + adiciona `derive_slug(text: str) -> str` (char-level NFKD; ver nota de divergência no Step 1.2).
+- Modify `engine/graph/reuse_apply.py` — troca o `_kebabify` local por import de `engine.utils.slug` (sem mudança de comportamento).
+- Modify `engine/plan.py` — re-exportar `derive_slug as _derive_slug` de `engine.utils.slug` (perto de `_is_valid_slug`, ~L369); reescrever `_elicit_slug` (~L1078-1120); ajustar `run()` (~L1387-1416, ponto pós-slug); corrigir `_render_template` (~L384-403); adicionar `_seed_intake_source` helper; adicionar `_looks_like_ticket` reusando `_TICKET_PATTERN` (~L163).
 - Create `tests/unit/test_engine_plan_frontdoor.py`
 
 **Interfaces:**
-- Produces `engine.plan._derive_slug(text: str) -> str` — determinístico; lança `ValueError` quando não derivável.
+- Produces `engine.utils.slug.kebabify(text: str) -> str` — leaf util promovido do `_kebabify` de `engine/graph/reuse_apply.py:158` (mesmo algoritmo: regex `_KEBAB_PARTS` token-based; sem mudança de comportamento).
+- Modifies `engine.graph.reuse_apply` — passa a importar `kebabify` de `engine.utils.slug` (o `_kebabify` local vira import/alias).
+- Produces `engine.utils.slug.derive_slug(text: str) -> str` — determinístico, char-level NFKD; trunca 2..50 + garante início com letra + regra de colisão; lança `ValueError` quando não derivável. **Reuso no nível do módulo compartilhado** (mesma casa que `kebabify`), não delega o char-mapping a `kebabify` (semânticas divergem — ver nota no Step 1.2).
+- Re-exports `engine.plan._derive_slug` ← `engine.utils.slug.derive_slug` (mantém o nome interno usado em `run()`/`_elicit_slug`).
 - Produces `engine.plan._seed_intake_source(feature_path: Path, raw_text: str, source_type: str, source_ref: str) -> None`
+- Produces `engine.plan._looks_like_ticket(text: str) -> bool` — **reusa `_TICKET_PATTERN`** (`engine/plan.py:163`), sem pattern novo.
 - Consumes `engine.plan._is_valid_slug(value: str) -> bool` (existente, ~L369).
+- Consumes `engine.plan._TICKET_PATTERN` (existente, ~L163) — `re.compile(r"\b([A-Z]{2,6}-\d{2,6})\b")`.
 - Consumes `engine.ui.question.ask_text(prompt, *, default=None, validator=None, validator_hint=None) -> str` (existente; usado pra confirmar/ajustar o slug derivado).
 - Modifies `engine.plan._render_template(template_name: str, target: Path, slug: str) -> bool` — passa a substituir `{{feature_slug}}` lowercase + tokens triviais.
 
@@ -106,27 +115,82 @@ def test_derive_slug_empty_raises() -> None:
 
 Esperado: `AttributeError: module 'engine.plan' has no attribute '_derive_slug'` (ou ImportError equivalente) → todos os casos em FAIL/ERROR.
 
-#### Step 1.2 — Impl `_derive_slug`
+#### Step 1.2.0 — Promover `kebabify` pra `engine/utils/slug.py` (reuso, sem mudança de comportamento)
 
-- [ ] Adicionar logo após `_is_valid_slug` (~L371) em `engine/plan.py`:
+- [ ] Criar `engine/utils/slug.py` movendo o `_kebabify` de `engine/graph/reuse_apply.py:158` **verbatim** (mesmo regex `_KEBAB_PARTS`, mesma lógica) e expondo como `kebabify` público:
+
+```python
+"""Slug utilities — leaf util compartilhado (sem deps de engine).
+
+`kebabify` foi promovido de `engine/graph/reuse_apply.py` (era `_kebabify`)
+pra evitar duplicação quando `engine/plan._derive_slug` precisou da mesma
+infra de slug (Mandamento 3). Algoritmo idêntico ao original — token-based,
+não char-by-char.
+"""
+
+from __future__ import annotations
+
+import re
+
+# Token-based: nomes camelCase, runs maiúsculos, e números viram tokens.
+_KEBAB_PARTS = re.compile(r"[A-Za-z][a-z0-9]+|[A-Z]+(?![a-z])|\d+")
+
+
+def kebabify(text: str) -> str:
+    """Kebab-case token-based (mesmo algoritmo do ex-`_kebabify`)."""
+    matches = _KEBAB_PARTS.findall(text or "")
+    return "-".join(m.lower() for m in matches if m).strip("-")
+```
+
+- [ ] Em `engine/graph/reuse_apply.py`, trocar a definição local de `_kebabify` (+ o `_KEBAB_PARTS` dela) por um import do módulo compartilhado, preservando o nome usado internamente:
+
+```python
+from engine.utils.slug import kebabify as _kebabify
+```
+
+- [ ] Regression — confirmar zero mudança de comportamento nos consumidores de `reuse_apply`:
+
+```bash
+.venv/bin/pytest tests/ -k reuse_apply -q
+```
+
+Esperado: 0 failed (a promoção é um move puro; nenhum caller muda saída).
+
+#### Step 1.2 — Impl `_derive_slug` (no módulo de slug compartilhado)
+
+`_derive_slug` vive em `engine/utils/slug.py` — **mesmo módulo canônico que
+`kebabify`** (Mandamento 3: a lógica de slug deixa de estar duplicada/enterrada
+em `reuse_apply.py` e passa a ter uma casa única que `engine.plan` e
+`engine.graph.reuse_apply` importam). `engine.plan` re-exporta via
+`from engine.utils.slug import derive_slug as _derive_slug`.
+
+> **Nota de divergência (verificada via `.venv/bin/python`):** `kebabify` é
+> token-based — descarta chars isolados (`"a b c"` → ``) e perde a letra após
+> dígito (`"8h"` → `"8"`). Isso reprova os casos `"a   b    c"`→`"a-b-c"` e
+> `"notificação às 8h"`→`"notificacao-as-8h"` do Step 1.1. Logo `derive_slug`
+> NÃO delega o char-mapping a `kebabify` (semânticas diferentes); o reuso
+> é no nível do **módulo compartilhado** `engine/utils/slug.py` (mesma casa,
+> sem duplicação), não numa chamada forçada que quebraria os testes.
+
+- [ ] Em `engine/utils/slug.py` (criado no Step 1.2.0), adicionar ao lado de `kebabify`:
 
 ```python
 import unicodedata as _unicodedata
 
 
-def _derive_slug(text: str) -> str:
+def derive_slug(text: str) -> str:
     """Deriva slug kebab-case determinístico de ticket/frase livre.
 
-    Regras (spec §4 C3): lowercase · NFKD strip de acentos · não-alfanum
-    → hífen · colapsa hífens · trunca pra 2..50 chars · garante início com
-    letra (prefixa "f-" quando começa com dígito). Levanta ``ValueError``
-    quando nada derivável (string vazia ou só pontuação).
+    Regras (spec §4 C3): NFKD strip de acentos · lowercase · não-alfanum →
+    hífen · colapsa hífens · trunca pra 2..50 chars · garante início com letra
+    (prefixa "f-" quando começa com dígito). Char-level por design — preserva
+    chars isolados e a letra após dígito, ao contrário do `kebabify`
+    token-based deste mesmo módulo (ver nota de divergência no plano). Levanta
+    ``ValueError`` quando nada derivável (string vazia ou só pontuação).
     """
     normalized = _unicodedata.normalize("NFKD", text)
     ascii_text = normalized.encode("ascii", "ignore").decode("ascii").lower()
-    out_chars: list[str] = []
-    for ch in ascii_text:
-        out_chars.append(ch if (ch.isalnum()) else "-")
+    out_chars: list[str] = [ch if ch.isalnum() else "-" for ch in ascii_text]
     collapsed = "-".join(filter(None, "".join(out_chars).split("-")))
     if not collapsed:
         raise ValueError(
@@ -138,6 +202,12 @@ def _derive_slug(text: str) -> str:
     if len(collapsed) < 2:
         collapsed = f"{collapsed}-x"[:50]
     return collapsed
+```
+
+- [ ] Em `engine/plan.py`, re-exportar (perto de `_is_valid_slug`, ~L371) pra manter o nome interno usado em `run()`/`_elicit_slug`:
+
+```python
+from engine.utils.slug import derive_slug as _derive_slug
 ```
 
 - [ ] Rodar e ver PASS:
@@ -346,17 +416,16 @@ def _elicit_slug(argv_slug: Optional[str], project_root: Optional[Path] = None) 
         )
 ```
 
-- [ ] Adicionar helper `_looks_like_ticket` perto de `_derive_slug`:
+- [ ] Adicionar helper `_looks_like_ticket` perto de `_derive_slug` **reusando o `_TICKET_PATTERN` existente** (`engine/plan.py:163` — `re.compile(r"\b([A-Z]{2,6}-\d{2,6})\b")`), sem criar pattern novo (Mandamento 3):
 
 ```python
-import re as _re
-
-_TICKET_RE = _re.compile(r"^[A-Z]{2,6}-\d{2,6}$")
-
-
 def _looks_like_ticket(text: str) -> bool:
-    """True quando o argv tem forma de ticket-id (ex.: IN-37234)."""
-    return bool(_TICKET_RE.match(text.strip()))
+    """True quando o argv contém um ticket-id (ex.: IN-37234).
+
+    Reusa `_TICKET_PATTERN` (~L163) — mesma fonte de verdade que o
+    subtype-detection já usa; nenhum regex paralelo.
+    """
+    return _TICKET_PATTERN.search(text) is not None
 ```
 
 - [ ] Rodar e ver PASS (suite do arquivo inteira):
@@ -956,7 +1025,7 @@ Adicionar scan de `needs-elicitation: true` não-promovido na Phase 5 do `readin
 
 **Files:**
 - Modify `agents/readiness-reviewer.md` — adicionar item ao `### Phase 5 — Discipline scan` (~L239-261).
-- Modify `validators/validate_readiness.py` — adicionar `_scan_needs_elicitation(f_root: Path) -> list[str]` + integrar no `validate()` (~L70).
+- Modify `validators/validate_readiness.py` — adicionar `_scan_needs_elicitation(f_root: Path) -> list[str]` + integrar no topo de `validate()` logo após `f_root = feature_dir(...)` (~L81), preempando o parse do verdict (a função não tem return único de sucesso — `result_pass` só quando `status == "ready"`, ~L124).
 - Create `tests/validators/test_validate_readiness_elicitation.py`
 
 **Interfaces:**
@@ -1042,9 +1111,13 @@ def _scan_needs_elicitation(f_root: Path) -> list[str]:
     return hits
 ```
 
-- [ ] Integrar no `validate()` — após o parse do verdict (~L103, antes do `return` de sucesso), adicionar o gate:
+- [ ] Integrar no `validate()` — **logo após a linha existente `f_root = feature_dir(project_root, slug)` (~L81), antes do parse do verdict** (não re-declarar `f_root`; só inserir o bloco abaixo na sequência). Importante: `validate()` NÃO tem um único "return de sucesso" — o veredito `ready` é um `result_pass` no meio (~L124, quando `status == "ready"`) e os demais ramos retornam `result_fail`. Inserir o scan no topo preempta o parse do verdict, então um `needs-elicitation` não-promovido bloqueia mesmo quando o verdict nominal diria `ready`:
 
 ```python
+    f_root = feature_dir(project_root, slug)  # ← linha JÁ existente
+
+    # spec C5 — needs-elicitation não-promovido bloqueia ANTES de parsear o
+    # verdict (um verdict 'ready' não pode mascarar campo não-elicitado).
     elicitation_hits = _scan_needs_elicitation(f_root)
     if elicitation_hits:
         return result_fail(
@@ -1120,7 +1193,7 @@ Sincronizar CHANGELOG + handoff + command-surface + pending + getting-started + 
 - Modify `CHANGELOG.md` — `## [Unreleased]`: Added (driver + front-door + grounded-challenge + readiness), Fixed (CASING-BUG), Changed (vision wire).
 - Modify `docs/design/08-session-handoff.md` — `**Última atualização:**` = 2026-06-17 + `**Estado:**` reflete Wave 1.
 - Modify `docs/design/06-command-surface.md` — `forge plan` aceita ticket/frase (comportamento novo).
-- Modify `docs/design/04-pending.md` — risca AMBIGUITY-DEAD + CASING-BUG; registra OUT (MCP, EXIT-2-COLLISION, DEAD-VERIFY, CONC-1, TOKEN-BLIND) como follow-ups.
+- Modify `docs/design/04-pending.md` — registra AMBIGUITY-DEAD + CASING-BUG como "fechados nesta wave" numa entrada nova (NÃO strike-through — eles vêm do spec, não estão tracked em 04-pending); registra OUT (MCP, EXIT-2-COLLISION, DEAD-VERIFY, CONC-1, TOKEN-BLIND) como follow-ups.
 - Modify `docs/guides/getting-started.md` — seção "como o forge fala com o host AI" (o driver).
 - Modify `README.md` — só se stats mudaram (novo artefato/skill).
 
@@ -1164,7 +1237,7 @@ Sincronizar CHANGELOG + handoff + command-surface + pending + getting-started + 
 
 - [ ] `docs/design/06-command-surface.md`: na linha do `forge plan`, registrar que aceita `<ticket|frase|slug>` como argv posicional (Decisão 10 preservada — argv, não flag).
 
-- [ ] `docs/design/04-pending.md`: riscar (strike-through ou mover pra "fechados") **AMBIGUITY-DEAD** e **CASING-BUG**; adicionar como follow-ups OUT desta wave: **MCP server** (norte estratégico D1), **EXIT-2-COLLISION** (wave de robustez), **DEAD-VERIFY** (wave de hooks), **CONC-1** (wave de concorrência), **TOKEN-BLIND/`--json`/manifesto/`forge status` router** (wave de token economy).
+- [ ] `docs/design/04-pending.md`: **AMBIGUITY-DEAD** e **CASING-BUG** NÃO estão tracked em 04-pending (vêm do spec, não de gaps abertos) — registrá-los numa **entrada nova "Fechados nesta wave (AI-first Wave 1)"** descrevendo o que cada um era + onde foi resolvido (CASING-BUG → `_render_template` lowercase, Task 1; AMBIGUITY-DEAD → front-door ticket/frase + grounded-challenge, Tasks 1/4). NÃO usar strike-through de item inexistente. Adicionar como follow-ups OUT desta wave: **MCP server** (norte estratégico D1), **EXIT-2-COLLISION** (wave de robustez), **DEAD-VERIFY** (wave de hooks), **CONC-1** (wave de concorrência), **TOKEN-BLIND/`--json`/manifesto/`forge status` router** (wave de token economy).
 
 - [ ] `docs/guides/getting-started.md`: adicionar seção "Como o forge fala com seu host AI" explicando o driver (SKILL.md/AGENTS.md) + o intent loop em linguagem de usuário.
 
@@ -1214,8 +1287,8 @@ git commit -m "docs(sync): Wave 1 AI-first — driver/front-door/grill/readiness
 
 **Placeholder scan:** nenhum `TBD`/`TODO`/`FIXME` no plano. Os `...` que aparecem (`docs/.../features/{slug}/`) são verbatim de comandos `grep` dentro do prompt do readiness-reviewer (sintaxe de path glob do agente), não placeholders do plano. ✅
 
-**Type/name consistency:** `_derive_slug`, `_seed_intake_source`, `_looks_like_ticket`, `_render_template`, `_ingest_screenshot`, `_install_ai_driver`, `_scan_needs_elicitation` — grafia consistente em todas as referências entre tasks e Self-Review. Assinaturas das funções de `engine/vision/screenshot.py` (`normalize_screenshot_path`, `validate_screenshot`, `compute_screenshot_fingerprint`, `infer_platform_inference`, `load_screenshot`) batem com o código lido. ✅
+**Type/name consistency:** `kebabify`/`derive_slug` (em `engine.utils.slug`; `_derive_slug` em `engine.plan` é re-export de `derive_slug`), `_seed_intake_source`, `_looks_like_ticket`, `_render_template`, `_ingest_screenshot`, `_install_ai_driver`, `_scan_needs_elicitation` — grafia consistente em todas as referências entre tasks e Self-Review. Assinaturas das funções de `engine/vision/screenshot.py` (`normalize_screenshot_path`, `validate_screenshot`, `compute_screenshot_fingerprint`, `infer_platform_inference`, `load_screenshot`) batem com o código lido. ✅
 
-**Reuso (Mandamento 3):** `engine/vision/screenshot.py` reusado (Task 2 não reescreve); `merge_settings_json` reusado como padrão brownfield (Task 3); conductor Phase 1-4 + `AskUserQuestion` agrupado reusados (Task 4); `validate_readiness` + forbidden-phrases scan estendidos, não recriados (Task 5). ✅
+**Reuso (Mandamento 3):** reuse-check explícito no preâmbulo da Task 1 — `_kebabify` (`engine/graph/reuse_apply.py:158`) **promovido** pra `engine/utils/slug.py` como `kebabify` (move puro, regression `-k reuse_apply` confirma zero mudança de comportamento) e `_derive_slug` mora na mesma casa canônica de slug em vez de duplicar; `_TICKET_PATTERN` (`engine/plan.py:163`) **reusado** por `_looks_like_ticket` (sem regex paralelo). `engine/vision/screenshot.py` reusado (Task 2 não reescreve); `merge_settings_json` reusado como padrão brownfield (Task 3); conductor Phase 1-4 + `AskUserQuestion` agrupado reusados (Task 4); `validate_readiness` + forbidden-phrases scan estendidos, não recriados (Task 5). Divergência documentada: `derive_slug` NÃO delega char-mapping a `kebabify` (token-based descartaria chars isolados e letra-após-dígito — verificado), reuso fica no nível do módulo compartilhado. ✅
 
 **Dependências:** Task 2 depende de Task 1 (mesmo arquivo `engine/plan.py` + slugify). Tasks 3/4/5 independentes entre si. Task 6 por último (reflete 1-5). ✅
