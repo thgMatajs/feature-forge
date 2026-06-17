@@ -504,6 +504,11 @@ def ask(
         project_root if project_root is not None else _project_root_for_io()
     )
 
+    # Normaliza o default uma vez: só vale se for uma key real de options.
+    # Compartilhado entre o intent legado e a chamada ao adapter pra não
+    # divergir (DRY — comportamento idêntico ao cálculo duplicado anterior).
+    effective_default = default if default in options else None
+
     # Build the legacy-shape intent dict so ``PausedForInputError.intent``
     # carries the same payload callers used to see. The adapter writes
     # its own (identical-shape) pending to disk; this dict is only for
@@ -512,7 +517,7 @@ def ask(
         kind="ask",
         question_text=question,
         options=options,
-        default=default if default in options else None,
+        default=effective_default,
         allow_pause=allow_pause,
     )
 
@@ -528,7 +533,7 @@ def ask(
             kind=AskKind.ASK,
             question=question,
             options=dict(options),
-            default=default if default in options else None,
+            default=effective_default,
             allow_pause=allow_pause,
         )
     except _AdapterPaused:
