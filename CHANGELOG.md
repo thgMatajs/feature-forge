@@ -7,6 +7,39 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (v1.3 Wave 4 — install/upgrade CLI, 2026-06-17)
+
+Instalação e upgrade do forge via curl one-liner e subcomando nativo.
+8 commits (`a0cd804..b5d0bee`) sobre `feat/v1.3-pilot-ready`.
+
+- **`scripts/install.sh`** (244 LOC, bash 3.2 portável): instalador curl
+  one-liner. Clone `--depth=1` de `github.com/thgMatajs/feature-forge` em
+  `FORGE_HOME` (`~/.local/share/feature-forge` — XDG default, antecipando
+  Revisita Decisão 18 formalizada na Wave 5) + criação de venv + `pip install
+  -e .` (deps via `pyproject.toml`; sem `requirements.txt`) + symlink em
+  `~/.local/bin/forge`. PATH detection marker-guarded e idempotente: detecta
+  `~/.zshrc` / `~/.bashrc` / `~/.config/fish/config.fish` e oferece 3-caminhos
+  (auto-append / manual / skip). Alias conflict detection: se `forge` já existe
+  no PATH (de outro tool), propõe `forge-cli` como `BIN_NAME` alternativo via
+  3-caminhos.
+- **`engine/upgrade.py`** + subcomando **`forge upgrade`**: git `pull --ff-only`
+  na `FORGE_HOME` + venv refresh (`pip install -e . --upgrade`) + smoke
+  (`forge --version`). Rollback automático (`git reset --hard prev_head`) em
+  falha de smoke. API pública: `run_upgrade(*, forge_home=None, force=False) ->
+  int`. Wired em `engine/cli.py` `COMMANDS` (subcomandos 13 → **14**) e em
+  `_BOOTSTRAP_SKIP` (opera sobre `FORGE_HOME`, não sobre o projeto consumidor).
+- **Testes**: `tests/unit/test_upgrade.py` (upgrade core — pull/rollback/smoke),
+  `tests/unit/test_cli_upgrade_wired.py` (wiring em COMMANDS + BOOTSTRAP_SKIP),
+  `tests/e2e/test_forge_upgrade.py` (pull cycle + rollback via repos git locais),
+  `tests/e2e/test_install_sh.bats` + `tests/e2e/test_install_sh.py` (bats suite
+  — PATH/alias/version scenarios; skipif bats ausente).
+- **Fix portabilidade bash 3.2** (`b5d0bee`): substituição `${var,,}` →
+  `echo "$var" | tr '[:upper:]' '[:lower:]'` para compatibilidade com o bash
+  3.2 que é o shell default no macOS.
+
+Test counts pós-Wave 4: rapid **1565 passed**, integration **162 passed**,
+e2e **27 passed**, 0 falhas.
+
 ### Fixed (v1.3 Wave 3 — bug-fix sprint, 2026-06-17)
 
 Sete bugs do relatório MeoBonsai fechados em 6 commits (`edfd20c..752b0fd`)

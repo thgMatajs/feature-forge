@@ -2,11 +2,11 @@
 
 A standalone CLI skill that orchestrates end-to-end planning + implementation of mobile features across Android, iOS, KMP, and Web. Backend-agnostic (Firebase, REST, GraphQL, local-only).
 
-> **State:** v1.3 Wave 2 · 2026-06-16 · rapid 1552 / integration 155 / e2e 23 passed (host-aware execution: ClaudeCodeAdapter + IntentFileAdapter + TtyAdapter in-process + opencode fallback; graph-ia-evolution ✅ shipped; PR #16 master review fix-pack Wave A+B+C aplicado integralmente) · 25 validators · 13 comandos · 29 cards · 4 bundles · 6 parsers (kotlin/swift/typescript + java/xml/objc) · ~400 arquivos · ~52.5K LOC
+> **State:** v1.3 Wave 4 · 2026-06-17 · rapid 1565 / integration 162 / e2e 27 passed (install.sh curl one-liner + forge upgrade + bash 3.2 portável; Wave 3 bug-fix sprint; Wave 2 host-aware execution; graph-ia-evolution ✅ shipped; PR #16 master review fix-pack Wave A+B+C aplicado integralmente) · 25 validators · 14 comandos · 29 cards · 4 bundles · 6 parsers (kotlin/swift/typescript + java/xml/objc) · ~400 arquivos · ~52.5K LOC
 
 ## What it is
 
-Skill CLI-first com 13 comandos canônicos (zero flags — toda parametrização via menu interativo) que dirige o ciclo completo de feature mobile:
+Skill CLI-first com 14 comandos canônicos (zero flags — toda parametrização via menu interativo) que dirige o ciclo completo de feature mobile:
 
 1. **`forge init`** — bootstrap em qualquer projeto KMP/mobile (greenfield ou brownfield). Step 11.5 escaneia o codebase atrás de duplicações já existentes (6 categorias de finding).
 2. **`forge plan {feature-slug}`** — 5 waves (intake/PRD → screen+contracts → tech-spec → tasks → readiness) com 16 templates. Subtypes: product / refactor / bugfix / spike / chore (cada um com waves específicas). No bugfix o pipeline detecta o ticket (ex: IN-37234), pula o PRD e exige um regression test que falha primeiro antes da correção; refactor entra com contrato no-behavior-change.
@@ -94,7 +94,7 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 | Validators Python | 25 + 3 helpers (`_gate_infra`, `_diff`, `_common`) — inclui `check_cyclomatic_complexity` (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon), `check_secrets` (gitleaks + trufflehog), `check_no_behavior_change` (refactor), `validate_extension_feature` (extends-feature cross-cutting), `validate_presets` (Phase B DET-6 — bundle YAML schema) |
 | Hooks | 9 + 1 reuse incremental (`post-edit-detect-duplications.sh`) |
 | Graph parsers | 6 (Kotlin / Swift / TypeScript + Java / XML / Objective-C — Java/XML/ObjC novos em v1.3.0 graph-ia-evolution). Body extraction (`symbols.body`) cobre brace-delimited bodies (5 linguagens; XML é NULL). |
-| Tests | rapid **1552 passed** / integration **155 passed** / e2e **23 passed** em v1.3 Wave 2 (0 falhas). Histórico: 1619 collected pós PR #16 fix-pack (v1.3.0); Wave 0 acresceu 57 novos; Wave 1 acresceu 14 novos; Wave 2 adicionou per-host e2e (`test_per_host_dispatch.py` + `test_tty_adapter_pty.py`) e removeu `test_tty_bridge_e2e.py` + `test_ui_tty_bridge.py`. Baseline histórico em CHANGELOG.md. |
+| Tests | rapid **1565 passed** / integration **162 passed** / e2e **27 passed** em v1.3 Wave 4 (0 falhas). Histórico: 1619 collected pós PR #16 fix-pack (v1.3.0); Wave 0 acresceu 57 novos; Wave 1 acresceu 14 novos; Wave 2 adicionou per-host e2e; Wave 3 acresceu regression suite (7 cenários); Wave 4 acresceu unit upgrade + bats e2e install (`test_upgrade.py`, `test_cli_upgrade_wired.py`, `test_forge_upgrade.py`, `test_install_sh.bats`, `test_install_sh.py`). Baseline histórico em CHANGELOG.md. |
 | LOC total | ~52.500 |
 | Engine LOC | ~33.500 (Python; engine/ apenas — validators/ adicional ~7.300) |
 | Files total | ~400 |
@@ -172,9 +172,9 @@ explicitamente.
   hooks/post-edit-detect-duplications.sh    opt-in incremental detect
 ```
 
-## Command surface (13 + 2 hidden)
+## Command surface (14 + 2 hidden)
 
-13 comandos user-facing — zero flags — toda parametrização via prompts interativos (Decision 9 + 10 locked).
+14 comandos user-facing — zero flags — toda parametrização via prompts interativos (Decision 9 + 10 locked).
 
 ```
 forge init           bootstrap workflow num projeto (greenfield/brownfield)
@@ -209,6 +209,9 @@ forge qa             gate adversarial multi-agente (red-team)
                      · 4 scope targets (feature / screen / task / paranoid)
                      · sandbox isolado em .planning/qa/<run-id>/fixtures/
                      · verdict informativo (BLOCK/FLAG/PASS); findings → forge evolve
+forge upgrade        atualiza o próprio forge (git pull --ff-only + venv refresh + smoke)
+                     · rollback automático em falha de smoke (git reset --hard prev_head)
+                     · opera sobre FORGE_HOME; não toca o projeto consumidor
 ```
 
 Hidden entrypoints (invocados por hooks, nunca tipados pelo usuário):
@@ -233,7 +236,7 @@ Start here:
 - **`docs/design/08-session-handoff.md`** — TL;DR completo + estado por fase + limites v1
 - `docs/design/00-vision.md` — arquitetura (6 layers, capability cards)
 - `docs/design/01-decisions.md` — 27 decisões locked
-- `docs/design/06-command-surface.md` — 13 comandos canônicos + 2 hidden
+- `docs/design/06-command-surface.md` — 14 comandos canônicos + 2 hidden
 - `docs/design/07-discipline.md` — 10 disciplinas universais (3-caminhos, fail-fast, pause/abort, vocabulário, fingerprint)
 - `docs/design/04-pending.md` — gaps abertos + itens deferred por versão
 - `docs/schemas/graph.md` — schema v2 com reuse_findings + module_deps + Q1-Q17 + `symbols.body` column (v1.3+) + `forge graph --json` non-interactive (v1.3+)
