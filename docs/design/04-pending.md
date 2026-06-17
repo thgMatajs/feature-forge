@@ -165,7 +165,28 @@ Wave A+B+C endereçou 60+ findings; estes 7 ficam pra ciclos futuros.
   "símbolo com extração parcial" — momento natural pra justificar o
   reshape sem custo de retrabalho cego.
 
-## Fechado em [Unreleased]
+## Fechado em [Unreleased v1.3]
+
+v1.3 ship completo cobrindo A+B+C+D — 6 waves entregues:
+
+- **W0 — foundation host module + sub-namespace** (`engine/ui/host.py`,
+  `ClaudeCodeAdapter`, `IntentFileAdapter`, `forge-config.yaml` sub-namespace
+  em `.claude/forge/`; forge init reescrito pra gravar em `.claude/forge/`).
+- **W1 — brownfield-safe init** (`engine/init.py` com settings_merge
+  APPEND-ONLY, detecção de conflitos existentes, forge-state-dir migration
+  intent_state default, json5 skipif guard).
+- **W2 — opencode + TTY adapters** (research W2.T0 confirmou Veredito B —
+  opencode fallback via IntentFileAdapter; `engine/ui/tty_bridge.py` TTY
+  adapter completo; multi-pergunta-por-ciclo stale-leftover fixed em
+  commits 5827900/7c26377).
+- **W3 — 7 bugs do relatório fechados** (see CHANGELOG para lista completa).
+- **W4 — install.sh + forge upgrade** (`scripts/install.sh` curl one-liner,
+  clone + venv + symlink + PATH detection + alias conflict 3-caminhos;
+  `engine/upgrade.py` forge upgrade git pull + venv refresh + smoke + rollback).
+- **W5 — doc-sync + Revisita Decisão 18 + tag v1.3.0** (forge-config.md
+  rename, 05-filesystem-layout XDG + sub-namespace, 04-pending + 06-command-surface,
+  CHANGELOG v1.3.0, tag; Revisita Decisão 18: standalone-repo path → XDG
+  `~/.local/share/feature-forge/`).
 
 - **Auditoria pós-plano** — gap identificado em 2026-06-04 (não estava
   listado em `04-pending.md` antes, mas surgiu no fluxo: o
@@ -174,6 +195,34 @@ Wave A+B+C endereçou 60+ findings; estes 7 ficam pra ciclos futuros.
   N", doc-sync gaps, reuse-first ignorado, voz quebrada). Resolvido via
   `.claude/rules/plan-auditor.md` + integração — ver CHANGELOG
   `[Unreleased]`. Spec: `docs/superpowers/specs/2026-06-04-plan-auditor-design.md`.
+
+## Open — pós v1.3
+
+- **Sem migrator v1.2 → v1.3** — clean-break deliberado. Projetos
+  experimentais em v1.2 (pré-production) limpam `.claude/` e re-rodam
+  `forge init`. Nenhum projeto real adotou v1.2 ainda (pre-production status
+  — ver `docs/design/08-session-handoff.md`). Migrator automático só
+  justificado quando v1.3 tiver ≥1 projeto adotante real. Critério de
+  reentrada: primeiro projeto piloto reportar necessidade.
+- **opencode fallback intent_file (Veredito B)** — revisitar quando opencode
+  shippar equivalente de elicitation/AskUserQuestion em protocolo oficial.
+  Research em `docs/research/opencode-tool-api.md`. Critério: env var estável
+  OR IPC canal oficial disponível em versão futura.
+- **find_project_root legacy marker** — `find_project_root` e
+  `_project_root_for_io` em `engine/utils/paths.py` ainda procuram
+  `.claude/workflow-config.yaml` como marcador legado. Gap deliberado: mudar
+  o marker requer coordenação com todos os consumers (validators, hooks,
+  tests). Critério de reentrada: primeiro projeto real reportar confusão OU
+  W6 cleanup pass dedicado.
+- **`.gitignore` semantic narrowing** — `.gitignore` que `forge init` cria
+  ainda usa paths v1.x (`.claude/memory/L1/*`, `.claude/graph.db`). v1.3 move
+  esses pra `.claude/forge/state/` e `.claude/graph.db` (caminho inalterado).
+  Sem impacto funcional imediato (paths antigos também existem por compatibilidade),
+  mas narrowing pra `.claude/forge/state/` ficou fora do W5. Critério:
+  próxima rodada de `forge init` hardening.
+- **`_SCHEMA_VERSION` duplicado adapter/question** — `engine/ui/host.py` e
+  `engine/ui/question.py` ambos definem `_SCHEMA_VERSION = "1.0"`. Cosmético
+  mas viola DRY. Critério: próxima mudança de schema de intent protocol.
 
 ### v1.3 Wave 2 — Limitações conhecidas (2026-06-16)
 
