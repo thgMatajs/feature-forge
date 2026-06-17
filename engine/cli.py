@@ -97,8 +97,8 @@ def _qa_run(argv: list[str]) -> int:
     from engine.qa import run_qa
     from engine.utils.paths import (
         ProjectRootNotFoundError,
+        active_config_path,
         find_project_root,
-        workflow_config_path,
     )
     from engine.utils.yaml_io import read_yaml_or_default
 
@@ -125,7 +125,7 @@ def _qa_run(argv: list[str]) -> int:
         return 1
 
     workflow_config = (
-        read_yaml_or_default(workflow_config_path(project_root), {}) or {}
+        read_yaml_or_default(active_config_path(project_root), {}) or {}
     )
     raw_target = argv[0] if argv else ""
     return run_qa(

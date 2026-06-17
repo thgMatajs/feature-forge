@@ -167,9 +167,10 @@ def _resolve_features_root(project_root: Path, *, subtype: str = "product") -> P
     the similarity-graph by convention.
 
     A-006 (master review PR #15): movido de `engine/plan.py` pra cá. A
-    função só lê `workflow_config_path` + monta paths — não tem dep de
-    `engine.plan`. Mantê-la em paths.py quebra o ciclo `paths.py ↔ plan.py`
-    que `feature_path` precisava resolver com lazy import.
+    função só lê a config ativa via `active_config_path` + monta paths —
+    não tem dep de `engine.plan`. Mantê-la em paths.py quebra o ciclo
+    `paths.py ↔ plan.py` que `feature_path` precisava resolver com lazy
+    import.
 
     Backwards-compat: `engine/plan.py` re-exporta como shim.
     """
@@ -179,7 +180,7 @@ def _resolve_features_root(project_root: Path, *, subtype: str = "product") -> P
     # `_resolve_features_root` poucas vezes por execução.
     from engine.utils.yaml_io import read_yaml_or_default  # noqa: PLC0415
 
-    cfg = read_yaml_or_default(workflow_config_path(project_root), {})
+    cfg = read_yaml_or_default(active_config_path(project_root), {})
     custom_root: Path | None = None
     if isinstance(cfg, dict):
         paths = cfg.get("paths") or {}

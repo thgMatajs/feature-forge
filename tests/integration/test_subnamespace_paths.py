@@ -104,6 +104,54 @@ def test_status_verify_reconfigure_resolve_active_config() -> None:
 
 
 @pytest.mark.integration
+def test_all_active_config_consumers_resolve_via_resolver() -> None:
+    """Todos os consumidores de config ativa liam via o resolver
+    `active_config_path` — não mais o `workflow_config_path` direto.
+
+    Raio completo do finding HIGH (cross-AI review): além de
+    status/verify/reconfigure (cobertos acima), os demais comandos que liam
+    a config ativa do projeto — cli (`qa`), raw (`edit-config`/`forge-debug`),
+    evolve, ingest, undo, implement, doctor, memory_cli — e o helper
+    `_resolve_features_root` em paths.py também liam só o legado
+    `.claude/workflow-config.yaml`. Após um init v1.4 limpo (que grava só
+    `.claude/forge/forge-config.yaml`), todos liam config vazia.
+
+    A asserção estática garante que a callsite de leitura passou pelo
+    resolver. Para `engine.utils.paths`, a presença de `workflow_config_path(`
+    é esperada — é o interior do próprio resolver e a definição do helper;
+    aqui só exigimos que `_resolve_features_root` referencie `active_config_path`.
+    """
+    import inspect
+
+    from engine import cli, doctor, evolve, implement, ingest, memory_cli, raw, undo
+
+    for mod in (cli, raw, evolve, ingest, undo, implement, doctor, memory_cli):
+        src = inspect.getsource(mod)
+        assert "active_config_path" in src, (
+            f"{mod.__name__} deveria ler config via active_config_path"
+        )
+        assert "workflow_config_path(" not in src, (
+            f"{mod.__name__} ainda chama workflow_config_path() — "
+            "deveria usar o resolver active_config_path"
+        )
+
+    # paths.py é especial: o resolver `active_config_path` compõe o legado
+    # internamente, então `workflow_config_path(` legitimamente sobrevive ali.
+    # O que precisamos garantir é que `_resolve_features_root` — leitura de
+    # config ativa pra override de feature-roots — passou a usar o resolver.
+    from engine.utils import paths as paths_mod
+
+    resolve_src = inspect.getsource(paths_mod._resolve_features_root)
+    assert "active_config_path" in resolve_src, (
+        "_resolve_features_root deveria ler config via active_config_path"
+    )
+    assert "workflow_config_path(" not in resolve_src, (
+        "_resolve_features_root ainda chama workflow_config_path() — "
+        "deveria usar o resolver active_config_path"
+    )
+
+
+@pytest.mark.integration
 def test_fresh_init_layout_read_via_resolver(tmp_path: Path) -> None:
     """Cenário fresh-init v1.4: SÓ `.claude/forge/forge-config.yaml` existe.
 

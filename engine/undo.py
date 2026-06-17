@@ -40,12 +40,12 @@ from engine.ui import question, renderer
 from engine.ui.question import PromptAbortedError
 from engine.utils.paths import (
     ProjectRootNotFoundError,
+    active_config_path,
     claude_dir,
     ensure_dir,
     feature_path,
     find_project_root,
     memory_l2_path,
-    workflow_config_path,
 )
 from engine.utils.yaml_io import YamlIOError, read_yaml_or_default, write_yaml
 from engine.utils.checkpoint_io import (
@@ -251,7 +251,7 @@ def _last_evolve_apply(project_root: Path) -> Optional[dict[str, Any]]:
 
 
 def _undo_reconfigure(project_root: Path) -> bool:
-    cfg_path = workflow_config_path(project_root)
+    cfg_path = active_config_path(project_root)
     bak = cfg_path.with_suffix(cfg_path.suffix + ".bak")
     if not bak.exists():
         renderer.write(renderer.colored(

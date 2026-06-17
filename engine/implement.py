@@ -44,13 +44,13 @@ from engine.ui import question, renderer
 from engine.ui.question import PromptAbortedError
 from engine.utils.paths import (
     ProjectRootNotFoundError,
+    active_config_path,
     claude_dir,
     ensure_dir,
     feature_dir,
     feature_path as _feature_path,
     find_project_root,
     forge_state_dir,
-    workflow_config_path,
 )
 from engine.utils.yaml_io import read_yaml, read_yaml_or_default, write_yaml
 from engine.utils.checkpoint_io import (
@@ -947,7 +947,7 @@ def _maybe_run_qa_pre_retrospective(
           do package qa puxa engine.cards/graph que indiretamente toca
           este módulo via memory/L1; lazy import é defesa idiomática).
     """
-    cfg = read_yaml_or_default(workflow_config_path(project_root), {})
+    cfg = read_yaml_or_default(active_config_path(project_root), {})
     if not isinstance(cfg, dict):
         return
     qa_cfg = cfg.get("qa") or {}
@@ -967,7 +967,7 @@ def _maybe_run_qa_pre_retrospective(
             "qa.auto-run-on-feature-done está ativo e a feature acaba "
             "de fechar — rodar forge qa antes do retrospective?"
         ),
-        where=str(workflow_config_path(project_root).relative_to(project_root)),
+        where=str(active_config_path(project_root).relative_to(project_root)),
         why=[
             "verdict QA é insumo pro retrospective (não bloqueia — §12.2)",
             "contexto fresco vale mais barato agora que depois",
@@ -1072,7 +1072,7 @@ def _toggle_qa_auto_run_off(project_root: Path) -> None:
     """
     from engine.utils.yaml_io import write_yaml  # noqa: PLC0415 — lazy
 
-    cfg_path = workflow_config_path(project_root)
+    cfg_path = active_config_path(project_root)
     cfg = read_yaml_or_default(cfg_path, {})
     if not isinstance(cfg, dict):
         cfg = {}

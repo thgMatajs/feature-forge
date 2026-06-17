@@ -33,10 +33,10 @@ from engine.ui import question, renderer
 from engine.ui.question import PromptAbortedError
 from engine.utils.paths import (
     ProjectRootNotFoundError,
+    active_config_path,
     claude_dir,
     ensure_dir,
     find_project_root,
-    workflow_config_path,
 )
 from engine.utils.yaml_io import read_yaml_or_default, write_yaml
 from engine.utils.checkpoint_io import (
@@ -109,7 +109,7 @@ def _clear_checkpoint(project_root: Path) -> None:
 
 
 def _load_workflow_config(project_root: Path) -> dict[str, Any]:
-    cfg = read_yaml_or_default(workflow_config_path(project_root), {})
+    cfg = read_yaml_or_default(active_config_path(project_root), {})
     return cfg if isinstance(cfg, dict) else {}
 
 

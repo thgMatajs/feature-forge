@@ -22,10 +22,10 @@ from pathlib import Path
 from engine.cards.loader import CardError, load_all_cards, validate_card_yaml
 from engine.cards.merger import merge_contributions, render_merged_template
 from engine.utils.paths import (
+    active_config_path,
     cards_dir,
     forge_home,
     try_find_project_root,
-    workflow_config_path,
 )
 from engine.utils.yaml_io import backup_file, read_yaml
 
@@ -98,7 +98,7 @@ def _edit_config(argv: list[str]) -> int:
     if project_root is None:
         print("forge raw edit-config: no project root", file=sys.stderr)
         return 2
-    path = workflow_config_path(project_root)
+    path = active_config_path(project_root)
     if not path.is_file():
         print(f"forge raw edit-config: not found {path}", file=sys.stderr)
         return 2
@@ -194,8 +194,8 @@ def _forge_debug(argv: list[str]) -> int:
     project_root = try_find_project_root()
     print(f"  project_root        = {project_root}")
     if project_root is not None:
-        cfg = workflow_config_path(project_root)
-        print(f"  workflow-config     = {cfg} (exists={cfg.is_file()})")
+        cfg = active_config_path(project_root)
+        print(f"  active config       = {cfg} (exists={cfg.is_file()})")
         cards_root = cards_dir(project_root)
         print(f"  cards snapshot dir  = {cards_root} (exists={cards_root.is_dir()})")
         if cards_root.is_dir():
