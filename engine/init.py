@@ -776,12 +776,43 @@ def _merge_forge_hooks_into_settings(project_root: Path) -> None:
         merge_settings_json,
         read_settings_tolerant,
     )
+    from engine.utils.yaml_io import backup_file
 
     settings_path = project_root / ".claude" / "settings.json"
     if settings_path.exists():
         try:
             existing = read_settings_tolerant(settings_path.read_text())
-        except (OSError, ValueError):
+        except ValueError:
+            # Parse failure: o arquivo existe mas não é JSON válido. NÃO
+            # descartamos silenciosamente o conteúdo do usuário — preservamos
+            # em .bak antes de seguir com as forge additions (cross-AI review
+            # HIGH, brownfield-safe).
+            bak = backup_file(settings_path)
+            if bak is not None:
+                renderer.write(renderer.colored(
+                    f"warn: .claude/settings.json não é JSON válido; "
+                    f"original preservado em {bak}. Seguindo com as adições "
+                    f"do forge sobre uma base vazia — revise e reintegre suas "
+                    f"settings a partir do backup.",
+                    "yellow",
+                ))
+            else:
+                renderer.write(renderer.colored(
+                    "warn: .claude/settings.json não é JSON válido e não pôde "
+                    "ser preservado em backup. Seguindo com as adições do forge.",
+                    "yellow",
+                ))
+            existing = {}
+        except OSError:
+            # Não conseguimos sequer ler o arquivo — best-effort: avisamos e
+            # seguimos com as forge additions. Sem backup (não há conteúdo
+            # legível). Init não falha.
+            renderer.write(renderer.colored(
+                "warn: não consegui ler o .claude/settings.json existente; "
+                "seguindo com as adições do forge (suas settings não foram "
+                "tocadas em disco até a próxima gravação).",
+                "yellow",
+            ))
             existing = {}
     else:
         settings_path.parent.mkdir(parents=True, exist_ok=True)

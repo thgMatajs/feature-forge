@@ -104,6 +104,86 @@ def test_merge_creates_settings_json_if_missing(tmp_path):
 
 
 @pytest.mark.integration
+def test_corrupt_settings_json_backed_up_and_warned(tmp_path, capsys):
+    """Parse-failure (invalid JSON) → backup do original + WARN + prossegue.
+
+    Cross-AI review HIGH: settings.json não-parseável NÃO pode ser descartado
+    silenciosamente. Antes de reescrever com as forge additions, o original
+    corrompido é preservado em .bak e um aviso mentor-calmo é emitido.
+    """
+    proj = tmp_path / "project"
+    (proj / ".claude").mkdir(parents=True)
+    settings_path = proj / ".claude" / "settings.json"
+    corrupt = "{ nao eh json"
+    settings_path.write_text(corrupt)
+
+    from engine.init import _merge_forge_hooks_into_settings
+    _merge_forge_hooks_into_settings(proj)
+
+    # Backup preserva o conteúdo ORIGINAL corrompido
+    bak = settings_path.with_suffix(settings_path.suffix + ".bak")
+    assert bak.exists(), "backup do settings.json corrompido deve existir"
+    assert bak.read_text() == corrupt, "backup deve preservar o conteúdo original"
+
+    # settings.json resultante contém as forge additions
+    data = json.loads(settings_path.read_text())
+    forge_session_cmds = [
+        h["command"] for entry in data["hooks"].get("SessionStart", [])
+        for h in entry.get("hooks", [])
+    ]
+    assert any("session-start-drift-check" in c for c in forge_session_cmds), \
+        f"forge hooks devem estar presentes após recuperação: {forge_session_cmds}"
+
+    # WARN foi emitido (mentor calmo, menciona o backup)
+    captured = capsys.readouterr()
+    assert "warn:" in captured.out
+    assert ".bak" in captured.out or "backup" in captured.out
+
+
+@pytest.mark.integration
+def test_unreadable_settings_json_warns_and_proceeds(tmp_path, capsys, monkeypatch):
+    """OSError ao ler settings.json → WARN best-effort, sem backup, prossegue.
+
+    Quando o arquivo existe mas nem pode ser lido (OSError), não há conteúdo
+    legível para backup. Init não falha: avisa e segue com as forge additions.
+    """
+    proj = tmp_path / "project"
+    (proj / ".claude").mkdir(parents=True)
+    settings_path = proj / ".claude" / "settings.json"
+    settings_path.write_text('{"hooks": {}}')
+
+    real_read_text = Path.read_text
+    state = {"raised": False}
+
+    def _boom(self, *args, **kwargs):
+        if self == settings_path and not state["raised"]:
+            state["raised"] = True
+            raise OSError("permissão negada (simulada)")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _boom)
+
+    from engine.init import _merge_forge_hooks_into_settings
+    _merge_forge_hooks_into_settings(proj)
+
+    monkeypatch.undo()
+
+    # settings.json resultante contém as forge additions
+    data = json.loads(settings_path.read_text())
+    forge_session_cmds = [
+        h["command"] for entry in data["hooks"].get("SessionStart", [])
+        for h in entry.get("hooks", [])
+    ]
+    assert any("session-start-drift-check" in c for c in forge_session_cmds)
+
+    # WARN foi emitido; nenhum backup (não havia conteúdo legível)
+    captured = capsys.readouterr()
+    assert "warn:" in captured.out
+    bak = settings_path.with_suffix(settings_path.suffix + ".bak")
+    assert not bak.exists(), "sem conteúdo legível → sem backup"
+
+
+@pytest.mark.integration
 @pytest.mark.skipif(
     not _HAS_JSON5,
     reason="json5 lib not installed in current Python environment",
