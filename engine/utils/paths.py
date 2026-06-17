@@ -6,7 +6,9 @@ ever shifts, this is the only file that has to change.
 
 Two roots matter at runtime:
 - FORGE_HOME — the canonical repo (`~/Documents/feature-forge/` by default).
-- project_root — the user's project, identified by a `.claude/workflow-config.yaml`.
+- project_root — the user's project, identified primarily by
+  `.claude/forge/forge-config.yaml` (v1.3+); `.claude/workflow-config.yaml`
+  is still recognised for backwards-compat with v1.2 projects.
 """
 
 from __future__ import annotations
@@ -18,9 +20,20 @@ from pathlib import Path
 _WORKFLOW_DIRNAME = ".claude"
 _WORKFLOW_CONFIG_FILE = "workflow-config.yaml"
 
+# Sub-namespace marker created by `forge init` (v1.3+). This is the primary
+# signal that a directory is a forge project root — `forge init` writes
+# `.claude/forge/forge-config.yaml`, never the legacy marker above.
+_FORGE_DIRNAME = "forge"
+_FORGE_CONFIG_FILE = "forge-config.yaml"
+
 
 class ProjectRootNotFoundError(RuntimeError):
-    """Raised when no `.claude/workflow-config.yaml` is found by walking up."""
+    """Raised when no forge project marker is found by walking up.
+
+    A directory counts as a project root when it contains either the
+    primary marker `.claude/forge/forge-config.yaml` (v1.3+) or the legacy
+    marker `.claude/workflow-config.yaml` (v1.2 compat).
+    """
 
 
 def forge_home() -> Path:
@@ -32,22 +45,46 @@ def forge_home() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def find_project_root(start: Path | None = None) -> Path:
-    """Walk up from `start` (cwd by default) until `.claude/workflow-config.yaml` is found.
+def _is_project_root(cursor: Path) -> bool:
+    """True when `cursor` carries a forge project marker.
 
-    Raises ProjectRootNotFoundError if we reach `/` without finding it. Callers
-    that want a soft check should catch this and fall back to bootstrap mode
-    (forge init).
+    Recognises two markers, in order of preference:
+    1. Primary (v1.3+): `.claude/forge/forge-config.yaml` — written by
+       `forge init`. This is the canonical sub-namespace marker (Spec §2).
+    2. Legacy (v1.2 compat): `.claude/workflow-config.yaml` — kept cheap so
+       projects initialised before the sub-namespace move still resolve.
+
+    The primary path is composed via `forge_config_path` (Mandamento 3 —
+    no hardcoded duplicate of the sub-namespace layout).
+    """
+    if forge_config_path(cursor).is_file():
+        return True
+    if (cursor / _WORKFLOW_DIRNAME / _WORKFLOW_CONFIG_FILE).is_file():
+        return True
+    return False
+
+
+def find_project_root(start: Path | None = None) -> Path:
+    """Walk up from `start` (cwd by default) until a forge project marker is found.
+
+    A directory is a project root when it carries the primary marker
+    `.claude/forge/forge-config.yaml` (v1.3+) or the legacy marker
+    `.claude/workflow-config.yaml` (v1.2 compat) — see `_is_project_root`.
+
+    Raises ProjectRootNotFoundError if we reach `/` without finding either.
+    Callers that want a soft check should catch this and fall back to
+    bootstrap mode (forge init).
     """
     cursor = (start or Path.cwd()).resolve()
     while True:
-        candidate = cursor / _WORKFLOW_DIRNAME / _WORKFLOW_CONFIG_FILE
-        if candidate.is_file():
+        if _is_project_root(cursor):
             return cursor
         if cursor.parent == cursor:
             raise ProjectRootNotFoundError(
-                "no .claude/workflow-config.yaml found from "
-                f"{(start or Path.cwd()).resolve()} upwards. "
+                "no forge project marker found from "
+                f"{(start or Path.cwd()).resolve()} upwards "
+                "(looked for .claude/forge/forge-config.yaml, primary; "
+                ".claude/workflow-config.yaml, legacy). "
                 "Run `forge init` from the project root."
             )
         cursor = cursor.parent

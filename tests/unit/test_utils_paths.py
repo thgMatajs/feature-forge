@@ -35,6 +35,44 @@ def test_find_project_root_walks_upward(tmp_path):
     assert found == tmp_path.resolve()
 
 
+def test_find_project_root_finds_forge_config_marker(tmp_path):
+    """v1.3+ marker: só existe `.claude/forge/forge-config.yaml` (o que
+    `forge init` cria), sem o marker legacy. Antes do fix, find_project_root
+    procurava só o legacy e levantava ProjectRootNotFoundError — quebrando
+    o ciclo init→uso pra projetos greenfield v1.3+.
+    """
+    forge_dir = tmp_path / ".claude" / "forge"
+    forge_dir.mkdir(parents=True)
+    (forge_dir / "forge-config.yaml").write_text(
+        "schema-version: 1\n", encoding="utf-8"
+    )
+    found = paths.find_project_root(tmp_path)
+    assert found == tmp_path.resolve()
+
+
+def test_find_project_root_finds_legacy_marker(tmp_path):
+    """Compat v1.2: só existe `.claude/workflow-config.yaml` (marker legacy).
+    O fix é aditivo — o caminho legacy continua resolvendo.
+    """
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    (claude / "workflow-config.yaml").write_text(
+        "schema-version: 1\n", encoding="utf-8"
+    )
+    found = paths.find_project_root(tmp_path)
+    assert found == tmp_path.resolve()
+
+
+def test_find_project_root_walks_upward_with_forge_config(tmp_path):
+    """Walk-up: a raiz com o marker v1.3+ está N níveis acima do `start`."""
+    (tmp_path / "sub" / "deep").mkdir(parents=True)
+    forge_dir = tmp_path / ".claude" / "forge"
+    forge_dir.mkdir(parents=True)
+    (forge_dir / "forge-config.yaml").write_text("{}\n", encoding="utf-8")
+    found = paths.find_project_root(tmp_path / "sub" / "deep")
+    assert found == tmp_path.resolve()
+
+
 def test_find_project_root_raises_when_missing(tmp_path):
     with pytest.raises(paths.ProjectRootNotFoundError):
         paths.find_project_root(tmp_path)
