@@ -39,7 +39,9 @@ python3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" 2>/de
 # ── Configuração ──────────────────────────────────────────────────────────────
 
 FORGE_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/feature-forge"
-FORGE_REPO_URL="https://github.com/thgMatajs/feature-forge.git"
+# FORGE_REPO_URL é env-overridável para testes (remote fake local). O default
+# real — o repositório canônico no GitHub — permanece inalterado pro usuário.
+FORGE_REPO_URL="${FORGE_REPO_URL:-https://github.com/thgMatajs/feature-forge.git}"
 
 # ── Aviso + grace period (abort via Ctrl+C) ───────────────────────────────────
 
@@ -73,12 +75,35 @@ echo ""
 echo "descobrindo a última release de feature-forge..."
 LATEST_TAG=$(git ls-remote --tags --refs --sort=-v:refname "$FORGE_REPO_URL" 'v*' 2>/dev/null | head -n1 | sed 's#.*refs/tags/##')
 
+# Valida LATEST_TAG contra o padrão semver exato (vMAJOR.MINOR.PATCH) ANTES de
+# passá-la pro --branch. Tag vazia, com lixo ou nome inesperado NÃO chega no
+# git clone — cai no fallback main. A validação usa case (portável bash 3.2,
+# sem [[ =~ ]]); o glob casa apenas dígitos separados por ponto e nada além,
+# então qualquer caractere extra — incl. newline embutido — reprova, porque
+# case avalia a string inteira contra o padrão.
+LATEST_TAG_VALID=""
+case "$LATEST_TAG" in
+  v[0-9]*.[0-9]*.[0-9]*)
+    # O glob acima garante o formato geral; refina com checagem estrita
+    # de que SÓ há dígitos e dois pontos (rejeita sufixos como -rc1, .4,
+    # ou caracteres de controle). printf+grep ancorado fecha a validação.
+    if printf '%s' "$LATEST_TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+       && [ "$(printf '%s' "$LATEST_TAG" | wc -l | tr -d ' ')" = "0" ]; then
+      LATEST_TAG_VALID="yes"
+    fi
+    ;;
+esac
+
 echo ""
-if [ -n "$LATEST_TAG" ]; then
+if [ -n "$LATEST_TAG_VALID" ]; then
   echo "🔨 instalando release $LATEST_TAG em $FORGE_HOME..."
   git clone --depth=1 --branch "$LATEST_TAG" "$FORGE_REPO_URL" "$FORGE_HOME"
 else
-  echo "🔨 nenhuma release tag encontrada — clonando main (fallback) em $FORGE_HOME..."
+  if [ -n "$LATEST_TAG" ]; then
+    echo "🔨 nenhuma release tag válida encontrada (ignorando '$LATEST_TAG') — clonando main (fallback) em $FORGE_HOME..."
+  else
+    echo "🔨 nenhuma release tag encontrada — clonando main (fallback) em $FORGE_HOME..."
+  fi
   git clone --depth=1 "$FORGE_REPO_URL" "$FORGE_HOME"
 fi
 
