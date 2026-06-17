@@ -6,12 +6,24 @@ Você dirige o `forge`. O engine emite intenções e pausa; você responde e re-
 
 Ao rodar um `forge` que sai com **exit 2** + linha `<FORGE_INTENT .../>`:
 
-1. Leia o pending em `.claude/forge/state/forge-pending.json`.
-2. Pergunte ao usuário (mecanismo opencode) com `question` + `options`.
-3. Escreva `.claude/forge/state/forge-response.json` com o **mesmo `intent-id`**
-   (schema: `docs/schemas/intent-protocol.md`).
-4. Re-invoque o `forge` com **argv idêntico**.
-5. Repita até exit 0/1/130. Legenda: 0=ok · 1=erro · 2=pausado · 130=cancelado.
+1. Leia o pending em `.claude/forge/state/forge-pending.json` (ou parseie o
+   marker do stdout). Atributos sempre presentes: `kind`, `intent-id`,
+   `question`, `options`, `default`, `allow-pause`; opcionais: `validator-hint`,
+   `min-selected`, `paths-detail`. Valores no marker vêm XML-escaped — unescape.
+2. **`options` vem JSON-encoded** — faça JSON-parse pra obter `{key: label}`
+   (não trate como texto plano). Respeite `default` (≠ `"null"` → pré-seleção)
+   e `allow-pause` (`false` → sem pausa). Pra `ask_multi`, `min-selected` é o piso.
+3. **Se `kind=ask_three_paths`**, parseie também `paths-detail` (lista JSON
+   `[{key,label,motive}]`) e renderize o bloco 3-caminhos canônico (disciplina §1)
+   com `label` + `motive` por caminho — `motive` é o "motivo provável". Sem ele
+   o prompt fica anêmico.
+4. Pergunte ao usuário (mecanismo opencode) com `question` + as opções decodificadas.
+5. Escreva `.claude/forge/state/forge-response.json` com o **mesmo `intent-id`**
+   (schema completo: `docs/schemas/intent-protocol.md`).
+6. Re-invoque o `forge` com **argv idêntico**.
+7. Repita até exit 0/1/130. Legenda: 0=ok · 1=erro · 2=pausado · 130=cancelado.
+
+Atributos, kinds e shape da response em detalhe: `docs/schemas/intent-protocol.md`.
 
 ## Workflow
 
