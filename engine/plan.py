@@ -449,46 +449,65 @@ def _ingest_screenshot(raw_input: str, feature_path: Path) -> Optional[dict]:
     mensagem mentor-calmo no stderr, segue sem a imagem. ``platform_hint``
     é só hint de baixa confiança que o conductor pode sobrepor. Reuso puro
     de ``engine.vision.screenshot`` (Mandamento 3) — nunca crasha.
+
+    Source externo (mockup do host): um path ABSOLUTO que existe e resolve
+    FORA da feature dir é aceito com semântica copy-in — o gate real continua
+    sendo ``validate_screenshot`` (rejeita não-imagem → None). Caminhos
+    relativos/bare/internos passam por ``normalize_screenshot_path`` (estrito:
+    traversal-safe, contido na feature) — esse contrato NÃO muda pros outros
+    callers. Todo o corpo (resolve → validate → copy → fingerprint → load)
+    roda sob um único ``try`` que captura ``(ValueError, FileNotFoundError,
+    OSError)`` — qualquer falha de IO/TOCTOU degrada gracioso em vez de
+    propagar traceback bruto (honra "nunca crasha" mesmo depois do lock).
     """
     from engine.vision import screenshot as _ss
 
     try:
-        resolved = _ss.normalize_screenshot_path(raw_input, feature_path)
-    except (ValueError, FileNotFoundError) as exc:
+        candidate = Path(raw_input)
+        if (
+            candidate.is_absolute()
+            and candidate.exists()
+            and not candidate.resolve().is_relative_to(feature_path.resolve())
+        ):
+            resolved = candidate.resolve()  # mockup externo — copy-in semantics
+        else:
+            # Estrito p/ relativo/bare/interno: traversal-safe, contido na feature.
+            resolved = _ss.normalize_screenshot_path(raw_input, feature_path)
+
+        issues = _ss.validate_screenshot(resolved)
+        if issues:
+            sys.stderr.write(
+                "forge plan: screenshot ignorado — "
+                + "; ".join(issues)
+                + ". Sigo sem a imagem; marque needs-elicitation se for UI.\n"
+            )
+            return None
+
+        screenshots_dir = feature_path / "screenshots"
+        ensure_dir(screenshots_dir)
+        dest = screenshots_dir / resolved.name
+        if resolved.resolve() != dest.resolve():
+            shutil.copy2(resolved, dest)
+
+        fingerprint = _ss.compute_screenshot_fingerprint(dest)
+        meta = _ss.load_screenshot(dest)
+        # `platform_inference` é Optional no dataclass (default None) — `load_screenshot`
+        # sempre popula, mas o guard é defense-in-depth contra o tipo.
+        inference = meta.platform_inference
+        platform = inference.platform if inference else "unknown"
+        confidence = inference.confidence if inference else None
+        return {
+            "path": str(dest.relative_to(feature_path)),
+            "fingerprint": fingerprint,
+            "platform_hint": platform,
+            "platform_confidence": confidence,
+        }
+    except (ValueError, FileNotFoundError, OSError) as exc:
         sys.stderr.write(
             f"forge plan: screenshot ignorado — {exc}. "
             "Sigo sem a imagem.\n"
         )
         return None
-
-    issues = _ss.validate_screenshot(resolved)
-    if issues:
-        sys.stderr.write(
-            "forge plan: screenshot ignorado — "
-            + "; ".join(issues)
-            + ". Sigo sem a imagem; marque needs-elicitation se for UI.\n"
-        )
-        return None
-
-    screenshots_dir = feature_path / "screenshots"
-    ensure_dir(screenshots_dir)
-    dest = screenshots_dir / resolved.name
-    if resolved.resolve() != dest.resolve():
-        shutil.copy2(resolved, dest)
-
-    fingerprint = _ss.compute_screenshot_fingerprint(dest)
-    meta = _ss.load_screenshot(dest)
-    # `platform_inference` é Optional no dataclass (default None) — `load_screenshot`
-    # sempre popula, mas o guard é defense-in-depth contra o tipo.
-    inference = meta.platform_inference
-    platform = inference.platform if inference else "unknown"
-    confidence = inference.confidence if inference else None
-    return {
-        "path": str(dest.relative_to(feature_path)),
-        "fingerprint": fingerprint,
-        "platform_hint": platform,
-        "platform_confidence": confidence,
-    }
 
 
 def _elicit_screenshot(
@@ -514,7 +533,9 @@ def _elicit_screenshot(
         "(path do screenshot/mockup, ou 'none')",
         default="none",
     )
-    if not resp or resp.strip().lower() == "none":
+    # `ask_text(default="none")` nunca devolve falsy (vazio resolve pro default),
+    # então só o sentinel "none" precisa de check — o ramo `not resp` era morto.
+    if resp.strip().lower() == "none":
         return None
     return _ingest_screenshot(resp.strip(), feature_path)
 
@@ -565,8 +586,18 @@ def _render_template(
     }
     if extra_tokens:
         substitutions.update(extra_tokens)
-    for token, value in substitutions.items():
-        raw = raw.replace(token, value)
+    # Substituição single-pass: um único `re.sub` escaneia o template UMA vez e
+    # troca cada token pelo lookup no dict. Diferente do `.replace` em cascata,
+    # NÃO re-escaneia valores já inseridos — então um valor (e.g. source-ref do
+    # argv livre) contendo o literal de outro token (`{{screenshots_count}}`)
+    # sobrevive intacto. `sorted(longest-first)` evita ambiguidade de prefixo;
+    # o guard `if substitutions` evita um regex vazio (sempre há ao menos os 3
+    # tokens base, mas o guard mantém o invariante explícito).
+    if substitutions:
+        _pat = re.compile(
+            "|".join(re.escape(k) for k in sorted(substitutions, key=len, reverse=True))
+        )
+        raw = _pat.sub(lambda m: substitutions[m.group(0)], raw)
     target.write_text(raw, encoding="utf-8")
     return True
 

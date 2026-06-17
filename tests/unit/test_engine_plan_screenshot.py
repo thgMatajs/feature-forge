@@ -18,6 +18,7 @@ Refs: docs/superpowers/specs/2026-06-17-ai-first-interaction-layer-design.md
 
 from __future__ import annotations
 
+import shutil
 import struct
 from pathlib import Path
 
@@ -25,6 +26,7 @@ import pytest
 
 from engine import plan
 from engine.ui import question
+from engine.vision import screenshot as _ss
 
 
 def _write_png(path: Path, width: int = 400, height: int = 800) -> None:
@@ -89,6 +91,76 @@ def test_ingest_fingerprint_stable(tmp_path: Path) -> None:
     r2 = plan._ingest_screenshot("a.png", feature)
     assert r1 is not None and r2 is not None
     assert r1["fingerprint"] == r2["fingerprint"]
+
+
+# ── _ingest_screenshot — crash-safe (W-001): IO failure → None, nunca crasha ─
+
+
+def test_ingest_copy_failure_returns_none_not_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Falha de IO no copy (disco cheio/perm) honra "nunca crasha" → None."""
+    feature = tmp_path / "feature"
+    (feature / "screenshots").mkdir(parents=True)
+    src = feature / "screenshots" / "screen.png"
+    _write_png(src, width=400, height=900)
+    # Força o caminho do copy: referencia o mesmo arquivo por path absoluto
+    # externo? Não — aqui o source já está em screenshots/, então o copy é
+    # no-op. Usamos um source bare em feature/ pra ativar o copy real.
+    other = feature / "other.png"
+    _write_png(other, width=400, height=900)
+
+    def _boom(*_a: object, **_k: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(shutil, "copy2", _boom)
+    # copy2 explode DEPOIS do lock/normalize/validate — o contrato exige None.
+    assert plan._ingest_screenshot("other.png", feature) is None
+
+
+def test_ingest_fingerprint_failure_returns_none_not_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Falha no fingerprint (TOCTOU/IO) também degrada gracioso → None."""
+    feature = tmp_path / "feature"
+    (feature / "screenshots").mkdir(parents=True)
+    src = feature / "screenshots" / "screen.png"
+    _write_png(src, width=400, height=900)
+
+    def _boom(*_a: object, **_k: object) -> str:
+        raise OSError("read error")
+
+    monkeypatch.setattr(_ss, "compute_screenshot_fingerprint", _boom)
+    assert plan._ingest_screenshot("screen.png", feature) is None
+
+
+# ── _ingest_screenshot — external copy-in (W-003): mockup do host ────────────
+
+
+def test_ingest_accepts_external_absolute_image(tmp_path: Path) -> None:
+    """Path absoluto externo (mockup do host) válido → ingerido + copiado."""
+    feature = tmp_path / "feature"
+    feature.mkdir()
+    external = tmp_path / "Desktop" / "mockup.png"
+    external.parent.mkdir(parents=True)
+    _write_png(external, width=400, height=900)
+
+    result = plan._ingest_screenshot(str(external), feature)
+    assert result is not None
+    assert result["path"] == "screenshots/mockup.png"
+    assert (feature / "screenshots" / "mockup.png").is_file()
+    assert len(result["fingerprint"]) == 64
+
+
+def test_ingest_rejects_external_absolute_non_image(tmp_path: Path) -> None:
+    """Path absoluto externo não-imagem → None (validate é o gate real)."""
+    feature = tmp_path / "feature"
+    feature.mkdir()
+    external = tmp_path / "Desktop" / "notes.txt"
+    external.parent.mkdir(parents=True)
+    external.write_text("not an image", encoding="utf-8")
+
+    assert plan._ingest_screenshot(str(external), feature) is None
 
 
 # ── _elicit_screenshot — source-inquiry só em product + Wave A ───────────────
@@ -216,3 +288,58 @@ def test_intake_render_without_screenshot_fills_none(
         "{{screenshots_relative_paths_csv_or_none}}",
     ):
         assert token not in rendered, f"{token} vazou cru no intake"
+
+
+# ── token-reinjection (W-002): single-pass render não re-escaneia valores ────
+
+
+def test_render_source_ref_literal_token_not_mangled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """source-ref contendo `{{screenshots_count}}` sobrevive literal.
+
+    O argv livre do host pode conter o literal `{{screenshots_count}}`.
+    Com substituição single-pass, o valor inserido em source-ref NÃO é
+    re-escaneado pelo pass de screenshot → o literal é preservado, e os
+    tokens reais de screenshot da própria LINHA de screenshots são
+    preenchidos normalmente.
+    """
+    fake_templates = tmp_path / "templates"
+    fake_templates.mkdir()
+    (fake_templates / "intake.template.md").write_text(
+        "# Intake {{feature_slug}}\n"
+        "- source-ref: {{source_ref_or_none}}\n"
+        "- screenshots: {{screenshots_count}} file(s) — "
+        "{{screenshots_relative_paths_csv}}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(plan, "_templates_dir", lambda: fake_templates)
+    monkeypatch.setattr(plan, "_continue_or_pause", lambda slug, label: "continuar")
+
+    feature_path = tmp_path / "feature"
+    feature_path.mkdir()
+
+    # argv CRU contendo o literal de um token de screenshot.
+    argv = "add {{screenshots_count}} widget"
+    intake_tokens = plan._source_tokens_for(argv)
+    intake_tokens.update(
+        {
+            "{{screenshots_count}}": "1",
+            "{{screenshots_relative_paths_csv}}": "screenshots/tela.png",
+            "{{screenshots_relative_paths_csv_or_none}}": "screenshots/tela.png",
+        }
+    )
+    plan._run_static_wave(
+        "A",
+        (("intake.template.md", "feature-intake.md"),),
+        "tela-bonsai",
+        tmp_path,
+        feature_path,
+        extra_tokens=intake_tokens,
+    )
+    rendered = (feature_path / "feature-intake.md").read_text(encoding="utf-8")
+
+    # O literal no source-ref NÃO virou "1": single-pass não re-escaneia.
+    assert "source-ref: add {{screenshots_count}} widget" in rendered
+    # A linha REAL de screenshots foi preenchida normalmente.
+    assert "screenshots: 1 file(s) — screenshots/tela.png" in rendered
