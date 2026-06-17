@@ -67,6 +67,31 @@ def _extract_verdict(text: str) -> dict[str, Any] | None:
     return None
 
 
+# Contract specs onde needs-elicitation não-promovido é block-severity.
+_CONTRACT_GLOBS = ("*-spec.yaml", "tasks/task-*.md", "*-contract*.yaml")
+
+
+def _scan_needs_elicitation(f_root: Path) -> list[str]:
+    """Retorna `arquivo:linha` com `needs-elicitation` ativo em contract specs.
+
+    spec §4 C5 — fecha o ponto-cego "thin-but-structurally-complete": um campo
+    `needs-elicitation` que o conductor não promoveu a `blocking: true` open
+    question pode escapar como ready se a cadeia story→task fecha nominalmente.
+    """
+    hits: list[str] = []
+    for pattern in _CONTRACT_GLOBS:
+        for path in sorted(f_root.glob(pattern)):
+            if not path.is_file():
+                continue
+            for lineno, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            ):
+                if "needs-elicitation" in line:
+                    rel = path.relative_to(f_root)
+                    hits.append(f"{rel}:{lineno}")
+    return hits
+
+
 def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
     """Validate the readiness verdict for the active feature."""
     slug = _resolve_slug(kwargs)
@@ -79,6 +104,29 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
         )
 
     f_root = feature_dir(project_root, slug)
+
+    # spec C5 — needs-elicitation não-promovido bloqueia ANTES de parsear o
+    # verdict (um verdict 'ready' não pode mascarar campo não-elicitado).
+    elicitation_hits = _scan_needs_elicitation(f_root)
+    if elicitation_hits:
+        return result_fail(
+            f"needs-elicitation não-promovido em {len(elicitation_hits)} contract spec(s)",
+            what_failed="needs-elicitation: true sobreviveu em contract spec",
+            where="; ".join(elicitation_hits[:5]),
+            why=[
+                "Campo needs-elicitation deve virar blocking:true open-question, não escapar como ready.",
+                "Fecha o ponto-cego thin-but-structurally-complete (spec C5).",
+            ],
+            paths=make_paths(
+                "Promover cada needs-elicitation a blocking:true em open-questions.yaml",
+                "O conductor elicita na próxima rodada de Phase 3.",
+                "Resolver inline se o valor já é conhecido",
+                "Se foi marcado por engano e o default é claro.",
+                "Reverter pra antes do plan — `forge undo`",
+                "Se o escopo da feature mudou.",
+            ),
+        )
+
     review = f_root / "implementation-readiness-review.md"
     if not review.is_file():
         return result_fail(
