@@ -183,24 +183,22 @@ def run(argv: list[str]) -> int:
     try:
         project_root = find_project_root()
     except Exception as exc:
-        renderer.write(renderer.colored(f"forge reconfigure: {exc}", "red"))
-        return 2
+        sys.stderr.write(f"forge reconfigure: {exc}\n")
+        return 1
 
     config_path = workflow_config_path(project_root)
     if not config_path.is_file():
-        renderer.write(
-            renderer.colored(
-                "Nenhum workflow-config.yaml encontrado — rode `forge init` primeiro.",
-                "red",
-            )
+        sys.stderr.write(
+            "forge reconfigure: nenhum workflow-config.yaml encontrado — "
+            "rode `forge init` primeiro.\n"
         )
-        return 2
+        return 1
 
     try:
         current = read_yaml(config_path) or {}
     except Exception as exc:
         renderer.write(renderer.colored(f"config inválido: {exc}", "red"))
-        return 2
+        return 1
 
     draft_path = claude_dir(project_root) / _DRAFT_NAME
     draft = _load_draft(draft_path)

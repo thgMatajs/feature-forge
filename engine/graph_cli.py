@@ -661,7 +661,7 @@ def run(argv: list[str]) -> int:
         project_root = find_project_root()
     except ProjectRootNotFoundError as exc:
         sys.stderr.write(f"forge graph: {exc}\n")
-        return 2
+        return 1
 
     if argv and argv[0] == "detect-incremental":
         return _run_detect_incremental(project_root, argv[1:])

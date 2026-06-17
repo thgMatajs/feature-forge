@@ -426,7 +426,7 @@ def run(argv: list[str]) -> int:
         project_root = find_project_root()
     except ProjectRootNotFoundError as exc:
         sys.stderr.write(f"forge memory: {exc}\n")
-        return 2
+        return 1
 
     # Hint when L2 file just doesn't exist yet.
     if not memory_l2_path(project_root).exists():
