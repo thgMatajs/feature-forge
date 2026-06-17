@@ -12,7 +12,21 @@ def detect_claude_code() -> bool:
 
 
 def detect_opencode() -> bool:
-    # opencode setta vars com prefixo OPENCODE_
+    # Detecção aspiracional / atualmente inativa na prática.
+    #
+    # A checagem por prefixo OPENCODE_ é best-effort/future-proofing: o
+    # projeto reconhece opencode como host futuro conhecido (Veredito B do
+    # research), mas hoje este ramo quase nunca dispara. Conforme
+    # docs/research/opencode-tool-api.md §3, o opencode NÃO injeta vars
+    # OPENCODE_* nos subprocessos que ele spawna — o bash tool herda
+    # process.env, mas o próprio opencode não setta uma var identificadora
+    # estável (issue sst/opencode#1775 regrediu). Logo, um subprocesso forge
+    # invocado pelo opencode normalmente NÃO vê nenhum OPENCODE_* no env.
+    #
+    # Na prática, opencode resolve via fallback TTY→INTENT_FILE: stdin é
+    # pipado (não-tty), então detect_host cai em HostName.INTENT_FILE — o
+    # comportamento documentado. Mantemos esta função como future-proofing;
+    # revisitar quando/se opencode shippar elicitation ou env var confiável.
     return any(k.startswith("OPENCODE_") for k in os.environ.keys())
 
 

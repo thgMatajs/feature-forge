@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 import pytest
 from engine.host.detect import detect_host, _clear_cache
@@ -25,6 +26,32 @@ def test_detect_fallback_intent_file(tmp_path, monkeypatch):
     _clear_cache()
     # sys.stdin.isatty() é False em pytest → fallback intent_file
     assert detect_host(tmp_path) in (HostName.TTY, HostName.INTENT_FILE)
+
+
+def test_detect_via_env_opencode_when_var_present(tmp_path, monkeypatch):
+    # Ramo aspiracional: COM OPENCODE_* no env (e sem CLAUDECODE), detect_host
+    # resolve OPENCODE. Trava a precedência; este caso é raro hoje porque o
+    # opencode não injeta OPENCODE_* em subprocessos (research §3).
+    for v in ("CLAUDECODE", "CODEX_CLI", "CURSOR_AGENT", "FORGE_FORCE_INTENT_MODE"):
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.setenv("OPENCODE_CONFIG", "/home/dev/.config/opencode/config.json")
+    _clear_cache()
+    assert detect_host(tmp_path) == HostName.OPENCODE
+
+
+def test_detect_opencode_real_env_falls_to_intent_file(tmp_path, monkeypatch):
+    # Trava o comportamento REAL do opencode: sem nenhum sinal de env
+    # (incluindo OPENCODE_*, que o opencode não injeta — research §3) e com
+    # stdin não-tty (subprocesso pipado), detect_host cai em INTENT_FILE.
+    # Este é o adapter que opencode efetivamente recebe (Veredito B).
+    for v in ("CLAUDECODE", "OPENCODE_VERSION", "OPENCODE_CONFIG", "CODEX_CLI",
+              "CURSOR_AGENT", "FORGE_FORCE_INTENT_MODE"):
+        monkeypatch.delenv(v, raising=False)
+    for k in [k for k in os.environ if k.startswith("OPENCODE_")]:
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr("sys.stdin", type("_FakeNonTTY", (), {"isatty": lambda self: False})())
+    _clear_cache()
+    assert detect_host(tmp_path) == HostName.INTENT_FILE
 
 
 def test_detect_cache_same_process(tmp_path, monkeypatch):

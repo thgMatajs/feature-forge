@@ -47,6 +47,10 @@ def detect_host(project_root: Path) -> HostName:
     elif env.detect_claude_code():
         result = HostName.CLAUDE_CODE
     elif env.detect_opencode():
+        # Ramo aspiracional: só alcançado se o env carregar OPENCODE_* — raro
+        # hoje, pois o opencode não injeta essas vars em subprocessos
+        # (docs/research/opencode-tool-api.md §3). No caso comum, opencode
+        # não dispara aqui e cai no fallback TTY→INTENT_FILE abaixo.
         result = HostName.OPENCODE
     # 4. TTY check (humano em terminal real)
     elif sys.stdin.isatty():
