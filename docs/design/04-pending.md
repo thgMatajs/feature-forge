@@ -208,12 +208,15 @@ v1.3 ship completo cobrindo A+B+C+D — 6 waves entregues:
   shippar equivalente de elicitation/AskUserQuestion em protocolo oficial.
   Research em `docs/research/opencode-tool-api.md`. Critério: env var estável
   OR IPC canal oficial disponível em versão futura.
-- **find_project_root legacy marker** — `find_project_root` e
-  `_project_root_for_io` em `engine/utils/paths.py` ainda procuram
-  `.claude/workflow-config.yaml` como marcador legado. Gap deliberado: mudar
-  o marker requer coordenação com todos os consumers (validators, hooks,
-  tests). Critério de reentrada: primeiro projeto real reportar confusão OU
-  W6 cleanup pass dedicado.
+- ~~**find_project_root legacy marker**~~ — **FECHADO em 1.4.0** (commits
+  c797539 + d6ec142). `find_project_root` e `_project_root_for_io` em
+  `engine/utils/paths.py` reconhecem agora `.claude/forge/forge-config.yaml`
+  (marker v1.3 primário criado por `forge init`) além do legacy
+  `.claude/workflow-config.yaml` (compat v1.2). Ciclo init→uso greenfield
+  restaurado: os ~12 comandos que resolvem a raiz via find_project_root
+  deixaram de levantar `ProjectRootNotFoundError` em projetos greenfield v1.3.
+  Regression test fecha o gap de cobertura (testes anteriores semeavam o
+  marker legacy à mão). Legacy compat mantido — não é breaking change.
 - **`.gitignore` semantic narrowing** — `.gitignore` que `forge init` cria
   ainda usa paths v1.x (`.claude/memory/L1/*`, `.claude/graph.db`). v1.3 move
   esses pra `.claude/forge/state/` e `.claude/graph.db` (caminho inalterado).

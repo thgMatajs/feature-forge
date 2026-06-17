@@ -117,8 +117,8 @@ Clean-break deliberado frente a v1.2.x — projetos experimentais reinicializam.
   response poisoning, bug #3 piped stdin) + 4 utilitários (U1 exit codes,
   U2 WARN, U3 ASCII fallback, U4 qa sem-args). Wave 3.
 
-Test counts finais (pós-Wave 4): rapid **1565 passed**, integration
-**162 passed**, e2e **27 passed**, 0 falhas.
+Test counts finais (pós-Wave 4 + pilot-blocker fix): rapid **1568 passed**, integration
+**162 passed**, e2e **30 passed**, 0 falhas.
 
 ### Changed
 
@@ -214,6 +214,7 @@ Test counts finais (pós-Wave 4): rapid **1565 passed**, integration
 - **`test_read_settings_tolerant_handles_comments` skipif** — pula quando lib
   `json5` ausente (system pytest fallback); os outros 4 testes de
   settings_merge funcionam com fallback stdlib `json`. Wave 1 follow-up.
+- **find_project_root marker mismatch (pilot-blocker)**: `engine/utils/paths.py::find_project_root` reconhece agora `.claude/forge/forge-config.yaml` (marker v1.3 que `forge init` cria) como raiz de projeto, além do legacy `.claude/workflow-config.yaml` (compat v1.2). Antes, após `forge init` greenfield, os ~12 comandos que resolvem a raiz via find_project_root levantavam ProjectRootNotFoundError ("não inicializado") mesmo com o projeto inicializado — ciclo init→uso quebrado. Gap herdado da migração de sub-namespace (Wave 0), não coberto por teste (testes semeavam o marker legacy à mão). Regression test fecha o gap (init greenfield → find_project_root resolve + comando de subdir funciona).
 
 ### Removed
 
