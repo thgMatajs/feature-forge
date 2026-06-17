@@ -9,6 +9,12 @@ Unicode chars used (BMP only — safe on every modern terminal):
 
 Colour palette is 256-color SGR — falls back to no-colour when stdout is
 not a TTY or when `NO_COLOR` env var is set (https://no-color.org).
+
+Non-TTY output (pipes, CI, redirects):
+    SGR sequences are stripped AND box-drawing Unicode chars are degraded to
+    plain ASCII via `to_ascii_box()`.  The degradation table lives in
+    `_BOX_TO_ASCII` and is applied inside `write()` — the single canonical
+    write path — so every caller is covered automatically.
 """
 
 from __future__ import annotations
@@ -22,6 +28,19 @@ from typing import Iterable, TextIO
 TL, TR, BL, BR = "┌", "┐", "└", "┘"
 H, V = "─", "│"
 T_DOWN, T_UP, T_LEFT, T_RIGHT, CROSS = "┬", "┴", "┤", "├", "┼"
+
+# Translation table: box-drawing Unicode → plain ASCII.
+# Used by `to_ascii_box()` for non-TTY output (pipes, CI, redirects).
+# Corner/junction chars → '+'; horizontal → '-'; vertical → '|'.
+# ASCII replacements are all single-column wide (same as the originals in
+# BMP), so `display_width()` calculations remain correct after translation.
+_BOX_TO_ASCII: dict[int, str] = str.maketrans(
+    "┌┐└┘├┤┬┴┼",  # corners + junctions  → +
+    "+++++++++",
+) | {
+    ord("─"): "-",  # horizontal bar
+    ord("│"): "|",  # vertical bar
+}
 
 # A minimal named palette. We map names → 256-color codes.
 _PALETTE: dict[str, int] = {
@@ -111,6 +130,24 @@ def strip_ansi(text: str) -> str:
     return "".join(out)
 
 
+def to_ascii_box(text: str) -> str:
+    """Degrade box-drawing Unicode chars to plain ASCII equivalents.
+
+    Converts the full set of box-drawing chars used by this module:
+        corners and junctions (┌┐└┘├┤┬┴┼) → '+'
+        horizontal bar (─)                 → '-'
+        vertical bar (│)                   → '|'
+
+    All replacements are single display-column wide (same as the originals),
+    so padding and width calculations are unaffected.
+
+    Called by `write()` for non-TTY streams.  Exposed as a public helper so
+    callers that build strings outside `write()` can also apply the
+    degradation, and so tests can exercise the mapping in isolation.
+    """
+    return text.translate(_BOX_TO_ASCII)
+
+
 def divider(width: int = 80, *, char: str = H) -> str:
     """Horizontal rule using box-drawing dash."""
     return char * width
@@ -159,9 +196,24 @@ def box(title: str | None, lines: Iterable[str], *, width: int = 80) -> str:
 
 
 def write(text: str, *, stream: TextIO | None = None, newline: bool = True) -> None:
-    """Single canonical write path. Strips ANSI for non-TTY streams."""
+    """Single canonical write path.
+
+    For TTY streams: writes `text` as-is (Unicode box-drawing + SGR colours
+    preserved).
+
+    For non-TTY streams (pipes, CI, redirects): strips SGR escape sequences
+    via `strip_ansi()` AND degrades box-drawing Unicode to plain ASCII via
+    `to_ascii_box()`.  Both transformations are applied here — the single
+    chokepoint — so every caller is covered without per-callsite changes.
+
+    TTY detection respects `NO_COLOR` (force off) and `FORGE_FORCE_COLOR`
+    (force on) via `_is_tty()`.
+    """
     stream = stream or sys.stdout
-    payload = text if _is_tty(stream) else strip_ansi(text)
+    if _is_tty(stream):
+        payload = text
+    else:
+        payload = to_ascii_box(strip_ansi(text))
     stream.write(payload)
     if newline:
         stream.write("\n")
