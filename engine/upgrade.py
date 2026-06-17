@@ -215,13 +215,16 @@ def run_upgrade(
             f"  Tente: {home}/.venv/bin/pip install -e {home} --upgrade\n"
             f"  Detalhe: {exc}\n"
         )
-        # Checkout já aconteceu — rollback pro sha anterior
+        # Checkout já aconteceu — rollback pro sha anterior (código + venv)
         try:
             _git_checkout(home, prev_sha)
             sys.stderr.write(f"forge upgrade: rollback executado para {prev_sha[:8]}.\n")
+            # Re-faz pip refresh pro sha anterior — restaura o venv ao estado
+            # que funcionava (pip pode ter mutado deps parcialmente acima).
+            _pip_refresh(home)
         except subprocess.CalledProcessError:
             sys.stderr.write(
-                f"forge upgrade: rollback também falhou. Estado pode estar inconsistente.\n"
+                f"forge upgrade: rollback ou pip re-refresh falhou. Estado pode estar inconsistente.\n"
                 f"  Rode manualmente: cd {home} && git checkout --detach {prev_sha}\n"
             )
         return 4

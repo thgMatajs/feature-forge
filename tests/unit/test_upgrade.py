@@ -71,6 +71,51 @@ def test_upgrade_rollback_on_smoke_fail(tmp_path: Path) -> None:
     )
 
 
+def test_upgrade_rollback_on_pip_fail_re_runs_pip(tmp_path: Path) -> None:
+    """When pip refresh fails after checkout, rollback restores BOTH code and venv.
+
+    Simetria com o path de smoke-fail: o rollback faz git checkout pro prev_sha
+    E re-roda pip refresh, restaurando o venv ao estado do sha anterior (que
+    funcionava). _pip_refresh falha na 1ª chamada (o refresh da nova tag) e
+    sucede na 2ª (o re-refresh do rollback).
+    """
+    from engine.upgrade import run_upgrade
+
+    pip_calls = {"n": 0}
+
+    def pip_side_effect(*_args, **_kwargs):
+        pip_calls["n"] += 1
+        if pip_calls["n"] == 1:
+            import subprocess
+
+            raise subprocess.CalledProcessError(1, ["pip", "install"])
+        # 2ª chamada (re-refresh do rollback) sucede
+        return None
+
+    with patch("engine.upgrade._git_current_sha", return_value="abc1234"), \
+         patch("engine.upgrade._git_fetch"), \
+         patch("engine.upgrade._latest_local_tag", return_value="v1.4.1"), \
+         patch("engine.upgrade._tag_sha", return_value="def5678"), \
+         patch("engine.upgrade._smoke_version", return_value=True), \
+         patch("engine.upgrade._pip_refresh", side_effect=pip_side_effect) as pip, \
+         patch("engine.upgrade._git_checkout") as checkout:
+        result = run_upgrade(forge_home=tmp_path)
+
+    assert result == 4, f"expected 4 on pip failure + rollback, got {result}"
+    # rollback checkout pro prev_sha aconteceu
+    assert checkout.call_count >= 2, (
+        f"expected forward + rollback checkout, got {checkout.call_count} calls"
+    )
+    last_call_args = checkout.call_args_list[-1]
+    assert "abc1234" in last_call_args.args, (
+        f"rollback checkout did not target prev_sha. calls={checkout.call_args_list}"
+    )
+    # pip foi chamado DUAS vezes: refresh da nova tag (falhou) + re-refresh do rollback
+    assert pip.call_count == 2, (
+        f"expected pip refresh re-run during rollback (2 calls), got {pip.call_count}"
+    )
+
+
 def test_upgrade_success(tmp_path: Path) -> None:
     """When a newer tag exists and smoke passes, return 0 and checkout the tag."""
     from engine.upgrade import run_upgrade
