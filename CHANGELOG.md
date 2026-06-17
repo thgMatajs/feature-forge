@@ -7,6 +7,10 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed (load-bearing)
+
+- **Revisita decisão 18**: skill location → `~/.local/share/feature-forge/` (XDG default; respeita $XDG_DATA_HOME). Era `~/Documents/feature-forge/`. Razão: XDG é convenção universal pra ferramentas instaladas via script; `~/Documents/` confunde com o diretório de docs do usuário. Linha antiga preservada em docs/design/01-decisions.md (row 18 superseded by row 18-v2). install.sh (Wave 4) já usa o destino XDG.
+
 ### Added (v1.3 Wave 4 — install/upgrade CLI, 2026-06-17)
 
 Instalação e upgrade do forge via curl one-liner e subcomando nativo.

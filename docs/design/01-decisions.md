@@ -25,7 +25,8 @@ revisit, not silent drift.
 | 15 | Versioning model | Snapshot copy local | Fork-and-forget. No runtime dep on upstream. |
 | 16 | Reconfigure UX | Comando `reconfigure` com diff | Incremental update. |
 | 17 | Greenfield vs brownfield | Mesmo fluxo, auto-detect opcional | One code path. |
-| 18 | Skill location | Standalone repo at `~/Documents/feature-forge/` | Canonical home + per-project install. |
+| 18 | Skill location | Standalone repo at `~/Documents/feature-forge/` | Canonical home + per-project install. (superseded by row 18-v2 — 2026-06-17) |
+| 18-v2 | Skill location | Standalone repo at `~/.local/share/feature-forge/` (XDG default; respects $XDG_DATA_HOME) | Revisita v1.3 2026-06-17 — XDG is the universal convention for script-installed tools; ~/Documents/ conflates with the user's docs directory. |
 | 19 | Language | Python core + Bash dispatcher + YAML/MD specs | Pragmatic mix. |
 | 20 | Persistence | SQLite (graph) + arquivos (config, memory, docs) | Best of both. |
 | 21 | First implementation artifact | Forge init roteiro end-to-end | UX before code. |
