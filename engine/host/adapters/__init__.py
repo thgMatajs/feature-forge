@@ -7,5 +7,6 @@ registry's detection precedence.
 from __future__ import annotations
 
 from engine.host.adapters.intent_file import IntentFileAdapter
+from engine.host.adapters.tty import TtyAdapter
 
-__all__ = ["IntentFileAdapter"]
+__all__ = ["IntentFileAdapter", "TtyAdapter"]

@@ -451,12 +451,13 @@ def _resolve_adapter(project_root: Path):
 
     Task 0.7b — surgical delegate of ``ask``/``ask_multi``/``ask_text`` to
     the host-adapter ABC defined in ``engine.host.adapter``. The lazy
-    bootstrap registers ``IntentFileAdapter`` + ``ClaudeCodeAdapter``
-    on first call so production code does not need an explicit setup
-    hook at import time. Wave 2 will register the TTY + OPENCODE
-    adapters; until then, unknown hosts fall back to the intent-file
-    adapter (the safest default — DRIFT-1 protocol against
-    ``.claude/forge/state/`` works in any environment with disk access).
+    bootstrap registers the native adapters on first call so production
+    code does not need an explicit setup hook at import time. Wave 2
+    registers ``TtyAdapter`` (caminho TTY humano in-process — substitui o
+    antigo ``tty_bridge`` subprocess-loop). OPENCODE ainda não tem
+    adapter dedicado; hosts sem registro caem no intent-file (o default
+    mais seguro — DRIFT-1 contra ``.claude/forge/state/`` funciona em
+    qualquer ambiente com acesso a disco).
     """
     from engine.host.detect import detect_host
     from engine.host.registry import get_adapter_class, register
@@ -467,16 +468,18 @@ def _resolve_adapter(project_root: Path):
     except KeyError:
         from engine.host.adapters.intent_file import IntentFileAdapter
         from engine.host.adapters.claude_code import ClaudeCodeAdapter
+        from engine.host.adapters.tty import TtyAdapter
 
         register(HostName.INTENT_FILE, IntentFileAdapter)
         register(HostName.CLAUDE_CODE, ClaudeCodeAdapter)
+        register(HostName.TTY, TtyAdapter)
 
     host = detect_host(project_root)
     try:
         cls = get_adapter_class(host)
     except KeyError:
-        # Wave 2 will register TTY + OPENCODE; until then, fallback to
-        # intent-file so re-entry remains correct under any host.
+        # OPENCODE ainda sem adapter dedicado; fallback pro intent-file
+        # mantém re-entry correto sob qualquer host não-registrado.
         cls = get_adapter_class(HostName.INTENT_FILE)
     return cls(project_root=project_root)
 
