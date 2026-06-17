@@ -30,11 +30,11 @@ from engine.memory.l2 import l2_size_bytes
 from engine.ui import renderer
 from engine.utils.paths import (
     ProjectRootNotFoundError,
+    active_config_path,
     claude_dir,
     find_project_root,
     memory_dir,
     memory_l2_path,
-    workflow_config_path,
 )
 from engine.utils.yaml_io import YamlIOError, read_yaml
 
@@ -53,7 +53,7 @@ def run(argv: list[str]) -> int:  # noqa: ARG001 — no args by design
         renderer.write("Rode `forge init` antes.")
         return 1
 
-    config = _safe_read_yaml(workflow_config_path(project_root)) or {}
+    config = _safe_read_yaml(active_config_path(project_root)) or {}
 
     renderer.write("")
     renderer.write(renderer.bold("forge status"))

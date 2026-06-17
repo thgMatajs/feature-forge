@@ -78,6 +78,55 @@ def test_validators_import_subnamespace_helpers() -> None:
 
 
 @pytest.mark.integration
+def test_status_verify_reconfigure_resolve_active_config() -> None:
+    """status/verify/reconfigure liam a config ativa via o resolver
+    `active_config_path` — não mais o `workflow_config_path` direto.
+
+    Antes do fix, esses três comandos liam só o legado
+    `.claude/workflow-config.yaml`; depois de um init v1.4 limpo (que grava
+    em `.claude/forge/forge-config.yaml`), liam config vazia. A asserção
+    estática garante que a callsite de leitura passou pelo resolver.
+    """
+    import inspect
+
+    from engine import reconfigure, status, verify
+
+    for mod in (status, verify, reconfigure):
+        src = inspect.getsource(mod)
+        assert "active_config_path" in src, (
+            f"{mod.__name__} deveria ler config via active_config_path"
+        )
+        # Nenhum dos três ainda invoca workflow_config_path diretamente —
+        # o resolver é o único caminho de leitura da config ativa.
+        assert "workflow_config_path(" not in src, (
+            f"{mod.__name__} ainda chama workflow_config_path() — deveria usar o resolver"
+        )
+
+
+@pytest.mark.integration
+def test_fresh_init_layout_read_via_resolver(tmp_path: Path) -> None:
+    """Cenário fresh-init v1.4: SÓ `.claude/forge/forge-config.yaml` existe.
+
+    O resolver tem que apontar pra esse arquivo (config NÃO vazia), espelhando
+    o que status/verify/reconfigure passam a fazer ao ler a config ativa.
+    """
+    from engine.utils.paths import active_config_path, forge_config_path
+    from engine.utils.yaml_io import read_yaml_or_default
+
+    forge_dir = tmp_path / ".claude" / "forge"
+    forge_dir.mkdir(parents=True)
+    forge_config_path(tmp_path).write_text(
+        "schema-version: 1\nhost: intent-file\n", encoding="utf-8"
+    )
+    # Sem legado presente: o resolver resolve pro forge-config.
+    resolved = active_config_path(tmp_path)
+    assert resolved == forge_config_path(tmp_path)
+    cfg = read_yaml_or_default(resolved, {})
+    assert cfg.get("schema-version") == 1
+    assert cfg.get("host") == "intent-file"
+
+
+@pytest.mark.integration
 def test_engine_implement_state_uses_forge_state_dir() -> None:
     """``engine/implement.py`` aponta state files pro sub-namespace."""
     import inspect

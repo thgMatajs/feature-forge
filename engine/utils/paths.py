@@ -246,6 +246,36 @@ def forge_config_path(project_root: Path) -> Path:
     return forge_dir(project_root) / "forge-config.yaml"
 
 
+def active_config_path(project_root: Path) -> Path:
+    """Resolve a config ativa do projeto, com precedência primário → legado.
+
+    Há dois lugares onde a config de um projeto pode viver, e este módulo já
+    documenta a intenção dual-path (ver docstrings de `_is_project_root` e
+    `find_project_root`):
+
+    1. Primário (v1.3+): `.claude/forge/forge-config.yaml` — o que `forge init`
+       grava no sub-namespace canônico (Spec §2).
+    2. Legado (v1.2 compat): `.claude/workflow-config.yaml` — onde projetos
+       inicializados antes da mudança de sub-namespace guardam a config.
+
+    A regra é simples e honra essa intenção: se o primário existe no disco,
+    é ele. Senão, cai pro legado. Se NENHUM dos dois existe ainda — projeto
+    novo, prestes a ser inicializado — devolvemos o primário, porque ele é o
+    destino canônico de escrita; nunca semeamos o caminho legado.
+
+    Compor aqui (em vez de duplicar a precedência em cada consumidor) garante
+    que ler e gravar a config caiam sempre no MESMO arquivo — sem o split que
+    surgia quando `init` gravava no primário mas os comandos liam só o legado.
+    """
+    primary = forge_config_path(project_root)
+    if primary.is_file():
+        return primary
+    legacy = workflow_config_path(project_root)
+    if legacy.is_file():
+        return legacy
+    return primary
+
+
 def forge_state_dir(project_root: Path) -> Path:
     return forge_dir(project_root) / "state"
 

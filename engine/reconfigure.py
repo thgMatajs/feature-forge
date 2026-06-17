@@ -57,13 +57,13 @@ from engine.inventory import (
 from engine.ui import progress as ui_progress
 from engine.ui import question, renderer
 from engine.utils.paths import (
+    active_config_path,
     cards_canonical_dir,
     cards_dir,
     claude_dir,
     find_project_root,
     forge_cards_local_dir,
     forge_hooks_dir,
-    workflow_config_path,
 )
 from engine.utils.sha256 import file_sha256
 from engine.utils.paths import ensure_dir as _ensure_dir
@@ -186,10 +186,14 @@ def run(argv: list[str]) -> int:
         sys.stderr.write(f"forge reconfigure: {exc}\n")
         return 1
 
-    config_path = workflow_config_path(project_root)
+    # Resolve a config ativa (forge-config primário → legado). Ler e gravar
+    # caem no MESMO arquivo, então reconfigure nunca splita a config entre os
+    # dois paths. Quando nenhum existe, o resolver devolve o primário e o guard
+    # abaixo dispara o caminho de erro "rode forge init".
+    config_path = active_config_path(project_root)
     if not config_path.is_file():
         sys.stderr.write(
-            "forge reconfigure: nenhum workflow-config.yaml encontrado — "
+            "forge reconfigure: nenhuma forge-config.yaml encontrada — "
             "rode `forge init` primeiro.\n"
         )
         return 1
