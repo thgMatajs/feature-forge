@@ -63,6 +63,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "undo":        ("engine.undo",        "run"),
     "raw":         ("engine.raw",         "run"),
     "qa":          ("engine.cli",         "_qa_run"),
+    "upgrade":     ("engine.upgrade",     "run"),
     # Hidden — never advertised in --help, only invoked by hooks.
     # See docs/design/06-command-surface.md §Hidden internal entrypoints.
     "ingest":      ("engine.ingest",      "run"),
@@ -71,7 +72,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
 _VISIBLE_ORDER = (
     "init", "plan", "implement", "verify",
     "status", "doctor", "reconfigure", "graph",
-    "memory", "evolve", "undo", "raw", "qa",
+    "memory", "evolve", "undo", "raw", "qa", "upgrade",
 )
 
 
@@ -183,6 +184,7 @@ _BOOTSTRAP_SKIP_COMMANDS: frozenset[str] = frozenset({
     "status",     # read-only — inspeção de estado
     "memory",     # read-only — leitura/listagem de L1/L2/L3
     "raw",        # read-only — pipe genérica de leitura
+    "upgrade",    # opera no FORGE_HOME, não no projeto consumidor — sem project root
 })
 
 
@@ -239,7 +241,7 @@ def _print_help() -> None:
     lines.append("")
     lines.append("Usage: forge <subcomando>")
     lines.append("")
-    lines.append("Subcomandos (13):")
+    lines.append("Subcomandos (14):")
     for cmd in _VISIBLE_ORDER:
         lines.append(f"  forge {cmd}")
     lines.append("")
