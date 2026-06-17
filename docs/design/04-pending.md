@@ -227,6 +227,32 @@ v1.3 ship completo cobrindo A+B+C+D — 6 waves entregues:
   `engine/ui/question.py` ambos definem `_SCHEMA_VERSION = "1.0"`. Cosmético
   mas viola DRY. Critério: próxima mudança de schema de intent protocol.
 
+### Adiados do PR #17 automated-review triage (2026-06-17)
+
+Findings de bots no PR #17 (gemini + codereviewbot) com fix correto fora
+do escopo de quick-fix — exigem brainstorm ou tocam contrato compartilhado.
+Registrados aqui pra reentrada consciente, não pra escapar do trabalho.
+
+- **TTY-fallback ask_multi validation** — duas frouxidões no caminho TTY:
+  (1) submissão vazia aceita quando `min_selected == 0` —
+  `_is_valid_token` em `engine/ui/_stdin_prompt.py` não rejeita token
+  vazio; (2) ausência de fail-fast quando `min_selected > len(options)` em
+  `ask_multi` (`engine/ui/question.py`), permitindo pedido impossível
+  silenciar. *Adiado:* o caminho TTY é fallback não-canônico — o exec
+  model canônico é Claude-Code-fronted (engine emite intent, CC usa
+  AskUserQuestion). Endereçar via brainstorm quando o fallback for
+  priorizado. Origem: review de bots no PR #17 (gemini HIGH +
+  codereviewbot).
+- **Workflow-config YAML malformado → erro amigável** —
+  `read_yaml_or_default` só retorna o default quando o arquivo está
+  AUSENTE; YAML malformado levanta `YamlIOError` não-tratado nos call
+  sites `_qa_run` (`engine/cli.py`), `_load_workflow_config`
+  (`engine/evolve.py`, `engine/memory_cli.py`). O fix correto é erro
+  loud/friendly na camada de config-loading — toca o contrato do helper
+  compartilhado + 3 sites + a decisão loud-vs-silent —, então vira tarefa
+  separada com brainstorm. *Adiado:* cross-cutting + decisão de contrato.
+  Origem: review de bots no PR #17.
+
 ### v1.3 Wave 2 — Limitações conhecidas (2026-06-16)
 
 - **opencode usa IntentFileAdapter como fallback (Veredito B)** —

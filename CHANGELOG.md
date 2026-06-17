@@ -272,6 +272,21 @@ PR #17): rapid **1611 passed**, integration **168 passed**, e2e **30 passed**,
   `json5` ausente (system pytest fallback); os outros 4 testes de
   settings_merge funcionam com fallback stdlib `json`. Wave 1 follow-up.
 - **find_project_root marker mismatch (pilot-blocker)**: `engine/utils/paths.py::find_project_root` reconhece agora `.claude/forge/forge-config.yaml` (marker v1.3 que `forge init` cria) como raiz de projeto, além do legacy `.claude/workflow-config.yaml` (compat v1.2). Antes, após `forge init` greenfield, os ~12 comandos que resolvem a raiz via find_project_root levantavam ProjectRootNotFoundError ("não inicializado") mesmo com o projeto inicializado — ciclo init→uso quebrado. Gap herdado da migração de sub-namespace (Wave 0), não coberto por teste (testes semeavam o marker legacy à mão). Regression test fecha o gap (init greenfield → find_project_root resolve + comando de subdir funciona).
+- **`install.sh` — guarda disponibilidade de `/dev/tty` em ambiente
+  não-interativo** (review PR #17, F27 + F28) — os dois prompts interativos
+  (conflito de binário + setup de PATH) ganham guard 3-vias: stdin tty → lê
+  do stdin; senão `/dev/tty` legível → lê de `/dev/tty`; senão (curl|bash em
+  CI/Docker sem terminal) assume o default seguro e avisa em vez de ler de
+  `/dev/tty` sob `set -euo pipefail` (que abortava o install inteiro). Default
+  seguro: conflito de binário → instala como `forge-cli` (não sobrescreve o
+  `forge` existente); PATH → imprime a linha manual sem editar o rc file.
+- **tests/upgrade — asserts de rollback e warning de no-tags reforçados**
+  (review PR #17, F37 + F38) — `test_upgrade_rollback_on_smoke_fail` passa a
+  verificar a sequência completa de checkout (forward pro tag de release
+  ANTES do rollback pro prev_sha), não só a última chamada;
+  `test_upgrade_no_op_when_no_tags` captura stdout via `capsys` e ancora no
+  warning documentado do branch sem release tags. Asserts existentes
+  preservados; mudança aditiva.
 
 ### Removed
 
