@@ -410,14 +410,28 @@ def read_response(
     - The decoded dict on match (from the log on re-entry, from the
       file on first consume).
 
+    Stale-consumed guard (multi-Q re-entry, 2026-06-16):
+
+    When the file's ``intent-id`` (``written_id``) differs from
+    ``intent_id`` but ``written_id`` is already in the consumed-log, the
+    file is a STALE leftover — a prior question's response that survived
+    because ``engine/cli.py`` only clears state at the end of the whole
+    invocation (not between questions). Commands that ask 2+ questions in
+    one invocation without a pause between them (e.g. ``reconfigure``
+    backend submenu) hit this on the SECOND ``ask()``: question A's
+    response is on disk and logged, question B's ``intent_id`` is in
+    neither. That is not a mismatch — it is "not my response yet" → return
+    ``None`` so the caller emits pending(``intent_id``) + exits 2.
+
     Raises:
-    - ``IntentMismatchError`` if the response file is on disk but its
-      ``intent-id`` differs from ``intent_id`` AND the log lacks an
-      entry for ``intent_id``. The file is preserved for forensic
-      value. The "log lacks entry" guard is important: in a multi-
-      intent re-entry, the log has the first intent's response and the
-      file has the second intent's response — both legitimate, no
-      mismatch.
+    - ``IntentMismatchError`` if the response file is on disk, its
+      ``intent-id`` differs from ``intent_id``, the log lacks an entry
+      for ``intent_id``, AND ``written_id`` is NOT in the log. The file
+      is preserved for forensic value — a genuine mismatch means an
+      orphan/unexpected response (``written_id`` was never consumed this
+      lifecycle), so the value is worth inspecting. The two guards work
+      together: ``intent_id`` not logged rules out branch-1 re-entry;
+      ``written_id`` not logged rules out the stale-consumed case above.
     - ``json_io.JsonIOError`` (propagated) if the response file is
       malformed JSON.
     """
@@ -435,6 +449,15 @@ def read_response(
     _check_schema_version(response, path=path, kind="response")
     written_id = response.get("intent-id")
     if written_id != intent_id:
+        if written_id in log:
+            # Stale-consumido: o file carrega um intent-id JÁ consumido
+            # neste lifecycle (está no log). Em comandos que fazem 2+
+            # perguntas na mesma invocação (ex.: reconfigure backend
+            # submenu), o file da pergunta anterior sobrevive até o
+            # cleanup final (cli.py finally) — não é mismatch genuíno.
+            # Tratar como "não é minha resposta" → None, pro caller emitir
+            # pending(intent_id) + exit 2 (handshake normal).
+            return None
         raise IntentMismatchError(
             "response intent-id mismatch — "
             f"expected '{intent_id}', got '{written_id}'. "
@@ -568,6 +591,10 @@ def detect_race(
     - No existing pending → returns ``None`` (safe to proceed).
     - Existing pending has the same ``intent-id`` → returns ``None``
       (treated as a re-emission of the same intent, not a race).
+    - Existing pending's ``intent-id`` is already in the consumed-log
+      (already answered this lifecycle — multi-Q leftover, not a
+      concurrent invocation) → swept; returns ``None``. Symmetric to the
+      stale-consumed guard in ``read_response``.
     - Existing pending is stale (``created-at`` > 10 minutes old OR
       missing/malformed) → swept; returns ``None``.
     - Existing pending is recent with a different ``intent-id`` →
@@ -593,6 +620,20 @@ def detect_race(
     existing_id = existing.get("intent-id")
     if existing_id == new_intent_id:
         return None
+
+    # Stale-consumido (simétrico ao guard de read_response): se o pending
+    # existente carrega um intent-id JÁ consumido neste lifecycle (está no
+    # log), ele é leftover de uma pergunta anterior — não uma invocação
+    # concorrente. Em comandos que fazem 2+ perguntas na mesma invocação
+    # (ex.: reconfigure backend submenu), o pending da pergunta 1 sobrevive
+    # até o cleanup final; ao emitir o pending da pergunta 2, o pending 1
+    # ainda está no disco. Como sua resposta já foi consumida, varre e segue
+    # em vez de levantar RaceDetectedError (falso positivo de race).
+    if isinstance(existing_id, str):
+        log = _read_intent_log(project_root, state_dir=state_dir)
+        if existing_id in log:
+            json_io.delete_if_exists(pending_path)
+            return None
 
     created = _parse_created_at(existing.get("created-at", ""))
     now = datetime.now(timezone.utc)

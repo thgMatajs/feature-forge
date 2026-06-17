@@ -143,6 +143,77 @@ def test_read_response_raises_on_intent_id_mismatch(tmp_project_root):
     assert response_path.exists()
 
 
+def test_read_response_stale_consumed_file_returns_none(tmp_project_root):
+    """Multi-Q re-entry: file holds an id already consumed this lifecycle.
+
+    Sequência sob host real (subprocess) em comando que faz 2+ perguntas
+    na mesma invocação (ex.: reconfigure backend submenu):
+
+      1. ask(id-A) → file id-A → match → consumed-log ganha id-A. File
+         NÃO é limpo (cli.py finally limpa só no fim da invocação).
+      2. handler avança → ask(id-B). File ainda tem id-A. id-B não está
+         no log, nem no file.
+
+    O file (id-A) já foi CONSUMIDO neste lifecycle — é stale, não um
+    mismatch genuíno. Deve retornar None pro caller emitir pending(id-B)
+    + exit 2 (handshake normal), NÃO levantar IntentMismatchError.
+    """
+    intent_state._reset_log_cache()
+    consumed_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    fresh_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+
+    # id-A já consumido neste lifecycle (está no log).
+    intent_state._append_intent_log(
+        tmp_project_root,
+        intent_id=consumed_id,
+        response=_response_payload(intent_id=consumed_id),
+    )
+    # File on-disk ainda carrega o id-A (não foi limpo entre as perguntas).
+    response_path = tmp_project_root / ".claude" / "forge" / "state" / "forge-response.json"
+    response_path.parent.mkdir(parents=True, exist_ok=True)
+    response_path.write_text(
+        json.dumps(_response_payload(intent_id=consumed_id)),
+        encoding="utf-8",
+    )
+
+    # Pergunta nova (id-B): não está no log nem no file → stale, return None.
+    result = intent_state.read_response(tmp_project_root, intent_id=fresh_id)
+    assert result is None, (
+        "file id já consumido no log deve ser tratado como stale (None), "
+        "não como mismatch"
+    )
+    # File preservado — o caller decide o ciclo de limpeza.
+    assert response_path.exists()
+
+
+def test_read_response_genuine_mismatch_still_raises_when_file_id_not_logged(
+    tmp_project_root,
+):
+    """Mismatch genuíno preserva o comportamento forense.
+
+    File tem id-X que NÃO está no log; request id-Y. Como id-X nunca foi
+    consumido neste lifecycle, é resposta órfã/inesperada → ainda
+    IntentMismatchError (preserva valor forense). Guard stale-consumido
+    NÃO afrouxa este caso.
+    """
+    intent_state._reset_log_cache()
+    file_id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+    requested_id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+
+    response_path = tmp_project_root / ".claude" / "forge" / "state" / "forge-response.json"
+    response_path.parent.mkdir(parents=True)
+    response_path.write_text(
+        json.dumps(_response_payload(intent_id=file_id)),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(intent_state.IntentMismatchError) as exc:
+        intent_state.read_response(tmp_project_root, intent_id=requested_id)
+    assert file_id in str(exc.value)
+    assert requested_id in str(exc.value)
+    assert response_path.exists()
+
+
 def test_read_response_raises_on_malformed_json(tmp_project_root):
     response_path = tmp_project_root / ".claude" / "forge" / "state" / "forge-response.json"
     response_path.parent.mkdir(parents=True)
@@ -241,6 +312,45 @@ def test_detect_race_raises_on_recent_concurrent_intent(tmp_project_root):
     assert "forge-pending.json" in message
     # Pending preservado (não sobrescreve).
     assert (tmp_project_root / ".claude" / "forge" / "state" / "forge-pending.json").exists()
+
+
+def test_detect_race_sweeps_pending_already_consumed_in_log(tmp_project_root):
+    """Multi-Q leftover: existing pending's id já consumido → sweep, not race.
+
+    Simétrico ao guard stale-consumido de read_response. Em comandos que
+    fazem 2+ perguntas na mesma invocação, o pending da pergunta 1
+    sobrevive no disco até o cleanup final. Ao emitir o pending da
+    pergunta 2 (id-B), o pending 1 (id-A) ainda está parqueado — mas como
+    a resposta de id-A já foi consumida (está no log), é leftover, não uma
+    invocação concorrente. detect_race deve varrer e seguir, NÃO levantar
+    RaceDetectedError.
+    """
+    intent_state._reset_log_cache()
+    consumed_id = "88888888-8888-4888-8888-888888888888"
+    fresh_id = "99999999-9999-4999-8999-999999999999"
+
+    # id-A já consumido neste lifecycle (está no log).
+    intent_state._append_intent_log(
+        tmp_project_root,
+        intent_id=consumed_id,
+        response=_response_payload(intent_id=consumed_id),
+    )
+    # Pending recente da pergunta 1 (id-A) ainda parqueado no disco.
+    recent_iso = (datetime.now(timezone.utc) - timedelta(minutes=2)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    intent_state.write_pending(
+        _pending_payload(intent_id=consumed_id, created_at=recent_iso),
+        tmp_project_root,
+    )
+    pending_path = tmp_project_root / ".claude" / "forge" / "state" / "forge-pending.json"
+    assert pending_path.exists()
+
+    # Emitir pending da pergunta 2 (id-B) → não é race, é leftover → sweep.
+    assert intent_state.detect_race(tmp_project_root, new_intent_id=fresh_id) is None
+    assert not pending_path.exists(), (
+        "pending já consumido (id no log) deve ser varrido, não tratado como race"
+    )
 
 
 def test_detect_race_handles_pending_missing_created_at(tmp_project_root):
