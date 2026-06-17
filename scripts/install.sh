@@ -77,6 +77,114 @@ echo "instalando dependências..."
 mkdir -p "$HOME/.local/bin"
 ln -sf "$FORGE_HOME/bin/forge" "$HOME/.local/bin/forge"
 
+# ── PATH detection + 3-caminhos ──────────────────────────────────────────────
+#
+# Detecta se ~/.local/bin já está no PATH.
+# Se não está, oferece 3-caminhos mentor-calmo:
+#   A) Adicionar ao rc file automaticamente (marker-guarded para idempotência)
+#   B) Mostrar a linha para o user adicionar manualmente
+#   C) Pular (user é responsável por configurar PATH)
+#
+# Spec ref: §3 D.1 — PATH detection canonical
+
+_forge_setup_path() {
+  local rc_file=""
+  local path_line=""
+  local marker="# added by feature-forge install"
+
+  # Detecta shell via $SHELL
+  local user_shell
+  user_shell="$(basename "${SHELL:-bash}")"
+
+  case "$user_shell" in
+    zsh)
+      rc_file="$HOME/.zshrc"
+      path_line='export PATH="$HOME/.local/bin:$PATH"'
+      ;;
+    bash)
+      # Prefere .bash_profile em macOS (login shell), .bashrc em Linux
+      if [[ -f "$HOME/.bash_profile" ]]; then
+        rc_file="$HOME/.bash_profile"
+      else
+        rc_file="$HOME/.bashrc"
+      fi
+      path_line='export PATH="$HOME/.local/bin:$PATH"'
+      ;;
+    fish)
+      rc_file="$HOME/.config/fish/config.fish"
+      path_line='fish_add_path $HOME/.local/bin'
+      ;;
+    *)
+      # Shell desconhecido — oferece linha genérica
+      rc_file=""
+      path_line='export PATH="$HOME/.local/bin:$PATH"'
+      ;;
+  esac
+
+  echo ""
+  echo "🔨 ~/.local/bin não está no PATH."
+  echo ""
+  echo "Três caminhos:"
+  if [[ -n "$rc_file" ]]; then
+    echo "  A) Adicionar automaticamente em $rc_file"
+  else
+    echo "  A) Imprimir linha para adicionar manualmente (shell $user_shell não reconhecido)"
+  fi
+  echo "  B) Mostrar a linha — você adiciona manualmente"
+  echo "  C) Pular (configure PATH por conta própria depois)"
+  echo ""
+
+  local choice
+  # Leitura interativa — funciona em terminal real; em pipe (curl | bash)
+  # /dev/tty garante acesso ao terminal mesmo com stdin redirecionado.
+  if [[ -t 0 ]]; then
+    read -r -p "Escolha [A/B/C]: " choice
+  else
+    read -r -p "Escolha [A/B/C]: " choice </dev/tty
+  fi
+
+  case "${choice,,}" in
+    a)
+      if [[ -n "$rc_file" ]]; then
+        # Idempotência: só adiciona se o marker ainda não existe
+        if ! grep -qF "$marker" "$rc_file" 2>/dev/null; then
+          {
+            echo ""
+            echo "$marker"
+            echo "$path_line"
+          } >> "$rc_file"
+          echo "adicionado em $rc_file — reabra o terminal ou execute: source $rc_file"
+        else
+          echo "PATH já configurado em $rc_file (marker encontrado) — nenhuma alteração."
+        fi
+      else
+        # Shell desconhecido: fallback pra imprimir
+        echo ""
+        echo "adicione ao seu rc file:"
+        echo "  $path_line"
+      fi
+      ;;
+    b)
+      echo ""
+      echo "adicione ao seu rc file:"
+      echo "  $path_line"
+      echo ""
+      echo "depois execute: source <seu-rc-file>"
+      ;;
+    c)
+      echo "PATH não configurado. Garanta que ~/.local/bin esteja no PATH antes de usar forge."
+      ;;
+    *)
+      echo "escolha inválida — PATH não configurado. Adicione ~/.local/bin ao PATH manualmente."
+      ;;
+  esac
+}
+
+# Só executa PATH detection se ~/.local/bin ainda não está no PATH
+if ! echo ":${PATH}:" | grep -q ":${HOME}/.local/bin:"; then
+  _forge_setup_path
+fi
+
 # ── Smoke ─────────────────────────────────────────────────────────────────────
 
 echo ""
