@@ -101,6 +101,22 @@ def _qa_run(argv: list[str]) -> int:
     )
     from engine.utils.yaml_io import read_yaml_or_default
 
+    # Guard de args: sem scope target, imprime 3-caminhos mentor-calmo e sai
+    # sem erro. Feito ANTES do find_project_root para que o user veja a
+    # mensagem orientativa mesmo em dir nao-inicializado. O ValueError que
+    # resolve_scope levantaria quando raw_target=="") nao e ScopeError e
+    # portanto nao era capturado pelo except em run_qa — causava traceback
+    # (Bug U4). Aqui interceptamos o caso de uso correto antes que chegue
+    # ao resolve_scope.
+    if not argv:
+        sys.stdout.write(
+            "forge qa requer um scope target. Tres caminhos:\n"
+            "  A) forge qa paranoid    — sweep cross-feature\n"
+            "  B) forge qa <slug>      — escopo single-feature\n"
+            "  C) forge qa --help      — ver doc completa\n"
+        )
+        return 0
+
     try:
         project_root = find_project_root()
     except ProjectRootNotFoundError as exc:
