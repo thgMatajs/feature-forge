@@ -8,7 +8,9 @@
 #   1. Verifica pré-requisitos (git, python3 >= 3.11)
 #   2. Define FORGE_HOME via XDG_DATA_HOME (~/.local/share/feature-forge por padrão)
 #   3. Guard: aborta se FORGE_HOME já existe (sugere forge upgrade)
-#   4. Clona o repositório em FORGE_HOME
+#   4. Descobre a última release tag (v*) no remote e clona ELA — a base é
+#      sempre uma release, nunca o main bleeding-edge. Fallback pra main só
+#      se nenhuma tag de release existir.
 #   5. Cria venv e instala dependências via pip install -e
 #   6. Cria symlink em ~/.local/bin/forge
 #   7. Smoke: forge --version
@@ -57,11 +59,28 @@ if [[ -d "$FORGE_HOME" ]]; then
   exit 1
 fi
 
-# ── Clone ─────────────────────────────────────────────────────────────────────
+# ── Clone (última release tag) ─────────────────────────────────────────────────
+#
+# feature-forge instala SEMPRE a partir da última release tag (v*), nunca do
+# main bleeding-edge. Isto mantém a base de cada instalação numa release
+# estável e versionada. Se nenhuma tag de release existir no remote, cai pra
+# main como fallback (repo recém-criado, antes do primeiro release).
+#
+# --sort=-v:refname ordena semver descendente (git 2.18+); o filtro 'v*' pega
+# apenas refs de release. Sed extrai o nome da tag do ref completo.
 
 echo ""
-echo "clonando feature-forge em $FORGE_HOME..."
-git clone --depth=1 "$FORGE_REPO_URL" "$FORGE_HOME"
+echo "descobrindo a última release de feature-forge..."
+LATEST_TAG=$(git ls-remote --tags --refs --sort=-v:refname "$FORGE_REPO_URL" 'v*' 2>/dev/null | head -n1 | sed 's#.*refs/tags/##')
+
+echo ""
+if [ -n "$LATEST_TAG" ]; then
+  echo "🔨 instalando release $LATEST_TAG em $FORGE_HOME..."
+  git clone --depth=1 --branch "$LATEST_TAG" "$FORGE_REPO_URL" "$FORGE_HOME"
+else
+  echo "🔨 nenhuma release tag encontrada — clonando main (fallback) em $FORGE_HOME..."
+  git clone --depth=1 "$FORGE_REPO_URL" "$FORGE_HOME"
+fi
 
 # ── Venv + dependências ───────────────────────────────────────────────────────
 
