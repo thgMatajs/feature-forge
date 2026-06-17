@@ -1,12 +1,16 @@
 # Testing — disciplina
 
-Mandamento #2: verde antes de "pronto". 1113 tests collected é estado-base (v1.2-dev pós-PR #9 — 2026-06-09).
+Mandamento #2: verde antes de "pronto".
+
+> **Counts por lane (snapshot release 1.4.0):** rapid 1569 / integration 162 / e2e 30.
+> Fonte canônica: `docs/design/08-session-handoff.md` (atualizada a cada wave).
+> Re-confirme com `.venv/bin/pytest -m 'not integration and not e2e' -q | tail -1`.
 
 ## Comandos canônicos
 
 ```bash
 # Lane completa (default)
-pytest                              # ~1113 tests, default lane (pós-PR #9 baseline)
+pytest                              # lane completa (ver handoff pra count atual)
 
 # Lane rápida (skip integration + e2e)
 pytest -m "not integration and not e2e"
@@ -103,7 +107,7 @@ Novo validator em `validators/` exige:
    severity level)
 4. Update `pyproject.toml` se introduzir marker novo
 
-### Validators ativos (v1.2-dev)
+### Validators ativos (v1.3+)
 
 15 validators no cascade. Novos desde v1.1:
 
@@ -133,8 +137,8 @@ Novo validator em `validators/` exige:
 Você só pode reportar trabalho "concluído" se TODOS:
 
 - [ ] `pytest` (full suite) sai com 0 falhas
-- [ ] Count de tests >= baseline (1113 em v1.2-dev pós-PR #9; consulte
-      `docs/design/08-session-handoff.md` pra current count)
+- [ ] Count de tests >= baseline (snapshot 1.4.0: rapid 1569 / integration 162 / e2e 30;
+      consulte `docs/design/08-session-handoff.md` pra current count)
 - [ ] `forge verify` passa cascade sem hard fail
 - [ ] Doc-sync executado (rule [doc-sync.md](doc-sync.md))
 - [ ] Subagent reviewer assinou off (REVIEW.md sem high/critical)
