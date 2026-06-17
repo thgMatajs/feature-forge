@@ -30,6 +30,7 @@ from engine.cards.snapshotter import compute_directory_sha256
 from engine.graph.incremental import remove_file as graph_remove_file
 from engine.graph.incremental import update_file as graph_update_file
 from engine.utils.paths import (
+    active_config_path,
     cards_dir,
     claude_dir,
     find_project_root,
@@ -37,7 +38,6 @@ from engine.utils.paths import (
     graph_db_path,
     memory_dir,
     try_find_project_root,
-    workflow_config_path,
 )
 from engine.utils.sqlite_io import open_db, transaction
 from engine.utils.yaml_io import read_yaml
@@ -302,7 +302,7 @@ def _handle_post_write_artifact(args: dict[str, str], project_root: Path) -> Non
 
 def _handle_session_start(args: dict[str, str], project_root: Path) -> None:
     """Drift check — snapshot sha256 vs canonical workflow-config card list."""
-    cfg_path = workflow_config_path(project_root)
+    cfg_path = active_config_path(project_root)
     if not cfg_path.is_file():
         return
     try:

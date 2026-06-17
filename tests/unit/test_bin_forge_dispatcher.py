@@ -1,27 +1,31 @@
-"""Unit tests — ``bin/forge`` dispatcher (DRIFT-1 W4.T1).
+"""Unit tests — ``bin/forge`` dispatcher (DRIFT-1 W4.T1 + Wave 2 clean break).
 
-The dispatcher is a tiny Bash shim that chooses between two execution
-paths after resolving ``FORGE_HOME``:
+The dispatcher is a tiny Bash shim that, after resolving ``FORGE_HOME``,
+always execs a single target:
 
-1. ``python -m engine.cli "$@"`` — intent-only mode. Picked when a
-   Claude-Code-style harness is fronting the engine (env hint), when
-   stdin or stdout is not a TTY (CI, pipes, subprocess), or when the
-   user explicitly overrides with ``FORGE_FORCE_INTENT_MODE=1``.
-2. ``python -m engine.ui.tty_bridge engine.cli "$@"`` — the TTY-fallback
-   bridge from W3. Default branch for genuine terminal sessions.
+    python -m engine.cli "$@"
+
+Host context (Claude-Code-style harness vs. real terminal) is resolved
+IN-PROCESS by ``engine.ui.question`` through the host adapter registry —
+the dispatcher no longer branches on it. Wave 2 removed the old
+``engine.ui.tty_bridge`` subprocess-loop (clean break); terminal-real
+prompting now lives in ``TtyAdapter`` (``engine/host/adapters/tty.py``),
+single-pass and in-process. The ``FORGE_FORCE_TTY_MODE`` override and the
+default bridge fallthrough are gone with it.
 
 Refs:
 - ``docs/superpowers/specs/drift-1-intent-protocol.md`` §6 sub-Q **Sd**,
   §8 (exit codes).
 - ``docs/superpowers/plans/drift-1-intent-protocol.md`` W4.T1.
 - ``bin/forge`` (dispatcher under test).
+- ``engine/host/adapters/tty.py`` (TtyAdapter — TTY path post clean break).
 
 Why these tests are unit-level: every assertion runs the dispatcher
 through ``subprocess.run``. Subprocess inherits no TTY, so the
-"non-interactive" detection path lights up naturally for every
-invocation — letting us verify the intent-mode branch with a single
-short-lived process per test. We do **not** drive the bridge branch
-from here (that needs a real PTY) — W5's e2e suite owns that.
+non-interactive detection path lights up naturally for every invocation;
+``engine.cli`` runs to completion regardless of which adapter the registry
+would pick at runtime. The real-PTY path is exercised by the e2e suite
+(``tests/e2e/test_tty_adapter_pty.py``).
 """
 
 from __future__ import annotations
@@ -156,88 +160,72 @@ def test_default_non_tty_invocation_routes_to_intent_mode() -> None:
     assert "forge" in result.stdout.lower()
 
 
-# --- FORGE_FORCE_TTY_MODE (PR #11 review finding #3) -----------------------
+# --- Wave 2 clean break — terminal-real migra pra engine.cli --------------
 
 
-def test_force_tty_mode_dispatches_tty_bridge() -> None:
-    """``FORGE_FORCE_TTY_MODE=1`` → bridge path (engine.ui.tty_bridge).
+def test_terminal_real_routes_to_engine_cli() -> None:
+    """Real-terminal (sem CLAUDECODE, sem FORGE_FORCE_INTENT_MODE) → engine.cli.
 
-    Finding #3 do master-review do PR #11: CHANGELOG + SPEC declaravam
-    o override mas o dispatcher só implementava ``FORGE_FORCE_INTENT_MODE``.
-    Este teste prova que o override foi ligado e que o bridge é
-    realmente o módulo executado.
+    Wave 2 clean break: o antigo ramo ``else → engine.ui.tty_bridge`` (que
+    rodava pra sessões de terminal genuíno) foi removido junto com o
+    subprocess-loop. O dispatcher agora tem um único alvo de exec —
+    ``engine.cli`` — e a rota TTY humana é resolvida in-process pelo
+    ``TtyAdapter`` via o registry de adapters em ``question._resolve_adapter``.
 
-    Verificação indireta: o bridge define ``FORGE_INTERNAL_TTY_BRIDGE=1``
-    no env do subprocesso filho (ver ``engine/ui/tty_bridge.py``), e o
-    engine pode observá-lo. Pra um teste unit barato, validamos que o
-    comando ``--version`` ainda completa com saída esperada — o bridge
-    passa returncode verbatim, então sucesso ponta-a-ponta significa
-    que o caminho funcional foi exercido sem crash.
+    Este teste cobre a migração de duas formas:
+
+    1. Inspeção estática — o dispatcher exec'a ``engine.cli`` e NÃO
+       exec'a mais o módulo deletado ``engine.ui.tty_bridge`` (a única
+       menção remanescente é no comentário que documenta o clean break),
+       nem carrega o override ``FORGE_FORCE_TTY_MODE``.
+    2. Runtime — com todos os sinais de intent-mode removidos do env (o
+       cenário que antes caía no ramo bridge), o comando ainda completa
+       limpo, provando que ``engine.cli`` é alcançado sem crash.
     """
-    result = _run_forge(
-        ["--version"], env_overrides={"FORGE_FORCE_TTY_MODE": "1"}
+    body = BIN_FORGE.read_text(encoding="utf-8")
+    assert "exec" in body and "engine.cli" in body, (
+        "dispatcher should exec engine.cli"
+    )
+    # Nenhuma LINHA exec'a o bridge deletado. Olhamos só as linhas exec
+    # (não comentários) — o cabeçalho documenta o clean break e pode citar
+    # o nome do módulo antigo legitimamente.
+    exec_lines = [
+        line for line in body.splitlines()
+        if line.strip().startswith("exec ")
+    ]
+    assert exec_lines, "dispatcher has no exec line"
+    for line in exec_lines:
+        assert "engine.ui.tty_bridge" not in line, (
+            f"dispatcher still exec's the deleted bridge: {line!r}"
+        )
+        assert "engine.cli" in line, (
+            f"unexpected exec target (not engine.cli): {line!r}"
+        )
+    # O override FORGE_FORCE_TTY_MODE saiu por completo (sem branch, sem
+    # comentário citando-o como caminho ativo).
+    assert "FORGE_FORCE_TTY_MODE" not in body, (
+        "dispatcher still carries the removed FORGE_FORCE_TTY_MODE override"
+    )
+
+    # Runtime: strip the intent-mode signals so this mirrors the old
+    # real-terminal branch as closely as a subprocess (no TTY) allows.
+    env = os.environ.copy()
+    env["FORGE_PYTHON"] = sys.executable
+    env.pop("FORGE_FORCE_INTENT_MODE", None)
+    env.pop("FORGE_FORCE_TTY_MODE", None)
+    env.pop("CLAUDECODE", None)
+    result = subprocess.run(
+        [str(BIN_FORGE), "--version"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0, (
         f"exit {result.returncode}; stderr={result.stderr!r}"
     )
     assert "forge" in result.stdout.lower(), (
         f"version output missing 'forge': stdout={result.stdout!r}"
-    )
-
-
-def test_force_tty_mode_overrides_intent_signals() -> None:
-    """``FORGE_FORCE_TTY_MODE=1`` vence até CLAUDECODE + FORGE_FORCE_INTENT_MODE.
-
-    Precedência declarada em ``bin/forge``: TTY_MODE é checado ANTES
-    dos sinais de intent-mode (CLAUDECODE / non-TTY /
-    FORGE_FORCE_INTENT_MODE). Esta é a única forma de o operador
-    forçar o bridge mesmo dentro de um harness Claude Code — sem isso,
-    o override seria inerte na maioria dos cenários reais.
-
-    Verificação: dispatcher não-crasha e propaga --version mesmo quando
-    todos os sinais de intent-mode estão ativos simultaneamente. O
-    bridge sobrescreve a rota; engine ainda imprime versão via exec.
-    """
-    result = _run_forge(
-        ["--version"],
-        env_overrides={
-            "FORGE_FORCE_TTY_MODE": "1",
-            "FORGE_FORCE_INTENT_MODE": "1",
-            "CLAUDECODE": "1",
-        },
-    )
-    assert result.returncode == 0, (
-        f"exit {result.returncode}; stderr={result.stderr!r}"
-    )
-    assert "forge" in result.stdout.lower()
-
-
-def test_force_tty_mode_routes_through_tty_bridge_module() -> None:
-    """Inspeção estática: dispatcher exec'a ``engine.ui.tty_bridge`` no
-    ramo ``FORGE_FORCE_TTY_MODE``.
-
-    Complementa os testes de runtime acima — runtime prova que o
-    caminho funciona, este prova que é o módulo CORRETO. Sem isso,
-    uma refatoração que route TTY_MODE pra engine.cli direto passaria
-    despercebida (e quebraria a SPEC §6 Sd).
-    """
-    body = BIN_FORGE.read_text(encoding="utf-8")
-    assert "FORGE_FORCE_TTY_MODE" in body, (
-        "bin/forge missing FORGE_FORCE_TTY_MODE override"
-    )
-    # Garante que o override roteia pro bridge, não pro engine.cli.
-    # Heurística: localiza a linha de teste real (``if [[ -n
-    # "${FORGE_FORCE_TTY_MODE:-}" ]]``) — não o comentário descritivo
-    # que vem antes — e exige tty_bridge na janela seguinte.
-    marker = '[[ -n "${FORGE_FORCE_TTY_MODE:-}" ]]'
-    assert marker in body, (
-        f"dispatcher missing FORGE_FORCE_TTY_MODE conditional: {marker!r}"
-    )
-    idx = body.index(marker)
-    window = body[idx : idx + 200]
-    assert "engine.ui.tty_bridge" in window, (
-        f"FORGE_FORCE_TTY_MODE branch does not exec engine.ui.tty_bridge; "
-        f"window={window!r}"
     )
 
 

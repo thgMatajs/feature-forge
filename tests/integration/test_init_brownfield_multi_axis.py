@@ -102,11 +102,37 @@ def _scaffold_project(tmp_path: Path) -> Path:
     `.claude/workflow-config.yaml`. Sem esse marker, ele cai no
     fallback `cwd` — que sob pytest é o working dir do runner, NÃO o
     tmp_path. Mesma estratégia que `test_intent_protocol_e2e.py`.
+
+    Pin de host `intent-file` (fallout do commit e43be4c — 2026-06-17):
+    desde que `ask_three_paths`/`confirm` passaram a delegar ao host
+    adapter resolvido, a suite (rodando sob `CLAUDECODE=1` herdado)
+    resolveria o ClaudeCodeAdapter, que emite o marker `<FORGE_INTENT />`
+    no stdout em vez de gravar `forge-pending.json`. Estes testes assertam
+    justamente o protocolo file-based (pending/response), então fixamos
+    `host: intent-file` via `forge-config.yaml` — a precedência mais alta
+    em `engine.host.detect.detect_host` (config vence env). Espelha o
+    padrão de `tests/unit/test_ui_question_intent.py` + a correção que o
+    cluster A aplicou em `tests/unit/test_engine_reconfigure_resume.py`.
+
+    O cache per-`project_root` de `detect_host` é limpo aqui porque o
+    config precisa existir ANTES da primeira resolução; idem o log cache
+    de `intent_state` (defensivo — cada teste recebe `tmp_path` fresco).
     """
     claude = tmp_path / ".claude"
     claude.mkdir(parents=True, exist_ok=True)
     (claude / "workflow-config.yaml").write_text("{}\n", encoding="utf-8")
-    (claude / "state").mkdir(exist_ok=True)
+    (claude / "forge" / "state").mkdir(parents=True, exist_ok=True)
+
+    forge_dir = claude / "forge"
+    (forge_dir / "forge-config.yaml").write_text(
+        "host: intent-file\n", encoding="utf-8"
+    )
+    from engine.host import detect as _host_detect
+
+    _host_detect._clear_cache()
+    from engine.ui import intent_state as _intent_state
+
+    _intent_state._reset_log_cache()
     return tmp_path
 
 
@@ -144,13 +170,13 @@ dependencies {
 
 
 def _write_response(project_root: Path, intent_id: str, value: str) -> None:
-    """Escreve `.claude/state/forge-response.json` casando o intent-id."""
+    """Escreve `.claude/forge/state/forge-response.json` casando o intent-id."""
     response = {
         "schema-version": 1,
         "intent-id": intent_id,
         "value": value,
     }
-    state_dir = project_root / ".claude" / "state"
+    state_dir = project_root / ".claude" / "forge" / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "forge-response.json").write_text(
         json.dumps(response), encoding="utf-8"
@@ -275,9 +301,21 @@ def test_brownfield_handler_confirm_returns_structured_result(
         f"confirm path must accept composer detection; selected={selected!r}"
     )
 
-    # Intent files cleared after successful consumption (Phase A contract).
-    assert intent_state.read_pending(tmp_path) is None, (
-        "pending must be cleared after a consumed response"
+    # Contrato pós-delegação (fallout do commit e43be4c — CR-002,
+    # 2026-06-17): com `ask_three_paths`/`confirm` delegando ao host
+    # adapter, o consume da response NÃO auto-limpa o pending em disco — a
+    # limpeza terminal é responsabilidade do `cli.main` finally (e mesmo lá
+    # SPEC §3 preserva pending/response forensicamente, limpando só o
+    # intent-log). Isso unifica este handler com `ask`/`ask_text`/
+    # `ask_multi` e espelha a correção que o cluster A aplicou em
+    # `tests/unit/test_engine_reconfigure_resume.py`. O que prova o consume
+    # bem-sucedido NÃO é a ausência do pending, mas o handler ter retornado
+    # um result estruturado (`choice="confirm"` + `firebase-auth`) em vez de
+    # re-pausar — já assertado acima. A response foi consumida via
+    # intent-log; nova chamada não re-emitiria o mesmo intent-id.
+    assert intent_state.read_pending(tmp_path) is not None, (
+        "pending sobrevive ao consume após delegação (CR-002 — a limpeza "
+        "terminal é trabalho do cli.main finally, não do consume per-prompt)"
     )
 
 

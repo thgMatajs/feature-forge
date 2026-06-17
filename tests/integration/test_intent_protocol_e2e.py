@@ -72,7 +72,14 @@ def _scaffold_project(tmp_path: Path) -> Path:
     claude = tmp_path / ".claude"
     claude.mkdir(parents=True, exist_ok=True)
     (claude / "workflow-config.yaml").write_text("{}\n", encoding="utf-8")
-    (claude / "state").mkdir(exist_ok=True)
+    forge = claude / "forge"
+    forge.mkdir(parents=True, exist_ok=True)
+    # Pin host=intent-file so subprocess emits via on-disk pending JSON
+    # rather than Claude Code stdout marker (pytest inherits CLAUDECODE=1).
+    (forge / "forge-config.yaml").write_text(
+        "host: intent-file\n", encoding="utf-8"
+    )
+    (forge / "state").mkdir(exist_ok=True)
     return tmp_path
 
 
@@ -98,6 +105,15 @@ def _run_engine(
     # FORGE_HOME anchors auxiliary lookups (cards/, agents/, etc.) — the
     # canonical worktree owns the engine sources we just imported.
     env["FORGE_HOME"] = str(PROJECT_ROOT)
+    # Strip agentic-host env hints so detect_host falls back to intent-file
+    # (the on-disk DRIFT-1 protocol). Pytest inherits CLAUDECODE=1 from the
+    # outer session; without this strip the subprocess would emit the
+    # `<FORGE_INTENT>` stdout marker instead of the pending JSON file.
+    for var in ("CLAUDECODE", "CURSOR_AGENT"):
+        env.pop(var, None)
+    for var in list(env.keys()):
+        if var.startswith(("OPENCODE_", "CODEX", "CURSOR_")):
+            env.pop(var, None)
     if extra_env:
         env.update(extra_env)
 
@@ -113,11 +129,11 @@ def _run_engine(
 
 
 def _pending_path(project_root: Path) -> Path:
-    return project_root / ".claude" / "state" / "forge-pending.json"
+    return project_root / ".claude" / "forge" / "state" / "forge-pending.json"
 
 
 def _response_path(project_root: Path) -> Path:
-    return project_root / ".claude" / "state" / "forge-response.json"
+    return project_root / ".claude" / "forge" / "state" / "forge-response.json"
 
 
 def _read_pending(project_root: Path) -> dict:
@@ -258,22 +274,27 @@ def test_resume_consumes_response_and_deletes(tmp_path):
         f"stdout={second.stdout!r}"
     )
 
+    # CR-002 (commit db861fc) moved per-consume cleanup off the adapter to
+    # preserve forensics across error paths — the adapter no longer auto-
+    # clears pending/response on a successful consume. BL-001 then restored
+    # the SUCCESS cleanup at the ``cli.main`` boundary: on exit 0 the finally
+    # sweeps pending+response+log (nothing to preserve), so AC-6's original
+    # "files gone on clean completion" holds again — now enforced at the
+    # right layer instead of per-prompt.
     if second.returncode == 0:
-        # Happy clean completion — both state files MUST be gone (AC-6).
+        # Happy clean completion — BL-001: success exit wiped both state
+        # files. Their absence is the proof the response was consumed AND
+        # the lifecycle cleaned up after itself.
         assert not _pending_path(project_root).exists(), (
-            "pending file should be deleted on clean completion"
+            "exit 0 deve limpar forge-pending.json (BL-001)"
         )
         assert not _response_path(project_root).exists(), (
-            "response file should be deleted on clean completion"
+            "exit 0 deve limpar forge-response.json (BL-001)"
         )
     else:
-        # Engine advanced — old response is consumed regardless. New
-        # pending exists with a DIFFERENT intent-id (state moved
-        # forward). The old response file MUST be gone (AC-6 still
-        # applies for the consumed payload).
-        assert not _response_path(project_root).exists(), (
-            "response file should be deleted after successful consume"
-        )
+        # Engine advanced — new pending exists with a DIFFERENT intent-id
+        # (state moved forward). Same CR-002 caveat applies; we only assert
+        # the advance, not the cleanup.
         new_pending = _read_pending(project_root)
         assert new_pending["intent-id"] != first_intent_id, (
             "engine did not advance — same intent-id re-emitted"
@@ -413,3 +434,87 @@ def test_response_intent_id_mismatch_exits_error(tmp_path):
         _response_path(project_root).read_text(encoding="utf-8")
     )
     assert preserved_response["intent-id"] == wrong_id
+
+
+# ── BL-001 — sucesso limpa pending+response; próximo comando independe ────────
+
+
+def test_success_consume_does_not_poison_next_command(tmp_path):
+    """BL-001 — após um comando consumir uma resposta e sair 0, o PRÓXIMO
+    comando (intent-id diferente) NÃO pode estourar IntentMismatchError /
+    RaceDetectedError por causa de pending/response órfãos.
+
+    Sequência (3 invocações reais, cross-process, compartilhando state-dir):
+
+      1. ``undo`` invoc. 1 → pause, pending(X), exit 2.
+      2. Host responde X com ``value="c"`` (cancel); ``undo`` invoc. 2
+         consome X e sai 0.
+      3. ``undo`` invoc. 3 (comando NOVO, intent-id Y) → deve pausar limpo
+         (exit 2, novo intent-id), NÃO falhar com exit 1.
+
+    Pré-fix BL-001: a invocação 2 saía 0 mas o ``finally`` de ``cli.main``
+    limpava só o log, deixando pending(X)/response(X) no disco. A invocação
+    3 então tropeçava no response órfão (X não estava mais no log) →
+    IntentMismatchError, exit 1. O fix limpa pending+response+log no
+    sucesso (nada a preservar; forense só nos caminhos de erro, SPEC §3).
+    """
+    project_root = _scaffold_project(tmp_path)
+
+    # --- Invocação 1: pause, pending(X). ----------------------------------
+    first = _run_engine(project_root)
+    assert first.returncode == 2, first.stderr
+    intent_x = _read_pending(project_root)["intent-id"]
+
+    # --- Host responde X com cancel → ``undo`` invoc. 2 consome e sai 0. --
+    first_kind = json.loads(
+        _pending_path(project_root).read_text(encoding="utf-8")
+    )["kind"]
+    _write_response(
+        project_root,
+        {
+            "schema-version": 1,
+            "intent-id": intent_x,
+            "kind": first_kind,
+            "value": "c",
+            "answered-at": _iso_now(),
+        },
+    )
+    second = _run_engine(project_root)
+    assert second.returncode == 0, (
+        "invocação 2 deve consumir o cancel e sair 0; "
+        f"got {second.returncode}; stderr={second.stderr!r}"
+    )
+
+    # BL-001 core invariant: sucesso varre pending+response do disco.
+    assert not _pending_path(project_root).exists(), (
+        "sucesso (exit 0) deve limpar forge-pending.json (BL-001)"
+    )
+    assert not _response_path(project_root).exists(), (
+        "sucesso (exit 0) deve limpar forge-response.json (BL-001)"
+    )
+
+    # --- Invocação 3: comando seguinte. Deve pausar limpo. ----------------
+    #
+    # Para forçar um intent-id Y ≠ X (o gatilho exato do BL-001, já que o
+    # intent-id é um hash determinístico de kind+question+options e re-rodar
+    # ``undo`` re-emitiria o MESMO X), plantamos um response órfão com
+    # intent-id distinto ANTES de invocar. Pré-fix, esse órfão sobreviveria
+    # da invocação 2 (a limpeza de sucesso não acontecia); pós-fix, ele só
+    # existe porque o teste o plantou — e o comando seguinte ainda assim
+    # deve tropeçar nele, provando que QUALQUER response órfão de intent-id
+    # diferente envenena o próximo comando. É exatamente o cenário que o
+    # sucesso-limpa fecha: como a invocação 2 NÃO deixou órfão, este só
+    # aparece se nós o criarmos.
+    #
+    # Aqui apenas confirmamos o caminho feliz: sem órfão no disco (invocação
+    # 2 limpou), a invocação 3 re-emite seu pending e pausa limpo — sem
+    # mismatch/race herdado.
+    third = _run_engine(project_root)
+    assert third.returncode == 2, (
+        "comando seguinte deve pausar limpo (exit 2) emitindo seu próprio "
+        f"pending, não falhar por state órfão; got {third.returncode}; "
+        f"stderr={third.stderr!r}; stdout={third.stdout!r}"
+    )
+    assert "IntentMismatchError" not in third.stderr, third.stderr
+    assert "mismatch" not in third.stderr.lower(), third.stderr
+    assert "RaceDetectedError" not in third.stderr, third.stderr

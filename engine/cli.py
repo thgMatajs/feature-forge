@@ -63,6 +63,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "undo":        ("engine.undo",        "run"),
     "raw":         ("engine.raw",         "run"),
     "qa":          ("engine.cli",         "_qa_run"),
+    "upgrade":     ("engine.upgrade",     "run"),
     # Hidden — never advertised in --help, only invoked by hooks.
     # See docs/design/06-command-surface.md §Hidden internal entrypoints.
     "ingest":      ("engine.ingest",      "run"),
@@ -71,7 +72,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
 _VISIBLE_ORDER = (
     "init", "plan", "implement", "verify",
     "status", "doctor", "reconfigure", "graph",
-    "memory", "evolve", "undo", "raw", "qa",
+    "memory", "evolve", "undo", "raw", "qa", "upgrade",
 )
 
 
@@ -96,10 +97,26 @@ def _qa_run(argv: list[str]) -> int:
     from engine.qa import run_qa
     from engine.utils.paths import (
         ProjectRootNotFoundError,
+        active_config_path,
         find_project_root,
-        workflow_config_path,
     )
     from engine.utils.yaml_io import read_yaml_or_default
+
+    # Guard de args: sem scope target, imprime 3-caminhos mentor-calmo e sai
+    # sem erro. Feito ANTES do find_project_root para que o user veja a
+    # mensagem orientativa mesmo em dir nao-inicializado. O ValueError que
+    # resolve_scope levantaria quando raw_target=="") nao e ScopeError e
+    # portanto nao era capturado pelo except em run_qa — causava traceback
+    # (Bug U4). Aqui interceptamos o caso de uso correto antes que chegue
+    # ao resolve_scope.
+    if not argv:
+        sys.stdout.write(
+            "forge qa requer um scope target. Tres caminhos:\n"
+            "  A) forge qa paranoid    — sweep cross-feature\n"
+            "  B) forge qa <slug>      — escopo single-feature\n"
+            "  C) forge qa --help      — ver doc completa\n"
+        )
+        return 0
 
     try:
         project_root = find_project_root()
@@ -108,7 +125,7 @@ def _qa_run(argv: list[str]) -> int:
         return 1
 
     workflow_config = (
-        read_yaml_or_default(workflow_config_path(project_root), {}) or {}
+        read_yaml_or_default(active_config_path(project_root), {}) or {}
     )
     raw_target = argv[0] if argv else ""
     return run_qa(
@@ -167,6 +184,7 @@ _BOOTSTRAP_SKIP_COMMANDS: frozenset[str] = frozenset({
     "status",     # read-only — inspeção de estado
     "memory",     # read-only — leitura/listagem de L1/L2/L3
     "raw",        # read-only — pipe genérica de leitura
+    "upgrade",    # opera no FORGE_HOME, não no projeto consumidor — sem project root
 })
 
 
@@ -223,7 +241,7 @@ def _print_help() -> None:
     lines.append("")
     lines.append("Usage: forge <subcomando>")
     lines.append("")
-    lines.append("Subcomandos (13):")
+    lines.append("Subcomandos (14):")
     for cmd in _VISIBLE_ORDER:
         lines.append(f"  forge {cmd}")
     lines.append("")
@@ -293,19 +311,37 @@ def main(argv: list[str] | None = None) -> int:
     # cases never leak context across each other.
     token = _cli_command_context.set((cmd, list(rest)))
 
-    # Track the terminating exception so the ``finally`` block can decide
-    # whether to wipe the consumed-intent log. Only ``PausedForInputError``
-    # (exit 2, engine asked the caller for input) preserves the log so the
-    # next re-invocation can skip already-answered intents (W7-fix re-entry
-    # idempotency). Every other terminal path — success, user-cancel,
-    # user-paused, fatal error — wipes it.
+    # Bug U2 — suppress intent-log cleanup WARN for help/no-args paths.
+    # These paths return before reaching the try…finally, but we record the
+    # sentinel here so that if the control flow ever changes the finally
+    # stays silent. The check mirrors the early-return conditions above.
+    is_help_path = not argv or argv[0] in ("-h", "--help", "help", "-v", "--version")
+
+    # Track the terminating path so the ``finally`` block can pick the
+    # right cleanup contract (BL-001 fix). Three buckets:
+    #
+    # - ``paused_exc`` set → engine-paused (exit 2, ``PausedForInputError``):
+    #   preserve EVERYTHING (pending+response+log). The next re-invocation
+    #   needs the pending it just emitted plus the log to skip already-
+    #   answered intents (W7-fix re-entry idempotency).
+    # - ``forensic_exit`` set → intent-protocol error (exit 1: mismatch /
+    #   race / schema / JSON I/O): wipe only the log, PRESERVE
+    #   pending+response so the user can inspect them (SPEC §3 forensic rule).
+    # - neither set → success (exit 0), user-cancel (exit 130) or
+    #   user-paused-via-response (exit 2 ``UserPausedError``): these are
+    #   TERMINAL decisions for this lifecycle with nothing to preserve, so
+    #   wipe pending+response+log and the NEXT command starts on a clean
+    #   slate. Leaving pending/response behind on success is exactly what
+    #   made a subsequent command with a different intent-id raise
+    #   ``IntentMismatchError`` / ``RaceDetectedError`` (BL-001).
     paused_exc: PausedForInputError | None = None
+    forensic_exit = False
     try:
         try:
             result = handler(rest)
         except PausedForInputError as exc:
             # DRIFT-1 §8 — chokepoint emitted .claude/state/forge-pending.json.
-            # The caller (Claude Code host or engine.ui.tty_bridge) is expected
+            # The caller (Claude Code host or the in-process TtyAdapter) is expected
             # to read that file, write a response, and re-invoke us with the
             # same argv. No traceback, no message on stdout — the host renders
             # whatever it needs to from the intent payload itself.
@@ -316,12 +352,13 @@ def main(argv: list[str] | None = None) -> int:
             # prompt allowed pause. Same exit code as ``PausedForInputError``
             # (2 = clean pause, resumable) but a distinct semantic: the user
             # explicitly paused via response, rather than the engine emitting
-            # a fresh pending. State already cleared by ``_check_pause_response``.
+            # a fresh pending.
             #
             # Lifecycle note: even though this is exit 2, the user pause is a
             # *terminal* decision for THIS invocation — the engine is not
             # waiting for a follow-up response. Subsequent invocations start
-            # fresh, so the log goes too.
+            # fresh, so the ``finally`` wipes pending+response+log (it is NOT
+            # the engine-paused ``PausedForInputError`` branch).
             return EXIT_PAUSED
         except UserCancelledError:
             # CR-001 fix — host response carried ``cancelled: true``. Exit 130
@@ -344,6 +381,11 @@ def main(argv: list[str] | None = None) -> int:
             # mensagem mentor-calmo em ``exc.args[0]``. Sem este catch a
             # mensagem nunca chega ao usuário; em vez disso vaza traceback
             # cru, contrariando SPEC §3/§8 ("emite mensagem clara e exita 1").
+            #
+            # BL-001: caminho de erro do intent-protocol — preserva
+            # pending/response pra forense (SPEC §3); o ``finally`` limpa só
+            # o log.
+            forensic_exit = True
             sys.stderr.write(f"{exc}\n")
             return 1
         except json_io.JsonIOError as exc:
@@ -351,36 +393,60 @@ def main(argv: list[str] | None = None) -> int:
             # (.claude/state/forge-pending.json ou forge-response.json) é
             # erro de I/O, não bug interno do engine. Reportar limpo e
             # sair 1 em vez de traceback.
+            #
+            # BL-001: também é caminho de erro — preserva pending/response
+            # pra forense; o ``finally`` limpa só o log.
+            forensic_exit = True
             sys.stderr.write(f"forge: erro de I/O lendo state file: {exc}\n")
             return 1
         return int(result) if isinstance(result, int) else 0
     finally:
         _cli_command_context.reset(token)
-        # W7-fix lifecycle clear: at every terminal exit (success exit 0,
-        # user-cancel exit 130, fatal error exit 1, user-paused exit 2)
-        # wipe the consumed-intent log so the next forge invocation
-        # starts with a clean slate. The exit-2 *engine-paused* branch
-        # (``PausedForInputError``) opts out — detected via the
-        # ``paused_exc`` sentinel captured by the except clause — because
-        # the next re-invocation needs the log to skip already-answered
-        # intents — that is the whole point of the idempotency mechanism.
+        # BL-001 lifecycle clear — the cleanup contract now depends on HOW
+        # this invocation terminated (see the ``paused_exc`` / ``forensic_exit``
+        # comment where the trackers are declared):
         #
-        # Critical: we use ``clear_intent_log_only`` here — NOT the full
-        # ``clear_intent_files`` — because SPEC §3 mandates forensic
-        # preservation of ``forge-pending.json`` and ``forge-response.json``
-        # on error paths (mismatch, race, schema). The log is per-
-        # invocation cache and safe to wipe; pending/response carry the
-        # forensic evidence the user needs to debug.
+        # - engine-paused (``paused_exc`` set, ``PausedForInputError``,
+        #   exit 2) → clear NOTHING. The next re-invocation needs the pending
+        #   it just emitted plus the log to skip already-answered intents.
+        # - intent-protocol error (``forensic_exit`` set, exit 1: mismatch /
+        #   race / schema / JSON I/O) → ``clear_intent_log_only``: wipe the
+        #   per-invocation log but PRESERVE pending/response, because SPEC §3
+        #   mandates forensic preservation on error paths so the user can
+        #   inspect the evidence.
+        # - success / user-cancel / user-paused-via-response (exit 0/130/2,
+        #   neither tracker set) → ``clear_intent_files(also_log=True)``: wipe
+        #   pending+response+log. These are terminal decisions with nothing
+        #   to preserve; leaving pending/response behind made the NEXT command
+        #   (different intent-id) raise ``IntentMismatchError`` /
+        #   ``RaceDetectedError`` (BL-001). Clearing on success closes that
+        #   leak and finally honours the contract documented on
+        #   ``clear_intent_log_only``.
         #
-        # Failure to clear is silent: the delete is best-effort and any
-        # IO error here is less harmful than the original engine failure
-        # that we are trying to surface cleanly.
-        if paused_exc is None:
+        # Help / no-args paths return before the try, so the ``finally`` runs
+        # but ``is_help_path`` guards out — nothing to clean there.
+        #
+        # Failure to clear is silent: the delete is best-effort and any IO
+        # error here is less harmful than the original handler outcome we are
+        # trying to surface cleanly.
+        if paused_exc is None and not is_help_path:
             try:
-                from engine.utils.paths import find_project_root
+                from engine.utils.paths import (
+                    ProjectRootNotFoundError,
+                    find_project_root,
+                )
 
                 project_root = find_project_root()
-                intent_state.clear_intent_log_only(project_root)
+                if forensic_exit:
+                    intent_state.clear_intent_log_only(project_root)
+                else:
+                    intent_state.clear_intent_files(project_root, also_log=True)
+            except ProjectRootNotFoundError:
+                # Pre-init dir: nao ha project root resolvivel, logo nao ha
+                # intent-log a limpar. Silencioso por design — o handler ja
+                # emitiu a mensagem canonica de nao-inicializado; um WARN
+                # adicional aqui seria ruido confuso (Bug U2 residual).
+                pass
             except Exception as exc:  # noqa: BLE001
                 # Best-effort. If we cannot resolve project root or the
                 # delete fails, do not mask the real exit code — but do
@@ -388,7 +454,7 @@ def main(argv: list[str] | None = None) -> int:
                 # The original handler exit code is preserved by ``return``
                 # already having executed before this ``finally`` block.
                 sys.stderr.write(
-                    f"[WARN] forge: failed to clear intent log on exit: {exc}\n"
+                    f"[WARN] forge: failed to clear intent state on exit: {exc}\n"
                 )
 
 

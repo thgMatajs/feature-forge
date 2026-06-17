@@ -68,7 +68,7 @@ def _write_canon_card(project: Path, name: str, provides: list[str]) -> None:
 
 
 def _write_local_card_covering_mock(project: Path) -> None:
-    card_dir = project / ".claude" / "cards" / "local" / "retrofit-mock-local"
+    card_dir = project / ".claude" / "forge" / "cards" / "local" / "retrofit-mock-local"
     card_dir.mkdir(parents=True, exist_ok=True)
     (card_dir / "detection").mkdir(parents=True, exist_ok=True)
     data = {
@@ -134,9 +134,11 @@ def test_pilot_local_cards_manifest_written(pilot_project):
 def test_pilot_canon_local_collision_hard_fails(pilot_project):
     """Workaround Approach A: nome colidindo é hard fail."""
     _write_canon_card(pilot_project, "kotlin-base", ["kotlin"])
-    # cria local com nome IGUAL ao canon → CardConflictError
-    canon_root = pilot_project / ".claude" / "cards"
-    collide_local = canon_root / "local" / "kotlin-base"
+    # cria local com nome IGUAL ao canon → CardConflictError.
+    # Task 0.8 (v1.3): local overlay vive em .claude/forge/cards/local/.
+    collide_local = (
+        pilot_project / ".claude" / "forge" / "cards" / "local" / "kotlin-base"
+    )
     collide_local.mkdir(parents=True)
     data = {
         "schema-version": 1,
@@ -181,7 +183,7 @@ def test_pilot_orphan_to_local_flow_endtoend(pilot_project, monkeypatch):
     # passo 2: cria local inline (Step 7.5 caminho 1)
     _card_local_add_inline(pilot_project, orphan)
 
-    created = pilot_project / ".claude" / "cards" / "local" / "kotlin-multiplatform"
+    created = pilot_project / ".claude" / "forge" / "cards" / "local" / "kotlin-multiplatform"
     # _card_local_add_inline nomeia com a capability — confirma existência
     assert created.is_dir()
     assert (created / "card.yaml").is_file()

@@ -240,7 +240,7 @@ Características operacionais do gate:
   fail, mesmo abaixo do threshold). Funções `unchanged` ignoradas.
 - **Threshold lookup** — precedência card `cc-gate-override` >
   workflow-config `cc-gate` > defaults built-in. Tudo documentado em
-  `docs/schemas/workflow-config.md § cc-gate` + `docs/schemas/card.md §
+  `docs/schemas/forge-config.md § cc-gate` + `docs/schemas/card.md §
   cc-gate-override`.
 - **Override-justify por commit** — `CC-OVERRIDE: <file>:<func> cc=<N>
   — <razão>` no commit body silencia fail **só pra aquele commit**.
@@ -290,7 +290,7 @@ Características operacionais:
 Composto inteiro da infra Phase 0 (`dispatch_native_tool`, `apply_overrides`,
 `check_tool_available`, `git_staged_files`, `read_commit_body`, `result_*`) —
 2º consumer da extração, sem helper duplicado. Detalhe de config em
-`docs/schemas/workflow-config.md § secrets-gate`.
+`docs/schemas/forge-config.md § secrets-gate`.
 
 ### Exemplo de cascade com fail-fast=false
 
@@ -317,7 +317,7 @@ Cada hard fail vira um bloco 3-caminhos separado. Warnings agrupam no fim.
 Validator cascade — Referenced from:
 `docs/ux/forge-verify-roteiro.md` §Design points ("Cascade para no primeiro
 fail") · `docs/ux/forge-doctor-roteiro.md` (mesma semântica de cascade) ·
-`docs/schemas/workflow-config.md` §validators.fail-fast ·
+`docs/schemas/forge-config.md` §validators.fail-fast ·
 `.claude/hooks/post-subagent-validate.sh` (cascade local em hook).
 
 ### Overlay-awareness (Gap 5, 2026-06-02)
@@ -376,7 +376,7 @@ manualmente e perderia trabalho.
 `.bak/` retention — Referenced from:
 `docs/ux/forge-reconfigure-roteiro.md` (apply diff cria `.bak`) ·
 `docs/ux/forge-doctor-roteiro.md` (check `bak-files-overdue`) ·
-`docs/schemas/workflow-config.md` §cleanup.bak-retention-days ·
+`docs/schemas/forge-config.md` §cleanup.bak-retention-days ·
 `docs/ux/forge-evolve-roteiro.md` (card upgrade cria `.bak`).
 
 ---
@@ -596,7 +596,7 @@ imediata após distill.
 L2 overflow — Referenced from:
 `docs/ux/forge-evolve-roteiro.md` §pre-flight L2 check ·
 `docs/ux/forge-doctor-roteiro.md` §memory size check ·
-`docs/schemas/memory.md` §max-size-mb · `docs/schemas/workflow-config.md`
+`docs/schemas/memory.md` §max-size-mb · `docs/schemas/forge-config.md`
 §memory.l2.max-size-mb.
 
 ---

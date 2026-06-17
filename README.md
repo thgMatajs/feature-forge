@@ -2,11 +2,11 @@
 
 A standalone CLI skill that orchestrates end-to-end planning + implementation of mobile features across Android, iOS, KMP, and Web. Backend-agnostic (Firebase, REST, GraphQL, local-only).
 
-> **State:** v1.3.0 · 2026-06-16 · 1619 tests collected (graph-ia-evolution ✅ shipped: `symbols.body` column + `forge graph --json` + Java/XML/ObjC parsers + onboarding UX; PR #16 master review fix-pack Wave A+B+C aplicado integralmente; REVIEW.md remediation Blocos 1-5 ✅; Phase B DET-6 multi-axis backend SHIPPING-READY + REVIEWED + E2E COVERED em worktree `det-6-w1`; Phase A DRIFT-1 PR #11 master-review remediado integralmente; DET-3 gradle-dep signal type mergido de `main`) · 25 validators · 13 comandos · 29 cards · 4 bundles · 6 parsers (kotlin/swift/typescript + java/xml/objc) · ~400 arquivos · ~52.5K LOC
+> **State:** 1.4.0 pilot-ready · 2026-06-17 · rapid 1611 / integration 168 / e2e 30 passed (remediação cross-AI review PR #17; install.sh curl one-liner + forge upgrade + bash 3.2 portável; Wave 3 bug-fix sprint; Wave 2 host-aware execution; graph-ia-evolution ✅ shipped; PR #16 master review fix-pack Wave A+B+C aplicado integralmente) · 25 validators · 14 comandos · 29 cards · 4 bundles · 6 parsers (kotlin/swift/typescript + java/xml/objc) · ~400 arquivos · ~52.5K LOC
 
 ## What it is
 
-Skill CLI-first com 13 comandos canônicos (zero flags — toda parametrização via menu interativo) que dirige o ciclo completo de feature mobile:
+Skill CLI-first com 14 comandos canônicos (zero flags — toda parametrização via menu interativo) que dirige o ciclo completo de feature mobile:
 
 1. **`forge init`** — bootstrap em qualquer projeto KMP/mobile (greenfield ou brownfield). Step 11.5 escaneia o codebase atrás de duplicações já existentes (6 categorias de finding).
 2. **`forge plan {feature-slug}`** — 5 waves (intake/PRD → screen+contracts → tech-spec → tasks → readiness) com 16 templates. Subtypes: product / refactor / bugfix / spike / chore (cada um com waves específicas). No bugfix o pipeline detecta o ticket (ex: IN-37234), pula o PRD e exige um regression test que falha primeiro antes da correção; refactor entra com contrato no-behavior-change.
@@ -29,21 +29,49 @@ Skill CLI-first com 13 comandos canônicos (zero flags — toda parametrização
 
 ## Quick Start
 
+### Instalar
+
 ```bash
-# 1. Instalar
-pip install feature-forge  # ou clone o repo e use bin/forge
-
-# 2. Iniciar num projeto mobile
-cd ~/code/seu-app
-forge init
-
-# 3. Verificar status
-forge status
+curl -fsSL https://raw.githubusercontent.com/thgMatajs/feature-forge/main/scripts/install.sh | bash
 ```
 
-Pronto. O `forge init` escaneia seu projeto, detecta a stack (KMP, Android, iOS), aplica cards, e já deixa um graph do codebase pronto.
+O instalador (bash 3.2 portável, macOS/Linux):
 
-> ⏱ 5 minutos. Sem flags. Tudo interativo.
+1. Clona em `~/.local/share/feature-forge/` (XDG default; respeita `$XDG_DATA_HOME`)
+2. Cria venv e instala dependências via `pip install -e .` (pyproject.toml)
+3. Cria symlink `~/.local/bin/forge`
+4. Detecta shell (zsh / bash / fish) e oferece 3-caminhos para adicionar `~/.local/bin` ao PATH
+5. Detecta conflito de alias `forge` existente (3-caminhos: sobrescrever / instalar como `forge-cli` / abortar)
+
+Pré-requisitos: `git` + `python3 >= 3.11`.
+
+### Usar
+
+```bash
+# Entrar no projeto mobile
+cd ~/code/seu-app
+
+# Bootstrap interativo (.claude/forge/ + forge-config.yaml + hooks)
+forge init
+
+# Planejar uma feature
+forge plan minha-feature
+
+# Validar
+forge verify
+```
+
+O `forge init` detecta a stack (KMP, Android, iOS, brownfield), aplica cards, e já constrói o graph do codebase.
+
+> Sem flags. Tudo interativo. 5 minutos do clone ao primeiro `forge plan`.
+
+### Atualizar
+
+```bash
+forge upgrade
+```
+
+Executa `git pull --ff-only` + venv refresh + smoke (`forge --version`). Rollback automático se o smoke falhar — instala estado anterior via `git reset --hard`.
 
 ## Stack alvo
 
@@ -79,7 +107,7 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 3. **Memory** — L1 per-feature (WIP) + L2 project (committed) + L3 read-only (auto-memory)
 4. **Graph** — SQLite com 17 queries canônicas (Q1–Q10 estruturais, Q11 reusable-helpers, Q12–Q17 reuse-intelligence: duplicates within/cross-module, KMP-migration, near-duplicates, redundant-platform, TS-helpers)
 5. **Inventory** — DS components + i18n + conventions extraídos do projeto
-6. **Engine Python** — Bash dispatcher + 13 commands + foundation + state + integrations + reuse-intelligence pipeline (parsers, body-hash, gradle modules/deps, detection, apply)
+6. **Engine Python** — Bash dispatcher + 14 commands + foundation + state + integrations + reuse-intelligence pipeline (parsers, body-hash, gradle modules/deps, detection, apply) + host-aware execution layer (`engine/host/` — 4 adapters: claude_code / opencode-fallback / tty / intent_file)
 
 ## Stats
 
@@ -94,7 +122,7 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 | Validators Python | 25 + 3 helpers (`_gate_infra`, `_diff`, `_common`) — inclui `check_cyclomatic_complexity` (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon), `check_secrets` (gitleaks + trufflehog), `check_no_behavior_change` (refactor), `validate_extension_feature` (extends-feature cross-cutting), `validate_presets` (Phase B DET-6 — bundle YAML schema) |
 | Hooks | 9 + 1 reuse incremental (`post-edit-detect-duplications.sh`) |
 | Graph parsers | 6 (Kotlin / Swift / TypeScript + Java / XML / Objective-C — Java/XML/ObjC novos em v1.3.0 graph-ia-evolution). Body extraction (`symbols.body`) cobre brace-delimited bodies (5 linguagens; XML é NULL). |
-| Tests | 1619 collected em v1.3.0 pós PR #16 fix-pack (unit + integration + e2e · ~20 skipped · baseline histórico em CHANGELOG.md). Phase A DRIFT-1 acresceu +118 sobre o pré-W2 1046; Phase B DET-6 acresceu W4-W7 (~88 unit + 12 integration) + W8 polish (+23 rapid + 3 integration + 4 e2e); REVIEW.md remediation Blocos 1-5 (2026-06-12) levou a 1523 collected (WR-01 fix-pack adicionou +1 regression test); **v1.3.0 graph-ia-evolution acresceu 84 tests em arquivos novos do PR (Java 19 + ObjC 25 + XML 13 + bootstrap 6 + lazy 6 + json 9 + migrations 5 + integration 1); Wave A+B+C fix-pack pós-master-review somou cobertura nova em arquivos preexistentes, chegando a 1619 collected (+71 vs baseline pré-PR 1548 — counts validados via `pytest --collect-only -q`)**. |
+| Tests | rapid **1611 passed** / integration **168 passed** / e2e **30 passed** em 1.4.0 pilot-ready, pós remediação cross-AI review PR #17 (0 falhas). Histórico: 1619 collected pós PR #16 fix-pack; W0–W5 acrescem 57+14+host-e2e+7+upgrade+pilot-smoke. Baseline histórico em CHANGELOG.md. |
 | LOC total | ~52.500 |
 | Engine LOC | ~33.500 (Python; engine/ apenas — validators/ adicional ~7.300) |
 | Files total | ~400 |
@@ -105,30 +133,30 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 ## Instalação
 
 ```bash
-# Clone canonical
-git clone <repo> ~/Documents/feature-forge
-export FORGE_HOME=~/Documents/feature-forge
-export PATH="$FORGE_HOME/bin:$PATH"
+curl -fsSL https://raw.githubusercontent.com/thgMatajs/feature-forge/main/scripts/install.sh | bash
+```
 
-# Verifica
-forge --version  # → forge 1.3.0
+Instala em `~/.local/share/feature-forge/` (XDG default; respeita `$XDG_DATA_HOME`), cria venv, symlink `~/.local/bin/forge`, configura PATH. Pré-requisitos: git + python3 >= 3.11. Script portável bash 3.2 (macOS default).
 
-# Init num projeto novo (Step 11.5 já escaneia duplicações existentes)
+```bash
+# Após instalar
+forge --version  # → forge 1.4.0
+
+# Init num projeto
 cd ~/code/my-project
-forge init  # → interactive, sem flags
+forge init       # interativo, sem flags
 
 # Revisar reuse-intelligence findings
 forge evolve     # 6 kinds: consolidate / promote / kmp-migration / etc
 forge graph      # opções 12–17 ou "r" (combined view)
+
+# Atualizar o próprio forge
+forge upgrade    # git pull + venv refresh + smoke + rollback automático
 ```
 
-Requer Python 3.11+ + PyYAML + pathspec (runtime). Dev: pytest + mypy.
-Install canônico: `pip install -e .` na raiz do repo (também rodado
-idempotentemente por `bash .claude/bootstrap.sh`).
+### Bootstrap (dev / contribuição)
 
-### Bootstrap
-
-Após clonar, rode uma vez:
+Para quem clona o repo diretamente (desenvolvimento, contribuição):
 
 ```bash
 bash .claude/bootstrap.sh
@@ -146,10 +174,13 @@ explicitamente.
 ## Where it lives
 
 ```
-~/Documents/feature-forge/              canonical source (this repo)
+~/.local/share/feature-forge/           canonical install (XDG default; $XDG_DATA_HOME)
   bin/forge                             Bash dispatcher
+  scripts/install.sh                    curl one-liner installer (bash 3.2)
   engine/                               Python engine (~33.500 LOC)
-    graph/                              parsers (Kotlin/Swift/TS) + builder +
+    host/                               host-aware execution — 4 adapters:
+                                          claude_code / opencode-fallback / tty / intent_file
+    graph/                              parsers (Kotlin/Swift/TS/Java/XML/ObjC) + builder +
                                         gradle_modules + gradle_deps +
                                         _body_text + duplicates + reuse_apply +
                                         incremental + queries (Q1–Q17)
@@ -158,23 +189,27 @@ explicitamente.
   docs/                                 design + schemas + UX roteiros + lifecycle
   agents/                               agent prompts (10 prompts)
   templates/                            18 canonical templates (16 + bugfix + refactor)
-  cards/                                22 canonical cards (+ overlay em consumidor)
+  cards/                                29 canonical cards (+ overlay em consumidor)
   presets/kmp-mobile/                   canonical preset v1
-  validators/                           20 validators + helpers (inclui check_cyclomatic_complexity + check_secrets + validate_extension_feature)
+  validators/                           25 validators + 3 helpers (inclui check_cyclomatic_complexity + check_secrets + validate_extension_feature)
   hooks/                                9 hooks + reuse incremental script
-  tests/                                ~1125 collected tests (unit + integration + e2e) + 20 skipped
+  tests/                                rapid 1611 / integration 168 / e2e 30 (unit + integration + e2e)
 
 [per project install via `forge init`]
+{project}/.claude/forge/                sub-namespace forge (v1.3+)
+  forge-config.yaml                     installed config (era .claude/workflow-config.yaml em v1.2)
+  state/                                intent protocol state files
+  cards/local/                          card local overlay
+  hooks/                                forge-managed hooks
 {project}/.claude/
-  workflow-config.yaml                  installed config
   graph.db                              codebase graph (schema v2)
   proposed-evolutions.yaml              reuse + retrospective proposals
   hooks/post-edit-detect-duplications.sh    opt-in incremental detect
 ```
 
-## Command surface (13 + 2 hidden)
+## Command surface (14 + 2 hidden)
 
-13 comandos user-facing — zero flags — toda parametrização via prompts interativos (Decision 9 + 10 locked).
+14 comandos user-facing — zero flags — toda parametrização via prompts interativos (Decision 9 + 10 locked).
 
 ```
 forge init           bootstrap workflow num projeto (greenfield/brownfield)
@@ -209,6 +244,9 @@ forge qa             gate adversarial multi-agente (red-team)
                      · 4 scope targets (feature / screen / task / paranoid)
                      · sandbox isolado em .planning/qa/<run-id>/fixtures/
                      · verdict informativo (BLOCK/FLAG/PASS); findings → forge evolve
+forge upgrade        atualiza o próprio forge (git pull --ff-only + venv refresh + smoke)
+                     · rollback automático em falha de smoke (git reset --hard prev_head)
+                     · opera sobre FORGE_HOME; não toca o projeto consumidor
 ```
 
 Hidden entrypoints (invocados por hooks, nunca tipados pelo usuário):
@@ -233,7 +271,7 @@ Start here:
 - **`docs/design/08-session-handoff.md`** — TL;DR completo + estado por fase + limites v1
 - `docs/design/00-vision.md` — arquitetura (6 layers, capability cards)
 - `docs/design/01-decisions.md` — 27 decisões locked
-- `docs/design/06-command-surface.md` — 13 comandos canônicos + 2 hidden
+- `docs/design/06-command-surface.md` — 14 comandos canônicos + 2 hidden
 - `docs/design/07-discipline.md` — 10 disciplinas universais (3-caminhos, fail-fast, pause/abort, vocabulário, fingerprint)
 - `docs/design/04-pending.md` — gaps abertos + itens deferred por versão
 - `docs/schemas/graph.md` — schema v2 com reuse_findings + module_deps + Q1-Q17 + `symbols.body` column (v1.3+) + `forge graph --json` non-interactive (v1.3+)

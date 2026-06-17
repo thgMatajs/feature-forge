@@ -2,7 +2,8 @@
 """validate_card_yaml.py — Thin wrapper over engine.cards.loader.validate_card_yaml.
 
 Validates one (--card NAME) or all card.yaml files under either the project's
-snapshot (`.claude/cards/`) — including the local overlay `.claude/cards/local/` —
+snapshot (`.claude/cards/`) — including the local overlay
+`.claude/forge/cards/local/` (Task 0.8 — v1.3 sub-namespace) —
 or the canonical library (`cards/`) as fallback.
 Surfaces every CARD-001..CARD-019 violation.
 
@@ -26,7 +27,11 @@ from _common import (
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from engine.cards.loader import validate_card_yaml as core_validate  # noqa: E402
-from engine.utils.paths import cards_canonical_dir, cards_dir  # noqa: E402
+from engine.utils.paths import (  # noqa: E402
+    cards_canonical_dir,
+    cards_dir,
+    forge_cards_local_dir,
+)
 from engine.utils.yaml_io import YamlIOError, read_yaml_or_default  # noqa: E402
 
 
@@ -36,24 +41,27 @@ def _collect_cards(
     """Return list of (card_yaml_path, origin) where origin ∈ {"canon", "local"}.
 
     Cascade:
-      - canon snapshot: `<project>/.claude/cards/<name>/card.yaml` (exclui `local/` subdir)
-      - local overlay: `<project>/.claude/cards/local/<name>/card.yaml`
+      - canon snapshot: `<project>/.claude/cards/<name>/card.yaml`
+      - local overlay: `<project>/.claude/forge/cards/local/<name>/card.yaml`
+        (Task 0.8 — v1.3 sub-namespace; antes vivia em `.claude/cards/local/`)
       - fallback: canonical library `<forge_home>/cards/<name>/card.yaml` quando snapshot vazio
     """
     candidates: list[tuple[Path, str]] = []
     snapshot = cards_dir(project_root)
     if snapshot.is_dir():
         for entry in snapshot.glob("*/card.yaml"):
-            # Pula a subpasta `local/` — handled separately abaixo
+            # Pula a subpasta `local/` legacy — não deveria mais existir
+            # após migração, mas continuamos defensivos.
             if entry.parent.parent.name == "local":
                 continue
             if entry.parent.name == "local":
                 continue
             candidates.append((entry, "canon"))
-        local_root = snapshot / "local"
-        if local_root.is_dir():
-            for entry in local_root.glob("*/card.yaml"):
-                candidates.append((entry, "local"))
+    # Task 0.8: local overlay agora vive em .claude/forge/cards/local/.
+    local_root = forge_cards_local_dir(project_root)
+    if local_root.is_dir():
+        for entry in local_root.glob("*/card.yaml"):
+            candidates.append((entry, "local"))
     if not candidates:
         canonical = cards_canonical_dir()
         if canonical.is_dir():
@@ -90,7 +98,7 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
         return result_fail(
             f"colisão de nome canon×local em {len(collisions)} card(s)",
             what_failed=", ".join(collisions),
-            where=".claude/cards/<name>/ + .claude/cards/local/<name>/",
+            where=".claude/cards/<name>/ + .claude/forge/cards/local/<name>/",
             why=[
                 "Approach A: card local não pode ter o mesmo nome de canon ativo.",
                 "Sem merge silencioso, sem override — escolha consciente exigida.",
@@ -138,7 +146,7 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
             f"{len(all_violations)} violação(ões) em {len(cards)} card(s)",
             what_failed="; ".join(all_violations[:3])
             + (f" (+{len(all_violations)-3} more)" if len(all_violations) > 3 else ""),
-            where="cards/*/card.yaml + .claude/cards/local/*/card.yaml",
+            where="cards/*/card.yaml + .claude/forge/cards/local/*/card.yaml",
             why=[
                 "docs/schemas/card.md §Validation define CARD-001..CARD-019.",
                 "Loader rejeita cards inválidos — composer/resolver não funcionam.",
@@ -158,7 +166,7 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
         return result_warn(
             f"{len(warnings_only)} warning(s) em {len(cards)} card(s)",
             what_failed="; ".join(warnings_only[:3]),
-            where="cards/*/card.yaml + .claude/cards/local/*/card.yaml",
+            where="cards/*/card.yaml + .claude/forge/cards/local/*/card.yaml",
             why=["Warnings não bloqueiam — agentes sem extension-points formalizadas"],
         )
 

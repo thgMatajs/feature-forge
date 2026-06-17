@@ -29,7 +29,7 @@ from engine.utils.paths import (  # noqa: E402  — path bootstrap above is inte
 # ── Backend axes / platforms — shared validator constants ───────────────────
 #
 # PR #13 review #3405255016. Antes, `VALID_AXES` (validate_presets) e
-# `_VALID_BACKEND_AXES` (validate_workflow_config) coexistiam com o mesmo
+# `_VALID_BACKEND_AXES` (validate_forge_config) coexistiam com o mesmo
 # conteúdo. Os dois sets de "platforms" eram homônimos mas semanticamente
 # distintos:
 #
@@ -64,7 +64,7 @@ VALID_BUNDLE_PLATFORM_KEYS: frozenset[str] = frozenset(
     {"android", "ios", "kmp", "all-platforms"}
 )
 
-# Workflow active platforms (validate_workflow_config) — universo de
+# Workflow active platforms (validate_forge_config) — universo de
 # plataformas que um projeto declara em `platforms.active`. `web` entra
 # pra cobrir mono-plataforma sem mobile.
 VALID_PROJECT_PLATFORMS: frozenset[str] = frozenset(

@@ -60,6 +60,7 @@ _ENGINE_ROOT = Path(__file__).parent.parent
 if str(_ENGINE_ROOT) not in _sys.path:
     _sys.path.insert(0, str(_ENGINE_ROOT))
 
+from engine.utils.paths import forge_config_path  # noqa: E402
 from engine.utils.yaml_io import read_yaml_or_default  # noqa: E402
 
 
@@ -602,13 +603,17 @@ _DEFAULT_IGNORE_PATTERNS: list[str] = [r"^tests/fixtures/secrets/"]
 
 
 def _load_workflow_config(project_root: Path) -> dict[str, Any]:
-    """Lê ``.claude/workflow-config.yaml`` ou devolve ``{}`` se ausente/inválido.
+    """Lê ``.claude/forge/forge-config.yaml`` ou devolve ``{}`` se ausente/inválido.
 
     Paralelo direto do helper do CC gate — mesmo pattern, sem reuso porque
     cada validator tem o próprio import e função one-liner não justifica
     extração ainda (princípio Phase 0: 2-3 consumers documentados antes).
+
+    Task 0.8 (v1.3 pilot-ready): callsite migrado pra ``forge_config_path``
+    helper — config canônico agora vive sob o sub-namespace
+    ``.claude/forge/`` (spec §2).
     """
-    cfg_path = project_root / ".claude" / "workflow-config.yaml"
+    cfg_path = forge_config_path(project_root)
     return read_yaml_or_default(cfg_path, {}) or {}
 
 
@@ -663,7 +668,7 @@ def validate(
         return result_warn(
             "secrets-gate: ignore-paths contém regex inválida — entradas ignoradas",
             what_failed="invalid-regex-in-config",
-            where="workflow-config.yaml::secrets-gate.ignore-paths",
+            where="forge-config.yaml::secrets-gate.ignore-paths",
             why=[f"regex inválida: {pat!r}" for pat in _invalid_patterns],
         )
 

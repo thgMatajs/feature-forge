@@ -30,9 +30,9 @@ from pathlib import Path
 import pytest
 
 from tests.e2e.conftest import (
+    drive_intent_loop,
     read_pending,
     run_forge,
-    write_response,
 )
 
 _RUN_E2E = os.environ.get("RUN_E2E") == "1"
@@ -119,70 +119,104 @@ def test_forge_reconfigure_emits_category_menu_pending(tmp_path: Path) -> None:
     )
 
 
+def _reconfigure_backend_response_provider(pending: dict) -> object:
+    """Response provider pra test_forge_reconfigure_backend_response_advances.
+
+    Fluxo natural pós engine-fix (read_response trata file stale-consumido
+    como None em vez de raise):
+
+    - Cycle 1: o engine emite o category picker (ask_multi com "backend"
+      nas options). O provider responde ``["backend"]``.
+    - Cycle 2: re-invocado, o engine lê a resposta do category picker do
+      response.json (match → consumed-log), avança pro backend submenu, e
+      emite o pending do submenu (ask_multi "Quais cells?"). O response.json
+      ainda carrega a resposta do category picker — mas o id dela já está no
+      consumed-log, então ``read_response`` pro intent-id do submenu retorna
+      None (stale-consumido) em vez de levantar IntentMismatchError. O engine
+      emite o pending do submenu + exit 2 limpo.
+    - O provider recebe esse pending de submenu e retorna None pra parar o
+      loop — o teste assere sobre esse pending final.
+
+    Sem _prime_intent_log, sem acoplamento ao formato JSONL interno: o
+    drive_intent_loop limpo dirige o handshake ponta-a-ponta.
+    """
+    kind = pending.get("kind", "")
+    options = pending.get("options") or {}
+
+    # Category picker: ask_multi com "backend" nas options → responde.
+    if kind == "ask_multi" and "backend" in options:
+        return ["backend"]
+
+    # Submenu backend (ou qualquer outro pending) → parar o loop.
+    return None
+
+
 @pytest.mark.e2e
 @pytest.mark.skipif(not _RUN_E2E, reason="set RUN_E2E=1 to run e2e tests")
 def test_forge_reconfigure_backend_response_advances(tmp_path: Path) -> None:
     """AC-8 wiring: selecionar ``backend`` no menu top-level avança pro submenu.
 
-    Two-cycle test:
-    1. Cycle 0: invoke → exit 2 → pending é o category picker (ask_multi).
-    2. Write response com value=["backend"].
-    3. Cycle 1: invoke → engine consome response, entra no
-       ``_handle_backend_axes_submenu`` (W7.3) e emit outro pending OU
-       termina (zero changes → exit 0).
+    Usa drive_intent_loop limpo (mesmo padrão de
+    ``test_e2e_greenfield_init::*_response_handshake``). Pós engine-fix
+    (read_response trata file stale-consumido como None), o ciclo multi-intent
+    do reconfigure funciona via fluxo natural — sem pre-prime do consumed-log.
 
-    O assertion-chave: cycle 1 NÃO raises IntentMismatchError — o response
-    foi consumido pelo engine. Cycle 1 exit 0 também é aceitável (handler
-    pode terminar sem mudanças); ambos comprovam o handshake do intent
-    protocol pelo subprocess.
+    Ciclo:
+    - Cycle 1: engine emite o category picker; provider responde ["backend"].
+    - Cycle 2: engine lê o category picker do response.json, avança pro
+      backend submenu, e emite o pending do submenu. O response.json stale
+      (id já no consumed-log) NÃO causa IntentMismatchError — read_response
+      retorna None pro intent-id do submenu. Provider retorna None → loop para.
+
+    Asserções (AC-8):
+    - Sem mismatch error: handshake funcionou.
+    - Exit 0 (handler termina limpo) ou exit 2 (provider parou no submenu).
+    - Se exit 2: pending final é do submenu backend (command="reconfigure",
+      intent-id diferente do category picker).
     """
     _seed_project_with_config(tmp_path)
 
-    # Cycle 0.
-    result0 = run_forge(["reconfigure"], cwd=tmp_path, timeout=60)
-    assert result0.returncode == 2, (
-        f"cycle 0: esperava exit 2, got {result0.returncode}.\n"
-        f"stderr: {result0.stderr[-400:]}"
+    final_result = drive_intent_loop(
+        ["reconfigure"],
+        cwd=tmp_path,
+        response_provider=_reconfigure_backend_response_provider,
+        max_cycles=4,
+        timeout=60,
     )
 
-    pending0 = read_pending(tmp_path)
-    assert pending0 is not None
-    intent_id_0 = pending0["intent-id"]
-
-    # Selecionar "backend" no ask_multi.
-    write_response(
-        tmp_path,
-        intent_id=intent_id_0,
-        kind="ask_multi",
-        value=["backend"],
-    )
-
-    # Cycle 1 — engine consome response e avança pro submenu backend.
-    result1 = run_forge(["reconfigure"], cwd=tmp_path, timeout=60)
-    assert result1.returncode in (0, 2), (
-        f"cycle 1: esperava advance (exit 0 ou 2), got {result1.returncode}.\n"
-        f"stdout: {result1.stdout[-400:]}\n"
-        f"stderr: {result1.stderr[-400:]}"
-    )
-
-    # Não pode ter mismatch error — sinal de wiring quebrado.
-    stderr_lc = result1.stderr.lower()
+    # Asserção principal: sem mismatch error — handshake do intent protocol
+    # funcionou (response do category picker foi consumido pelo engine sem
+    # que o stale response.json levantasse IntentMismatchError no submenu).
+    stderr_lc = final_result.stderr.lower()
     assert "mismatch" not in stderr_lc, (
-        f"cycle 1 stderr menciona intent mismatch — response não foi "
-        f"consumido pelo engine.\nstderr: {result1.stderr[-400:]}"
+        f"intent mismatch detectado — handshake falhou.\n"
+        f"stderr: {final_result.stderr[-400:]}"
     )
 
-    if result1.returncode == 2:
-        pending1 = read_pending(tmp_path)
-        assert pending1 is not None
-        # Submenu backend deve estar emitindo seu próprio pending agora.
-        # ``command`` continua "reconfigure" (mesma re-invocação).
-        assert pending1["command"] == "reconfigure", (
-            f"cycle 1 pending.command esperado 'reconfigure', "
-            f"got {pending1['command']!r}"
+    # Exit 0 (handler terminou sem mudanças — zero cells editadas) ou exit 2
+    # (provider retornou None no submenu backend). Ambos provam que o engine
+    # avançou além do category picker pro submenu backend.
+    assert final_result.returncode in (0, 2), (
+        f"loop terminou com exit {final_result.returncode} inesperado.\n"
+        f"stdout: {final_result.stdout[-400:]}\n"
+        f"stderr: {final_result.stderr[-400:]}"
+    )
+
+    if final_result.returncode == 2:
+        pending_final = read_pending(tmp_path)
+        assert pending_final is not None, (
+            "exit 2 mas pending ausente — contrato quebrado."
         )
-        # Intent-id diferente prova advance.
-        assert pending1["intent-id"] != intent_id_0, (
-            "cycle 1 emit pending com mesmo intent-id do cycle 0 — "
-            "engine não avançou pro submenu."
+        # Submenu backend emite seu próprio pending com command="reconfigure"
+        # (re-entry preserva o cmd) e intent-id diferente do category picker.
+        assert pending_final["command"] == "reconfigure", (
+            f"pending final.command esperado 'reconfigure', "
+            f"got {pending_final['command']!r}"
+        )
+        # O pending final é o submenu backend — kind ask/ask_multi, mas NÃO o
+        # category picker (que tinha "backend" nas options de top-level).
+        final_options = pending_final.get("options") or {}
+        assert "backend" not in final_options, (
+            "pending final ainda é o category picker (tem 'backend' nas "
+            "options) — engine não avançou pro submenu backend."
         )

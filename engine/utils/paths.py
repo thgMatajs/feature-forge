@@ -6,7 +6,9 @@ ever shifts, this is the only file that has to change.
 
 Two roots matter at runtime:
 - FORGE_HOME — the canonical repo (`~/Documents/feature-forge/` by default).
-- project_root — the user's project, identified by a `.claude/workflow-config.yaml`.
+- project_root — the user's project, identified primarily by
+  `.claude/forge/forge-config.yaml` (v1.3+); `.claude/workflow-config.yaml`
+  is still recognised for backwards-compat with v1.2 projects.
 """
 
 from __future__ import annotations
@@ -18,9 +20,20 @@ from pathlib import Path
 _WORKFLOW_DIRNAME = ".claude"
 _WORKFLOW_CONFIG_FILE = "workflow-config.yaml"
 
+# Sub-namespace marker created by `forge init` (v1.3+). This is the primary
+# signal that a directory is a forge project root — `forge init` writes
+# `.claude/forge/forge-config.yaml`, never the legacy marker above.
+_FORGE_DIRNAME = "forge"
+_FORGE_CONFIG_FILE = "forge-config.yaml"
+
 
 class ProjectRootNotFoundError(RuntimeError):
-    """Raised when no `.claude/workflow-config.yaml` is found by walking up."""
+    """Raised when no forge project marker is found by walking up.
+
+    A directory counts as a project root when it contains either the
+    primary marker `.claude/forge/forge-config.yaml` (v1.3+) or the legacy
+    marker `.claude/workflow-config.yaml` (v1.2 compat).
+    """
 
 
 def forge_home() -> Path:
@@ -32,22 +45,46 @@ def forge_home() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def find_project_root(start: Path | None = None) -> Path:
-    """Walk up from `start` (cwd by default) until `.claude/workflow-config.yaml` is found.
+def _is_project_root(cursor: Path) -> bool:
+    """True when `cursor` carries a forge project marker.
 
-    Raises ProjectRootNotFoundError if we reach `/` without finding it. Callers
-    that want a soft check should catch this and fall back to bootstrap mode
-    (forge init).
+    Recognises two markers, in order of preference:
+    1. Primary (v1.3+): `.claude/forge/forge-config.yaml` — written by
+       `forge init`. This is the canonical sub-namespace marker (Spec §2).
+    2. Legacy (v1.2 compat): `.claude/workflow-config.yaml` — kept cheap so
+       projects initialised before the sub-namespace move still resolve.
+
+    The primary path is composed via `forge_config_path` (Mandamento 3 —
+    no hardcoded duplicate of the sub-namespace layout).
+    """
+    if forge_config_path(cursor).is_file():
+        return True
+    if (cursor / _WORKFLOW_DIRNAME / _WORKFLOW_CONFIG_FILE).is_file():
+        return True
+    return False
+
+
+def find_project_root(start: Path | None = None) -> Path:
+    """Walk up from `start` (cwd by default) until a forge project marker is found.
+
+    A directory is a project root when it carries the primary marker
+    `.claude/forge/forge-config.yaml` (v1.3+) or the legacy marker
+    `.claude/workflow-config.yaml` (v1.2 compat) — see `_is_project_root`.
+
+    Raises ProjectRootNotFoundError if we reach `/` without finding either.
+    Callers that want a soft check should catch this and fall back to
+    bootstrap mode (forge init).
     """
     cursor = (start or Path.cwd()).resolve()
     while True:
-        candidate = cursor / _WORKFLOW_DIRNAME / _WORKFLOW_CONFIG_FILE
-        if candidate.is_file():
+        if _is_project_root(cursor):
             return cursor
         if cursor.parent == cursor:
             raise ProjectRootNotFoundError(
-                "no .claude/workflow-config.yaml found from "
-                f"{(start or Path.cwd()).resolve()} upwards. "
+                "no forge project marker found from "
+                f"{(start or Path.cwd()).resolve()} upwards "
+                "(looked for .claude/forge/forge-config.yaml, primary; "
+                ".claude/workflow-config.yaml, legacy). "
                 "Run `forge init` from the project root."
             )
         cursor = cursor.parent
@@ -130,9 +167,10 @@ def _resolve_features_root(project_root: Path, *, subtype: str = "product") -> P
     the similarity-graph by convention.
 
     A-006 (master review PR #15): movido de `engine/plan.py` pra cá. A
-    função só lê `workflow_config_path` + monta paths — não tem dep de
-    `engine.plan`. Mantê-la em paths.py quebra o ciclo `paths.py ↔ plan.py`
-    que `feature_path` precisava resolver com lazy import.
+    função só lê a config ativa via `active_config_path` + monta paths —
+    não tem dep de `engine.plan`. Mantê-la em paths.py quebra o ciclo
+    `paths.py ↔ plan.py` que `feature_path` precisava resolver com lazy
+    import.
 
     Backwards-compat: `engine/plan.py` re-exporta como shim.
     """
@@ -142,7 +180,7 @@ def _resolve_features_root(project_root: Path, *, subtype: str = "product") -> P
     # `_resolve_features_root` poucas vezes por execução.
     from engine.utils.yaml_io import read_yaml_or_default  # noqa: PLC0415
 
-    cfg = read_yaml_or_default(workflow_config_path(project_root), {})
+    cfg = read_yaml_or_default(active_config_path(project_root), {})
     custom_root: Path | None = None
     if isinstance(cfg, dict):
         paths = cfg.get("paths") or {}
@@ -198,3 +236,59 @@ def ensure_dir(path: Path) -> Path:
     """mkdir -p — returns the path for chaining. Idempotent."""
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def forge_dir(project_root: Path) -> Path:
+    """Sub-namespace canônico do forge no projeto consumidor. Spec §2."""
+    return project_root / ".claude" / "forge"
+
+
+def forge_config_path(project_root: Path) -> Path:
+    return forge_dir(project_root) / "forge-config.yaml"
+
+
+def active_config_path(project_root: Path) -> Path:
+    """Resolve a config ativa do projeto.
+
+    Precedência completa: primário (se existe) → legado (se existe) →
+    primário (destino de escrita canônico quando nenhum dos dois existe
+    ainda). O terceiro termo é o que evita o split read/write descrito
+    abaixo — não é só "primário → legado".
+
+    Há dois lugares onde a config de um projeto pode viver, e este módulo já
+    documenta a intenção dual-path (ver docstrings de `_is_project_root` e
+    `find_project_root`):
+
+    1. Primário (v1.3+): `.claude/forge/forge-config.yaml` — o que `forge init`
+       grava no sub-namespace canônico (Spec §2).
+    2. Legado (v1.2 compat): `.claude/workflow-config.yaml` — onde projetos
+       inicializados antes da mudança de sub-namespace guardam a config.
+
+    A regra é simples e honra essa intenção: se o primário existe no disco,
+    é ele. Senão, cai pro legado. Se NENHUM dos dois existe ainda — projeto
+    novo, prestes a ser inicializado — devolvemos o primário, porque ele é o
+    destino canônico de escrita; nunca semeamos o caminho legado.
+
+    Compor aqui (em vez de duplicar a precedência em cada consumidor) garante
+    que ler e gravar a config caiam sempre no MESMO arquivo — sem o split que
+    surgia quando `init` gravava no primário mas os comandos liam só o legado.
+    """
+    primary = forge_config_path(project_root)
+    if primary.is_file():
+        return primary
+    legacy = workflow_config_path(project_root)
+    if legacy.is_file():
+        return legacy
+    return primary
+
+
+def forge_state_dir(project_root: Path) -> Path:
+    return forge_dir(project_root) / "state"
+
+
+def forge_cards_local_dir(project_root: Path) -> Path:
+    return forge_dir(project_root) / "cards" / "local"
+
+
+def forge_hooks_dir(project_root: Path) -> Path:
+    return forge_dir(project_root) / "hooks"

@@ -1,4 +1,4 @@
-# Schema — `workflow-config.yaml`
+# Schema — `forge-config.yaml`
 
 The canonical file that `forge init` creates, `forge reconfigure` modifies,
 and all sub-agents read. Anchor for the entire skill state.
@@ -6,17 +6,17 @@ and all sub-agents read. Anchor for the entire skill state.
 ## Schema + example (annotated)
 
 ```yaml
-# feature-forge / workflow-config.yaml
+# feature-forge / forge-config.yaml
 # ──────────────────────────────────────────────────────────────────────────
-# Schema version: 1
-# Location:       .claude/workflow-config.yaml
-#                 (em monorepo: .claude/subprojects/{name}/workflow-config.yaml)
+# Schema version: 1.3
+# Location:       .claude/forge/forge-config.yaml
+#                 (em monorepo: .claude/forge/subprojects/{name}/forge-config.yaml)
 # Owner:          forge init (creates) · forge reconfigure (modifies) ·
 #                 planning-conductor (reads on entry) · all sub-agents (read)
-# Git policy:     COMMIT este arquivo. NÃO commitar: memory/, graph.db
+# Git policy:     COMMIT este arquivo. NÃO commitar: forge/state/, graph.db
 # ──────────────────────────────────────────────────────────────────────────
 
-schema-version: 1
+schema-version: 1.3
 
 
 # ── IDENTITY ──────────────────────────────────────────────────────────────
@@ -432,7 +432,7 @@ doctor:
 ## Validation rules enforced by `forge doctor`
 
 ```text
-RULE-001  schema-version must be in [1]
+RULE-001  schema-version must be in [1, 1.3]
 RULE-002  identity.project-slug must match [a-z0-9-]+ regex
 RULE-003  identity.preset must reference a known preset definition
 RULE-004  platforms.active must be non-empty and ⊆ {android, ios, kmp, web}
@@ -472,7 +472,9 @@ pass, 1 if warn, 2 if block.
 ## Schema versioning
 
 ```text
-v1 (current)   2026-05-28  initial release
+v1     2026-05-28  initial release (.claude/workflow-config.yaml)
+v1.3   2026-06-17  v1.3 pilot-ready: file moved to .claude/forge/forge-config.yaml;
+                   clean-break (no migrator — pre-production status, see 04-pending.md)
 v2 (future)    when breaking change needed
 
 Migration:
@@ -689,7 +691,7 @@ implementado v1.2).
 
 | Where | Content | Updated by | Versioned in git? |
 |---|---|---|---|
-| `workflow-config.yaml` | **Fixed decisions** about project (preset, cards, paths, backend, persona) | Init + reconfigure | ✅ yes |
+| `forge-config.yaml` (at `.claude/forge/forge-config.yaml`) | **Fixed decisions** about project (preset, cards, paths, backend, persona) | Init + reconfigure | ✅ yes |
 | `.claude/inventory/*.yaml` | **Factual snapshot** of project (DS, i18n, conventions) | Init + on-demand re-scan | ✅ yes |
 | `.claude/memory/L*.yaml` | **Accumulated learning** (inferred patterns, FNDs, resolved contradictions) | Each feature | ⚠️ L2/L3 yes; L1 no |
 | `.claude/graph.db` | **Structural map** of code (queryable) | Incremental | ❌ rebuildable |

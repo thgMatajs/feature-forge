@@ -1,0 +1,13 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "Write", "hooks": [{"type": "command", "command": ".claude/hooks/user1.sh"}]}
+    ],
+    "PostToolUse": [
+      {"matcher": "Edit", "hooks": [{"type": "command", "command": ".claude/hooks/user2.sh"}]}
+    ],
+    "SessionStart": [
+      {"hooks": [{"type": "command", "command": ".claude/hooks/user3.sh"}]}
+    ]
+  }
+}

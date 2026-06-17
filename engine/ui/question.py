@@ -8,10 +8,10 @@ a canonical pending intent to ``.claude/state/forge-pending.json`` and
 raises ``PausedForInputError``. The top-level handler in ``engine.cli``
 maps that sentinel to exit code 2.
 
-stdin reading lives in ``engine.ui.tty_bridge`` (W3), which loops over
-``engine.cli`` in subprocess mode whenever the dispatcher detects a real
-terminal (sub-Q **Sd** of the spec). No subcommand calls stdin directly —
-this module is the single point of input.
+In the TTY path stdin is read in-process by ``engine.host.adapters.tty``
+(``TtyAdapter``); in the agentic path the engine emits intent files and the
+host (Claude Code / opencode) writes responses to disk. No subcommand calls
+stdin directly — this module is the single point of input.
 
 Invariants honoured here (the refactor preserves them bit-a-bit):
 
@@ -56,7 +56,7 @@ import sys
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping, NoReturn, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from engine.ui import intent_state
 from engine.utils.paths import try_find_project_root
@@ -84,8 +84,9 @@ class NonInteractiveError(RuntimeError):
     Kept for API stability — callers may still ``except NonInteractiveError``.
     DRIFT-1 superseded the stdin-EOF path that used to raise it; the
     sentinel is now reached via ``allow_pause=False`` + ``paused: true``
-    on the response (which raises ``ValueError`` directly — see
-    ``_check_pause_response``).
+    on the response, which the host adapter resolves to a ``ValueError``
+    (pause forbidden in this context) — see the pause/cancel handling in
+    ``engine/host/adapter.py``.
     """
 
 
@@ -93,8 +94,9 @@ class PausedForInputError(Exception):
     """Sentinel raised by the chokepoint when no response is available yet.
 
     ``intent`` carries the dict that was just written to
-    ``.claude/state/forge-pending.json`` — the host caller (Claude Code
-    or ``engine.ui.tty_bridge``) reads that file and writes a response;
+    ``.claude/state/forge-pending.json`` — the host (Claude Code,
+    opencode, or ``TtyAdapter`` in the TTY path) reads that file and
+    writes a response;
     the engine is then re-invoked with the same argv and consumes the
     response on its way back through this module.
 
@@ -171,7 +173,8 @@ _cli_command_context: ContextVar[tuple[str, list[str]] | None] = ContextVar(
 )
 
 
-# stdin reading lives in engine.ui.tty_bridge; this module never reads stdin.
+# stdin is read in-process by TtyAdapter (engine/host/adapters/tty.py) on the
+# TTY path; this module never reads stdin directly.
 
 
 # --- Intent-id derivation --------------------------------------------------
@@ -373,74 +376,101 @@ def _build_pending(
     return intent
 
 
-def _emit_pending_and_raise(intent: dict[str, Any]) -> NoReturn:
-    """Write the pending file (after race detection) and raise the sentinel.
+# NOTE (BL-001 / MD-001): a antiga geração de helpers nativos do
+# chokepoint — ``_emit_pending_and_raise``, ``_consume_response_or_none``,
+# ``_clear_state`` e ``_check_pause_response`` — foi removida quando
+# ``ask``/``ask_multi``/``ask_text`` e, por fim, ``confirm``/
+# ``ask_three_paths`` passaram a delegar pro ``HostAdapter`` (Task 0.7b +
+# série de remediação PR #17). A semântica de pause/cancel/clear hoje vive
+# no adapter (ver ``engine/host/adapter.py`` e o loop em
+# ``IntentFileAdapter``); o cleanup terminal de pending/response/log é
+# responsabilidade do ``finally`` de ``engine/cli.py::main`` (BL-001).
+# Mantê-los aqui como código morto só desorientava o próximo leitor sobre
+# quem limpa o quê.
 
-    Race detection consults ``.claude/state/forge-pending.json``; a recent
-    pending with a different intent-id raises ``RaceDetectedError`` from
-    ``intent_state`` (caught upstream and mapped to exit 1 by spec §3).
 
-    The ``NoReturn`` annotation (LO-002 fix) lets type checkers — and
-    static-analysis readers — know that control never returns from this
-    function; the downstream entrypoints rely on that to keep their
-    happy-path branches readable without defensive guards.
+# --- Adapter resolution (Task 0.7b) ----------------------------------------
+
+
+def _resolve_adapter(project_root: Path):
+    """Resolve the host adapter for this project; bootstraps the registry lazily.
+
+    Task 0.7b — surgical delegate of ``ask``/``ask_multi``/``ask_text`` to
+    the host-adapter ABC defined in ``engine.host.adapter``. The lazy
+    bootstrap registers the native adapters on first call so production
+    code does not need an explicit setup hook at import time. Wave 2
+    registers ``TtyAdapter`` (caminho TTY humano in-process — substitui o
+    antigo ``tty_bridge`` subprocess-loop).
+
+    OPENCODE — Veredito B (docs/research/opencode-tool-api.md):
+    opencode captura stdout do subprocess ao final da execucao; nao ha
+    interceptacao de marker em tempo real nem canal subprocess→host para
+    acionar a ``question`` tool. Portanto nao e compativel com o shape do
+    ``ClaudeCodeAdapter``. O registro abaixo e explicito (nao mais um
+    KeyError acidental): OPENCODE usa ``IntentFileAdapter`` como fallback
+    documentado. O protocolo DRIFT-1 funciona em qualquer ambiente com
+    acesso a disco, incluindo o bash-tool do opencode.
     """
-    project_root = _project_root_for_io()
-    intent_state.detect_race(project_root, new_intent_id=intent["intent-id"])
-    intent_state.write_pending(intent, project_root)
-    raise PausedForInputError(intent=intent)
+    from engine.host.detect import detect_host
+    from engine.host.registry import get_adapter_class, register
+    from engine.host.adapter import HostName
+
+    try:
+        get_adapter_class(HostName.INTENT_FILE)
+    except KeyError:
+        from engine.host.adapters.intent_file import IntentFileAdapter
+        from engine.host.adapters.claude_code import ClaudeCodeAdapter
+        from engine.host.adapters.tty import TtyAdapter
+
+        register(HostName.INTENT_FILE, IntentFileAdapter)
+        register(HostName.CLAUDE_CODE, ClaudeCodeAdapter)
+        register(HostName.TTY, TtyAdapter)
+        # Veredito B: opencode nao suporta adapter in-process (ver docstring).
+        # Registro explicito aqui documenta a decisao; sem isso, OPENCODE
+        # cairia no KeyError abaixo por acidente, sem intencao registrada.
+        register(HostName.OPENCODE, IntentFileAdapter)
+
+    host = detect_host(project_root)
+    try:
+        cls = get_adapter_class(host)
+    except KeyError:
+        # Rede de seguranca para hosts genuinamente desconhecidos (nao OPENCODE —
+        # esse ja esta registrado acima). IntentFileAdapter e o fallback mais
+        # seguro: funciona em qualquer ambiente com acesso a disco.
+        cls = get_adapter_class(HostName.INTENT_FILE)
+    return cls(project_root=project_root)
 
 
-def _consume_response_or_none(intent_id: str) -> dict[str, Any] | None:
-    """Read the response file if it exists and its intent-id matches."""
-    project_root = _project_root_for_io()
-    return intent_state.read_response(project_root, intent_id=intent_id)
+def _read_adapter_pending_or_fallback(
+    project_root: Path, fallback: dict[str, Any]
+) -> dict[str, Any]:
+    """Return the canonical pending dict the adapter just wrote to disk.
 
-
-def _clear_state() -> None:
-    intent_state.clear_intent_files(_project_root_for_io())
-
-
-def _check_pause_response(
-    response: dict[str, Any],
-    *,
-    allow_pause: bool,
-) -> None:
-    """Apply the pause / cancel semantics to a response.
-
-    Resolution order (MD-002 fix from W2 review): cancel is checked
-    BEFORE pause because cancellation is the stronger semantic. A
-    malformed host response carrying both ``"cancelled": true`` and
-    ``"paused": true`` resolves to cancellation — the user wants out
-    entirely, not a resumable pause.
-
-    Outcomes (each maps cleanly via ``engine.cli::main()``):
-
-    - ``cancelled: true`` → ``_clear_state()`` then raise
-      ``UserCancelledError`` (cli maps to exit 130, SPEC §8).
-    - ``paused: true`` + ``allow_pause=True`` → ``_clear_state()`` then
-      raise ``UserPausedError`` (cli maps to exit 2). This is the
-      user-initiated pause channel — distinct from
-      ``PausedForInputError`` (which fires when the engine emits a
-      fresh pending and is still waiting for a first response).
-    - ``paused: true`` + ``allow_pause=False`` → raise ``ValueError``
-      (pause forbidden in this context). State files are NOT cleared:
-      this is an invalid pause attempt, so the response is preserved
-      forensically per SPEC §3.
-
-    No ``RuntimeError`` ladder catches the new sentinels — they are
-    plain ``Exception`` siblings of ``PausedForInputError``, so legacy
-    ``except PromptAbortedError`` / ``except RuntimeError`` clauses in
-    callsite modules cannot silently swallow user-initiated termination.
+    Task 0.7b — when ``adapter.ask*`` raises ``PausedForInputError`` it
+    has already written ``forge-pending.json`` to the resolved
+    ``state_dir`` (``.claude/forge/state/`` for the IntentFileAdapter).
+    Reading it back is the authoritative source of the intent-id and
+    other wire fields, which guarantees that the ``intent`` payload
+    surfaced via ``question.PausedForInputError.intent`` matches what
+    callers will see on disk (e.g. tests that write a response keyed by
+    ``exc.value.intent['intent-id']``). When the read fails — host did
+    not write a pending file (TTY adapter in W2, transient I/O glitch)
+    — fall back to the in-process intent dict so callers still get
+    something coherent.
     """
-    if response.get("cancelled"):
-        _clear_state()
-        raise UserCancelledError("user cancelled via response")
-    if response.get("paused"):
-        if allow_pause:
-            _clear_state()
-            raise UserPausedError("user paused via response")
-        raise ValueError("pause not allowed in this context, but response was paused")
+    from engine.utils.paths import forge_state_dir as _forge_state_dir
+    from engine.utils import json_io as _json_io
+
+    candidate = _forge_state_dir(project_root) / "forge-pending.json"
+    if not candidate.exists():
+        return fallback
+    try:
+        return _json_io.read_json(candidate)
+    except Exception:
+        # Forensic — never mask the original adapter exception with a
+        # secondary I/O error. Best-effort: return fallback so the
+        # PausedForInputError still has a non-empty ``.intent``.
+        return fallback
 
 
 # --- ask -------------------------------------------------------------------
@@ -452,39 +482,91 @@ def ask(
     *,
     default: str | None = None,
     allow_pause: bool = True,
+    project_root: Path | None = None,
 ) -> str:
     """Single-select prompt. ``options`` is ``{key: human_label}``.
 
     Returns the chosen key. If no response is on disk, writes the
     canonical pending intent and raises ``PausedForInputError`` so the
     top-level handler can exit 2.
+
+    Task 0.7b: body delegates to the resolved host adapter. The adapter
+    handles the DRIFT-1 pending/response loop against ``.claude/forge/state/``
+    (the v1.3 sub-namespace) and raises ``PausedForInputError`` /
+    ``UserPausedError`` / ``UserCancelledError`` which this delegate
+    wraps back to ``question.*`` equivalents so the cli.py exception
+    ladder keeps working without changes.
     """
     if not options:
         raise ValueError("ask() requires at least one option")
 
+    project_root = (
+        project_root if project_root is not None else _project_root_for_io()
+    )
+
+    # Normaliza o default uma vez: só vale se for uma key real de options.
+    # Compartilhado entre o intent legado e a chamada ao adapter pra não
+    # divergir (DRY — comportamento idêntico ao cálculo duplicado anterior).
+    effective_default = default if default in options else None
+
+    # Build the legacy-shape intent dict so ``PausedForInputError.intent``
+    # carries the same payload callers used to see. The adapter writes
+    # its own (identical-shape) pending to disk; this dict is only for
+    # the in-process exception attribute.
     intent = _build_pending(
         kind="ask",
         question_text=question,
         options=options,
-        default=default if default in options else None,
+        default=effective_default,
         allow_pause=allow_pause,
     )
 
-    response = _consume_response_or_none(intent["intent-id"])
-    if response is None:
-        _emit_pending_and_raise(intent)
+    from engine.host.adapter import (
+        AskKind,
+        PausedForInputError as _AdapterPaused,
+        UserPausedError as _AdapterUserPaused,
+        UserCancelledError as _AdapterUserCancelled,
+    )
 
-    _check_pause_response(response, allow_pause=allow_pause)
+    try:
+        result = _resolve_adapter(project_root).ask(
+            kind=AskKind.ASK,
+            question=question,
+            options=dict(options),
+            default=effective_default,
+            allow_pause=allow_pause,
+        )
+    except _AdapterPaused:
+        # First entry — engine emitted fresh pending, no response yet.
+        # Wrap as question.PausedForInputError so cli.main maps to exit 2
+        # and callers' ``except question.PausedForInputError`` continues
+        # working untouched. Re-hydrate ``.intent`` from the adapter's
+        # on-disk pending so the surfaced ``intent-id`` matches what the
+        # host will see (and what tests anchor responses against).
+        raise PausedForInputError(
+            intent=_read_adapter_pending_or_fallback(project_root, intent)
+        )
+    except _AdapterUserPaused:
+        if not allow_pause:
+            # Legacy semantic preserved: pause forbidden in this context.
+            # State files remain on disk (CR-002 — adapter no longer
+            # auto-clears) for forensic inspection.
+            raise ValueError(
+                "pause not allowed in this context, but response was paused"
+            )
+        raise UserPausedError("user paused via response")
+    except _AdapterUserCancelled:
+        raise UserCancelledError("user cancelled via response")
 
-    value = response.get("value")
+    value = result.value
     if not isinstance(value, str) or value not in options:
-        # CR-002: do NOT clear state on invalid value — preserve forensics
-        # per SPEC §3 so the host can inspect what arrived.
+        # CR-002: state remains on disk — cli.py finally clears on terminal
+        # error paths; here we just surface the validation failure.
         raise ValueError(
             f"response value {value!r} is not one of the offered options "
             f"{list(options.keys())!r}"
         )
-    _clear_state()
+    # Happy path — caller (cli.py finally) clears state. CR-002 invariant.
     return value
 
 
@@ -496,15 +578,22 @@ def ask_multi(
     options: Mapping[str, str],
     *,
     min_selected: int = 0,
+    project_root: Path | None = None,
 ) -> list[str]:
     """Multi-select prompt. Returns picked keys in ``options`` insertion order.
 
     Response shape: ``value`` is a list of keys (the host orders them
     however it likes; the engine re-projects onto ``options`` order so
     downstream output stays stable regardless of input order).
+
+    Task 0.7b: body delegates to the resolved host adapter; see ``ask``.
     """
     if not options:
         raise ValueError("ask_multi() requires at least one option")
+
+    project_root = (
+        project_root if project_root is not None else _project_root_for_io()
+    )
 
     intent = _build_pending(
         kind="ask_multi",
@@ -515,16 +604,32 @@ def ask_multi(
         min_selected=min_selected,
     )
 
-    response = _consume_response_or_none(intent["intent-id"])
-    if response is None:
-        _emit_pending_and_raise(intent)
+    from engine.host.adapter import (
+        PausedForInputError as _AdapterPaused,
+        UserPausedError as _AdapterUserPaused,
+        UserCancelledError as _AdapterUserCancelled,
+    )
 
-    _check_pause_response(response, allow_pause=True)
+    try:
+        value = _resolve_adapter(project_root).ask_multi(
+            question=question,
+            options=dict(options),
+            min_selected=min_selected,
+        )
+    except _AdapterPaused:
+        raise PausedForInputError(
+            intent=_read_adapter_pending_or_fallback(project_root, intent)
+        )
+    except _AdapterUserPaused:
+        raise UserPausedError("user paused via response")
+    except _AdapterUserCancelled:
+        raise UserCancelledError("user cancelled via response")
 
-    value = response.get("value")
     if not isinstance(value, list):
         # CR-002: preserve forensics — see ``ask`` rationale above.
-        raise ValueError(f"ask_multi response value must be a list, got {type(value).__name__}")
+        raise ValueError(
+            f"ask_multi response value must be a list, got {type(value).__name__}"
+        )
 
     picked = {str(v).lower() for v in value}
     valid_keys_lower = {k.lower() for k in options.keys()}
@@ -538,7 +643,7 @@ def ask_multi(
         raise ValueError(
             f"at least {min_selected} option(s) required, got {len(result)}"
         )
-    _clear_state()
+    # Happy path — caller (cli.py finally) clears state. CR-002 invariant.
     return result
 
 
@@ -551,13 +656,22 @@ def ask_text(
     default: str | None = None,
     validator: Callable[[str], bool] | None = None,
     validator_hint: str | None = None,
+    project_root: Path | None = None,
 ) -> str:
     """Free-text prompt with optional validator and default.
 
     Validator returns True on accept. If the response value fails the
     validator, the engine raises ``ValueError`` (it does not loop —
     looping is the host's responsibility, just like with ``ask``).
+
+    Task 0.7b: body delegates to the resolved host adapter; see ``ask``.
+    The Python-callable ``validator`` is applied post-consume in this
+    delegate (the adapter only knows ``validator_hint`` over the wire).
     """
+    project_root = (
+        project_root if project_root is not None else _project_root_for_io()
+    )
+
     intent = _build_pending(
         kind="ask_text",
         question_text=question,
@@ -567,16 +681,30 @@ def ask_text(
         validator_hint=validator_hint,
     )
 
-    response = _consume_response_or_none(intent["intent-id"])
-    if response is None:
-        _emit_pending_and_raise(intent)
+    from engine.host.adapter import (
+        PausedForInputError as _AdapterPaused,
+        UserPausedError as _AdapterUserPaused,
+        UserCancelledError as _AdapterUserCancelled,
+    )
 
-    _check_pause_response(response, allow_pause=True)
+    try:
+        value = _resolve_adapter(project_root).ask_text(
+            prompt=question,
+            default=default,
+            validator_hint=validator_hint,
+        )
+    except _AdapterPaused:
+        raise PausedForInputError(
+            intent=_read_adapter_pending_or_fallback(project_root, intent)
+        )
+    except _AdapterUserPaused:
+        raise UserPausedError("user paused via response")
+    except _AdapterUserCancelled:
+        raise UserCancelledError("user cancelled via response")
 
-    value = response.get("value")
     # Empty value with a default → resolve to default (legacy semantics).
     if (value is None or value == "") and default is not None:
-        _clear_state()
+        # Happy path — caller (cli.py finally) clears state.
         return default
     if not isinstance(value, str) or not value:
         # CR-002: preserve forensics on invalid response value.
@@ -584,7 +712,7 @@ def ask_text(
     if validator is not None and not validator(value):
         # CR-002: preserve forensics on validator rejection.
         raise ValueError(validator_hint or f"validator rejected value {value!r}")
-    _clear_state()
+    # Happy path — caller (cli.py finally) clears state. CR-002 invariant.
     return value
 
 
@@ -598,9 +726,10 @@ def ask_three_paths(
     """Render the 3-caminhos prompt (discipline §1) and return the picked key.
 
     ``paths`` MUST be exactly 3 entries, each with ``label`` + ``motive``.
-    The visual block itself is rendered by the host (Claude Code or
-    ``engine.ui.tty_bridge``) using the intent payload; this entrypoint
-    only assembles the intent and consumes the response.
+    The visual block itself is rendered by the host (Claude Code,
+    opencode, or ``TtyAdapter`` on the TTY path) using the intent
+    payload; this entrypoint only assembles the intent and consumes the
+    response.
     """
     if len(paths) != 3:
         raise ValueError(
@@ -625,28 +754,59 @@ def ask_three_paths(
         }
         for i in range(3)
     ]
+    question_text = f"Qual caminho para resolver '{gate_name}'?"
+
+    # Resolve the I/O anchor with the same fallback ``ask`` uses, so the
+    # public signature ``ask_three_paths(gate_name, paths)`` stays intact
+    # — no callsite needs to thread ``project_root`` through.
+    project_root = _project_root_for_io()
+
+    # In-process intent payload for ``PausedForInputError.intent`` parity
+    # (the adapter writes its own identical-shape pending to disk).
     intent = _build_pending(
         kind="ask_three_paths",
-        question_text=f"Qual caminho para resolver '{gate_name}'?",
+        question_text=question_text,
         options=options,
         default=None,
         allow_pause=True,
         paths_detail=paths_detail,
     )
 
-    response = _consume_response_or_none(intent["intent-id"])
-    if response is None:
-        _emit_pending_and_raise(intent)
+    from engine.host.adapter import (
+        AskKind,
+        PausedForInputError as _AdapterPaused,
+        UserPausedError as _AdapterUserPaused,
+        UserCancelledError as _AdapterUserCancelled,
+    )
 
-    _check_pause_response(response, allow_pause=True)
+    try:
+        result = _resolve_adapter(project_root).ask(
+            kind=AskKind.ASK_THREE_PATHS,
+            question=question_text,
+            options=dict(options),
+            default=None,
+            allow_pause=True,
+            paths_detail=paths_detail,
+        )
+    except _AdapterPaused:
+        # First entry — re-hydrate ``.intent`` from the adapter's on-disk
+        # pending so the surfaced intent-id matches what the host sees.
+        raise PausedForInputError(
+            intent=_read_adapter_pending_or_fallback(project_root, intent)
+        )
+    except _AdapterUserPaused:
+        raise UserPausedError("user paused via response")
+    except _AdapterUserCancelled:
+        raise UserCancelledError("user cancelled via response")
 
-    value = response.get("value")
+    value = result.value
     if not isinstance(value, str) or value not in options:
-        # CR-002: preserve forensics on invalid path key.
+        # CR-002: state remains on disk for forensic inspection; cli.py
+        # finally clears on terminal error paths.
         raise ValueError(
             f"ask_three_paths response value {value!r} is not one of 'a'/'b'/'c'"
         )
-    _clear_state()
+    # Happy path — caller (cli.py finally) clears state. CR-002 invariant.
     return value
 
 
@@ -670,6 +830,13 @@ def confirm(question: str, *, default: bool = False, allow_pause: bool = True) -
     default_key = "s" if default else "n"
     options = {"s": "sim", "n": "não"}
 
+    # Resolve the I/O anchor with the same fallback ``ask`` uses, keeping
+    # the public signature ``confirm(question, *, default, allow_pause)``
+    # intact — no callsite threads ``project_root`` through.
+    project_root = _project_root_for_io()
+
+    # In-process intent payload for ``PausedForInputError.intent`` parity
+    # (the adapter writes its own identical-shape pending to disk).
     intent = _build_pending(
         kind="confirm",
         question_text=question,
@@ -678,23 +845,45 @@ def confirm(question: str, *, default: bool = False, allow_pause: bool = True) -
         allow_pause=allow_pause,
     )
 
-    response = _consume_response_or_none(intent["intent-id"])
-    if response is None:
-        _emit_pending_and_raise(intent)
+    from engine.host.adapter import (
+        AskKind,
+        PausedForInputError as _AdapterPaused,
+        UserPausedError as _AdapterUserPaused,
+        UserCancelledError as _AdapterUserCancelled,
+    )
 
-    _check_pause_response(response, allow_pause=allow_pause)
+    try:
+        result = _resolve_adapter(project_root).ask(
+            kind=AskKind.CONFIRM,
+            question=question,
+            options=dict(options),
+            default=default_key,
+            allow_pause=allow_pause,
+        )
+    except _AdapterPaused:
+        raise PausedForInputError(
+            intent=_read_adapter_pending_or_fallback(project_root, intent)
+        )
+    except _AdapterUserPaused:
+        if not allow_pause:
+            # Legacy semantic preserved: pause forbidden in this context.
+            # State files remain on disk (CR-002) for forensic inspection.
+            raise ValueError(
+                "pause not allowed in this context, but response was paused"
+            )
+        raise UserPausedError("user paused via response")
+    except _AdapterUserCancelled:
+        raise UserCancelledError("user cancelled via response")
 
-    value = response.get("value")
+    value = result.value
     if isinstance(value, bool):
-        _clear_state()
+        # Happy path — caller (cli.py finally) clears state. CR-002 invariant.
         return value
     if isinstance(value, str):
         normalized = value.strip().lower()
         if normalized in {"s", "sim", "y", "yes", "true"}:
-            _clear_state()
             return True
         if normalized in {"n", "não", "nao", "no", "false"}:
-            _clear_state()
             return False
     # CR-002: preserve forensics on unrecognised confirm value.
     raise ValueError(

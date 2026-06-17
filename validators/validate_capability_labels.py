@@ -34,20 +34,29 @@ from _common import (
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from engine.utils.paths import cards_canonical_dir, cards_dir  # noqa: E402
+from engine.utils.paths import (  # noqa: E402
+    cards_canonical_dir,
+    cards_dir,
+    forge_cards_local_dir,
+)
 from engine.utils.yaml_io import YamlIOError, read_yaml_or_default  # noqa: E402
 
 
 def _collect_cards(project_root: Path) -> list[Path]:
-    """Return all card.yaml files to validate (project snapshot + canonical)."""
+    """Return all card.yaml files to validate (project snapshot + canonical).
+
+    Task 0.8 (v1.3 pilot-ready): local overlay vive em
+    ``.claude/forge/cards/local/`` (sub-namespace §2). O canon snapshot
+    continua em ``.claude/cards/``.
+    """
     candidates: list[Path] = []
     snapshot = cards_dir(project_root)
     if snapshot.is_dir():
         candidates.extend(snapshot.glob("*/card.yaml"))
-        # Inclui overlay local quando existe (cards/local/<name>/card.yaml).
-        local_root = snapshot / "local"
-        if local_root.is_dir():
-            candidates.extend(local_root.glob("*/card.yaml"))
+    # Overlay local — sub-namespace v1.3.
+    local_root = forge_cards_local_dir(project_root)
+    if local_root.is_dir():
+        candidates.extend(local_root.glob("*/card.yaml"))
     if not candidates:
         canonical = cards_canonical_dir()
         if canonical.is_dir():

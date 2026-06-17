@@ -3,7 +3,7 @@
 This is the MOST IMPORTANT command of feature-forge. It:
 
 - detects whether the cwd is a fresh project (greenfield) or already has
-  `.claude/workflow-config.yaml` (brownfield — defer to `forge reconfigure`);
+  `.claude/forge/forge-config.yaml` (brownfield — defer to `forge reconfigure`);
 - runs cinematic discovery (cards, stack detection, design system, i18n,
   conventions);
 - proposes the canonical preset (`kmp-mobile`) and asks the user to confirm;
@@ -14,7 +14,7 @@ This is the MOST IMPORTANT command of feature-forge. It:
 - snapshots cards into `.claude/cards/`;
 - merges contributions, writes inventory snapshots, seeds memory L1/L2 dirs;
 - builds the codebase graph (SQLite, deterministic);
-- writes `.claude/workflow-config.yaml` (schema v1) + history JSONL seed;
+- writes `.claude/forge/forge-config.yaml` (schema v1.3) + history JSONL seed;
 - renders a final summary.
 
 Decision 10 (zero flags): only positional `help` accepted. Everything else
@@ -76,12 +76,15 @@ from engine.utils.paths import (
     cards_dir,
     claude_dir,
     ensure_dir,
+    forge_cards_local_dir,
+    forge_config_path,
+    forge_dir,
     forge_home,
+    forge_hooks_dir,
     graph_db_path,
     inventory_dir,
     memory_dir,
     memory_l2_path,
-    workflow_config_path,
 )
 from engine.utils.sha256 import file_sha256
 from engine.utils.yaml_io import read_yaml_or_default, write_yaml
@@ -195,6 +198,32 @@ def _utc_now_iso() -> str:
 
 def _is_git_repo(root: Path) -> bool:
     return (root / ".git").exists()
+
+
+def _detect_brownfield(project_root: Path) -> bool:
+    """True if the project's `.claude/` directory already carries user-owned
+    content that forge must not touch.
+
+    Signals:
+    - `.claude/skills/` exists and is non-empty
+    - `.claude/agents/` exists and is non-empty
+    - `.claude/settings.json` exists with non-zero size
+
+    Used by init to switch into brownfield-safe mode (Wave 1) — append-only
+    settings merge, hook delegator chained, sub-namespace `.claude/forge/`
+    isolation. Spec §3 / §4.
+    """
+    claude_dir = project_root / ".claude"
+    if not claude_dir.exists():
+        return False
+    for sub in ("skills", "agents"):
+        d = claude_dir / sub
+        if d.exists() and any(d.iterdir()):
+            return True
+    settings = claude_dir / "settings.json"
+    if settings.exists() and settings.stat().st_size > 0:
+        return True
+    return False
 
 
 @dataclass
@@ -382,7 +411,7 @@ def _surface_three_paths(
         renderer.write("     PR de promoção rodar.")
     else:
         renderer.write("  1) Criar card local agora (recomendado pra stack atual)")
-        renderer.write("     Materializa card(s) local(is) em .claude/cards/local/ cobrindo")
+        renderer.write("     Materializa card(s) local(is) em .claude/forge/cards/local/ cobrindo")
         renderer.write("     os signals órfãos. Init segue com a `activated` corrente —")
         renderer.write("     re-rode `forge init` pra ativar com catálogo expandido.")
     renderer.write("")
@@ -493,7 +522,7 @@ def _card_local_add_inline(
     # as capabilities órfãs apontam pra labels SEM card canon — mas defensivo
     # caso o catálogo evolua), sufixa com `-local` pra evitar colisão silenciosa
     # com a cascade canon×local (que faria hard fail no próximo load).
-    canon_root = project_root / ".claude" / "cards"
+    canon_root = cards_dir(project_root)
     canon_names: set[str] = set()
     if canon_root.is_dir():
         canon_names = {
@@ -503,7 +532,9 @@ def _card_local_add_inline(
         }
     name = base_name if base_name not in canon_names else f"{base_name}-local"
 
-    local_root = project_root / ".claude" / "cards" / "local" / name
+    # Task 0.8 (v1.3 pilot-ready): local card vive em
+    # ``.claude/forge/cards/local/<name>/`` (sub-namespace spec §2).
+    local_root = forge_cards_local_dir(project_root) / name
     local_root.mkdir(parents=True, exist_ok=True)
     (local_root / "detection").mkdir(parents=True, exist_ok=True)
 
@@ -608,7 +639,7 @@ def _index_cards(canonical: list[CardManifest]) -> dict[str, CardManifest]:
 
 
 def _install_hooks(project_root: Path) -> int:
-    """Copy canonical hooks from FORGE_HOME/hooks/ to .claude/hooks/.
+    """Copy canonical hooks from FORGE_HOME/hooks/ to .claude/forge/hooks/.
 
     Rules:
     - `.sh` scripts and `git-*` wrappers → copied with +x preserved.
@@ -616,13 +647,16 @@ def _install_hooks(project_root: Path) -> int:
       workflows the user installs into `.github/workflows/` manually.
     - Idempotent: overwrites existing copies (canonical wins).
 
+    Task 0.8 (v1.3 pilot-ready): destino migrado para sub-namespace
+    ``.claude/forge/hooks/`` (spec §2).
+
     Returns the number of hooks installed.
     """
     canonical = forge_home() / "hooks"
     if not canonical.is_dir():
         return 0
 
-    target = claude_dir(project_root) / "hooks"
+    target = forge_hooks_dir(project_root)
     ensure_dir(target)
 
     count = 0
@@ -643,10 +677,17 @@ def _install_hooks(project_root: Path) -> int:
 
 
 def _install_git_hooks(project_root: Path) -> None:
-    """Symlink `.git/hooks/{pre-commit,post-commit,pre-push}` to canonical wrappers.
+    """Install `.git/hooks/{pre-commit,post-commit,pre-push}` as chained delegators.
 
-    Idempotent — pre-existing custom hooks get backed up to `<name>.bak` once
-    before being replaced. On non-git projects this is a no-op.
+    Each wrapper is a Bash script bearing ``# FORGE_DELEGATOR_MARKER``. Pre-existing
+    user hooks (non-wrapper, non-symlink) são migrados pra ``<name>.user`` UMA vez
+    e re-encadeados a partir do wrapper, preservando o que o usuário escreveu
+    (brownfield-safe). Symlinks antigos (estilo Task 0.8 pré-1.4) são descartados
+    porque apontam direto pro forge hook — o wrapper já cobre esse exec.
+
+    Idempotente: re-rodar detecta o marker e no-op. Em projetos não-git é no-op.
+
+    Substitui o install symlink-com-``.bak`` (Task 1.4, v1.3 pilot-ready).
     """
     git_hooks = project_root / ".git" / "hooks"
     if not git_hooks.is_dir():
@@ -658,32 +699,179 @@ def _install_git_hooks(project_root: Path) -> None:
         "pre-push": "git-pre-push",
     }
     for git_name, claude_name in mappings.items():
-        source = claude_dir(project_root) / "hooks" / claude_name
-        if not source.is_file():
+        forge_hook = forge_hooks_dir(project_root) / claude_name
+        if not forge_hook.is_file():
             continue
         target = git_hooks / git_name
+        user_backup = git_hooks / f"{git_name}.user"
 
-        if target.is_symlink() or target.exists():
-            backup = target.with_name(target.name + ".bak")
-            if not backup.exists():
+        # Idempotente: já é um forge delegator? (file, não symlink, com marker)
+        if target.exists() and not target.is_symlink():
+            try:
+                content = target.read_text()
+                if "# FORGE_DELEGATOR_MARKER" in content:
+                    continue
+            except (OSError, UnicodeDecodeError):
+                pass
+
+        # Migra hook pré-existente do usuário pra <name>.user
+        if target.exists() or target.is_symlink():
+            if target.is_symlink():
+                # Symlink estilo antigo — descarta, wrapper substituirá
                 try:
-                    target.replace(backup)
+                    target.unlink()
                 except OSError:
-                    try:
-                        target.unlink()
-                    except OSError:
-                        continue
+                    continue
+            elif not user_backup.exists():
+                # Primeira migração de um hook real do usuário
+                try:
+                    target.rename(user_backup)
+                except OSError:
+                    continue
             else:
+                # .user já existe de migração anterior — preserva-o, descarta target
                 try:
                     target.unlink()
                 except OSError:
                     continue
 
+        # Escreve o wrapper encadeado
+        wrapper = (
+            "#!/usr/bin/env bash\n"
+            "# FORGE_DELEGATOR_MARKER\n"
+            "set -e\n"
+            "# Chain user hook if present (preserves brownfield content)\n"
+            f'if [ -x "$(dirname "$0")/{git_name}.user" ]; then\n'
+            f'    "$(dirname "$0")/{git_name}.user" "$@"\n'
+            "fi\n"
+            "# Then run forge hook\n"
+            f'exec "{forge_hook}" "$@"\n'
+        )
         try:
-            target.symlink_to(Path("../../.claude/hooks") / claude_name)
+            target.write_text(wrapper)
             target.chmod(0o755)
         except OSError:
-            pass
+            continue
+        if user_backup.exists():
+            try:
+                user_backup.chmod(0o755)  # preserva exec bit
+            except OSError:
+                pass
+
+
+def _merge_forge_hooks_into_settings(project_root: Path) -> None:
+    """Append forge's CC hook registrations to `.claude/settings.json`.
+
+    Brownfield-safe via ``merge_settings_json`` (append-only, dedup-via-deep-equal).
+    JSON5-tolerant read via ``read_settings_tolerant``. Idempotent.
+
+    Forge hooks live in ``.claude/forge/hooks/`` after init (Task 0.8); this
+    function registers their CC events in the user's ``.claude/settings.json``
+    so Claude Code dispatches them on SessionStart/PostToolUse/SubagentStop.
+
+    Wave 1 Fix #1 (v1.3 pilot-ready): closes the gap where ``_install_hooks``
+    copied the shims but didn't register them in CC settings.
+    """
+    from engine.utils.settings_merge import (
+        merge_settings_json,
+        read_settings_tolerant,
+    )
+    from engine.utils.yaml_io import backup_file
+
+    settings_path = project_root / ".claude" / "settings.json"
+    if settings_path.exists():
+        try:
+            existing = read_settings_tolerant(settings_path.read_text())
+        except ValueError:
+            # Parse failure: o arquivo existe mas não é JSON válido. NÃO
+            # descartamos silenciosamente o conteúdo do usuário — preservamos
+            # em .bak antes de seguir com as forge additions (cross-AI review
+            # HIGH, brownfield-safe).
+            bak = backup_file(settings_path)
+            if bak is not None:
+                renderer.write(renderer.colored(
+                    f"warn: .claude/settings.json não é JSON válido; "
+                    f"original preservado em {bak}. Seguindo com as adições "
+                    f"do forge sobre uma base vazia — revise e reintegre suas "
+                    f"settings a partir do backup.",
+                    "yellow",
+                ))
+            else:
+                renderer.write(renderer.colored(
+                    "warn: .claude/settings.json não é JSON válido e não pôde "
+                    "ser preservado em backup. Seguindo com as adições do forge.",
+                    "yellow",
+                ))
+            existing = {}
+        except OSError:
+            # Não conseguimos PARSEAR o arquivo via read_text (EACCES
+            # transiente, lock momentâneo, EINTR) — mas o arquivo pode estar
+            # fisicamente íntegro no disco. A função grava settings.json
+            # incondicionalmente logo abaixo; sem backup isso DESTRÓI as
+            # settings do usuário silenciosamente (HI-001).
+            #
+            # backup_file copia BYTES (shutil.copy2), não depende do read que
+            # falhou — então funciona mesmo aqui. Tentamos preservar antes de
+            # seguir com base vazia. Se nem a cópia der (disco realmente
+            # inacessível), avisamos best-effort e seguimos: init não falha.
+            from engine.utils.yaml_io import backup_file as _backup_file
+
+            bak = None
+            try:
+                bak = _backup_file(settings_path)
+            except OSError:
+                bak = None
+            if bak is not None:
+                renderer.write(renderer.colored(
+                    f"warn: não consegui parsear o .claude/settings.json "
+                    f"existente; original preservado em {bak}. Seguindo com "
+                    f"as adições do forge sobre uma base vazia — revise e "
+                    f"reintegre suas settings a partir do backup.",
+                    "yellow",
+                ))
+            else:
+                renderer.write(renderer.colored(
+                    "warn: não consegui ler nem preservar o "
+                    ".claude/settings.json existente em backup; seguindo com "
+                    "as adições do forge sobre uma base vazia.",
+                    "yellow",
+                ))
+            existing = {}
+    else:
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        existing = {}
+
+    # Canonical forge hook entries (paths relative to project root; Task 0.8
+    # migrated forge shims to .claude/forge/hooks/ sub-namespace).
+    forge_additions = {
+        "hooks": {
+            "SessionStart": [
+                {"matcher": "", "hooks": [
+                    {"type": "command",
+                     "command": ".claude/forge/hooks/session-start-drift-check.sh"}
+                ]}
+            ],
+            "PostToolUse": [
+                {"matcher": "Edit|Write|NotebookEdit", "hooks": [
+                    {"type": "command",
+                     "command": ".claude/forge/hooks/post-edit-codebase-graph.sh"}
+                ]},
+                {"matcher": "Write", "hooks": [
+                    {"type": "command",
+                     "command": ".claude/forge/hooks/post-write-feature-artifact.sh"}
+                ]},
+            ],
+            "SubagentStop": [
+                {"matcher": "", "hooks": [
+                    {"type": "command",
+                     "command": ".claude/forge/hooks/post-subagent-validate.sh"}
+                ]}
+            ],
+        }
+    }
+
+    merged = merge_settings_json(existing, forge_additions)
+    settings_path.write_text(json.dumps(merged, indent=2) + "\n")
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────
@@ -762,12 +950,12 @@ def _run_pipeline(project_root: Path) -> int:
             )
         )
 
-    if workflow_config_path(project_root).is_file():
+    if forge_config_path(project_root).is_file():
         renderer.write(
             mentor_calmo.three_paths_block(
                 "INIT-BROWNFIELD",
-                what_failed="já existe .claude/workflow-config.yaml neste projeto",
-                where=str(workflow_config_path(project_root)),
+                what_failed="já existe .claude/forge/forge-config.yaml neste projeto",
+                where=str(forge_config_path(project_root)),
                 why=[
                     "init é destrutivo — sobrescreveria cards/inventory já curados",
                     "reconfigure é a porta canônica pra mudar config existente",
@@ -1314,18 +1502,19 @@ def _run_pipeline(project_root: Path) -> int:
         renderer.write("  ✓ no reuse opportunities detected")
 
     # ── Step 11.6 — Incremental detection hook (opt-in) ─────────────────────
-    # Writes a hook script in .claude/hooks/. Wiring it to Claude Code's
+    # Writes a hook script in .claude/forge/hooks/. Wiring it to Claude Code's
     # `tool-use:post:Edit` hook is left to the user — we print a one-liner
     # they can paste into .claude/settings.local.json.
-    hooks_dir = claude_dir(project_root) / "hooks"
-    hooks_dir.mkdir(parents=True, exist_ok=True)
-    hook_script = hooks_dir / "post-edit-detect-duplications.sh"
+    # Task 0.8 (v1.3 pilot-ready): hooks vivem em sub-namespace .claude/forge/.
+    hooks_local = forge_hooks_dir(project_root)
+    hooks_local.mkdir(parents=True, exist_ok=True)
+    hook_script = hooks_local / "post-edit-detect-duplications.sh"
     hook_script.write_text(
         "#!/usr/bin/env bash\n"
         "# Post-edit hook: surface reuse-intelligence findings introduced by the edit.\n"
         "# Installed by `forge init` — wire it up in .claude/settings.local.json:\n"
         "#   { \"hooks\": { \"tool-use:post:Edit\": "
-        "[{\"command\": \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit-detect-duplications.sh \\\"$file_path\\\"\"}] } }\n"
+        "[{\"command\": \"$CLAUDE_PROJECT_DIR/.claude/forge/hooks/post-edit-detect-duplications.sh \\\"$file_path\\\"\"}] } }\n"
         "set -e\n"
         "FILE=\"${1:-}\"\n"
         "[ -z \"$FILE\" ] && exit 0\n"
@@ -1346,7 +1535,7 @@ def _run_pipeline(project_root: Path) -> int:
     checkpoint.at = _utc_now_iso()
     _save_checkpoint(checkpoint)
 
-    # ── Step 12 — workflow-config.yaml ───────────────────────────────────────
+    # ── Step 12 — forge-config.yaml ──────────────────────────────────────────
     config = _build_workflow_config(
         project_root=project_root,
         activated=activated,
@@ -1373,13 +1562,17 @@ def _run_pipeline(project_root: Path) -> int:
                 existing.append(var)
         qa_cfg["sensitive-env-grants"] = existing
 
-    write_yaml(workflow_config_path(project_root), config, atomic=True)
+    # Task 0.10 (v1.3 pilot-ready): config vive em
+    # ``.claude/forge/forge-config.yaml`` (sub-namespace spec §2).
+    ensure_dir(forge_dir(project_root))
+    write_yaml(forge_config_path(project_root), config, atomic=True)
 
     checkpoint.step = "step-12.5-version-lock"
 
     # ── Step 12.5 — forge-version-lock.yaml ─────────────────────────────────
     # `forge doctor` checks this lock to detect engine/project version drift.
-    version_lock_path = claude_dir(project_root) / "forge-version-lock.yaml"
+    # Task 0.10: version-lock também migra pro sub-namespace.
+    version_lock_path = forge_dir(project_root) / "forge-version-lock.yaml"
     write_yaml(
         version_lock_path,
         {
@@ -1393,21 +1586,18 @@ def _run_pipeline(project_root: Path) -> int:
 
     checkpoint.step = "step-12.6-gitignore"
 
-    # ── Step 12.6 — .claude/.gitignore ──────────────────────────────────────
+    # ── Step 12.6 — .claude/forge/.gitignore ────────────────────────────────
     # Auto-managed gitignore per docs/design/05-filesystem-layout.md so that
-    # graph.db, archived L1 entries and checkpoints stay out of git.
-    gitignore_path = claude_dir(project_root) / ".gitignore"
+    # forge-internal state (init checkpoints, reconfigure drafts) stays out
+    # of git. Task 0.10 (v1.3 pilot-ready): vive em ``.claude/forge/``.
+    gitignore_path = forge_dir(project_root) / ".gitignore"
     gitignore_content = (
         "# feature-forge — auto-managed\n"
-        "graph.db\n"
-        "graph.db-journal\n"
-        "graph.db-wal\n"
-        "memory/L1/**/!archived/\n"
-        "memory/L1/**/!archived/**\n"
-        "*.bak\n"
+        "state/\n"
         ".init-checkpoint.yaml\n"
         ".reconfigure-draft.yaml\n"
         ".evolve-checkpoint.yaml\n"
+        "*.bak\n"
     )
     ensure_dir(gitignore_path.parent)
     gitignore_path.write_text(gitignore_content, encoding="utf-8")
@@ -1415,13 +1605,18 @@ def _run_pipeline(project_root: Path) -> int:
     checkpoint.step = "step-14-history"
 
     # ── Step 13 — Hooks install ──────────────────────────────────────────────
-    # Copy canonical shims into .claude/hooks/ and wire git hooks symlinks.
-    ensure_dir(claude_dir(project_root) / "hooks")
+    # Copy canonical shims into .claude/forge/hooks/ and wire git hooks symlinks.
+    # Task 0.8 (v1.3 pilot-ready): hooks live under .claude/forge/ sub-namespace.
+    ensure_dir(forge_hooks_dir(project_root))
     try:
         n_hooks = _install_hooks(project_root)
         _install_git_hooks(project_root)
+        # Wave 1 Fix #1: register forge CC hooks in .claude/settings.json
+        # (brownfield-safe, append-only, dedup via merge_settings_json).
+        # Must run AFTER hooks are copied so settings.json points to real files.
+        _merge_forge_hooks_into_settings(project_root)
         if n_hooks:
-            renderer.write(f"  └─ {n_hooks} hooks instalados em .claude/hooks/")
+            renderer.write(f"  └─ {n_hooks} hooks instalados em .claude/forge/hooks/")
     except (OSError, shutil.Error) as exc:  # pragma: no cover - hooks must not block init
         # MD-03 (final review 2026-06-15): narrow scope is intentional —
         # `_install_hooks` + `_install_git_hooks` only use shutil.copy*/chmod/
@@ -1435,8 +1630,10 @@ def _run_pipeline(project_root: Path) -> int:
     # ── Step 14 — workflow-config-history.jsonl seed ─────────────────────────
     # Schema HIST-001..012 per docs/schemas/workflow-config-history.md.
     # Greenfield init → before-snapshot-sha is null; after-snapshot-sha is the
-    # sha256 of the workflow-config.yaml we just wrote.
-    cfg_path = workflow_config_path(project_root)
+    # sha256 of the forge-config.yaml we just wrote.
+    # Task 0.10: config lê de forge_config_path; history continua em claude_dir
+    # (reconfigure/undo coupling — fora do escopo desta task).
+    cfg_path = forge_config_path(project_root)
     after_sha = file_sha256(cfg_path) if cfg_path.is_file() else ""
     history_path = claude_dir(project_root) / "workflow-config-history.jsonl"
     history_entry = {
@@ -1474,7 +1671,7 @@ def _run_pipeline(project_root: Path) -> int:
         f"i18n keys:      {n_i18n}",
         "",
         "Saved to .claude/:",
-        "  workflow-config.yaml  ·  cards/  ·  inventory/  ·  memory/  ·  graph.db",
+        "  forge/forge-config.yaml  ·  cards/  ·  inventory/  ·  memory/  ·  graph.db",
         "",
         "Próximos passos:",
         "  forge plan <slug>     começar uma feature",
@@ -1504,10 +1701,12 @@ def _build_workflow_config(
     qa_enabled: bool = True,
     qa_auto_run: bool = False,
 ) -> dict[str, Any]:
-    """Assemble the workflow-config.yaml dict (schema v1).
+    """Assemble the forge-config.yaml dict (schema v1.3).
 
-    Follows docs/schemas/workflow-config.md. Optional blocks are populated
-    with sane defaults when init can't infer them (ticketing, external-docs).
+    Follows docs/schemas/forge-config.md (canonical reference — schema
+    bumped to "1.3" in Task 0.9, artifact renamed to forge-config.yaml).
+    Optional blocks are populated with sane defaults when init can't infer
+    them (ticketing, external-docs).
 
     W7.4 — ``backend_cells`` substitui o legacy ``backend_choice``. Shape
     canônico em ``docs/schemas/backend-axes.md``:
@@ -1520,7 +1719,7 @@ def _build_workflow_config(
     project_slug = project_root.name.lower().replace("_", "-")
 
     config: dict[str, Any] = {
-        "schema-version": 1,
+        "schema-version": "1.3",
         "identity": {
             "project-name": project_root.name,
             "project-slug": project_slug,
@@ -2418,7 +2617,7 @@ def _build_paths(project_root: Path, conv_inv: Any) -> dict[str, Any]:
         "inventory-root": ".claude/inventory",
         "memory-root": ".claude/memory",
         "graph-path": ".claude/graph.db",
-        "hooks-root": ".claude/hooks",
+        "hooks-root": ".claude/forge/hooks",
         "feature-roots": {},
         "tests-roots": {},
     }

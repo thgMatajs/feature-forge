@@ -1,7 +1,11 @@
-"""Smoke + path tests for `validators/validate_workflow_config.py`.
+"""Smoke + path tests for `validators/validate_forge_config.py`.
+
+v1.3 (Task 0.9): module renamed from ``validate_workflow_config`` →
+``validate_forge_config`` + schema-version bumped from ``1`` → ``"1.3"``.
+Fixtures seed ``.claude/forge/forge-config.yaml`` (sub-namespace per spec §2).
 
 Coverage:
-- 3 smoke tests (import, missing config, minimal config, missing keys)
+- 4 smoke tests (import, missing config, minimal config, missing keys)
 - M-001 (W7 cluster review r1): RULE-021 accepts canonical OR local card
 - M-003 (W7 cluster review r1): per-RULE positive/negative cases for
   RULE-019..024 — confirms validator surfaces correct rule ID em
@@ -12,13 +16,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import validate_workflow_config as v
+import validate_forge_config as v
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 _BASE_REQUIRED_BLOCKS = """\
-schema-version: 1
+schema-version: "1.3"
 identity:
   project-slug: probe-project
 platforms:
@@ -37,22 +41,31 @@ graph: {}
 
 
 def _write_config(project_root: Path, backend_block: str) -> Path:
-    """Compõe workflow-config.yaml com base mínima + backend custom.
+    """Compõe forge-config.yaml com base mínima + backend custom.
 
     `backend_block` é YAML pra anexar sob a key ``backend:``. Convenção:
     cada teste injeta SÓ o backend que quer exercitar, mantendo o resto
-    constante pra isolar a violation testada.
+    constante pra isolar a violation testada. Path segue spec §2:
+    ``.claude/forge/forge-config.yaml``.
     """
     cfg = _BASE_REQUIRED_BLOCKS + "backend:\n" + backend_block
-    path = project_root / ".claude" / "workflow-config.yaml"
+    forge_dir = project_root / ".claude" / "forge"
+    forge_dir.mkdir(parents=True, exist_ok=True)
+    path = forge_dir / "forge-config.yaml"
     path.write_text(cfg, encoding="utf-8")
     return path
 
 
 def _seed_card(project_root: Path, card_name: str, *, local: bool = False) -> None:
-    """Cria stub `card.yaml` sob canonical (`.claude/cards/`) ou local overlay."""
+    """Cria stub `card.yaml` sob canonical (`.claude/cards/`) ou local overlay.
+
+    Task 0.8 (v1.3 pilot-ready): local overlay migrou pra
+    ``.claude/forge/cards/local/`` (sub-namespace §2).
+    """
     if local:
-        card_dir = project_root / ".claude" / "cards" / "local" / card_name
+        card_dir = (
+            project_root / ".claude" / "forge" / "cards" / "local" / card_name
+        )
     else:
         card_dir = project_root / ".claude" / "cards" / card_name
     card_dir.mkdir(parents=True, exist_ok=True)
@@ -66,22 +79,24 @@ def test_module_importable() -> None:
     assert callable(v.validate)
 
 
-def test_missing_workflow_config_fails(tmp_forge_project: Path) -> None:
+def test_missing_forge_config_fails(tmp_forge_project: Path) -> None:
     result = v.validate(tmp_forge_project, scope="inferred", id=None)
     assert result["status"] in ("fail", "warn")
     if result["status"] == "fail":
         assert len(result["paths"]) == 3
 
 
-def test_minimal_workflow_config_returns_structured_result(
+def test_minimal_forge_config_returns_structured_result(
     tmp_forge_project: Path,
 ) -> None:
     # W7.4 — `backend-choice` (legacy monolítico) removido em DET-6 Phase B;
     # backend agora vive em ``backend.<axis>.<platform>`` (RULE-019..024).
     # Test fica minimal — top-level keys faltando devem cair em fail/warn
     # com paths estruturados.
-    (tmp_forge_project / ".claude" / "workflow-config.yaml").write_text(
-        "schema-version: 1\n"
+    forge_dir = tmp_forge_project / ".claude" / "forge"
+    forge_dir.mkdir(parents=True, exist_ok=True)
+    (forge_dir / "forge-config.yaml").write_text(
+        'schema-version: "1.3"\n'
         "preset: kmp-mobile\n"
         "cards:\n"
         "  active: []\n",
@@ -93,11 +108,13 @@ def test_minimal_workflow_config_returns_structured_result(
         assert len(result["paths"]) == 3
 
 
-def test_workflow_config_missing_required_keys_returns_structured_result(
+def test_forge_config_missing_required_keys_returns_structured_result(
     tmp_forge_project: Path,
 ) -> None:
-    (tmp_forge_project / ".claude" / "workflow-config.yaml").write_text(
-        "schema-version: 1\n", encoding="utf-8"
+    forge_dir = tmp_forge_project / ".claude" / "forge"
+    forge_dir.mkdir(parents=True, exist_ok=True)
+    (forge_dir / "forge-config.yaml").write_text(
+        'schema-version: "1.3"\n', encoding="utf-8"
     )
     result = v.validate(tmp_forge_project, scope="inferred", id=None)
     assert result["status"] in ("fail", "warn", "pass")
@@ -280,7 +297,7 @@ def test_rule_024_rejects_unknown_migrating_to_card(tmp_forge_project: Path) -> 
 
 
 _BASE_NO_PLATFORMS_ACTIVE = """\
-schema-version: 1
+schema-version: "1.3"
 identity:
   project-slug: probe-project
 platforms:
@@ -320,9 +337,9 @@ def test_empty_platforms_active_emits_single_guidance_not_cascade(
         + "      card: stub-card\n"
         + "      status: active\n"
     )
-    (tmp_forge_project / ".claude" / "workflow-config.yaml").write_text(
-        cfg, encoding="utf-8"
-    )
+    forge_dir = tmp_forge_project / ".claude" / "forge"
+    forge_dir.mkdir(parents=True, exist_ok=True)
+    (forge_dir / "forge-config.yaml").write_text(cfg, encoding="utf-8")
     result = v.validate(tmp_forge_project, scope="inferred", id=None)
     # Without the guard: 3 RULE-020 violations (one per platform). With:
     # exactly 0 RULE-020 mentions + 1 guidance line.

@@ -5,5 +5,5 @@ nothing more than `exec python -m engine.cli "$@"` — everything that matters
 lives here.
 """
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 __all__ = ["__version__"]

@@ -70,7 +70,7 @@ def _project(tmp_path: Path) -> Path:
     test module lives under ``tests/integration/`` where the conftest
     fixture may not be auto-discovered depending on layout)."""
     (tmp_path / ".git").mkdir(exist_ok=True)
-    (tmp_path / ".claude" / "state").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".claude" / "forge" / "state").mkdir(parents=True, exist_ok=True)
     return tmp_path
 
 
@@ -205,7 +205,7 @@ def test_concurrent_writers_document_torn_write_window(tmp_path):
 
     # Read raw bytes — bypass json_io to make sure we hit the file as-is.
     pending_path = (
-        project_root / ".claude" / "state" / "forge-pending.json"
+        project_root / ".claude" / "forge" / "state" / "forge-pending.json"
     )
     if not pending_path.is_file():
         # All writers lost the os.replace race; nothing to inspect.

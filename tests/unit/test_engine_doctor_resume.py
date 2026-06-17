@@ -108,6 +108,20 @@ def test_resume_from_checkpoint(
     _write_workflow_config(tmp_forge_project)
     monkeypatch.chdir(tmp_forge_project)
 
+    # Task 0.7b — ``question.ask`` now delegates to the host adapter. Pin
+    # ``host: intent-file`` so the delegate writes/reads against
+    # ``.claude/forge/state/`` (v1.3 sub-namespace) instead of stdout
+    # (ClaudeCodeAdapter) under CLAUDECODE=1. Clear the per-project_root
+    # detection cache so the override actually wins.
+    forge_dir = tmp_forge_project / ".claude" / "forge"
+    forge_dir.mkdir(parents=True, exist_ok=True)
+    (forge_dir / "forge-config.yaml").write_text(
+        "host: intent-file\n", encoding="utf-8"
+    )
+    from engine.host import detect as _host_detect
+
+    _host_detect._clear_cache()
+
     # Stage 1 — descobrir o intent-id determinístico que o doctor emite
     # quando chama question.ask("Qual scope?", {"full": ..., "quick": ...},
     # default="full"). Usamos a propria funcao stable_intent_id pra
@@ -125,7 +139,7 @@ def test_resume_from_checkpoint(
 
     # Stage 2 — host escreveu response.json + checkpoint do doctor com
     # intent_id matching.
-    state_dir = tmp_forge_project / ".claude" / "state"
+    state_dir = tmp_forge_project / ".claude" / "forge" / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     response_payload = {
         "schema-version": 1,
@@ -160,11 +174,13 @@ def test_resume_from_checkpoint(
     # crashar com excecao nao-tratada).
     assert rc in (0, 1), f"unexpected exit code from doctor.run: {rc}"
 
-    # Resume contract: forge-response.json e consumido (question.ask
-    # apaga em _clear_state). Forge-pending.json nao foi escrito nesta
-    # invocacao porque a response ja estava la.
-    assert not (state_dir / "forge-response.json").exists(), (
-        "response file should be consumed/cleared after successful resume"
+    # Task 0.7b — CR-002 invariant: state files MUST remain on disk
+    # after happy-path consume. The host adapter no longer auto-clears;
+    # cli.py finally block performs the terminal cleanup at handler exit.
+    # Forensic inspection of an accepted response survives until the
+    # engine actually terminates.
+    assert (state_dir / "forge-response.json").exists(), (
+        "response file must survive happy-path consume (CR-002)"
     )
 
     # Checkpoint deve ser apagado apos run completar (clean completion).

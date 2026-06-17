@@ -11,8 +11,9 @@ Behavior contract:
   "blocking": bool}``. ``blocking`` is True iff the gate hard-failed.
 - ``NO_CC_GATE=1`` env var → returns ``{"status": "warn", "blocking":
   False}`` AND appends one JSONL record to
-  ``.claude/state/cc-gate-bypass.jsonl`` (path discoverable via
-  ``_cc_bypass_log_path`` so tests can redirect it).
+  ``.claude/forge/state/cc-gate-bypass.jsonl`` (path discoverable via
+  ``_cc_bypass_log_path`` so tests can redirect it). Task 0.8 — v1.3
+  sub-namespace.
 - When ``validate()`` returns ``status: "fail"``, ``_run_cc_gate``
   augments the result with ``blocking=True``.
 - When ``validate()`` returns ``status: "pass"`` (e.g. CC-OVERRIDE in
@@ -81,7 +82,9 @@ def test_run_cc_gate_bypassed_by_env_var(
 ) -> None:
     """NO_CC_GATE=1 short-circuits to warn + appends an audit JSONL line."""
     monkeypatch.setenv("NO_CC_GATE", "1")
-    bypass_log = tmp_path / ".claude" / "state" / "cc-gate-bypass.jsonl"
+    bypass_log = (
+        tmp_path / ".claude" / "forge" / "state" / "cc-gate-bypass.jsonl"
+    )
     monkeypatch.setattr(implement, "_cc_bypass_log_path", lambda root: bypass_log)
 
     # If validate is invoked, fail loud — bypass should skip the validator.

@@ -354,16 +354,40 @@ graph layers. Ele vive uma única invocação `forge <cmd>` e é destruído
 no terminal exit. Quem precisa de persistência cross-invocation usa o
 checkpoint do próprio comando (ex.: `.claude/.init-checkpoint.yaml`).
 
-### Interação com `IntentMismatchError`
+### Interação com `IntentMismatchError` e stale-leftover
 
-`read_response` ainda raise `IntentMismatchError` quando:
-- `intent_id` requerido NÃO está no log, E
-- `forge-response.json` existe com `intent-id` diferente.
+`read_response` trata `intent_id` em quatro cenários distintos:
 
-Isso é o sintoma genuíno de bug (caller respondeu o intent errado).
-Sem o log, a mesma situação aparecia também em re-entries legítimos
-de handlers multi-intent — falso positivo. Com o log, o false-positive
-fica filtrado.
+1. **`intent_id` requisitado já no consumed-log** → retorna o valor
+   cacheado (re-entry idempotency; pré-existente). O handler do
+   subprocess re-inicia do topo e toca o primeiro `ask()` com seu
+   `intent-id` estável; neste cenário o log já contém a resposta
+   daquele intent, então `read_response` retorna ela diretamente sem
+   tocar o arquivo em disco. Nunca retorna `None`.
+
+2. **`intent_id` NÃO no log + `forge-response.json` com o mesmo id** →
+   consome normalmente (caminho feliz): append ao log, retorna a
+   response.
+
+3. **`intent_id` NÃO no log + arquivo com id diferente, MAS o id do
+   arquivo já está no log** → stale-leftover de pergunta anterior na
+   mesma invocação. O arquivo contém a resposta de um intent anterior
+   que já foi consumido (está no log) e sobreviveu porque `engine/cli.py`
+   só limpa o estado no exit terminal — não entre perguntas. Retorna
+   `None`: o caller emite novo `forge-pending.json` para a pergunta
+   atual e sai com exit 2 (handshake normal). Introduzido em Wave 2
+   (v1.3) para habilitar comandos multi-pergunta-por-ciclo como
+   `forge reconfigure` (category → submenu).
+
+4. **`intent_id` NÃO no log + arquivo com id diferente E id do arquivo
+   NÃO está no log** → raise `IntentMismatchError`. Mismatch genuíno:
+   o caller respondeu o intent errado (o `written_id` nunca passou pelo
+   log neste lifecycle). Arquivo preservado para inspeção forense.
+
+`detect_race` segue lógica análoga: se encontrar `forge-pending.json` com
+`intent-id` já no consumed-log, trata como stale-leftover de pergunta
+anterior e varre o arquivo em vez de levantar `RaceDetectedError`.
+Race genuíno — `intent-id` diferente E não no log — ainda levanta.
 
 ---
 

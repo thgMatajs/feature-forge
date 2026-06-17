@@ -7,129 +7,304 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Fixed (master review PR #16 — Wave A + B + C remediation, 2026-06-16)
+(nada ainda)
 
-Aplicação dos 60+ findings do master review PR #16 contra `feat/graph-ia-evolution`
-(v1.3.0 candidate). Distribuído em três waves atômicas: A (parsers), B (engine
-core), C (bootstrap + hooks + docs). Test baseline do PR sobe de 1548 → 1619
-(`pytest --collect-only -q`), refletindo cobertura nova em arquivos
-preexistentes além dos 84 testes em arquivos novos do PR (Java 19 + ObjC 25 +
-XML 13 + bootstrap 6 + lazy 6 + json 9 + migrations 5 + integration 1).
+## [1.4.0] - 2026-06-17
 
-**Parsers (Wave A — engine/graph/parser_{java,xml,objc,kotlin}.py):**
+Esforço codinome v1.3-pilot-ready; shipa como 1.4.0 (1.3.0 = graph-ia, já em main).
 
-- **P-N-001 / P-N-011 / P-N-002** (`parser_objc.py`) — body extraction
-  brace-matched + skip de strings/comments via `_mask_strings_and_comments`
-  + tratamento de categorias e class extensions; cobertura de instance/class
-  methods previamente perdidos.
-- **P-N-003** (`parser_objc.py`) — categorias `@interface Foo (Bar)` e
-  class extensions `@interface Foo ()` reconhecidas como símbolos próprios.
-- **P-N-015 / P-N-016 / P-N-018** (`parser_objc.py`) — regex hardening
-  (anchors, escapes, escopo de match); P-N-018 pre-computa posições de
-  `@end` pra evitar varredura O(N²) ao casar method bodies. Endereça parte
-  de M-003 (perf O(N²) entre parsers) — gap restante (Java/XML) registrado
-  pra v1.3.1+.
-- **P-N-006 / P-N-014 / P-N-018 / T-N-007** (`parser_xml.py`) — prefixes
-  fully-qualified, sanitização de IDs, perf de scan de attributes, cobertura
-  de view IDs e data-binding actions.
-- **P-N-010 / P-N-008 / T-N-008** (`parser_java.py`) — generics em assinatura
-  de método, modifiers (default/static/synchronized/etc.), tipos de retorno
-  parametrizados; cobertura de cases anteriormente ignorados em classes
-  Android idiomáticas.
-- **P-N-012 / P-N-013** (`parser_kotlin.py`) — logging consistente em path
-  de detecção + docstring detalhada sobre limites conhecidos do parser
-  regex (overload disambiguation, lambda body extraction).
-- **P-N-004** (`engine/graph/_body_text.py`) — `_mask_strings_and_comments`
-  promovido pra módulo compartilhado a partir de `parser_objc.py`. Java
-  + Kotlin + Swift + TypeScript + Objective-C reusam mesma máscara;
-  divergência prévia entre parsers eliminada.
-- **P-N-021** (`engine/graph/kinds.py`) — constantes `Kind.CLASS`,
-  `Kind.FUNCTION`, etc. consumidas pelos parsers Java/XML/ObjC.
-  `kinds.py` deixa de ser dead code; valor único pra cada `symbols.kind`.
+Release piloto: host abstraction completa, adapters para os 4 contextos de
+execução (Claude Code / TTY / Opencode / IntentFile), init brownfield-safe,
+instalador curl one-liner, `forge upgrade`, e 7 bugs MeoBonsai fechados.
+Clean-break deliberado frente a v1.2.x — projetos experimentais reinicializam.
 
-**Engine (Wave B — engine/cli.py, engine/ingest.py, engine/graph/builder.py,
-engine/utils/sqlite_io.py):**
+### Added
 
-- **C-001** (`parser_java.py`) — remove type-hints duplicados (mypy
-  strict-mode cleanup).
-- **C-004 + M-014** (`engine/cli.py`) — skip-list de bootstrap detection
-  amplia pra cobrir read-only commands (`status`, `memory`, `graph`,
-  `--help`, `--version`, `bootstrap`); narrow do broad-except em path
-  de discovery.
-- **E-N-001** (`engine/graph/builder.py`) — symlink-safe walker via
-  `scandir` (substitui `rglob`), early-skip de `_SKIP_DIRS`; cobre
-  fallback gracioso quando symlink target sumiu mid-walk.
-- **E-N-002 / N-005 / N-006 / N-009** (`engine/cli.py`) — narrow de
-  exceptions em handlers + fail-loud em invariants quebrados; sanitiza
-  stderr em paths emergenciais (não vaza traceback Python pro user).
-- **E-N-003 + N-008** (`engine/utils/sqlite_io.py`) — TOCTOU migration
-  race coberto por commit-after-migration + integration tests novos
-  (T-N-012). Per-file lock em ingest narrowed pra evitar contention em
-  builds full paralelos.
-- **E-N-016** (`engine/graph/builder.py`) — overload collision em parsers
-  Kotlin/Java emite warning estruturado em vez de silent overwrite; log
-  via `logger.warning` (compatível com hooks audit).
-- **T-N-002** (`tests/engine/test_bootstrap_detection.py`) — testes saíram
-  de skip; 6/6 passam contra implementação real (eram 3 skipped antes).
-- **T-N-012** (`tests/engine/test_migrations.py`) — +3 testes cobrindo
-  migration race (2 → 5 total no arquivo).
+- **`engine/host/` module** — abstração de host completa: adapter ABC
+  (`HostAdapter`, `HostName`, `AskKind`, `AskResult`) + env detectors
+  (`CLAUDECODE` / `OPENCODE_*` / `CODEX_*` / `CURSOR_*`) + registry +
+  detecção de host com precedência config > env > TTY > fallback. Wave 0.
+- **`ClaudeCodeAdapter`** — adapter in-process para Claude Code: emite
+  marcador stdout `<FORGE_INTENT/>` que o host intercepta em tempo real;
+  zero subprocess overhead. Wave 0.
+- **`IntentFileAdapter`** — adapter DRIFT-1 fallback: escreve intent JSON em
+  `.claude/forge/state/forge-pending.json`, lê response de
+  `.claude/forge/state/forge-response.json`, exit 2 sinaliza pausa pro host.
+  Wave 0.
+- **`TtyAdapter` in-process** — `engine/host/adapters/tty.py`: lê
+  `sys.stdin` diretamente (line buffered), valida resposta localmente e
+  devolve `AskResult` ao engine sem subprocess. Substitui
+  `engine/ui/tty_bridge.py` subprocess-loop. `engine/ui/_stdin_prompt.py`
+  extrai helpers de prompt/validação reusados pelo adapter. Wave 2.
+- **OPENCODE → `IntentFileAdapter` fallback (Veredito B)** — research W2.T0
+  (`docs/research/opencode-tool-api.md`) documentou que opencode NÃO suporta
+  adapter in-process: stdout de subprocess não é interceptado em tempo real e
+  não existe env var oficial confiável. Veredito B: opencode usa
+  `IntentFileAdapter` como fallback, sem execução in-process de tools.
+  Spec R1 success criterion #4 atendido. `engine/host/detect.py::detect_opencode`
+  permanece documentado como **aspiracional/inativo** — não há env var oficial
+  confiável pra opencode, então a resolução cai no fallback intent-file por
+  design (clarificação cross-AI review PR #17). Wave 2.
+- **Sub-namespace `.claude/forge/`** — isola state e hooks do forge do
+  `.claude/` do usuário. Novos helpers em `engine/utils/paths.py`:
+  `forge_dir`, `forge_config_path`, `forge_state_dir`, `forge_cards_local_dir`,
+  `forge_hooks_dir`. `engine/init.py` escreve projetos greenfield sob
+  `.claude/forge/`. 50+ callsites em engine/ + validators/ migrados. Wave 0.
+- **Brownfield-safe init (Wave 1)** — `_detect_brownfield` detecta
+  `.claude/{skills,agents,settings.json}`. `engine.utils.settings_merge`:
+  `merge_settings_json` append-only com dedup-via-deep-equal +
+  `read_settings_tolerant` JSON5-tolerante (comments + trailing commas via
+  lib `json5`). `engine.init._install_git_hooks` reescrito como chained
+  delegator: hooks existentes do usuário migram para `<name>.user` e são
+  encadeados via bash wrapper com `FORGE_DELEGATOR_MARKER`. Idempotente;
+  faz upgrade de installs symlink-style antigos. Fixture sintética
+  `tests/fixtures/meobonsai-class/` (5 skills + 3 agents + 2 user hooks +
+  settings.json + CLAUDE.md) valida 3 regression tests + 3 brownfield
+  contract tests. Nova dep: `json5>=0.9.10` em `pyproject.toml`.
+  `engine.init._run_pipeline` invoca `_merge_forge_hooks_into_settings`
+  pós-install de hooks: registra SessionStart → session-start-drift-check.sh;
+  PostToolUse(Edit|Write|NotebookEdit) → post-edit-codebase-graph.sh;
+  PostToolUse(Write) → post-write-feature-artifact.sh; SubagentStop →
+  post-subagent-validate.sh. Tudo apontando para `.claude/forge/hooks/`.
+- **`scripts/install.sh`** (244 LOC, bash 3.2 portável) — instalador curl
+  one-liner. Clone `--depth=1` de `github.com/thgMatajs/feature-forge` em
+  `FORGE_HOME` (`~/.local/share/feature-forge` — XDG default) + criação de
+  venv + `pip install -e .` + symlink em `~/.local/bin/forge`. PATH detection
+  marker-guarded e idempotente: detecta `~/.zshrc` / `~/.bashrc` /
+  `~/.config/fish/config.fish` e oferece 3-caminhos (auto-append / manual /
+  skip). Alias conflict detection: se `forge` já existe no PATH (de outro
+  tool), propõe `forge-cli` como `BIN_NAME` alternativo via 3-caminhos.
+  Wave 4.
+- **`engine/upgrade.py`** + subcomando **`forge upgrade`** — git
+  `pull --ff-only` na `FORGE_HOME` + venv refresh (`pip install -e .
+  --upgrade`) + smoke (`forge --version`). Rollback automático
+  (`git reset --hard prev_head`) em falha de smoke. API pública:
+  `run_upgrade(*, forge_home=None, force=False) -> int`. Wired em
+  `engine/cli.py` `COMMANDS` (subcomandos 13 → **14**) e em
+  `_BOOTSTRAP_SKIP`. Wave 4.
+- **Per-host e2e** — `tests/e2e/test_per_host_dispatch.py` (claude_code
+  adapter via marker+exit2 / intent_file pending round-trip / opencode
+  fallback) + `tests/e2e/test_tty_adapter_pty.py` (TtyAdapter via pty,
+  stdin in-process sem subprocess). Cobertura dos 4 caminhos de detecção
+  de host. Wave 2.
+- **Pilot smoke e2e** — `tests/e2e/test_install_sh.bats` +
+  `tests/e2e/test_install_sh.py` (PATH/alias/version scenarios; skipif bats
+  ausente) + `tests/e2e/test_forge_upgrade.py` (pull cycle + rollback via
+  repos git locais). Wave 4.
+- **Renderer ASCII fallback non-TTY** — `engine/ui/renderer.py::write()`
+  degrada box-drawing Unicode (┌┐└─│) pra ASCII (+,-,|) em contextos
+  non-TTY via `_BOX_TO_ASCII` map + `to_ascii_box()` helper. Corrige bug U3:
+  box-drawing virava `?` em pipes e captura de stdout em CI. Wave 2.
+- **Parser fixes (PR #16 Wave A)** — Objective-C: body extraction
+  brace-matched + `_mask_strings_and_comments` + categorias
+  `@interface Foo (Bar)` / class extensions `@interface Foo ()` como símbolos
+  próprios; P-N-018 pre-computa posições de `@end` (evita O(N²)). XML:
+  prefixes fully-qualified, sanitização de IDs, perf de attributes,
+  cobertura de view IDs e data-binding actions. Java: generics em assinatura,
+  modifiers (default/static/synchronized/etc.), tipos de retorno
+  parametrizados. Kotlin: logging consistente + docstring sobre limites regex.
+  `_mask_strings_and_comments` promovido para `engine/graph/_body_text.py`
+  (módulo compartilhado); `engine/graph/kinds.py` consumido por parsers
+  (deixa de ser dead code).
+- **Test coverage additions (PR #16)** — cobertura nova em arquivos
+  preexistentes (delta full suite 1548 → 1619 = +71):
+  `tests/unit/test_parser_objc.py` 14 → 25; `tests/unit/test_parser_xml.py`
+  7 → 13; `tests/unit/test_parser_java.py` 9 → 19;
+  `tests/engine/test_migrations.py` 2 → 5 (T-N-012);
+  `tests/integration/test_multilang_graph_build.py` cobertura expandida
+  (T-N-011). 84 tests em arquivos novos do PR (Java 19 + ObjC 25 + XML 13 +
+  bootstrap 6 + lazy 6 + json 9 + migrations 5 + integration 1).
+- **Regression suite MeoBonsai** (`752b0fd`) —
+  `tests/integration/test_bug_regressions.py` cobre 7 cenários
+  integration-level: 3 críticos (bug #1 intent-id mismatch, bug #2 stale
+  response poisoning, bug #3 piped stdin) + 4 utilitários (U1 exit codes,
+  U2 WARN, U3 ASCII fallback, U4 qa sem-args). Wave 3.
 
-**Bootstrap + hooks + docs (Wave C — esta entrega):**
+Test counts finais (pós-Wave 4 + pilot-blocker fix + remediação cross-AI review
+PR #17): rapid **1611 passed**, integration **168 passed**, e2e **30 passed**,
+0 falhas.
 
-- **codereviewbot bootstrap.sh:46** (`.claude/bootstrap.sh`) — `flock -n`
-  em `.claude/state/bootstrap.lock` previne race em runs simultâneos.
-  Fallback gracioso quando flock indisponível (macOS default).
-- **codereviewbot bootstrap.sh:74 + T-N-015** — captura stderr de
-  `pip install -e .` em `.claude/state/pip-install.log` + tail das
-  últimas 20 linhas quando falha. Antes silenciava `>/dev/null 2>&1`.
-- **T-N-014** — mesmo tratamento pra probe `forge graph --json q3`;
-  log em `.claude/state/bootstrap-graph.log` + orientação pra
-  `forge doctor` / `forge init`.
-- **T-N-016** — substitui lista hardcoded `pre-commit pre-push` por
-  glob `hooks/git-*`. Futuros delegators entram sem editar bootstrap.
-- **T-N-017** (`hooks/post-edit-codebase-graph.sh`) — early-exit em
-  `*/build/*`, `*/node_modules/*`, `*/.gradle/*`, `*/dist/*`, `*/target/*`,
-  `*/DerivedData/*`, `*/.next/*`, `*/out/*`. Evita re-ingest custoso por
-  edit em diretório gerado, especialmente falso-positivo `.m` em source
-  maps minificados.
-- **T-N-018** — counts factuais corrigidos em CHANGELOG + README + spec:
-  release [1.3.0] subscrevia "+35 tests novos" mas a contagem real é 84
-  tests novos em arquivos novos do PR (Java 19 + ObjC 25 + XML 13 +
-  bootstrap 6 + lazy 6 + json 9 + migrations 5 + integration 1); full
-  suite cresce de 1548 → 1619 (+71).
-- **T-N-019** (`docs/schemas/graph.md`) — nota explícita sobre
-  `files.source_set` (presente no DDL real desde schema v2; documentado
-  na §Reuse Intelligence pero ausente do bloco `files` principal). Schema
-  doc agora aponta cross-reference.
-- **T-N-020** (`docs/superpowers/specs/2026-06-12-graph-ia-evolution.md`) —
-  `_SUPPORTED_LANGS` registry pós-fix-pack listado explicitamente:
-  `{kotlin, swift, typescript, javascript, java, objc}`; XML fora por
-  design (bodies XML não fazem sentido).
+### Changed
 
-### Changed (master review PR #16 remediation)
+- **install.sh + forge upgrade agora baseiam-se na última release tag** (não no main bleeding-edge). `scripts/install.sh` descobre a última tag `v*` (`git ls-remote --tags --sort=-v:refname`) e clona ela (`--branch <tag>`, detached HEAD na release; fallback main se não há tags). `forge upgrade` faz `git fetch --tags` + checkout da última tag (rollback pra tag/sha anterior em smoke fail). Garante que instalações e upgrades rodem releases estáveis, não commits intermediários de main.
+- **`validate_workflow_config.py` → `validate_forge_config.py`** — validator
+  renomeado + classe `ValidateWorkflowConfig` → `ValidateForgeConfig` + schema
+  bump 1.2 → 1.3. Wave 0.
+- **`engine/ui/question.py` delega ao host adapter** — `ask` / `ask_multi` /
+  `ask_text` / `ask_three_paths` / `confirm` delegam ao adapter registrado,
+  preservando exception classes, normalização de tokens e semântica de
+  pause/cancel. `ask_three_paths` e `confirm` foram migrados pro adapter na
+  remediação cross-AI review (eram os últimos consumidores nativos), fechando
+  a unificação de todos os caminhos de prompt sob o host. Wave 0 + remediação
+  PR #17.
+- **Resolução de config ativa unificada (`active_config_path`)** — todos os
+  comandos passam a resolver a config via `engine/utils/paths.py::active_config_path`,
+  com precedência primário `.claude/forge/forge-config.yaml` (se existe) →
+  legado `.claude/workflow-config.yaml` (se existe) → primário como destino de
+  escrita canônico quando nenhum existe. Antes, vários comandos liam apenas o
+  legado. Migrados: `status` / `verify` / `reconfigure` / `cli` / `doctor` /
+  `implement` / `evolve` / `memory` / `ingest` / `undo` / `raw` + a resolução de
+  feature-roots. Leitura e escrita caem no mesmo path resolvido (sem split).
+  Remediação cross-AI review PR #17.
+- **`bin/forge` dispatcher simplificado** — `exec python -m engine.cli`
+  diretamente em todos os casos; detecção de host (TTY, ClaudeCode, opencode,
+  intent-file) 100% no lado Python via `detect_host()`. Branch
+  `FORGE_FORCE_TTY_MODE` removida (clean break — `tty_bridge.py` não existe
+  mais). Wave 2.
+- **Exit codes unificados** — `forge graph`, `forge memory`, e
+  `forge reconfigure` invocados antes de `forge init` (pre-init) agora
+  retornam exit 1. Contrato completo: `pre-init=1 / intent-pause=2 /
+  cancel=130`. Wave 3 (bug U1).
+- **`FORGE_FORCE_INTENT_MODE` movido para `detect_host`** — preserve escape-hatch
+  DRIFT-1 §439 pós clean-break de `tty_bridge.py`. Wave 2.
+- **`intent_state._state_dir` default migrado** — de `.claude/state/` para
+  `forge_state_dir(project_root)` = `.claude/forge/state/`. Fecha 13 falhas
+  de integration pré-existentes (tty_bridge + question.confirm/ask_three_paths
+  lendo do path legacy enquanto adapters escrevem no sub-namespace). ~50 test
+  path assertions migrados. Wave 1 follow-up.
+- **Bootstrap hardening (PR #16 Wave C)** — `.claude/bootstrap.sh`: `flock -n`
+  em `.claude/state/bootstrap.lock` previne race em runs simultâneos (fallback
+  gracioso quando flock indisponível no macOS); captura stderr de
+  `pip install -e .` em `.claude/state/pip-install.log`; log de
+  `forge graph --json q3` em `.claude/state/bootstrap-graph.log`; glob
+  `hooks/git-*` substitui lista hardcoded.
+- **`hooks/post-edit-codebase-graph.sh` early-exit** — pula re-ingest custoso
+  em `*/build/*`, `*/node_modules/*`, `*/.gradle/*`, `*/dist/*`, `*/target/*`,
+  `*/DerivedData/*`, `*/.next/*`, `*/out/*` (PR #16 T-N-017).
+- **Engine robustness (PR #16 Wave B)** — symlink-safe walker via `scandir`
+  (substitui `rglob`) em `engine/graph/builder.py`; narrow de exceptions em
+  handlers + fail-loud em invariants quebrados em `engine/cli.py`; TOCTOU
+  migration race coberto por commit-after-migration em
+  `engine/utils/sqlite_io.py`; overload collision em parsers Kotlin/Java
+  emite warning estruturado em vez de silent overwrite.
 
-- **`engine/graph/kinds.py` consumido por parsers** — antes dead code
-  (referenciado só por tests). P-N-021 promoveu adoção em parser_java +
-  parser_xml + parser_objc.
-- **`_mask_strings_and_comments` em `engine/graph/_body_text.py`** — P-N-004
-  promoveu de parser_objc.py pra módulo compartilhado; demais parsers
-  consomem o helper canônico em vez de re-implementar.
+### Changed (load-bearing)
 
-### Added (master review PR #16 remediation — tests)
+- **Revisita decisão 18**: skill location → `~/.local/share/feature-forge/`
+  (XDG default; respeita `$XDG_DATA_HOME`). Era `~/Documents/feature-forge/`.
+  Razão: XDG é convenção universal pra ferramentas instaladas via script;
+  `~/Documents/` confunde com o diretório de docs do usuário. Linha antiga
+  preservada em `docs/design/01-decisions.md` (row 18 superseded by row
+  18-v2). `scripts/install.sh` já usa o destino XDG. Wave 5.
 
-Cobertura nova em arquivos preexistentes (delta full suite 1548 → 1619 = +71):
+### Fixed
 
-- `tests/unit/test_parser_objc.py`: 14 → 25 (T-N-004 + T-N-005)
-- `tests/unit/test_parser_xml.py`: 7 → 13 (T-N-007)
-- `tests/unit/test_parser_java.py`: 9 → 19 (T-N-008)
-- `tests/engine/test_migrations.py`: 2 → 5 (T-N-012, Wave B)
-- `tests/integration/test_multilang_graph_build.py`: cobertura expandida
-  (T-N-011 — asserts ampliados; count 1 mantido por design — é
-  integration test único cobrindo round-trip multi-language).
-- Demais arquivos novos do PR (bootstrap 6, lazy 6, json 9, migrations
-  delta) compõem o total 84 tests **PR-scope** em arquivos novos.
+- **CLI lifecycle — `cli.main` limpa pending/response no exit de sucesso**
+  (remediação cross-AI review PR #17, BL-001) — no terminal exit de SUCESSO
+  (exit 0, não-paused, não-erro), `engine/cli.py::main` agora chama
+  `clear_intent_files` (apaga `forge-pending.json` + `forge-response.json`),
+  além de limpar o intent-log. Os paths de erro (mismatch / race / schema)
+  continuam preservando pending+response pra forense (SPEC §3). Corrige
+  `IntentMismatchError` espúrio no comando seguinte a um comando terminado em
+  `confirm` / `ask_three_paths`: o stale `forge-response.json` de um comando já
+  concluído não envenena mais o próximo. Honra o contrato documentado em
+  `clear_intent_log_only` sem reintroduzir cleanup per-prompt. Afeta
+  IntentFileAdapter (fallback opencode + harnesses disk-based) e
+  ClaudeCodeAdapter; TTY é imune (sem state em disco). Regression test cobre
+  invocação-3-após-confirm.
+- **`install.sh` — smoke falho sai com exit≠0** (remediação cross-AI review
+  PR #17, HIGH) — `scripts/install.sh` falha explicitamente (exit 1) quando o
+  smoke pós-instalação (`forge --version`) não passa, em vez de aparentar
+  sucesso. Além disso valida `LATEST_TAG` como semver (`case` + `printf | grep
+  -Eq` ancorado, bash 3.2 portável) antes de `git clone --branch <tag>`; tag
+  malformada cai no fallback `main` com aviso. e2e `test_install_sh_real.bats`
+  roda o script íntegro contra um remote `file://` fake, cobrindo tag válida E
+  `vGARBAGE` → fallback.
+- **`forge init` — `.claude/settings.json` corrompido/ilegível vira backup**
+  (remediação cross-AI review PR #17, HI-001) — `engine/init.py` faz backup
+  `.bak` + warn em vez de sobrescrever silenciosamente quando o settings.json
+  do usuário não pode ser lido. O caso JSON inválido (`ValueError`) e o caso de
+  leitura falha (`OSError`) tentam `backup_file` antes de prosseguir; se o
+  backup também falha, o merge não escreve por cima (preserva o arquivo
+  intacto). Brownfield-safe: zero perda silenciosa de config do usuário.
+- **`forge upgrade` — rollback re-roda o venv refresh** (remediação cross-AI
+  review PR #17) — quando o `pip install` do upgrade falha, o rollback de
+  `engine/upgrade.py` agora re-executa `_pip_refresh` na revisão restaurada,
+  simétrico ao path de smoke-fail. Antes restaurava só o código (git reset),
+  deixando as deps no estado pós-falha; agora restaura código E deps.
+  `CalledProcessError` no re-refresh é surfado ("rollback ou pip re-refresh
+  falhou — estado pode estar inconsistente"), não mascarado.
+- **TTY — `ask_multi` re-prompta seleção fora dos limites** (remediação cross-AI
+  review PR #17) — `engine/host/adapters/tty.py` re-pergunta (dentro do budget
+  de tentativas) quando a seleção viola `min_selected`, em vez de estourar.
+  Espelha exatamente o `len(result) < min_selected` de `question.ask_multi`.
+- **Bug #1 — intent-id mismatch (DRIFT-1 multi-pergunta-por-ciclo)** —
+  `engine/ui/intent_state.py::read_response` e `detect_race` agora tratam
+  `intent-id` já presente no consumed-log como stale-leftover (resposta de
+  pergunta anterior na mesma invocação), não como erro: `read_response` retorna
+  `None` (caller emite novo pending), `detect_race` varre e remove o pending
+  stale. Comandos multi-pergunta-por-ciclo (ex.: `forge reconfigure`
+  category→submenu) funcionam sob host real sem `IntentMismatchError` espúrio.
+  Mismatch genuíno e race genuíno ainda levantam `IntentMismatchError` /
+  `RaceDetectedError`. Drive loop limpo em e2e reconfigure via
+  `drive_intent_loop`. Refs commits 5827900/7c26377. Wave 2.
+- **Bug #2 — stale response poisoning** — `read_response` verifica
+  consumed-log antes de consumir response, evitando que response de
+  intent-id anterior envenene ciclo seguinte. Coberto pela regression suite
+  MeoBonsai (bug #2 scenario). Wave 2.
+- **Bug #3 — TtyAdapter guard non-TTY com mensagem DEPRECATED** (`00dad0d`)
+  — `engine/host/adapters/tty.py` detecta stdin piped (non-TTY interativo)
+  e emite mensagem `DEPRECATED v1.3` orientando ao uso do harness agentic
+  ou terminal real, em vez de travar aguardando input que nunca chega.
+  Wave 3.
+- **Bug U1 — exit codes unificados** (`edfd20c`) — ver seção Changed acima.
+  Wave 3.
+- **Bug U2 — WARN de cleanup suprimido em `--help`/`-h`/sem-args** (`d9d3bb5`)
+  — guard `is_help` adicionado no bloco `finally` de `engine/cli.py`;
+  invocações de ajuda e sem argumentos não emitem mais o aviso de cleanup de
+  log. Residual: bloco `finally` captura `ProjectRootNotFoundError`
+  silenciosamente em contextos pre-init (`b0fcb35`). Wave 3.
+- **Bug U3 — renderer ASCII fallback** — ver seção Added acima. Wave 2.
+- **Bug U4 — `forge qa` sem args apresenta 3-caminhos** (`137a993`) — guard
+  adicionado em `_qa_run` antes de `resolve_scope`; ao ser invocado sem
+  argumentos, exibe bloco mentor-calmo de 3-caminhos em stdout com exit 0,
+  sem `ValueError` nem traceback. Wave 3.
+- **e2e env scrub** — `tests/e2e/conftest.py::env_with_forge_home` faz scrub
+  de variáveis agentic (`CLAUDECODE`, `OPENCODE_*`, `CODEX_*`, `CURSOR_*`)
+  antes de iniciar subprocesso forge. Sem o scrub, suites rodadas dentro de
+  Claude Code herdavam o env agentic e roteavam pro adapter errado — e2e
+  não-determinístico dependendo do host de CI. Bug pré-existente surfaced
+  durante verificação Wave 2. Wave 2.
+- **`scripts/install.sh` bash 3.2 portability** (`b5d0bee`) — substituição
+  `${var,,}` → `echo "$var" | tr '[:upper:]' '[:lower:]'` para
+  compatibilidade com o bash 3.2 default no macOS. Wave 4.
+- **`test_read_settings_tolerant_handles_comments` skipif** — pula quando lib
+  `json5` ausente (system pytest fallback); os outros 4 testes de
+  settings_merge funcionam com fallback stdlib `json`. Wave 1 follow-up.
+- **find_project_root marker mismatch (pilot-blocker)**: `engine/utils/paths.py::find_project_root` reconhece agora `.claude/forge/forge-config.yaml` (marker v1.3 que `forge init` cria) como raiz de projeto, além do legacy `.claude/workflow-config.yaml` (compat v1.2). Antes, após `forge init` greenfield, os ~12 comandos que resolvem a raiz via find_project_root levantavam ProjectRootNotFoundError ("não inicializado") mesmo com o projeto inicializado — ciclo init→uso quebrado. Gap herdado da migração de sub-namespace (Wave 0), não coberto por teste (testes semeavam o marker legacy à mão). Regression test fecha o gap (init greenfield → find_project_root resolve + comando de subdir funciona).
+- **`install.sh` — guarda disponibilidade de `/dev/tty` em ambiente
+  não-interativo** (review PR #17, F27 + F28) — os dois prompts interativos
+  (conflito de binário + setup de PATH) ganham guard 3-vias: stdin tty → lê
+  do stdin; senão `/dev/tty` legível → lê de `/dev/tty`; senão (curl|bash em
+  CI/Docker sem terminal) assume o default seguro e avisa em vez de ler de
+  `/dev/tty` sob `set -euo pipefail` (que abortava o install inteiro). Default
+  seguro: conflito de binário → instala como `forge-cli` (não sobrescreve o
+  `forge` existente); PATH → imprime a linha manual sem editar o rc file.
+- **tests/upgrade — asserts de rollback e warning de no-tags reforçados**
+  (review PR #17, F37 + F38) — `test_upgrade_rollback_on_smoke_fail` passa a
+  verificar a sequência completa de checkout (forward pro tag de release
+  ANTES do rollback pro prev_sha), não só a última chamada;
+  `test_upgrade_no_op_when_no_tags` captura stdout via `capsys` e ancora no
+  warning documentado do branch sem release tags. Asserts existentes
+  preservados; mudança aditiva.
 
-### Deferred (master review PR #16 — anotados em `docs/design/04-pending.md`)
+### Removed
+
+- **`engine/ui/tty_bridge.py` subprocess-loop** — substituído por
+  `engine/host/adapters/tty.py` in-process (TtyAdapter). `tty_bridge`
+  re-invocava o engine completo via subprocess pra cada pergunta TTY —
+  model mental mais complexo, mais lento, gerava processos extras. Clean
+  break; sem shim de retrocompatibilidade. Wave 2.
+- **`FORGE_FORCE_TTY_MODE` branch em `bin/forge`** — env var de fallback pra
+  `tty_bridge` removida junto com o módulo. `FORGE_FORCE_INTENT_MODE`
+  preservado em `detect_host` (escape-hatch DRIFT-1 diferente). Wave 2.
+- **`tests/e2e/test_tty_bridge_e2e.py`** e **`tests/unit/test_ui_tty_bridge.py`**
+  — testes do subprocess-loop removidos. Cobertura equivalente migrada para
+  `test_tty_adapter_pty.py` e `test_per_host_dispatch.py`. Wave 2.
+- **Nenhum migrator v1.2→v1.3** — clean-break deliberado. Projetos
+  experimentais em v1.2 reinicializam: limpar `.claude/` + `forge init`.
+
+### Deferred (anotados em `docs/design/04-pending.md`)
 
 - **P-N-007** (is_method_call heurística refinamento — exige parser real,
   fora do escopo regex)
@@ -138,18 +313,12 @@ Cobertura nova em arquivos preexistentes (delta full suite 1548 → 1619 = +71):
 - **N-007 / N-015** (silent audit log em `.claude/state/hook-failures.jsonl`
   — cross-cutting cross-hook)
 - **N-012** (migrations dentro de transaction — refactor estrutural;
-  parcialmente coberto por commit-after-migration de E-N-003)
+  parcialmente coberto por commit-after-migration)
 - **N-013** (3-state helper `_db_has_full_rebuild_marker`)
 - **M-003** (perf O(N²) Java/XML — pre-compute newlines positions via
   `bisect`; ObjC já coberto por P-N-018, registrado pra v1.3.1+)
 - **T-N-025** (plan-auditor severity calibration — DOC only, exige
   discussion com user antes de mexer)
-
-### Carry-over
-
-(Itens das remediations PR #15 + chore gitignore listados abaixo
-ficam fora de v1.3.0 — eles foram acumulados em `main` paralelo ao
-branch de graph-ia-evolution e seguem release lifecycle separado.)
 
 ## [1.3.0] — 2026-06-15
 

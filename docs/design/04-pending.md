@@ -165,7 +165,28 @@ Wave A+B+C endereçou 60+ findings; estes 7 ficam pra ciclos futuros.
   "símbolo com extração parcial" — momento natural pra justificar o
   reshape sem custo de retrabalho cego.
 
-## Fechado em [Unreleased]
+## Fechado em [Unreleased v1.3]
+
+v1.3 ship completo cobrindo A+B+C+D — 6 waves entregues:
+
+- **W0 — foundation host module + sub-namespace** (`engine/ui/host.py`,
+  `ClaudeCodeAdapter`, `IntentFileAdapter`, `forge-config.yaml` sub-namespace
+  em `.claude/forge/`; forge init reescrito pra gravar em `.claude/forge/`).
+- **W1 — brownfield-safe init** (`engine/init.py` com settings_merge
+  APPEND-ONLY, detecção de conflitos existentes, forge-state-dir migration
+  intent_state default, json5 skipif guard).
+- **W2 — opencode + TTY adapters** (research W2.T0 confirmou Veredito B —
+  opencode fallback via IntentFileAdapter; `engine/ui/tty_bridge.py` TTY
+  adapter completo; multi-pergunta-por-ciclo stale-leftover fixed em
+  commits 5827900/7c26377).
+- **W3 — 7 bugs do relatório fechados** (see CHANGELOG para lista completa).
+- **W4 — install.sh + forge upgrade** (`scripts/install.sh` curl one-liner,
+  clone + venv + symlink + PATH detection + alias conflict 3-caminhos;
+  `engine/upgrade.py` forge upgrade git pull + venv refresh + smoke + rollback).
+- **W5 — doc-sync + Revisita Decisão 18 + tag v1.3.0** (forge-config.md
+  rename, 05-filesystem-layout XDG + sub-namespace, 04-pending + 06-command-surface,
+  CHANGELOG v1.3.0, tag; Revisita Decisão 18: standalone-repo path → XDG
+  `~/.local/share/feature-forge/`).
 
 - **Auditoria pós-plano** — gap identificado em 2026-06-04 (não estava
   listado em `04-pending.md` antes, mas surgiu no fluxo: o
@@ -174,6 +195,92 @@ Wave A+B+C endereçou 60+ findings; estes 7 ficam pra ciclos futuros.
   N", doc-sync gaps, reuse-first ignorado, voz quebrada). Resolvido via
   `.claude/rules/plan-auditor.md` + integração — ver CHANGELOG
   `[Unreleased]`. Spec: `docs/superpowers/specs/2026-06-04-plan-auditor-design.md`.
+
+## Open — pós v1.3
+
+- **Sem migrator v1.2 → v1.3** — clean-break deliberado. Projetos
+  experimentais em v1.2 (pré-production) limpam `.claude/` e re-rodam
+  `forge init`. Nenhum projeto real adotou v1.2 ainda (pre-production status
+  — ver `docs/design/08-session-handoff.md`). Migrator automático só
+  justificado quando v1.3 tiver ≥1 projeto adotante real. Critério de
+  reentrada: primeiro projeto piloto reportar necessidade.
+- **opencode fallback intent_file (Veredito B)** — revisitar quando opencode
+  shippar equivalente de elicitation/AskUserQuestion em protocolo oficial.
+  Research em `docs/research/opencode-tool-api.md`. Critério: env var estável
+  OR IPC canal oficial disponível em versão futura.
+- ~~**find_project_root legacy marker**~~ — **FECHADO em 1.4.0** (commits
+  c797539 + d6ec142). `find_project_root` e `_project_root_for_io` em
+  `engine/utils/paths.py` reconhecem agora `.claude/forge/forge-config.yaml`
+  (marker v1.3 primário criado por `forge init`) além do legacy
+  `.claude/workflow-config.yaml` (compat v1.2). Ciclo init→uso greenfield
+  restaurado: os ~12 comandos que resolvem a raiz via find_project_root
+  deixaram de levantar `ProjectRootNotFoundError` em projetos greenfield v1.3.
+  Regression test fecha o gap de cobertura (testes anteriores semeavam o
+  marker legacy à mão). Legacy compat mantido — não é breaking change.
+- **`.gitignore` semantic narrowing** — `.gitignore` que `forge init` cria
+  ainda usa paths v1.x (`.claude/memory/L1/*`, `.claude/graph.db`). v1.3 move
+  esses pra `.claude/forge/state/` e `.claude/graph.db` (caminho inalterado).
+  Sem impacto funcional imediato (paths antigos também existem por compatibilidade),
+  mas narrowing pra `.claude/forge/state/` ficou fora do W5. Critério:
+  próxima rodada de `forge init` hardening.
+- **`_SCHEMA_VERSION` duplicado adapter/question** — `engine/ui/host.py` e
+  `engine/ui/question.py` ambos definem `_SCHEMA_VERSION = "1.0"`. Cosmético
+  mas viola DRY. Critério: próxima mudança de schema de intent protocol.
+
+### Adiados do PR #17 automated-review triage (2026-06-17)
+
+Findings de bots no PR #17 (gemini + codereviewbot) com fix correto fora
+do escopo de quick-fix — exigem brainstorm ou tocam contrato compartilhado.
+Registrados aqui pra reentrada consciente, não pra escapar do trabalho.
+
+- **TTY-fallback ask_multi validation** — duas frouxidões no caminho TTY:
+  (1) submissão vazia aceita quando `min_selected == 0` —
+  `_is_valid_token` em `engine/ui/_stdin_prompt.py` não rejeita token
+  vazio; (2) ausência de fail-fast quando `min_selected > len(options)` em
+  `ask_multi` (`engine/ui/question.py`), permitindo pedido impossível
+  silenciar. *Adiado:* o caminho TTY é fallback não-canônico — o exec
+  model canônico é Claude-Code-fronted (engine emite intent, CC usa
+  AskUserQuestion). Endereçar via brainstorm quando o fallback for
+  priorizado. Origem: review de bots no PR #17 (gemini HIGH +
+  codereviewbot).
+- **Workflow-config YAML malformado → erro amigável** —
+  `read_yaml_or_default` só retorna o default quando o arquivo está
+  AUSENTE; YAML malformado levanta `YamlIOError` não-tratado nos call
+  sites `_qa_run` (`engine/cli.py`), `_load_workflow_config`
+  (`engine/evolve.py`, `engine/memory_cli.py`). O fix correto é erro
+  loud/friendly na camada de config-loading — toca o contrato do helper
+  compartilhado + 3 sites + a decisão loud-vs-silent —, então vira tarefa
+  separada com brainstorm. *Adiado:* cross-cutting + decisão de contrato.
+  Origem: review de bots no PR #17.
+
+### v1.3 Wave 2 — Limitações conhecidas (2026-06-16)
+
+- **opencode usa IntentFileAdapter como fallback (Veredito B)** —
+  research W2.T0 (`docs/research/opencode-tool-api.md`) confirmou que
+  opencode NÃO suporta adapter in-process: stdout do processo filho não
+  é interceptado em tempo real pelo host, e não há env var oficial
+  confiável pra detectar opencode de forma estável. Consequência: forge
+  rodando sob opencode usa `IntentFileAdapter` (protocol DRIFT-1 —
+  pending.json / response.json round-trip via tool calls) em vez de
+  execução in-process de tools. Usuário perde o "leverage all tools"
+  in-process disponível no ClaudeCodeAdapter, mas todas as perguntas
+  funcionam corretamente via intent-file. Critério de reentrada:
+  opencode expor protocolo oficial de subprocess-to-host (env var
+  estável OR IPC canal) em versão futura — momento natural pra
+  implementar `OpencodeAdapter` equivalente ao `ClaudeCodeAdapter`.
+  Ref: `docs/research/opencode-tool-api.md`.
+
+- **DRIFT-1 multi-pergunta-por-ciclo (read_response stale-leftover)**
+  — ✅ FECHADO em Wave 2 (commits 5827900/7c26377). `read_response` e
+  `detect_race` em `engine/ui/intent_state.py` agora tratam `intent-id`
+  já consumido (presente no consumed-log) como stale-leftover de pergunta
+  anterior na mesma invocação. `read_response` retorna `None` (caller
+  emite novo pending) em vez de `IntentMismatchError`. Comandos
+  multi-pergunta-por-ciclo como `forge reconfigure` (category → submenu)
+  funcionam corretamente sob host real. Mismatch genuíno (id não no log,
+  response com id diferente) ainda levanta `IntentMismatchError`.
+  Race genuíno (id não no log, pending de outra invocação) ainda levanta
+  `RaceDetectedError`. Ver também `docs/schemas/intent-protocol.md §4`.
 
 ### B1 — `identity.backend-choice` ↔ `backend.provider` desync
 
@@ -469,7 +576,7 @@ Target: contínuo (sem versão fixa — gatilho é dados de mais smokes).
 
 ## Phase 1 — Espinha dorsal (schemas + estrutura)
 
-- [x] workflow-config.yaml schema → `docs/schemas/workflow-config.md`
+- [x] forge-config.yaml schema → `docs/schemas/forge-config.md` (era workflow-config.md, renomeado em v1.3)
 - [x] Card schema → `docs/schemas/card.md`
 - [x] Inventory schemas → `docs/schemas/inventories.md`
 - [x] Memory schemas → `docs/schemas/memory.md`
@@ -3044,7 +3151,7 @@ durante doc-sync W1. Não-bloqueantes pro avanço W2; revisitar em W2 ou
 cleanup pass dedicado dentro da própria branch `feat/det-6-multi-axis-backend`
 antes do PR final ao fim de W8.
 
-### W1-L-002 — Open-details #6/#7 em `workflow-config.md` em vez de `card.md` / `backend-axes.md`
+### W1-L-002 — Open-details #6/#7 em `forge-config.md` em vez de `card.md` / `backend-axes.md`
 
 **Categoria:** schema-foundation (doc placement)
 **Severidade:** baixa (deviation cosmética; placement semanticamente correto)
@@ -3054,9 +3161,9 @@ PLAN W1.4 nominou apenas `docs/schemas/card.md` e `docs/schemas/backend-axes.md`
 como locais pra inline `<!-- open-detail -->` comments. Os anchors #6 (Phase A
 API shape — referência ao formato de `signal-id`/`detector` que Phase A
 consolidará) e #7 (rename `crashlytics` → `crash-reporting` discutido em
-Phase B brainstorm) acabaram em `docs/schemas/workflow-config.md` porque
-semanticamente pertencem ao contexto desse schema (axes-resolution + status
-enum vivem lá). Não é regressão — só desvio do nominal do PLAN.
+Phase B brainstorm) acabaram em `docs/schemas/forge-config.md` (era `workflow-config.md`,
+renomeado em v1.3) porque semanticamente pertencem ao contexto desse schema
+(axes-resolution + status enum vivem lá). Não é regressão — só desvio do nominal do PLAN.
 
 Fix forward: ao consolidar W8 (final doc-sync da Phase B antes do PR), mover
 os 2 anchors pra `backend-axes.md` se a sentence ainda fizer sentido lá; ou
@@ -3308,7 +3415,7 @@ evitar três cópias da mesma busca binária.
 8. `docs/design/03-influences.md`
 9. `docs/design/05-filesystem-layout.md`
 10. `docs/ux/forge-init-roteiro.md` (start UX docs here)
-11. `docs/schemas/workflow-config.md` (start schemas here)
+11. `docs/schemas/forge-config.md` (start schemas here)
 12. `agents/planning-conductor.md` (start agents here)
 13. `docs/lifecycle/memory-and-graph.md`
 14. This file (04-pending.md) to see what's left

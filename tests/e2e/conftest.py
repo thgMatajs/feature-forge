@@ -50,6 +50,42 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 FORGE_BIN = REPO_ROOT / "bin" / "forge"
 
 
+# ── Env scrub ─────────────────────────────────────────────────────────────────
+#
+# Variáveis que fariam ``detect_host`` resolver um adapter agentic
+# (ClaudeCodeAdapter, OpenCodeAdapter, etc.) em vez do caminho determinístico
+# não-agentic (IntentFileAdapter via stdin piped / non-tty). Quando a e2e
+# lane roda DENTRO de uma sessão Claude Code/opencode, CLAUDECODE=1 (e/ou
+# OPENCODE_* / CODEX* / CURSOR_*) está presente no env do pytest e seria
+# herdado pelo subprocess ``bin/forge`` sem o scrub, forçando o engine pra
+# emitir o marcador ``<FORGE_INTENT/>`` no stdout em vez de escrever
+# ``forge-pending.json`` — quebrando os 4 testes que verificam o pending file.
+#
+# Mesma lista usada em ``test_tty_adapter_pty.py`` e
+# ``test_per_host_dispatch.py`` (Mandamento #3 — reuse antes de criar).
+# Testes que precisam exercitar um host agentic específico SETAM a variável
+# DEPOIS de chamar ``env_with_forge_home()`` (override local, não afeta o
+# default scrubado).
+
+_SCRUB_EXACT = ("CLAUDECODE", "FORGE_FORCE_INTENT_MODE", "FORGE_FORCE_TTY_MODE")
+_SCRUB_PREFIXES = ("OPENCODE_", "CODEX", "CURSOR_")
+
+
+def _scrub_agentic_env(env: dict[str, str]) -> None:
+    """Remove sinais agentic do env dict in-place.
+
+    Garante que ``detect_host`` não resolva um adapter agentic quando a
+    suite roda dentro de Claude Code / opencode / codex / cursor. O scrub
+    é feito in-place (mutação direta) para que o chamador possa continuar
+    adicionando variáveis após a chamada.
+    """
+    for name in _SCRUB_EXACT:
+        env.pop(name, None)
+    for key in list(env.keys()):
+        if any(key.startswith(prefix) for prefix in _SCRUB_PREFIXES):
+            env.pop(key, None)
+
+
 def env_with_forge_home() -> dict[str, str]:
     """Build an env dict for the subprocess with ``FORGE_HOME`` exported.
 
@@ -60,8 +96,18 @@ def env_with_forge_home() -> dict[str, str]:
     chained so any helper that bypasses ``bin/forge`` and uses
     ``python -m engine.cli`` still resolves ``engine.*`` without
     ``pip install -e .``.
+
+    Agentic env vars (``CLAUDECODE``, ``OPENCODE_*``, ``CODEX*``,
+    ``CURSOR_*``, ``FORGE_FORCE_INTENT_MODE``, ``FORGE_FORCE_TTY_MODE``)
+    are scrubbed so that ``detect_host`` always falls through to the
+    deterministic non-agentic path (``IntentFileAdapter`` via piped stdin)
+    regardless of the host environment running the test suite. Tests that
+    need to exercise a specific agentic host must set the relevant variable
+    on the returned dict after this call — the scrub is a default, not a
+    prohibition.
     """
     env = os.environ.copy()
+    _scrub_agentic_env(env)
     env["FORGE_HOME"] = str(REPO_ROOT)
     env["PYTHONPATH"] = str(REPO_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
     return env
@@ -160,7 +206,7 @@ def read_pending(project_root: Path) -> dict[str, Any] | None:
     written yet, or the engine consumed and cleared after a successful
     run). Otherwise returns the decoded payload.
     """
-    pending_path = project_root / ".claude" / "state" / "forge-pending.json"
+    pending_path = project_root / ".claude" / "forge" / "state" / "forge-pending.json"
     if not pending_path.is_file():
         return None
     return json.loads(pending_path.read_text(encoding="utf-8"))
@@ -184,7 +230,7 @@ def write_response(
       (ask_multi) | ``bool`` (confirm)
     - ``answered-at``: ISO-8601 UTC (a fixed string is fine for tests)
     """
-    state_dir = project_root / ".claude" / "state"
+    state_dir = project_root / ".claude" / "forge" / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     response = {
         "schema-version": 1,
@@ -217,7 +263,7 @@ def clear_response(project_root: Path) -> None:
     we know the engine will encounter a different question first,
     explicitly clear the stale response.
     """
-    response_path = project_root / ".claude" / "state" / "forge-response.json"
+    response_path = project_root / ".claude" / "forge" / "state" / "forge-response.json"
     response_path.unlink(missing_ok=True)
 
 
@@ -253,10 +299,19 @@ def drive_intent_loop(
 
     The ``max_cycles`` ceiling prevents runaway loops if the engine keeps
     asking forever (would be a real bug, but the test should fail loud
-    instead of hanging).
+    instead of hanging). Mismatch-recovery iterations (exit 1 + "mismatch"
+    in stderr) are NOT counted against ``max_cycles`` — they are automatic
+    housekeeping, not genuine question-answer cycles. The ceiling is capped
+    separately at ``max_cycles * 3`` total iterations (including recoveries)
+    as a safety net against truly pathological loops.
     """
     last_result: subprocess.CompletedProcess | None = None
-    for _cycle in range(max_cycles):
+    _response_cycles = 0
+    _total_iters = 0
+    _max_total = max_cycles * 3  # safety cap including recovery iterations
+
+    while _response_cycles < max_cycles and _total_iters < _max_total:
+        _total_iters += 1
         result = subprocess.run(
             [str(FORGE_BIN), *cmd_args],
             cwd=cwd,
@@ -278,12 +333,14 @@ def drive_intent_loop(
         # o engine não consumiu ele neste ciclo (mismatch raised antes
         # do ``_emit_pending_and_raise``), e o próximo ciclo vai
         # re-emitir o pending da pergunta correta.
+        # Recovery iterations do NOT consume the ``max_cycles`` budget —
+        # they are housekeeping, not question-answer turns.
         if (
             result.returncode == 1
             and "mismatch" in (result.stderr or "").lower()
         ):
             clear_response(cwd)
-            pending_path = cwd / ".claude" / "state" / "forge-pending.json"
+            pending_path = cwd / ".claude" / "forge" / "state" / "forge-pending.json"
             pending_path.unlink(missing_ok=True)
             continue
 
@@ -309,8 +366,9 @@ def drive_intent_loop(
             kind=pending["kind"],
             value=value,
         )
+        _response_cycles += 1
 
-    # Esgotou max_cycles sem terminar — devolve estado atual pra test
-    # inspecionar (provavelmente vai falhar com asserção clara).
-    assert last_result is not None  # max_cycles >= 1 garantido pelo default
+    # Esgotou max_cycles (ou safety cap) sem terminar — devolve estado atual
+    # pra test inspecionar (provavelmente vai falhar com asserção clara).
+    assert last_result is not None  # ao menos 1 iteração executou
     return last_result

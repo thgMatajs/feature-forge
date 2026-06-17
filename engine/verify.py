@@ -46,12 +46,12 @@ from engine.ui import question, renderer
 from engine.ui.question import PromptAbortedError
 from engine.utils.paths import (
     ProjectRootNotFoundError,
+    active_config_path,
     cards_dir,
     claude_dir,
     ensure_dir,
     find_project_root,
     memory_dir,
-    workflow_config_path,
 )
 from engine.utils.yaml_io import read_yaml_or_default, write_yaml
 from engine.utils.checkpoint_io import (
@@ -253,7 +253,7 @@ def run_scope(
             )
         return 1
 
-    config = read_yaml_or_default(workflow_config_path(project_root), {}) or {}
+    config = read_yaml_or_default(active_config_path(project_root), {}) or {}
 
     if interactive:
         renderer.write("")

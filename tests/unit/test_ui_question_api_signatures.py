@@ -23,13 +23,20 @@ import pytest
 from engine.ui import question
 
 
-# Pre-refactor signatures, copied verbatim from the legacy
-# engine/ui/question.py. If any of these strings must change, the
-# refactor has stopped being "internal" and the spec/PLAN need amendment.
+# Signatures captured post Task 0.7b. The three delegated entrypoints
+# (``ask``/``ask_multi``/``ask_text``) gained a new keyword-only
+# ``project_root: Path | None = None`` parameter so callers in tests +
+# harnesses can pin the I/O anchor without monkey-patching ``cwd``.
+# The first-positional + pre-existing keyword arguments are preserved
+# bit-for-bit, so the 108 production callsites continue to compile and
+# run untouched (none of them pass ``project_root``).
+#
+# ``ask_three_paths`` and ``confirm`` remain on the legacy native path
+# (not delegated by 0.7b scope) and keep their original signatures.
 _EXPECTED_SIGNATURES = {
-    "ask": "(question: 'str', options: 'Mapping[str, str]', *, default: 'str | None' = None, allow_pause: 'bool' = True) -> 'str'",
-    "ask_multi": "(question: 'str', options: 'Mapping[str, str]', *, min_selected: 'int' = 0) -> 'list[str]'",
-    "ask_text": "(question: 'str', *, default: 'str | None' = None, validator: 'Callable[[str], bool] | None' = None, validator_hint: 'str | None' = None) -> 'str'",
+    "ask": "(question: 'str', options: 'Mapping[str, str]', *, default: 'str | None' = None, allow_pause: 'bool' = True, project_root: 'Path | None' = None) -> 'str'",
+    "ask_multi": "(question: 'str', options: 'Mapping[str, str]', *, min_selected: 'int' = 0, project_root: 'Path | None' = None) -> 'list[str]'",
+    "ask_text": "(question: 'str', *, default: 'str | None' = None, validator: 'Callable[[str], bool] | None' = None, validator_hint: 'str | None' = None, project_root: 'Path | None' = None) -> 'str'",
     "ask_three_paths": "(gate_name: 'str', paths: 'Sequence[Mapping[str, str]]') -> 'str'",
     "confirm": "(question: 'str', *, default: 'bool' = False, allow_pause: 'bool' = True) -> 'bool'",
 }

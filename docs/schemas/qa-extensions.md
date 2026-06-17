@@ -255,7 +255,7 @@ qa-extensions:
 ### Cross-refs
 
 - Grant flow: `engine/cards/grant.py`
-- Storage: `docs/schemas/workflow-config.md §qa.sensitive-env-grants`
+- Storage: `docs/schemas/forge-config.md §qa.sensitive-env-grants`
 - Spec: `docs/superpowers/specs/2026-06-08-qa-sandbox-env-hardening-design.md`
 
 ---
@@ -266,7 +266,7 @@ qa-extensions:
 |---|---|
 | Schema base do card (campos identity / provides / etc.) | [`card.md`](card.md) |
 | Pattern de campo aditivo (precedente do `legacy-marker`) | [`card.md` §Optional top-level legacy-marker](card.md) |
-| Section `qa:` em workflow-config (inclui `qa.extensions.disabled`) | [`workflow-config.md` §qa](workflow-config.md) |
+| Section `qa:` em forge-config (inclui `qa.extensions.disabled`) | [`forge-config.md` §qa](forge-config.md) |
 | Validator que enforça as 5 regras | `validators/validate_qa_extensions.py` |
 | Catálogo canônico de capability labels (cruzado pela Regra 4) | [`capability-labels.md`](capability-labels.md) |
 | Decisão 28 — Gap 5 overlay policy (origem do hard-fail em colisão) | [`docs/design/01-decisions.md` §Decisão 28](../design/01-decisions.md) |

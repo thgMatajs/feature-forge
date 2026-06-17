@@ -115,12 +115,26 @@ def test_resume_from_checkpoint(
     _seed_workflow_config(tmp_forge_project)
     monkeypatch.chdir(tmp_forge_project)
 
+    # Task 0.7b — pin host: intent-file so question.ask_text delegate
+    # writes/reads against .claude/forge/state/ (v1.3 sub-namespace).
+    forge_dir = tmp_forge_project / ".claude" / "forge"
+    forge_dir.mkdir(parents=True, exist_ok=True)
+    (forge_dir / "forge-config.yaml").write_text(
+        "host: intent-file\n", encoding="utf-8"
+    )
+    from engine.host import detect as _host_detect
+
+    _host_detect._clear_cache()
+
     # Stage 1 — calcula o intent-id deterministico da pergunta de slug.
     # Argumentos seguem _elicit_slug em engine/plan.py.
+    # Task 0.7b: o delegate roda o intent via host adapter, que passa
+    # ``options={}`` para o ``_ask_loop`` em ``ask_text``. Pra reproduzir
+    # bit-a-bit o intent-id que o adapter calcula, usamos a mesma forma.
     intent_id = question._stable_intent_id(
         "ask_text",
         "Qual o slug da feature? (kebab-case, ex.: lembrete-rega)",
-        None,
+        {},
         extra={
             "default": None,
             "min-selected": None,
@@ -139,7 +153,7 @@ def test_resume_from_checkpoint(
     # confiamos que o run completa minimo até o ponto que prova consumo
     # da response.
     valid_slug = "ghost-feature-plan"
-    state_dir = tmp_forge_project / ".claude" / "state"
+    state_dir = tmp_forge_project / ".claude" / "forge" / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     response_payload = {
         "schema-version": 1,
@@ -170,6 +184,17 @@ def test_resume_from_checkpoint(
     # slug-ask. Isso prova que: (a) o slug-response foi consumido (nao
     # houve re-prompt do mesmo intent-id) e (b) o handler avancou pra
     # uma pergunta nova.
+    #
+    # Task 0.7b — CR-002: o response file do slug NAO e mais
+    # auto-clearado apos consume. O prompt seguinte da Wave A vai
+    # encontrar o response file legado em disco (slug intent-id) e
+    # levantar IntentMismatchError porque o novo intent-id da Wave A
+    # nao bate. Este path tambem prova que o handler avancou alem do
+    # slug-elicit; cli.py mapeia IntentMismatchError pra exit 1 (ver
+    # engine/cli.py:341). No teste tratamos como assinatura valida
+    # do avanco.
+    from engine.ui import intent_state
+
     advanced_past_slug = False
     try:
         plan.run([])
@@ -182,6 +207,16 @@ def test_resume_from_checkpoint(
             "response do slug nao foi consumida"
         )
         advanced_past_slug = True
+    except intent_state.IntentMismatchError as exc:
+        # CR-002: o response do slug ficou em disco e a Wave A pediu um
+        # intent-id NOVO. A mismatch entre o file (slug) e o novo
+        # intent-id pedido prova que o handler avancou alem do slug-ask.
+        msg = str(exc)
+        assert intent_id in msg, (
+            "IntentMismatchError nao referencia o slug intent-id em disco — "
+            "o avanco para alem do slug-elicit nao foi comprovado"
+        )
+        advanced_past_slug = True
     except SystemExit:
         # Caminho alternativo: run pode levantar SystemExit antes do
         # primeiro prompt novo (ex.: phase-lock falha). Tambem prova
@@ -192,10 +227,12 @@ def test_resume_from_checkpoint(
         "plan.run nao saiu/pausou apos consumir o slug response"
     )
 
-    # Resume contract: forge-response.json do slug-ask deve ter sido
-    # consumido. O novo PausedForInputError pode ter ESCRITO um pending
-    # diferente em disco — mas o RESPONSE original foi limpo por
-    # _clear_state ao consumir match.
-    assert not (state_dir / "forge-response.json").exists(), (
-        "response file should be consumed/cleared after successful resume"
+    # Task 0.7b — CR-002 invariant: state files MUST remain on disk
+    # after happy-path consume. cli.py finally block performs the
+    # terminal cleanup at handler exit, preserving forensic inspection.
+    # O novo PausedForInputError downstream pode ter sobrescrito o
+    # pending com um intent-id diferente, mas o response original
+    # permanece em disco até o cli.py terminal cleanup.
+    assert (state_dir / "forge-response.json").exists(), (
+        "response file must survive happy-path consume (CR-002)"
     )

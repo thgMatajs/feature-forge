@@ -44,12 +44,13 @@ from engine.ui import question, renderer
 from engine.ui.question import PromptAbortedError
 from engine.utils.paths import (
     ProjectRootNotFoundError,
+    active_config_path,
     claude_dir,
     ensure_dir,
     feature_dir,
     feature_path as _feature_path,
     find_project_root,
-    workflow_config_path,
+    forge_state_dir,
 )
 from engine.utils.yaml_io import read_yaml, read_yaml_or_default, write_yaml
 from engine.utils.checkpoint_io import (
@@ -483,8 +484,12 @@ def _print_plan_mode(task: TaskContract, project_root: Path) -> None:
 
 
 def _cc_bypass_log_path(project_root: Path) -> Path:
-    """Audit trail location for ``NO_CC_GATE=1`` bypass invocations."""
-    return project_root / ".claude" / "state" / "cc-gate-bypass.jsonl"
+    """Audit trail location for ``NO_CC_GATE=1`` bypass invocations.
+
+    Task 0.8 (v1.3 pilot-ready): state file vive em
+    ``.claude/forge/state/cc-gate-bypass.jsonl`` (sub-namespace spec §2).
+    """
+    return forge_state_dir(project_root) / "cc-gate-bypass.jsonl"
 
 
 def _run_cc_gate(project_root: Path) -> dict[str, Any]:
@@ -496,7 +501,7 @@ def _run_cc_gate(project_root: Path) -> dict[str, Any]:
     - ``blocking=False`` → pass / warn / bypass — handoff continues.
 
     Bypass: ``NO_CC_GATE=1`` env var short-circuits the validator and
-    appends one record to ``.claude/state/cc-gate-bypass.jsonl`` for audit.
+    appends one record to ``.claude/forge/state/cc-gate-bypass.jsonl`` for audit.
     Override-justify (``CC-OVERRIDE: …``) in the commit body is handled
     *inside* the validator — pass-through here.
     """
@@ -599,9 +604,13 @@ def _secrets_bypass_log_path(project_root: Path) -> Path:
 
     Paralelo de ``_cc_bypass_log_path`` — cada bypass escreve uma linha
     JSONL para auditoria via ``git log`` / scripts off-band. Path
-    consistente com o pattern do CC gate (mesma pasta ``.claude/state/``).
+    consistente com o pattern do CC gate (mesma pasta
+    ``.claude/forge/state/``).
+
+    Task 0.8 (v1.3 pilot-ready): migrado pra ``forge_state_dir`` helper —
+    state vive sob o sub-namespace ``.claude/forge/`` (spec §2).
     """
-    return project_root / ".claude" / "state" / "secrets-gate-bypass.jsonl"
+    return forge_state_dir(project_root) / "secrets-gate-bypass.jsonl"
 
 
 def _run_secrets_gate(project_root: Path) -> dict[str, Any]:
@@ -619,7 +628,7 @@ def _run_secrets_gate(project_root: Path) -> dict[str, Any]:
         - ``blocking=False`` → pass / warn / bypass — handoff continua.
 
     Bypass: ``NO_SECRETS_GATE=1`` env var faz short-circuit do validator e
-    appenda um registro em ``.claude/state/secrets-gate-bypass.jsonl`` pra
+    appenda um registro em ``.claude/forge/state/secrets-gate-bypass.jsonl`` pra
     auditoria. Override-justify (``SECRETS-OVERRIDE: …``) no commit body é
     tratado *dentro* do validator — pass-through aqui.
 
@@ -938,7 +947,7 @@ def _maybe_run_qa_pre_retrospective(
           do package qa puxa engine.cards/graph que indiretamente toca
           este módulo via memory/L1; lazy import é defesa idiomática).
     """
-    cfg = read_yaml_or_default(workflow_config_path(project_root), {})
+    cfg = read_yaml_or_default(active_config_path(project_root), {})
     if not isinstance(cfg, dict):
         return
     qa_cfg = cfg.get("qa") or {}
@@ -958,7 +967,7 @@ def _maybe_run_qa_pre_retrospective(
             "qa.auto-run-on-feature-done está ativo e a feature acaba "
             "de fechar — rodar forge qa antes do retrospective?"
         ),
-        where=str(workflow_config_path(project_root).relative_to(project_root)),
+        where=str(active_config_path(project_root).relative_to(project_root)),
         why=[
             "verdict QA é insumo pro retrospective (não bloqueia — §12.2)",
             "contexto fresco vale mais barato agora que depois",
@@ -1063,7 +1072,7 @@ def _toggle_qa_auto_run_off(project_root: Path) -> None:
     """
     from engine.utils.yaml_io import write_yaml  # noqa: PLC0415 — lazy
 
-    cfg_path = workflow_config_path(project_root)
+    cfg_path = active_config_path(project_root)
     cfg = read_yaml_or_default(cfg_path, {})
     if not isinstance(cfg, dict):
         cfg = {}

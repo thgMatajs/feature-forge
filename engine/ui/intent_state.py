@@ -1,10 +1,20 @@
 """State-file I/O for the DRIFT-1 intent protocol.
 
-Single chokepoint for ``.claude/state/forge-pending.json`` and
-``.claude/state/forge-response.json``. Engine reads/writes go through
-this module; ``question.py`` stays thin (sentinel + dispatch). The
-``tty_bridge`` (W3) also lands here for the read-pending +
-write-response half of the loop.
+Single chokepoint for ``.claude/forge/state/forge-pending.json`` and
+``.claude/forge/state/forge-response.json``. Engine reads/writes go
+through this module; ``question.py`` stays thin (sentinel + dispatch).
+The host (Claude Code adapter) consumes the read-pending + write-response
+half of the loop. The in-process ``TtyAdapter`` (Wave 2) does NOT touch
+this module — it reads stdin directly and never writes state files; the
+old ``tty_bridge`` subprocess-loop that used to land here was removed in
+the same clean break.
+
+State directory canonical (v1.3 clean break, spec §5):
+The default ``state_dir`` resolves to ``forge_state_dir(project_root)``
+— i.e., ``.claude/forge/state/`` — the v1.3 sub-namespace.  Callers
+that supply ``state_dir`` explicitly still win (override semantics).
+Pre-v1.3 default was ``.claude/state/``; that path is gone (no legacy
+fallback) since the project is pre-production (no install to migrate).
 
 Why a dedicated module:
 
@@ -26,11 +36,11 @@ Surface delivered in W1.T3 (foundation):
   ``RaceDetectedError`` if a recent pending with a different intent-id
   is still parked
 
-Companion helpers added in W3 (caller-side of the loop, consumed by
-``engine.ui.tty_bridge``):
+Companion helpers added in W3 (caller-side of the loop, consumed by the
+host adapter that fronts the engine — the Claude Code host):
 
 - ``read_pending(project_root)`` — None if absent, dict otherwise.
-  Counterpart to ``read_response`` from the bridge's perspective.
+  Counterpart to ``read_response`` from the host's perspective.
 - ``write_response(project_root, response)`` — atomic emit using the
   same tempfile-rename strategy.
 
@@ -67,7 +77,7 @@ from pathlib import Path
 from typing import Any
 
 from engine.utils import json_io
-from engine.utils.paths import claude_dir
+from engine.utils.paths import forge_state_dir
 
 # Pending older than this is considered orphaned and gets swept.
 _STALE_THRESHOLD_SECONDS = 10 * 60  # 10 minutes
@@ -95,8 +105,8 @@ class RaceDetectedError(RuntimeError):
     """Raised when a recent pending intent (≤ 10min) blocks a new one.
 
     The existing pending is NOT overwritten. Caller must wait or delete
-    ``.claude/state/forge-pending.json`` by hand. Top-level handler maps
-    this to exit code 1 with the mentor-calmo phrasing carried in
+    ``.claude/forge/state/forge-pending.json`` by hand. Top-level handler
+    maps this to exit code 1 with the mentor-calmo phrasing carried in
     ``args[0]``.
     """
 
@@ -115,32 +125,51 @@ class SchemaVersionMismatchError(RuntimeError):
 # --- Path helpers ----------------------------------------------------------
 
 
-def _state_dir(project_root: Path) -> Path:
-    """``.claude/state/`` for this project. Promoted to ``engine.utils.paths``
-    when a second consumer appears (anti-procrastination would say now,
-    but the spec already flagged this as a deferred promotion).
+def _state_dir(
+    project_root: Path, state_dir_override: Path | None = None
+) -> Path:
+    """``.claude/forge/state/`` for this project (default), or the explicit
+    override.
+
+    Fix #3 / Path A (v1.3 pilot-ready, spec §5 clean break, 2026-06-16):
+    The default resolves to ``forge_state_dir(project_root)`` — i.e.,
+    ``.claude/forge/state/`` — the v1.3 canonical sub-namespace. The
+    pre-v1.3 default (``claude_dir(project_root) / "state"``) is gone:
+    no legacy fallback, no migration shim. Pre-production phase means
+    there is no install to migrate, so the cleaner default wins.
+
+    ``state_dir_override`` (Task 0.5 facade hook) preserves explicit-override
+    semantics: callers that need a specific path still get it back unchanged.
+    Used by ``engine/host/adapters/intent_file.py`` and by tests that need
+    to pin paths under a ``tmp_path`` root.
     """
-    return claude_dir(project_root) / "state"
+    if state_dir_override is not None:
+        return state_dir_override
+    return forge_state_dir(project_root)
 
 
-def _pending_path(project_root: Path) -> Path:
-    return _state_dir(project_root) / "forge-pending.json"
+def _pending_path(project_root: Path, *, state_dir: Path | None = None) -> Path:
+    return _state_dir(project_root, state_dir) / "forge-pending.json"
 
 
-def _response_path(project_root: Path) -> Path:
-    return _state_dir(project_root) / "forge-response.json"
+def _response_path(project_root: Path, *, state_dir: Path | None = None) -> Path:
+    return _state_dir(project_root, state_dir) / "forge-response.json"
 
 
-def _log_path(project_root: Path) -> Path:
-    """``.claude/state/forge-intent-log.jsonl`` — consumed-intent log for
-    re-entry idempotency in multi-intent handlers.
+def _log_path(project_root: Path, *, state_dir: Path | None = None) -> Path:
+    """``.claude/forge/state/forge-intent-log.jsonl`` — consumed-intent log
+    for re-entry idempotency in multi-intent handlers.
 
     Lifetime is bounded by a single ``forge <cmd>`` invocation cycle:
     written by ``read_response`` on consume, cleared by
     ``clear_intent_files(also_log=True)`` from the top-level handler at
     terminal exit.
+
+    ``state_dir`` keyword (Task 0.5) overrides the default
+    ``forge_state_dir(project_root)`` anchor when provided. When ``None``,
+    falls back to the v1.3 canonical sub-namespace (spec §5).
     """
-    return _state_dir(project_root) / "forge-intent-log.jsonl"
+    return _state_dir(project_root, state_dir) / "forge-intent-log.jsonl"
 
 
 # --- consumed-intent log (re-entry idempotency) ----------------------------
@@ -173,7 +202,9 @@ def _reset_log_cache() -> None:
     _log_cache.clear()
 
 
-def _read_intent_log(project_root: Path) -> dict[str, dict[str, Any]]:
+def _read_intent_log(
+    project_root: Path, *, state_dir: Path | None = None
+) -> dict[str, dict[str, Any]]:
     """Read consumed-intents log → ``{intent-id: response}``.
 
     Cached por `path` no module-level `_log_cache`. Hit retorna copy
@@ -194,7 +225,7 @@ def _read_intent_log(project_root: Path) -> dict[str, dict[str, Any]]:
     Returns a flat dict keyed by ``intent-id`` so callers can do a
     single dict lookup per ``read_response`` call.
     """
-    path = _log_path(project_root)
+    path = _log_path(project_root, state_dir=state_dir)
     if path in _log_cache:
         # Copy rasa — protege o cache contra mutação acidental por callers
         # que façam dict ops downstream. As values (response dicts) são
@@ -235,6 +266,7 @@ def _append_intent_log(
     *,
     intent_id: str,
     response: dict[str, Any],
+    state_dir: Path | None = None,
 ) -> None:
     """Append a consumed-intent entry to the log.
 
@@ -248,7 +280,7 @@ def _append_intent_log(
     Atualiza o cache (PR #13 review #3405256063) — append incremental
     em vez de invalidar tudo, mantém leituras subsequentes O(1).
     """
-    path = _log_path(project_root)
+    path = _log_path(project_root, state_dir=state_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     entry = {
         "intent-id": intent_id,
@@ -268,28 +300,84 @@ def _append_intent_log(
         cached[intent_id] = response
 
 
+# --- seed_consumed_log (test affordance, public) ---------------------------
+
+
+def seed_consumed_log(
+    project_root: Path,
+    *,
+    intent_id: str,
+    response: dict[str, Any],
+    state_dir: Path | None = None,
+    reset_cache: bool = True,
+) -> None:
+    """Pré-semeia uma response JÁ consumida no log — forma canônica em testes.
+
+    Esta é a porta PÚBLICA pra testes que precisam simular "uma pergunta
+    anterior deste lifecycle já foi respondida e registrada no log". O caso
+    de uso é exercitar o stale-consumed guard de ``read_response`` /
+    ``detect_race`` sem depender dos internos ``_append_intent_log`` +
+    ``_reset_log_cache`` diretamente — assim o teste prova COMPORTAMENTO
+    (o guard funciona) e não acopla ao formato de storage do log.
+
+    Wrapper fino sobre ``_append_intent_log``. Por padrão zera o cache de
+    log antes do append (``reset_cache=True``) porque fixtures que reusam o
+    mesmo ``project_root`` entre invocações simuladas podem carregar entries
+    fantasma de um teste anterior — o reset garante determinismo. Passe
+    ``reset_cache=False`` quando estiver semeando múltiplas entries em
+    sequência e quiser preservar as anteriores.
+
+    Args:
+      project_root: raiz do projeto que ancora ``.claude/forge/state/``.
+      intent_id: o intent-id a marcar como consumido.
+      response: o dict de response a cachear pra esse intent-id.
+      state_dir: override do anchor de state (mesma semântica dos demais
+        helpers); ``None`` resolve pro sub-namespace canônico v1.3.
+      reset_cache: zera o cache de log antes do append (default ``True``).
+    """
+    if reset_cache:
+        _reset_log_cache()
+    _append_intent_log(
+        project_root,
+        intent_id=intent_id,
+        response=response,
+        state_dir=state_dir,
+    )
+
+
 # --- write_pending ---------------------------------------------------------
 
 
-def write_pending(intent: dict[str, Any], project_root: Path) -> None:
+def write_pending(
+    intent: dict[str, Any],
+    project_root: Path,
+    *,
+    state_dir: Path | None = None,
+) -> None:
     """Emit the pending intent atomically.
 
     ``intent`` must already be a fully-formed dict matching
     ``docs/schemas/intent-protocol.md``. Validation of the shape lives
-    with the caller (``question.py``); this module trusts its sole
-    in-tree consumer.
+    with the caller (``question.py``); this module trusts its in-tree
+    consumers.
+
+    ``state_dir`` (Task 0.5 facade hook) overrides the default
+    ``forge_state_dir(project_root)`` anchor. Default ``None`` resolves
+    to ``.claude/forge/state/`` (v1.3 sub-namespace, spec §5 clean break).
     """
-    json_io.write_json(_pending_path(project_root), intent)
+    json_io.write_json(_pending_path(project_root, state_dir=state_dir), intent)
 
 
 # --- read_pending (W3 companion) -------------------------------------------
 
 
-def read_pending(project_root: Path) -> dict[str, Any] | None:
-    """Read ``.claude/state/forge-pending.json`` if present.
+def read_pending(
+    project_root: Path, *, state_dir: Path | None = None
+) -> dict[str, Any] | None:
+    """Read ``.claude/forge/state/forge-pending.json`` if present.
 
     Mirrors ``read_response`` but for the engine→caller direction: the
-    ``tty_bridge`` loop calls this whenever the subprocess exits with
+    host (Claude Code adapter) calls this whenever the engine exits with
     code 2, to discover what input the engine is asking for.
 
     Returns:
@@ -301,8 +389,11 @@ def read_pending(project_root: Path) -> dict[str, Any] | None:
     Raises ``json_io.JsonIOError`` (propagated) on a malformed file —
     same contract as ``read_response``. Forensic preservation per SPEC §3
     is the caller's choice; this function does not touch the file.
+
+    ``state_dir`` (Task 0.5) overrides the default anchor; ``None``
+    resolves to ``forge_state_dir(project_root)`` (v1.3 canonical).
     """
-    path = _pending_path(project_root)
+    path = _pending_path(project_root, state_dir=state_dir)
     if not path.exists():
         return None
     return json_io.read_json(path)
@@ -311,28 +402,40 @@ def read_pending(project_root: Path) -> dict[str, Any] | None:
 # --- write_response (W3 companion) -----------------------------------------
 
 
-def write_response(project_root: Path, response: dict[str, Any]) -> None:
+def write_response(
+    project_root: Path,
+    response: dict[str, Any],
+    *,
+    state_dir: Path | None = None,
+) -> None:
     """Emit the response payload atomically.
 
     Counterpart to ``write_pending``: same tempfile-rename strategy via
     ``engine.utils.json_io.write_json``, same trust contract (the caller
-    formed a schema-compliant dict). Used by ``tty_bridge`` after the
-    user supplies input via stdin; the engine then consumes it through
-    ``read_response`` on the next invocation.
+    formed a schema-compliant dict). Used by the host (Claude Code
+    adapter) after the user supplies input; the engine then consumes it
+    through ``read_response`` on the next invocation.
+
+    ``state_dir`` (Task 0.5) overrides the default anchor.
     """
-    json_io.write_json(_response_path(project_root), response)
+    json_io.write_json(_response_path(project_root, state_dir=state_dir), response)
 
 
 # --- read_response ---------------------------------------------------------
 
 
-def read_response(project_root: Path, intent_id: str) -> dict[str, Any] | None:
+def read_response(
+    project_root: Path,
+    intent_id: str,
+    *,
+    state_dir: Path | None = None,
+) -> dict[str, Any] | None:
     """Read the response file matching ``intent_id``.
 
     Lookup order (re-entry idempotency, W7-fix 2026-06-12):
 
     1. **Consumed-intent log** — if ``intent_id`` already appears in
-       ``.claude/state/forge-intent-log.jsonl``, return the cached
+       ``.claude/forge/state/forge-intent-log.jsonl``, return the cached
        response. The on-disk response file is not touched. This makes
        handler re-entry safe across subprocess invocations: the FIRST
        ``ask()`` in a multi-intent handler will always see its own
@@ -352,24 +455,38 @@ def read_response(project_root: Path, intent_id: str) -> dict[str, Any] | None:
     - The decoded dict on match (from the log on re-entry, from the
       file on first consume).
 
+    Stale-consumed guard (multi-Q re-entry, 2026-06-16):
+
+    When the file's ``intent-id`` (``written_id``) differs from
+    ``intent_id`` but ``written_id`` is already in the consumed-log, the
+    file is a STALE leftover — a prior question's response that survived
+    because ``engine/cli.py`` only clears state at the end of the whole
+    invocation (not between questions). Commands that ask 2+ questions in
+    one invocation without a pause between them (e.g. ``reconfigure``
+    backend submenu) hit this on the SECOND ``ask()``: question A's
+    response is on disk and logged, question B's ``intent_id`` is in
+    neither. That is not a mismatch — it is "not my response yet" → return
+    ``None`` so the caller emits pending(``intent_id``) + exits 2.
+
     Raises:
-    - ``IntentMismatchError`` if the response file is on disk but its
-      ``intent-id`` differs from ``intent_id`` AND the log lacks an
-      entry for ``intent_id``. The file is preserved for forensic
-      value. The "log lacks entry" guard is important: in a multi-
-      intent re-entry, the log has the first intent's response and the
-      file has the second intent's response — both legitimate, no
-      mismatch.
+    - ``IntentMismatchError`` if the response file is on disk, its
+      ``intent-id`` differs from ``intent_id``, the log lacks an entry
+      for ``intent_id``, AND ``written_id`` is NOT in the log. The file
+      is preserved for forensic value — a genuine mismatch means an
+      orphan/unexpected response (``written_id`` was never consumed this
+      lifecycle), so the value is worth inspecting. The two guards work
+      together: ``intent_id`` not logged rules out branch-1 re-entry;
+      ``written_id`` not logged rules out the stale-consumed case above.
     - ``json_io.JsonIOError`` (propagated) if the response file is
       malformed JSON.
     """
     # Branch 1: log lookup — re-entry idempotency.
-    log = _read_intent_log(project_root)
+    log = _read_intent_log(project_root, state_dir=state_dir)
     if intent_id in log:
         return log[intent_id]
 
     # Branch 2: file lookup — first consume in this lifecycle.
-    path = _response_path(project_root)
+    path = _response_path(project_root, state_dir=state_dir)
     if not path.exists():
         return None
 
@@ -377,6 +494,15 @@ def read_response(project_root: Path, intent_id: str) -> dict[str, Any] | None:
     _check_schema_version(response, path=path, kind="response")
     written_id = response.get("intent-id")
     if written_id != intent_id:
+        if written_id in log:
+            # Stale-consumido: o file carrega um intent-id JÁ consumido
+            # neste lifecycle (está no log). Em comandos que fazem 2+
+            # perguntas na mesma invocação (ex.: reconfigure backend
+            # submenu), o file da pergunta anterior sobrevive até o
+            # cleanup final (cli.py finally) — não é mismatch genuíno.
+            # Tratar como "não é minha resposta" → None, pro caller emitir
+            # pending(intent_id) + exit 2 (handshake normal).
+            return None
         raise IntentMismatchError(
             "response intent-id mismatch — "
             f"expected '{intent_id}', got '{written_id}'. "
@@ -384,7 +510,12 @@ def read_response(project_root: Path, intent_id: str) -> dict[str, Any] | None:
         )
     # Persist to log BEFORE returning — next re-entry skips straight to
     # branch 1 instead of fighting a stale response file.
-    _append_intent_log(project_root, intent_id=intent_id, response=response)
+    _append_intent_log(
+        project_root,
+        intent_id=intent_id,
+        response=response,
+        state_dir=state_dir,
+    )
     return response
 
 
@@ -418,7 +549,10 @@ def _check_schema_version(payload: dict[str, Any], *, path: Path, kind: str) -> 
 
 
 def clear_intent_files(
-    project_root: Path, *, also_log: bool = False
+    project_root: Path,
+    *,
+    also_log: bool = False,
+    state_dir: Path | None = None,
 ) -> None:
     """Delete ``forge-pending.json`` and ``forge-response.json``.
 
@@ -439,17 +573,19 @@ def clear_intent_files(
     can wipe the log without touching pending/response (which SPEC §3
     preserves forensically on error paths).
     """
-    json_io.delete_if_exists(_pending_path(project_root))
-    json_io.delete_if_exists(_response_path(project_root))
+    json_io.delete_if_exists(_pending_path(project_root, state_dir=state_dir))
+    json_io.delete_if_exists(_response_path(project_root, state_dir=state_dir))
     if also_log:
-        log_path = _log_path(project_root)
+        log_path = _log_path(project_root, state_dir=state_dir)
         json_io.delete_if_exists(log_path)
         # Cache invalidation: próxima leitura re-lê do disco (que estará
         # ausente → {}). Sem isso, callers veriam entries fantasma.
         _log_cache.pop(log_path, None)
 
 
-def clear_intent_log_only(project_root: Path) -> None:
+def clear_intent_log_only(
+    project_root: Path, *, state_dir: Path | None = None
+) -> None:
     """Delete only ``forge-intent-log.jsonl``, leaving pending/response
     intact.
 
@@ -462,7 +598,7 @@ def clear_intent_log_only(project_root: Path) -> None:
 
     Idempotent: no-op when the log file is absent.
     """
-    log_path = _log_path(project_root)
+    log_path = _log_path(project_root, state_dir=state_dir)
     json_io.delete_if_exists(log_path)
     # Cache invalidation pareada com o delete on-disk.
     _log_cache.pop(log_path, None)
@@ -487,7 +623,12 @@ def _parse_created_at(value: str) -> datetime | None:
     return parsed
 
 
-def detect_race(project_root: Path, new_intent_id: str) -> None:
+def detect_race(
+    project_root: Path,
+    new_intent_id: str,
+    *,
+    state_dir: Path | None = None,
+) -> None:
     """Check whether it is safe to write a new pending for ``new_intent_id``.
 
     Outcomes:
@@ -495,6 +636,10 @@ def detect_race(project_root: Path, new_intent_id: str) -> None:
     - No existing pending → returns ``None`` (safe to proceed).
     - Existing pending has the same ``intent-id`` → returns ``None``
       (treated as a re-emission of the same intent, not a race).
+    - Existing pending's ``intent-id`` is already in the consumed-log
+      (already answered this lifecycle — multi-Q leftover, not a
+      concurrent invocation) → swept; returns ``None``. Symmetric to the
+      stale-consumed guard in ``read_response``.
     - Existing pending is stale (``created-at`` > 10 minutes old OR
       missing/malformed) → swept; returns ``None``.
     - Existing pending is recent with a different ``intent-id`` →
@@ -504,7 +649,7 @@ def detect_race(project_root: Path, new_intent_id: str) -> None:
     Lock file via ``fcntl.flock`` is deferred — see the spec
     §"Anti-goals + Considerações futuras".
     """
-    pending_path = _pending_path(project_root)
+    pending_path = _pending_path(project_root, state_dir=state_dir)
     if not pending_path.exists():
         return None
 
@@ -520,6 +665,20 @@ def detect_race(project_root: Path, new_intent_id: str) -> None:
     existing_id = existing.get("intent-id")
     if existing_id == new_intent_id:
         return None
+
+    # Stale-consumido (simétrico ao guard de read_response): se o pending
+    # existente carrega um intent-id JÁ consumido neste lifecycle (está no
+    # log), ele é leftover de uma pergunta anterior — não uma invocação
+    # concorrente. Em comandos que fazem 2+ perguntas na mesma invocação
+    # (ex.: reconfigure backend submenu), o pending da pergunta 1 sobrevive
+    # até o cleanup final; ao emitir o pending da pergunta 2, o pending 1
+    # ainda está no disco. Como sua resposta já foi consumida, varre e segue
+    # em vez de levantar RaceDetectedError (falso positivo de race).
+    if isinstance(existing_id, str):
+        log = _read_intent_log(project_root, state_dir=state_dir)
+        if existing_id in log:
+            json_io.delete_if_exists(pending_path)
+            return None
 
     created = _parse_created_at(existing.get("created-at", ""))
     now = datetime.now(timezone.utc)

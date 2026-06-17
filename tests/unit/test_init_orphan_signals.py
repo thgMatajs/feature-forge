@@ -217,7 +217,9 @@ def test_card_local_add_inline_consolidates_signals_from_list(tmp_path):
     ]
     _card_local_add_inline(proj, orphans)
 
-    card_yaml = proj / ".claude" / "cards" / "local" / "shared-cap" / "card.yaml"
+    card_yaml = (
+        proj / ".claude" / "forge" / "cards" / "local" / "shared-cap" / "card.yaml"
+    )
     assert card_yaml.is_file()
     parsed = yaml.safe_load(card_yaml.read_text(encoding="utf-8"))
     signals = (parsed.get("detection") or {}).get("signals") or []
@@ -242,7 +244,13 @@ def test_card_local_add_inline_accepts_single_orphan_backward_compat(tmp_path):
     _card_local_add_inline(proj, orphan)
 
     card_yaml = (
-        proj / ".claude" / "cards" / "local" / "kotlin-multiplatform" / "card.yaml"
+        proj
+        / ".claude"
+        / "forge"
+        / "cards"
+        / "local"
+        / "kotlin-multiplatform"
+        / "card.yaml"
     )
     assert card_yaml.is_file()
 

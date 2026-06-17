@@ -85,7 +85,7 @@ def test_forge_init_brownfield_emits_valid_pending_on_first_prompt(
     pending = read_pending(tmp_path)
     assert pending is not None, (
         "Engine emit exit 2 mas não escreveu "
-        ".claude/state/forge-pending.json — wiring intent-protocol quebrou."
+        ".claude/forge/state/forge-pending.json — wiring intent-protocol quebrou."
     )
 
     missing = _PENDING_REQUIRED_FIELDS - set(pending.keys())

@@ -44,6 +44,7 @@ from engine.ui import question, renderer
 from engine.ui.question import PromptAbortedError
 from engine.utils.paths import (
     ProjectRootNotFoundError,
+    active_config_path,
     cards_dir,
     claude_dir,
     ensure_dir,
@@ -54,7 +55,6 @@ from engine.utils.paths import (
     inventory_dir,
     memory_dir,
     memory_l2_path,
-    workflow_config_path,
 )
 from engine.utils.yaml_io import (
     YamlIOError,
@@ -252,7 +252,7 @@ def run(argv: list[str]) -> int:
     except PromptAbortedError:
         return 130
 
-    config_path = workflow_config_path(project_root)
+    config_path = active_config_path(project_root)
     config = _safe_read_yaml(config_path) or {}
 
     categories: list[_CategoryReport] = [
