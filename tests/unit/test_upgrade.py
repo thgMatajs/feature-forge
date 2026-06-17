@@ -32,7 +32,9 @@ def test_upgrade_no_op_when_at_latest_tag(tmp_path: Path) -> None:
     checkout.assert_not_called()
 
 
-def test_upgrade_no_op_when_no_tags(tmp_path: Path) -> None:
+def test_upgrade_no_op_when_no_tags(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     """When no release tag exists, upgrade is a no-op with a warning (return 0, no checkout)."""
     from engine.upgrade import run_upgrade
 
@@ -44,6 +46,12 @@ def test_upgrade_no_op_when_no_tags(tmp_path: Path) -> None:
 
     assert result == 0, f"expected 0 (no tags, no-op), got {result}"
     checkout.assert_not_called()
+    # O branch sem tags precisa avisar o usuário (não silenciar). Ancora num
+    # substring estável da mensagem de engine/upgrade.py (no-tags branch).
+    captured = capsys.readouterr()
+    assert "nenhuma release tag encontrada" in captured.out, (
+        f"expected no-tags warning on stdout, got: {captured.out!r}"
+    )
 
 
 def test_upgrade_rollback_on_smoke_fail(tmp_path: Path) -> None:
@@ -63,6 +71,12 @@ def test_upgrade_rollback_on_smoke_fail(tmp_path: Path) -> None:
     # checkout called at least twice: once forward to tag, once back to prev_sha
     assert checkout.call_count >= 2, (
         f"expected forward + rollback checkout, got {checkout.call_count} calls"
+    )
+    # first checkout must be the forward move to the target tag — garante que
+    # a sequência completa (forward THEN rollback) é verificada, não só o fim.
+    first_call_args = checkout.call_args_list[0]
+    assert "v1.4.1" in first_call_args.args, (
+        f"forward checkout did not target the release tag. calls={checkout.call_args_list}"
     )
     # last checkout must be the rollback to prev_sha
     last_call_args = checkout.call_args_list[-1]
