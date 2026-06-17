@@ -29,6 +29,7 @@ Exit codes follow CLI convention:
 from __future__ import annotations
 
 import re
+import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -436,6 +437,86 @@ def _source_tokens_for(argv_slug: Optional[str]) -> dict[str, str]:
         "{{source_type}}": source_type,
         "{{source_ref_or_none}}": _yaml_double_quote_safe(argv_slug),
     }
+
+
+def _ingest_screenshot(raw_input: str, feature_path: Path) -> Optional[dict]:
+    """Sanitiza + registra um screenshot fornecido conversacionalmente.
+
+    spec §4 C3a — o engine NÃO interpreta pixel: normaliza o path
+    (traversal-safe), valida formato/tamanho, copia pra
+    ``{feature}/screenshots/`` e calcula o fingerprint sha256. Devolve
+    ``None`` em qualquer rejeição (path inválido, formato inválido) —
+    mensagem mentor-calmo no stderr, segue sem a imagem. ``platform_hint``
+    é só hint de baixa confiança que o conductor pode sobrepor. Reuso puro
+    de ``engine.vision.screenshot`` (Mandamento 3) — nunca crasha.
+    """
+    from engine.vision import screenshot as _ss
+
+    try:
+        resolved = _ss.normalize_screenshot_path(raw_input, feature_path)
+    except (ValueError, FileNotFoundError) as exc:
+        sys.stderr.write(
+            f"forge plan: screenshot ignorado — {exc}. "
+            "Sigo sem a imagem.\n"
+        )
+        return None
+
+    issues = _ss.validate_screenshot(resolved)
+    if issues:
+        sys.stderr.write(
+            "forge plan: screenshot ignorado — "
+            + "; ".join(issues)
+            + ". Sigo sem a imagem; marque needs-elicitation se for UI.\n"
+        )
+        return None
+
+    screenshots_dir = feature_path / "screenshots"
+    ensure_dir(screenshots_dir)
+    dest = screenshots_dir / resolved.name
+    if resolved.resolve() != dest.resolve():
+        shutil.copy2(resolved, dest)
+
+    fingerprint = _ss.compute_screenshot_fingerprint(dest)
+    meta = _ss.load_screenshot(dest)
+    # `platform_inference` é Optional no dataclass (default None) — `load_screenshot`
+    # sempre popula, mas o guard é defense-in-depth contra o tipo.
+    inference = meta.platform_inference
+    platform = inference.platform if inference else "unknown"
+    confidence = inference.confidence if inference else None
+    return {
+        "path": str(dest.relative_to(feature_path)),
+        "fingerprint": fingerprint,
+        "platform_hint": platform,
+        "platform_confidence": confidence,
+    }
+
+
+def _elicit_screenshot(
+    feature_path: Path,
+    subtype: str,
+    starting_wave: str,
+) -> Optional[dict]:
+    """Source-inquiry: pergunta por material visual e ingere se houver.
+
+    spec §4 C3a + §5 — só pergunta quando a feature é UI-capable e o render
+    é fresco: ``subtype == "product"`` E ``starting_wave == "A"``. Refactor/
+    bugfix não têm Wave B (sem mockup), e em resume (wave != A) não
+    re-pergunta — devolve ``None`` em silêncio nesses casos. A resposta
+    ``"none"`` (ou vazia, via default) também devolve ``None``. Reusa a infra
+    de prompt (``question.ask_text``, como ``_ask_task_count``) — participa do
+    intent loop/resume via o ``stable_intent_id`` que o adapter computa. A
+    análise multimodal dos pixels é do conductor (Wave B), não daqui.
+    """
+    if subtype != "product" or starting_wave != "A":
+        return None
+    resp = question.ask_text(
+        "Tem material visual pra essa tela? "
+        "(path do screenshot/mockup, ou 'none')",
+        default="none",
+    )
+    if not resp or resp.strip().lower() == "none":
+        return None
+    return _ingest_screenshot(resp.strip(), feature_path)
 
 
 def _forge_home() -> Path:
@@ -1646,6 +1727,24 @@ def run(argv: list[str]) -> int:
     # Wave A. Computados do `argv_slug` CRU (nunca reescrito) — sempre
     # presentes, matando o vazamento do token cru universalmente.
     intake_tokens = _source_tokens_for(argv_slug)
+
+    # Vision wire (spec §4 C3a): source-inquiry conversacional por material
+    # visual — só em product + Wave A (UI-capable + render fresco). Os 3 nomes
+    # de token de screenshot são SEMPRE preenchidos (product usa o nome puro;
+    # refactor/bugfix usam o sufixo `_or_none`) — o `.replace` no-opa o ausente
+    # por variante e nenhum token cru vaza em qualquer subtype. Fluem pelo MESMO
+    # threading dos tokens de source (intake_tokens → _run_waves_for_subtype →
+    # Wave A render). O engine só sanitiza/fingerprint; a análise é do conductor.
+    screenshot_result = _elicit_screenshot(feature_path, subtype, starting_wave)
+    _ss_count = "1" if screenshot_result else "0"
+    _ss_paths = screenshot_result["path"] if screenshot_result else "none"
+    intake_tokens.update(
+        {
+            "{{screenshots_count}}": _ss_count,
+            "{{screenshots_relative_paths_csv}}": _ss_paths,
+            "{{screenshots_relative_paths_csv_or_none}}": _ss_paths,
+        }
+    )
 
     # Wave dispatch loop (subtype-aware; bugfix branches on wave_b_required).
     try:
