@@ -1,20 +1,25 @@
-"""E2E — ``forge upgrade`` pull cycle + rollback on smoke fail.
+"""E2E — ``forge upgrade`` tag-to-tag cycle + rollback on smoke fail.
 
 Testa ``engine.upgrade.run_upgrade`` end-to-end usando repos git locais
 (file:// remote, sem rede). Cada cenário monta um ``fake_forge_home``
-isolado com git init + origin bare repo, evitando qualquer acesso externo.
+isolado: git init + origin bare repo + tags de release, evitando qualquer
+acesso externo.
+
+feature-forge faz upgrade da última RELEASE TAG (v*), não do origin/main.
+O install deixa o repo em detached HEAD numa tag (ex.: v1.4.0); o upgrade
+faz fetch --tags + checkout da tag mais nova (ex.: v1.4.1).
 
 ``_pip_refresh`` é sempre monkeypatched (não roda pip real — lento e
-desnecessário pra testar a lógica de pull/rollback).
+desnecessário pra testar a lógica de checkout/rollback).
 
 Skipped por default; ativa com ``RUN_E2E=1`` no env.
 
 Cenários:
-- ``test_forge_upgrade_no_op_at_latest``: HEAD == origin → retorna 0,
+- ``test_forge_upgrade_no_op_at_latest_tag``: HEAD == última tag → retorna 0,
   "já no latest".
-- ``test_forge_upgrade_pull_cycle``: origin tem 1 commit novo → pull
-  acontece, HEAD avança, smoke ok, retorna 0.
-- ``test_forge_upgrade_rollback_on_smoke_fail``: origin tem 1 commit novo,
+- ``test_forge_upgrade_tag_checkout_cycle``: origin ganha tag mais nova →
+  checkout acontece, HEAD avança pra nova tag, smoke ok, retorna 0.
+- ``test_forge_upgrade_rollback_on_smoke_fail``: origin ganha tag mais nova,
   smoke falha → rollback executado, HEAD volta ao sha anterior, retorna 4.
 
 Mentor calmo: falha clara, diagnóstico preciso.
@@ -63,14 +68,17 @@ def _setup_fake_forge_home(
     *,
     smoke_ok: bool = True,
 ) -> tuple[Path, Path]:
-    """Monta fake_forge_home com git init + origin bare.
+    """Monta fake_forge_home com git init + origin bare + tag inicial v1.4.0.
+
+    O fake_forge_home fica em detached HEAD na tag v1.4.0 (simula o estado
+    pós-install: o install clona a última release tag em detached HEAD).
 
     Retorna (fake_forge_home, origin_bare_path).
 
     Estrutura:
         tmp_path/
-            origin/          ← bare repo (simula remote)
-            fake_forge_home/ ← clone local com origin apontando pra origin/
+            origin/          ← bare repo (simula remote), tem tag v1.4.0
+            fake_forge_home/ ← clone local, detached HEAD em v1.4.0
     """
     origin = tmp_path / "origin"
     origin.mkdir()
@@ -85,9 +93,10 @@ def _setup_fake_forge_home(
 
     _make_forge_stub(fake_home / "bin", smoke_ok=smoke_ok)
 
-    # Commit inicial
+    # Commit inicial + tag de release v1.4.0
     _git(["add", "."], cwd=fake_home)
     _git(["commit", "-m", "initial"], cwd=fake_home)
+    _git(["tag", "v1.4.0"], cwd=fake_home)
 
     # Aponta main branch (git 2.28+ pode ser 'master' por default)
     try:
@@ -97,34 +106,43 @@ def _setup_fake_forge_home(
     if current_branch == "master":
         _git(["branch", "-M", "master", "main"], cwd=fake_home)
 
-    # Adiciona origin e faz push inicial
+    # Adiciona origin, push do branch + tag
     _git(["remote", "add", "origin", str(origin)], cwd=fake_home)
     _git(["push", "-u", "origin", "main"], cwd=fake_home)
+    _git(["push", "origin", "v1.4.0"], cwd=fake_home)
+
+    # Detached HEAD na tag inicial (estado pós-install)
+    _git(["checkout", "--detach", "v1.4.0"], cwd=fake_home)
 
     return fake_home, origin
 
 
-def _push_new_commit_to_origin(fake_home: Path, origin: Path) -> str:
-    """Cria 1 commit novo em fake_home e faz push pra origin.
+def _push_new_tag_to_origin(fake_home: Path, origin: Path) -> str:
+    """Cria 1 commit novo + tag v1.4.1 e faz push pra origin.
 
-    Retorna o SHA novo em origin/main (que o run_upgrade deve puxar).
-    Reseta fake_home de volta pro commit anterior via reset --hard, de
-    modo que o estado local está 1 commit atrás do origin — simula o
-    cenário real de pull.
+    Retorna o SHA do commit da tag v1.4.1 (que o run_upgrade deve checar out).
+    Reseta fake_home de volta pro estado detached em v1.4.0, de modo que a
+    nova tag existe só no origin — simula o cenário real de upgrade onde uma
+    release mais nova apareceu remotamente.
     """
     prev_sha = _git(["rev-parse", "HEAD"], cwd=fake_home)
 
-    # Cria arquivo novo + commit
-    (fake_home / "VERSION").write_text("v1.3.1\n", encoding="utf-8")
+    # Precisa de um branch pra commitar — vai pra main, avança, tag, push
+    _git(["checkout", "main"], cwd=fake_home)
+    (fake_home / "VERSION").write_text("v1.4.1\n", encoding="utf-8")
     _git(["add", "VERSION"], cwd=fake_home)
-    _git(["commit", "-m", "bump to v1.3.1"], cwd=fake_home)
+    _git(["commit", "-m", "bump to v1.4.1"], cwd=fake_home)
     new_sha = _git(["rev-parse", "HEAD"], cwd=fake_home)
+    _git(["tag", "v1.4.1"], cwd=fake_home)
 
-    # Push pra origin
+    # Push da nova tag + branch pra origin
     _git(["push", "origin", "main"], cwd=fake_home)
+    _git(["push", "origin", "v1.4.1"], cwd=fake_home)
 
-    # Volta fake_home pro commit anterior (simula "não tenho o novo commit")
-    _git(["reset", "--hard", prev_sha], cwd=fake_home)
+    # Volta fake_home pro estado detached em v1.4.0 e remove a tag local nova
+    # (simula "ainda não tenho a release v1.4.1 localmente")
+    _git(["checkout", "--detach", prev_sha], cwd=fake_home)
+    _git(["tag", "-d", "v1.4.1"], cwd=fake_home)
 
     return new_sha
 
@@ -134,11 +152,11 @@ def _push_new_commit_to_origin(fake_home: Path, origin: Path) -> str:
 
 @pytest.mark.e2e
 @pytest.mark.skipif(not _RUN_E2E, reason="set RUN_E2E=1 to run e2e tests")
-def test_forge_upgrade_no_op_at_latest(tmp_path: Path, capsys) -> None:
-    """HEAD == origin/main → run_upgrade retorna 0, avisa 'já no latest'.
+def test_forge_upgrade_no_op_at_latest_tag(tmp_path: Path, capsys) -> None:
+    """HEAD == última tag → run_upgrade retorna 0, avisa 'já no latest'.
 
-    Cenário: repo local sincronizado com origin. Nenhum commit novo.
-    Expectativa: saída 0, mensagem informativa de 'já no latest'.
+    Cenário: repo local em detached HEAD na última release tag. Nenhuma tag
+    mais nova no origin. Expectativa: saída 0, mensagem 'já no latest'.
     """
     from engine.upgrade import run_upgrade
 
@@ -156,17 +174,17 @@ def test_forge_upgrade_no_op_at_latest(tmp_path: Path, capsys) -> None:
 
 @pytest.mark.e2e
 @pytest.mark.skipif(not _RUN_E2E, reason="set RUN_E2E=1 to run e2e tests")
-def test_forge_upgrade_pull_cycle(tmp_path: Path, capsys) -> None:
-    """origin tem 1 commit novo → pull acontece, HEAD avança, retorna 0.
+def test_forge_upgrade_tag_checkout_cycle(tmp_path: Path, capsys) -> None:
+    """origin ganha tag v1.4.1 → checkout acontece, HEAD avança, retorna 0.
 
-    Cenário: fake_home está 1 commit atrás de origin/main. bin/forge stub
-    retorna exit 0 (smoke ok). Expectativa: HEAD local avança para o SHA
-    do commit novo após run_upgrade retornar 0.
+    Cenário: fake_home em detached HEAD na v1.4.0; origin ganha release
+    v1.4.1. bin/forge stub retorna exit 0 (smoke ok). Expectativa: HEAD
+    local avança para o SHA da v1.4.1 após run_upgrade retornar 0.
     """
     from engine.upgrade import run_upgrade
 
     fake_home, _origin = _setup_fake_forge_home(tmp_path, smoke_ok=True)
-    new_sha = _push_new_commit_to_origin(fake_home, _origin)
+    new_sha = _push_new_tag_to_origin(fake_home, _origin)
 
     sha_before = _git(["rev-parse", "HEAD"], cwd=fake_home)
     assert sha_before != new_sha, "setup incorreto: HEAD já aponta para o novo SHA"
@@ -178,7 +196,7 @@ def test_forge_upgrade_pull_cycle(tmp_path: Path, capsys) -> None:
 
     assert result == 0, f"esperado 0, obtido {result}"
     assert sha_after == new_sha, (
-        f"HEAD não avançou após pull. antes={sha_before[:8]}, "
+        f"HEAD não avançou após checkout da tag. antes={sha_before[:8]}, "
         f"depois={sha_after[:8]}, esperado={new_sha[:8]}"
     )
     captured = capsys.readouterr()
@@ -190,16 +208,16 @@ def test_forge_upgrade_pull_cycle(tmp_path: Path, capsys) -> None:
 @pytest.mark.e2e
 @pytest.mark.skipif(not _RUN_E2E, reason="set RUN_E2E=1 to run e2e tests")
 def test_forge_upgrade_rollback_on_smoke_fail(tmp_path: Path) -> None:
-    """Smoke falha após pull → rollback executado, HEAD volta ao sha anterior, retorna 4.
+    """Smoke falha após checkout → rollback, HEAD volta ao sha anterior, retorna 4.
 
-    Cenário: fake_home está 1 commit atrás de origin/main. bin/forge stub
-    retorna exit 1 (smoke fail). Expectativa: run_upgrade retorna 4 e
-    HEAD volta ao SHA que estava antes do pull.
+    Cenário: fake_home em detached HEAD na v1.4.0; origin ganha release
+    v1.4.1. bin/forge stub retorna exit 1 (smoke fail). Expectativa:
+    run_upgrade retorna 4 e HEAD volta ao SHA que estava antes do checkout.
     """
     from engine.upgrade import run_upgrade
 
     fake_home, _origin = _setup_fake_forge_home(tmp_path, smoke_ok=False)
-    _push_new_commit_to_origin(fake_home, _origin)
+    _push_new_tag_to_origin(fake_home, _origin)
 
     sha_before = _git(["rev-parse", "HEAD"], cwd=fake_home)
 

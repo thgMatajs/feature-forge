@@ -1,19 +1,25 @@
-"""forge upgrade — git pull + venv refresh + smoke + rollback gracioso.
+"""forge upgrade — checkout da última release tag + venv refresh + smoke + rollback.
 
 Spec §3 D.2. Plan Task 4.4.
 
 Opera no FORGE_HOME (diretório de instalação do feature-forge), NÃO no
 projeto consumidor. Não exige forge-config.yaml.
 
+feature-forge se baseia SEMPRE na última RELEASE TAG (v*), nunca no main
+bleeding-edge. O install deixa o repo em detached HEAD numa tag de release;
+o upgrade traz as tags novas e faz checkout da mais recente.
+
 Sequência:
-  1. git fetch origin
-  2. Compara HEAD local vs origin/main
-  3. Se igual (e não force) → "já no latest", exit 0
-  4. git pull --ff-only origin main
-  5. pip install -e . --upgrade (venv refresh)
-  6. bin/forge --version (smoke)
-  7. Se smoke falha → git reset --hard <prev_head> + exit 4
-  8. Se smoke ok → "atualizado", exit 0
+  1. Captura prev_sha (HEAD atual) — referência pra rollback
+  2. git fetch origin --tags --force (traz tags novas)
+  3. Descobre a última tag local (v*, semver desc)
+  4. Se nenhuma tag → no-op com aviso, exit 0
+  5. Se SHA da última tag == prev_sha (e não force) → "já no latest", exit 0
+  6. git checkout --detach <latest_tag>
+  7. pip install -e . --upgrade (venv refresh)
+  8. bin/forge --version (smoke)
+  9. Se smoke falha → git checkout --detach <prev_sha> + exit 4
+  10. Se smoke ok → "atualizado para <latest_tag>", exit 0
 """
 
 from __future__ import annotations
@@ -29,42 +35,50 @@ from typing import Optional
 
 
 def _git_fetch(forge_home: Path) -> None:
-    """Executa git fetch origin no forge_home."""
+    """Executa git fetch origin --tags --force no forge_home.
+
+    --tags traz tags novas (releases); --force atualiza tags que mudaram de
+    SHA remotamente (raro, mas evita divergência silenciosa).
+    """
     subprocess.run(
-        ["git", "fetch", "origin"],
+        ["git", "fetch", "origin", "--tags", "--force"],
         cwd=forge_home,
         check=True,
         capture_output=True,
     )
 
 
-def _git_head_eq_origin(forge_home: Path) -> bool:
-    """True se HEAD local == origin/main (sem commits novos remotos)."""
-    local = subprocess.check_output(
-        ["git", "rev-parse", "HEAD"],
+def _latest_local_tag(forge_home: Path) -> Optional[str]:
+    """Retorna a última tag de release (v*) por semver desc, ou None.
+
+    Roda após _git_fetch, então as tags remotas já estão disponíveis
+    localmente. Usa --sort=-v:refname (semver descendente, git 2.18+).
+    """
+    out = subprocess.check_output(
+        ["git", "tag", "-l", "v*", "--sort=-v:refname"],
         cwd=forge_home,
-    ).strip()
-    remote = subprocess.check_output(
-        ["git", "rev-parse", "origin/main"],
-        cwd=forge_home,
-    ).strip()
-    return local == remote
+    ).decode().strip()
+    if not out:
+        return None
+    return out.splitlines()[0].strip()
 
 
-def _git_pull(forge_home: Path) -> None:
-    """git pull --ff-only origin main."""
+def _tag_sha(forge_home: Path, tag: str) -> str:
+    """Retorna o SHA do commit apontado por <tag> (rev-list -1)."""
+    return subprocess.check_output(
+        ["git", "rev-list", "-1", tag],
+        cwd=forge_home,
+    ).decode().strip()
+
+
+def _git_checkout(forge_home: Path, ref: str) -> None:
+    """git checkout --detach <ref> — aponta o HEAD pra uma tag ou SHA.
+
+    Detached HEAD é o estado canônico pós-install (repo numa release tag),
+    e também o alvo do rollback (volta pro SHA anterior).
+    """
     subprocess.run(
-        ["git", "pull", "--ff-only", "origin", "main"],
-        cwd=forge_home,
-        check=True,
-        capture_output=True,
-    )
-
-
-def _git_reset_hard(forge_home: Path, sha: str) -> None:
-    """git reset --hard <sha> — rollback pós-smoke-falha."""
-    subprocess.run(
-        ["git", "reset", "--hard", sha],
+        ["git", "checkout", "--detach", ref],
         cwd=forge_home,
         check=True,
         capture_output=True,
@@ -120,15 +134,16 @@ def run_upgrade(
     forge_home: Optional[Path] = None,
     force: bool = False,
 ) -> int:
-    """Executa o upgrade do feature-forge.
+    """Executa o upgrade do feature-forge para a última release tag.
 
     Parâmetros:
         forge_home: diretório de instalação. Se None, resolve via FORGE_HOME
                     env ou raiz do repo.
-        force:      ignora o check "já no latest" e atualiza mesmo assim.
+        force:      ignora o check "já no latest" e re-checkout a última tag
+                    mesmo assim.
 
     Retorna:
-        0 — sucesso ou já no latest
+        0 — sucesso, já no latest, ou nenhuma release tag (no-op com aviso)
         4 — smoke falhou, rollback executado
         1 — erro inesperado
     """
@@ -143,7 +158,7 @@ def run_upgrade(
         )
         return 1
 
-    # 1. Fetch
+    # 1. Fetch (traz tags novas)
     try:
         _git_fetch(home)
     except subprocess.CalledProcessError as exc:
@@ -152,32 +167,46 @@ def run_upgrade(
         )
         return 1
 
-    # 2. Verifica se já está no latest
+    # 2. Descobre a última release tag
     try:
-        at_latest = _git_head_eq_origin(home)
+        latest_tag = _latest_local_tag(home)
     except subprocess.CalledProcessError:
-        # Se origin/main não existe (shallow clone, remote diferente), continua.
-        at_latest = False
+        latest_tag = None
 
-    if at_latest and not force:
-        sys.stdout.write("forge: já no latest — nenhuma atualização disponível.\n")
+    if latest_tag is None:
+        sys.stdout.write(
+            "forge: nenhuma release tag encontrada — nada para atualizar.\n"
+            "  feature-forge se baseia em releases (tags v*); aguarde a próxima.\n"
+        )
         return 0
 
-    # 3. Pull
+    # 3. Já estamos na última release?
     try:
-        _git_pull(home)
+        latest_sha = _tag_sha(home, latest_tag)
+    except subprocess.CalledProcessError:
+        latest_sha = None
+
+    if latest_sha == prev_sha and not force:
+        sys.stdout.write(
+            f"forge: já no latest ({latest_tag}) — nenhuma atualização disponível.\n"
+        )
+        return 0
+
+    # 4. Checkout da última tag
+    try:
+        _git_checkout(home, latest_tag)
     except subprocess.CalledProcessError as exc:
         sys.stderr.write(
-            f"forge upgrade: git pull falhou.\n"
+            f"forge upgrade: checkout da release {latest_tag} falhou.\n"
             f"  Três caminhos:\n"
-            f"  A) Resolva conflitos manualmente em {home} e rode forge upgrade de novo.\n"
-            f"  B) Use --force para sobrescrever (perde commits locais).\n"
+            f"  A) Verifique mudanças locais não commitadas em {home} e rode de novo.\n"
+            f"  B) Restaure o estado anterior: cd {home} && git checkout --detach {prev_sha}\n"
             f"  C) Contate suporte se o problema persistir.\n"
             f"  Detalhe: {exc}\n"
         )
         return 1
 
-    # 4. Venv refresh
+    # 5. Venv refresh
     try:
         _pip_refresh(home)
     except subprocess.CalledProcessError as exc:
@@ -186,37 +215,37 @@ def run_upgrade(
             f"  Tente: {home}/.venv/bin/pip install -e {home} --upgrade\n"
             f"  Detalhe: {exc}\n"
         )
-        # Pull já aconteceu — rollback
+        # Checkout já aconteceu — rollback pro sha anterior
         try:
-            _git_reset_hard(home, prev_sha)
+            _git_checkout(home, prev_sha)
             sys.stderr.write(f"forge upgrade: rollback executado para {prev_sha[:8]}.\n")
         except subprocess.CalledProcessError:
             sys.stderr.write(
                 f"forge upgrade: rollback também falhou. Estado pode estar inconsistente.\n"
-                f"  Rode manualmente: cd {home} && git reset --hard {prev_sha}\n"
+                f"  Rode manualmente: cd {home} && git checkout --detach {prev_sha}\n"
             )
         return 4
 
-    # 5. Smoke
+    # 6. Smoke
     smoke_ok = _smoke_version(home)
     if not smoke_ok:
         sys.stderr.write(
-            "forge upgrade: smoke check falhou após atualização.\n"
-            "  Revertendo para versão anterior...\n"
+            f"forge upgrade: smoke check falhou após atualização para {latest_tag}.\n"
+            "  Revertendo para a versão anterior...\n"
         )
         try:
-            _git_reset_hard(home, prev_sha)
+            _git_checkout(home, prev_sha)
             sys.stderr.write(f"  Rollback executado para {prev_sha[:8]}.\n")
             # Tenta re-fazer pip refresh pro sha anterior
             _pip_refresh(home)
         except subprocess.CalledProcessError:
             sys.stderr.write(
                 f"forge upgrade: rollback ou pip re-refresh falhou.\n"
-                f"  Rode manualmente: cd {home} && git reset --hard {prev_sha}\n"
+                f"  Rode manualmente: cd {home} && git checkout --detach {prev_sha}\n"
             )
         return 4
 
-    sys.stdout.write("forge: atualizado com sucesso.\n")
+    sys.stdout.write(f"forge: atualizado para {latest_tag} com sucesso.\n")
     return 0
 
 
