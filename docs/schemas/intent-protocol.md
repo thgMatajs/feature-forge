@@ -354,16 +354,31 @@ graph layers. Ele vive uma única invocação `forge <cmd>` e é destruído
 no terminal exit. Quem precisa de persistência cross-invocation usa o
 checkpoint do próprio comando (ex.: `.claude/.init-checkpoint.yaml`).
 
-### Interação com `IntentMismatchError`
+### Interação com `IntentMismatchError` e stale-leftover
 
-`read_response` ainda raise `IntentMismatchError` quando:
-- `intent_id` requerido NÃO está no log, E
-- `forge-response.json` existe com `intent-id` diferente.
+`read_response` trata `intent_id` de três formas distintas:
 
-Isso é o sintoma genuíno de bug (caller respondeu o intent errado).
-Sem o log, a mesma situação aparecia também em re-entries legítimos
-de handlers multi-intent — falso positivo. Com o log, o false-positive
-fica filtrado.
+1. **`intent_id` já no consumed-log** → retorna `None` (stale-leftover de
+   pergunta anterior na mesma invocação). O caller deve emitir novo
+   `forge-pending.json` para a pergunta atual. Comportamento introduzido
+   em Wave 2 (v1.3) para habilitar comandos multi-pergunta-por-ciclo
+   como `forge reconfigure` (category → submenu): cada subprocess do
+   handler re-inicia do topo e toca o primeiro `ask()` com seu
+   `intent-id` estável; sem este tratamento, a response do ÚLTIMO intent
+   respondido causava `IntentMismatchError` em todos os intents anteriores.
+
+2. **`intent_id` NÃO no log + `forge-response.json` tem o mesmo id** →
+   consome normalmente (caminho feliz).
+
+3. **`intent_id` NÃO no log + `forge-response.json` tem id diferente** →
+   raise `IntentMismatchError`. Sintoma genuíno de bug (caller respondeu
+   o intent errado). Com o log, este caso não confunde mais com re-entries
+   legítimos.
+
+`detect_race` segue lógica análoga: se encontrar `forge-pending.json` com
+`intent-id` já no consumed-log, trata como stale-leftover de pergunta
+anterior e varre o arquivo em vez de levantar `RaceDetectedError`.
+Race genuíno — `intent-id` diferente E não no log — ainda levanta.
 
 ---
 

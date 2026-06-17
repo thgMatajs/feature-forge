@@ -7,6 +7,80 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (v1.3 Wave 2 — opencode+TTY adapters, 2026-06-16)
+
+- **TtyAdapter in-process** — `engine/host/adapters/tty.py` implementa o
+  adapter TTY humano sem subprocess loop: lê `sys.stdin` diretamente (line
+  buffered), valida resposta localmente e devolve `AskResult` ao engine sem
+  necessidade de `forge-pending.json`. Substitui `engine/ui/tty_bridge.py`
+  subprocess-loop que gerava re-invocações completas do engine pra cada
+  pergunta. `engine/ui/_stdin_prompt.py` extrai helpers de prompt/validação
+  reusados pelo adapter. `question._resolve_adapter` registra `TtyAdapter`
+  no registry de hosts quando detecta TTY interativo sem env de host agentic.
+- **OPENCODE → IntentFileAdapter fallback (Veredito B)** — research W2.T0
+  (`docs/research/opencode-tool-api.md`) documentou que opencode NÃO suporta
+  adapter in-process: stdout de subprocess não é interceptado em tempo real e
+  não existe env var oficial confiável. Veredito B registrado: opencode usa
+  `IntentFileAdapter` como fallback (intent-file protocol), sem execução
+  in-process de tools. Perde "leverage all tools" mas v1.3 ship conforme
+  spec R1, success criterion #4.
+- **Per-host e2e** — `tests/e2e/test_per_host_dispatch.py` (claude_code
+  adapter via marker+exit2 / intent_file pending round-trip / opencode
+  fallback) + `tests/e2e/test_tty_adapter_pty.py` (TtyAdapter via pty,
+  testa stdin in-process sem subprocess). Cobertura dos 4 caminhos de
+  detecção de host.
+
+### Changed (v1.3 Wave 2, 2026-06-16)
+
+- **renderer ASCII fallback non-TTY (bug U3)** — `engine/ui/renderer.py::write()`
+  degrada box-drawing Unicode (┌┐└─│) pra ASCII (+,-,|) em contextos
+  non-TTY via `_BOX_TO_ASCII` map + `to_ascii_box()` helper. Corrige bug U3
+  observado durante Wave 2: box-drawing Unicode virava `?` em streams sem
+  suporte a Unicode (pipes, captura de stdout em CI).
+- **`bin/forge` dispatcher simplificado** — `exec python -m engine.cli`
+  diretamente em todos os casos; detecção de host (TTY, ClaudeCode, opencode,
+  intent-file) 100% no lado Python via `detect_host()`. Branch
+  `FORGE_FORCE_TTY_MODE` removida (clean break — `tty_bridge.py` não existe
+  mais). `FORGE_FORCE_INTENT_MODE` movido para `detect_host` pra preservar
+  escape-hatch DRIFT-1 §439 pós clean-break.
+
+### Removed (v1.3 Wave 2, 2026-06-16)
+
+- **`engine/ui/tty_bridge.py` subprocess-loop** — substituído por
+  `engine/host/adapters/tty.py` in-process (TtyAdapter). `tty_bridge`
+  re-invocava o engine completo via subprocess pra cada pergunta TTY —
+  model mental mais complexo, mais lento, gerava processos extras. Clean
+  break; sem shim de retrocompatibilidade.
+- **`FORGE_FORCE_TTY_MODE` branch em `bin/forge`** — env var de fallback
+  pra `tty_bridge` removida junto com o módulo. `FORGE_FORCE_INTENT_MODE`
+  preservado em `detect_host` (escape-hatch DRIFT-1 diferente).
+- **`tests/e2e/test_tty_bridge_e2e.py`** — testes e2e do subprocess-loop
+  removidos junto com o módulo que testavam.
+- **`tests/unit/test_ui_tty_bridge.py`** — testes unit de `tty_bridge`
+  removidos. Cobertura equivalente migrada pra `test_tty_adapter_pty.py` e
+  `test_per_host_dispatch.py`.
+
+### Fixed (v1.3 Wave 2, 2026-06-16)
+
+- **DRIFT-1 multi-pergunta-por-ciclo re-entry** — `engine/ui/intent_state.py::read_response`
+  e `detect_race` agora tratam `intent-id` já presente no consumed-log como
+  stale-leftover (resposta de pergunta anterior na mesma invocação), não como
+  erro: `read_response` retorna `None` (caller emite novo pending), `detect_race`
+  varre e remove o pending stale. Comandos multi-pergunta-por-ciclo (ex.:
+  `forge reconfigure` category→submenu) agora funcionam sob host real sem
+  `IntentMismatchError` espúrio. Mismatch genuíno — `intent-id` não no log,
+  response com id diferente — ainda levanta `IntentMismatchError`. Race
+  genuíno — `intent-id` não no log, pending de outra invocação — ainda
+  levanta `RaceDetectedError`. Drive loop limpo em e2e reconfigure via
+  `drive_intent_loop`. Refs commits 5827900/7c26377.
+- **e2e env scrub (bug pré-existente)** — `tests/e2e/conftest.py::env_with_forge_home`
+  agora faz scrub de variáveis agentic (`CLAUDECODE`, `OPENCODE_*`, `CODEX_*`,
+  `CURSOR_*`) antes de iniciar subprocesso forge. Sem o scrub, suites rodadas
+  dentro de Claude Code (ou opencode) herdavam o env agentic e roteavam pra
+  CC/opencode adapter em vez do intent-file adapter esperado — tornando e2e
+  não-determinístico dependendo do host da sessão de CI. Bug pré-existente
+  surfaced durante verificação Wave 2, não regressão desta wave.
+
 ### Fixed (v1.3 Wave 1 follow-ups, 2026-06-16)
 
 - **Production bug — intent_state default state_dir.** `engine.ui.intent_state._state_dir`

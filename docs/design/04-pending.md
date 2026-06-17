@@ -175,6 +175,35 @@ Wave A+B+C endereçou 60+ findings; estes 7 ficam pra ciclos futuros.
   `.claude/rules/plan-auditor.md` + integração — ver CHANGELOG
   `[Unreleased]`. Spec: `docs/superpowers/specs/2026-06-04-plan-auditor-design.md`.
 
+### v1.3 Wave 2 — Limitações conhecidas (2026-06-16)
+
+- **opencode usa IntentFileAdapter como fallback (Veredito B)** —
+  research W2.T0 (`docs/research/opencode-tool-api.md`) confirmou que
+  opencode NÃO suporta adapter in-process: stdout do processo filho não
+  é interceptado em tempo real pelo host, e não há env var oficial
+  confiável pra detectar opencode de forma estável. Consequência: forge
+  rodando sob opencode usa `IntentFileAdapter` (protocol DRIFT-1 —
+  pending.json / response.json round-trip via tool calls) em vez de
+  execução in-process de tools. Usuário perde o "leverage all tools"
+  in-process disponível no ClaudeCodeAdapter, mas todas as perguntas
+  funcionam corretamente via intent-file. Critério de reentrada:
+  opencode expor protocolo oficial de subprocess-to-host (env var
+  estável OR IPC canal) em versão futura — momento natural pra
+  implementar `OpencodeAdapter` equivalente ao `ClaudeCodeAdapter`.
+  Ref: `docs/research/opencode-tool-api.md`.
+
+- **DRIFT-1 multi-pergunta-por-ciclo (read_response stale-leftover)**
+  — ✅ FECHADO em Wave 2 (commits 5827900/7c26377). `read_response` e
+  `detect_race` em `engine/ui/intent_state.py` agora tratam `intent-id`
+  já consumido (presente no consumed-log) como stale-leftover de pergunta
+  anterior na mesma invocação. `read_response` retorna `None` (caller
+  emite novo pending) em vez de `IntentMismatchError`. Comandos
+  multi-pergunta-por-ciclo como `forge reconfigure` (category → submenu)
+  funcionam corretamente sob host real. Mismatch genuíno (id não no log,
+  response com id diferente) ainda levanta `IntentMismatchError`.
+  Race genuíno (id não no log, pending de outra invocação) ainda levanta
+  `RaceDetectedError`. Ver também `docs/schemas/intent-protocol.md §4`.
+
 ### B1 — `identity.backend-choice` ↔ `backend.provider` desync
 
 **Status:** ✅ FECHADO via Phase B DET-6 (2026-06-11). Removeu o
