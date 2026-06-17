@@ -399,10 +399,19 @@ def main(argv: list[str] | None = None) -> int:
         # that we are trying to surface cleanly.
         if paused_exc is None and not is_help_path:
             try:
-                from engine.utils.paths import find_project_root
+                from engine.utils.paths import (
+                    ProjectRootNotFoundError,
+                    find_project_root,
+                )
 
                 project_root = find_project_root()
                 intent_state.clear_intent_log_only(project_root)
+            except ProjectRootNotFoundError:
+                # Pre-init dir: nao ha project root resolvivel, logo nao ha
+                # intent-log a limpar. Silencioso por design — o handler ja
+                # emitiu a mensagem canonica de nao-inicializado; um WARN
+                # adicional aqui seria ruido confuso (Bug U2 residual).
+                pass
             except Exception as exc:  # noqa: BLE001
                 # Best-effort. If we cannot resolve project root or the
                 # delete fails, do not mask the real exit code — but do
