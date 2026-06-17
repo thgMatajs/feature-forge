@@ -139,9 +139,21 @@ if command -v forge >/dev/null 2>&1; then
 
   _choice_conflict=""
   if [[ -t 0 ]]; then
+    # stdin é um terminal — pergunta direto.
     read -r -p "Escolha [A/B/C]: " _choice_conflict
-  else
+  elif [[ -r /dev/tty ]]; then
+    # stdin foi redirecionado (curl | bash) mas há terminal controlador —
+    # lê a escolha por /dev/tty.
     read -r -p "Escolha [A/B/C]: " _choice_conflict </dev/tty
+  else
+    # Ambiente não-interativo sem terminal (CI/Docker). Não tentamos ler
+    # /dev/tty — sob 'set -euo pipefail' isso abortaria o install inteiro.
+    # Default seguro: caminho B — instala como 'forge-cli' pra NÃO
+    # sobrescrever o binário 'forge' existente.
+    _choice_conflict="b"
+    echo "ambiente não-interativo — sem terminal pra perguntar."
+    echo "default seguro: instalando como 'forge-cli' (não sobrescreve o 'forge' existente)."
+    echo "pra escolher de outra forma, rode o instalador num terminal interativo."
   fi
 
   _lc_conflict=$(printf '%s' "$_choice_conflict" | tr '[:upper:]' '[:lower:]')
@@ -231,9 +243,18 @@ _forge_setup_path() {
   # Leitura interativa — funciona em terminal real; em pipe (curl | bash)
   # /dev/tty garante acesso ao terminal mesmo com stdin redirecionado.
   if [[ -t 0 ]]; then
+    # stdin é um terminal — pergunta direto.
     read -r -p "Escolha [A/B/C]: " choice
-  else
+  elif [[ -r /dev/tty ]]; then
+    # stdin redirecionado mas há terminal controlador — lê por /dev/tty.
     read -r -p "Escolha [A/B/C]: " choice </dev/tty
+  else
+    # Ambiente não-interativo sem terminal (CI/Docker). Não tocamos no rc
+    # file sem confirmação — default seguro é só imprimir a linha manual
+    # (semântica do caminho C/B sem auto-edit).
+    choice="b"
+    echo "ambiente não-interativo — sem terminal pra perguntar."
+    echo "default seguro: não editamos seu rc file automaticamente; adicione a linha manualmente."
   fi
 
   _lc_choice=$(printf '%s' "$choice" | tr '[:upper:]' '[:lower:]')
