@@ -604,7 +604,7 @@ Coisas decididas em auto-mode durante a sessão de design (já refletidas nos do
 | Auto-resume em `forge plan {slug}` / `forge implement {slug}` | Sem flag `--resume`. Detecta state e segue. |
 | Sub-agents usam `model: sonnet` | Só planning-conductor usa opus. |
 | `phase_lock` dual: agent-scoped (intake, prd, etc.) ou task-scoped (TASK-NNNN) | Documentado em memory.md §phase_lock canonical form. |
-| Strictness matrix 14/10/5 enumerada | Documentada em workflow-config.md §strictness-matrix. |
+| Strictness matrix 14/10/5 enumerada | Documentada em forge-config.md §strictness-matrix. |
 | Extension-points formalizados nos frontmatters dos agentes | Não tem doc separado de registry — agente declara seu próprio. |
 
 ---

@@ -585,10 +585,10 @@ bloqueia trabalho por causa de rede.
 
 ## Cross-references
 
-- Rule codes vêm de `docs/schemas/workflow-config.md` (RULE-001..018),
+- Rule codes vêm de `docs/schemas/forge-config.md` (RULE-001..018),
   `docs/schemas/card.md` (CARD-001..018), `docs/schemas/inventories.md`
   (INV-DS/INV-I18N/INV-CONV), `docs/schemas/memory.md` (MEM-L1/MEM-L2) e
   `docs/schemas/graph.md` (GRAPH-001..008).
-- Doctor estado persistido em `workflow-config.yaml.doctor`
-  (ver `docs/schemas/workflow-config.md §DOCTOR`).
+- Doctor estado persistido em `forge-config.yaml.doctor`
+  (ver `docs/schemas/forge-config.md §DOCTOR`).
 - Estética e timing seguem `docs/ux/forge-init-roteiro.md`.

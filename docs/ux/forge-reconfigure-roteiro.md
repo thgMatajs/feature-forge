@@ -168,7 +168,7 @@ Multi-select cinemático. Categorias espelham blocos top-level de
 ```
 
 **Note:** preset, `project-slug`, `platforms.active` e `schema-version` são
-**imutáveis** via reconfigure (workflow-config.md §Top-level field reference).
+**imutáveis** via reconfigure (forge-config.md §Top-level field reference).
 Cada um tem mensagem de redirecionamento dedicada.
 
 ---

@@ -498,7 +498,7 @@ Target: contínuo (sem versão fixa — gatilho é dados de mais smokes).
 
 ## Phase 1 — Espinha dorsal (schemas + estrutura)
 
-- [x] workflow-config.yaml schema → `docs/schemas/workflow-config.md`
+- [x] forge-config.yaml schema → `docs/schemas/forge-config.md` (era workflow-config.md, renomeado em v1.3)
 - [x] Card schema → `docs/schemas/card.md`
 - [x] Inventory schemas → `docs/schemas/inventories.md`
 - [x] Memory schemas → `docs/schemas/memory.md`
@@ -3073,7 +3073,7 @@ durante doc-sync W1. Não-bloqueantes pro avanço W2; revisitar em W2 ou
 cleanup pass dedicado dentro da própria branch `feat/det-6-multi-axis-backend`
 antes do PR final ao fim de W8.
 
-### W1-L-002 — Open-details #6/#7 em `workflow-config.md` em vez de `card.md` / `backend-axes.md`
+### W1-L-002 — Open-details #6/#7 em `forge-config.md` em vez de `card.md` / `backend-axes.md`
 
 **Categoria:** schema-foundation (doc placement)
 **Severidade:** baixa (deviation cosmética; placement semanticamente correto)
@@ -3083,9 +3083,9 @@ PLAN W1.4 nominou apenas `docs/schemas/card.md` e `docs/schemas/backend-axes.md`
 como locais pra inline `<!-- open-detail -->` comments. Os anchors #6 (Phase A
 API shape — referência ao formato de `signal-id`/`detector` que Phase A
 consolidará) e #7 (rename `crashlytics` → `crash-reporting` discutido em
-Phase B brainstorm) acabaram em `docs/schemas/workflow-config.md` porque
-semanticamente pertencem ao contexto desse schema (axes-resolution + status
-enum vivem lá). Não é regressão — só desvio do nominal do PLAN.
+Phase B brainstorm) acabaram em `docs/schemas/forge-config.md` (era `workflow-config.md`,
+renomeado em v1.3) porque semanticamente pertencem ao contexto desse schema
+(axes-resolution + status enum vivem lá). Não é regressão — só desvio do nominal do PLAN.
 
 Fix forward: ao consolidar W8 (final doc-sync da Phase B antes do PR), mover
 os 2 anchors pra `backend-axes.md` se a sentence ainda fizer sentido lá; ou
@@ -3337,7 +3337,7 @@ evitar três cópias da mesma busca binária.
 8. `docs/design/03-influences.md`
 9. `docs/design/05-filesystem-layout.md`
 10. `docs/ux/forge-init-roteiro.md` (start UX docs here)
-11. `docs/schemas/workflow-config.md` (start schemas here)
+11. `docs/schemas/forge-config.md` (start schemas here)
 12. `agents/planning-conductor.md` (start agents here)
 13. `docs/lifecycle/memory-and-graph.md`
 14. This file (04-pending.md) to see what's left

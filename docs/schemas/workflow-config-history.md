@@ -137,8 +137,8 @@ Crash mid-line = next-startup truncation of any trailing partial line by
 
 ## Related schemas
 
-- `workflow-config.yaml` — the live state this file logs changes to —
-  see `docs/schemas/workflow-config.md`
+- `forge-config.yaml` — the live state this file logs changes to —
+  see `docs/schemas/forge-config.md`
 - `.claude/memory/history.jsonl` — a different append-only log that tracks
   per-feature lifecycle events (not config changes)
 - `docs/ux/forge-reconfigure-roteiro.md` — the cinematic UX whose final

@@ -11,7 +11,7 @@ Spec §5.0 (Phase 0 Ingest) + §6.4 (qa section schema). Consumer canonico:
     tree = create_run_tree(scope, project_root=root)
 
 Reusa ``engine.qa.scope.Scope`` (Task 3.1) e ``engine.qa.run_id.generate_run_id``
-(Task 3.6). Defaults batem com ``docs/schemas/workflow-config.md §6.4`` —
+(Task 3.6). Defaults batem com ``docs/schemas/forge-config.md §6.4`` —
 nao duplique a lista de defaults em outro lugar; este modulo e a fonte
 canonica em runtime.
 """

@@ -193,7 +193,7 @@ nesta phase. Pós-ship DET-6, o único shape válido é o multi-axis acima.
 
 RULE-019..024 abaixo são os **IDs canônicos** referenciados por
 `validate_workflow_config.py` (W7 - update) quando aplicados ao bloco
-`backend:` em `workflow-config.yaml`. `docs/schemas/workflow-config.md`
+`backend:` em `forge-config.yaml`. `docs/schemas/forge-config.md`
 §"Validation rules" cita essa mesma faixa (RULE-019..024) e mantém os
 slots RULE-010/011 reservados como audit-trail dos campos legacy
 (`backend.provider`) removidos em Phase B / DET-6.
@@ -212,7 +212,7 @@ RULE-024  cell.migrating-to (quando presente) deve referenciar card em cards/
 ## Related schemas
 
 - [`card.md`](card.md) — `identity.category` enum + `identity.platforms`
-- [`workflow-config.md`](workflow-config.md) — bloco `backend:` no shape
+- [`forge-config.md`](forge-config.md) — bloco `backend:` no shape
   multi-axis platform-keyed
 - [`capability-labels.md`](capability-labels.md) — labels singulares
   removidas em W3 (`auth-provider`, `http-client`, `crash-reporting`)

@@ -12,7 +12,7 @@ Cross-refs validated:
 - task contracts under tasks/ all parse as YAML
 - plan-feature-handoff.json + open-questions.yaml are always-required
 
-Schema source: docs/schemas/workflow-config.md §workflow.strictness-matrix.
+Schema source: docs/schemas/forge-config.md §workflow.strictness-matrix.
 """
 
 from __future__ import annotations

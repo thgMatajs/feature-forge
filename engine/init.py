@@ -1649,7 +1649,7 @@ def _build_workflow_config(
 ) -> dict[str, Any]:
     """Assemble the forge-config.yaml dict (schema v1.3).
 
-    Follows docs/schemas/workflow-config.md (canonical reference — schema
+    Follows docs/schemas/forge-config.md (canonical reference — schema
     bumped to "1.3" in Task 0.9, artifact renamed to forge-config.yaml).
     Optional blocks are populated with sane defaults when init can't infer
     them (ticketing, external-docs).
