@@ -510,26 +510,38 @@ falhar); não tocar `intent_state.detect_race` nesta task (é a Task 3).
 ## Task 3 — C4 CONC-1 (parte B): flock na seção crítica de detect_race + write_pending
 
 **Files:**
-- `engine/ui/intent_state.py` (Modify — `detect_race` em 626-725; adicionar lock)
-- `tests/integration/test_intent_state_concurrency.py` (Modify — adicionar teste de flock)
+- `engine/ui/intent_state.py` (Modify — `detect_race` em 626-725; adicionar helper `pending_lock` + `_pending_lock_path`)
+- `engine/host/adapters/intent_file.py` (Modify — `_ask_loop` 291-300: envolver a seção crítica `detect_race`+`write_pending` no `pending_lock`)
+- `tests/integration/test_intent_state_concurrency.py` (Modify — adicionar teste de concorrência da seção crítica REAL)
 
 **Interfaces:**
 - Consumes: `fcntl.flock(LOCK_EX)` (POSIX) / `msvcrt.locking` (Windows), no padrão
   já existente em `engine/memory/l1.py::_file_lock` (133-185).
 - Produces: `detect_race` + `write_pending` executados sob lock exclusivo
-  por-root, eliminando a janela TOCTOU (read-then-write sem lock) descrita no
-  comentário "flock deferred" (intent_state.py:649-650).
+  por-root NA SEÇÃO CRÍTICA REAL DE PRODUÇÃO (`IntentFileAdapter._ask_loop`),
+  eliminando a janela TOCTOU (read-then-write sem lock) descrita no comentário
+  "flock deferred" (intent_state.py:649-650).
 
 ### Contexto do bug (scout confirmado)
 
-`detect_race` (intent_state.py:626-725) faz read-then-decide sem lock; o caller
-(`engine/ui/question.py`) chama `detect_race(...)` seguido de
-`write_pending(...)` como duas operações separadas. A janela entre "li o pending
-e decidi que é seguro" e "escrevi o meu pending" permite que dois processos
-ambos passem pelo `detect_race` (pending ausente) antes de qualquer escrita. A
-docstring admite: "Lock file via `fcntl.flock` is deferred". A Task 2 já fecha o
-torn-write no nível de bytes; esta task fecha a janela TOCTOU no nível semântico
-(detecção de corrida confiável).
+`detect_race` (intent_state.py:626-725) faz read-then-decide sem lock. A seção
+crítica REAL de produção NÃO está em `question.py` — está no adapter
+`engine/host/adapters/intent_file.py::_ask_loop` (linhas 291-300), que é o que
+`question.ask`/`ask_multi`/`ask_text` alcançam via
+`_resolve_adapter(project_root).ask(...)`. Ali o adapter chama, como duas
+operações sequenciais sem lock:
+
+```python
+intent_state.detect_race(self.project_root, new_intent_id=intent_id, state_dir=self._state_dir)
+intent_state.write_pending(intent, self.project_root, state_dir=self._state_dir)
+```
+
+A janela entre "li o pending e decidi que é seguro" e "escrevi o meu pending"
+permite que dois processos ambos passem pelo `detect_race` (pending ausente)
+antes de qualquer escrita. A docstring admite: "Lock file via `fcntl.flock` is
+deferred". A Task 2 já fecha o torn-write no nível de bytes; esta task fecha a
+janela TOCTOU no nível semântico (detecção de corrida confiável) APLICANDO o
+lock onde o TOCTOU vive de fato.
 
 ### Decisão de design (justificada)
 
@@ -542,25 +554,32 @@ pending pra não interferir com o `os.replace` atômico do `write_json` (que
 substitui o inode do pending — segurar lock sobre um fd que vai ser substituído
 é frágil; lock file dedicado é o padrão robusto).
 
-Expomos um context manager `pending_lock(project_root, *, state_dir=None)` que
-o caller (`question.py`) usa pra envolver detect_race+write_pending. Como o
-caller não está na whitelist desta task, expomos o CM mas NÃO mudamos
-`question.py` aqui — o CM fica disponível e o teste de concorrência o exercita
-diretamente. (A integração em `question.py` é fora de escopo desta wave; o
-ganho de robustez já vem do tempfile por-processo da Task 2 mesmo sem o caller
-adotar o lock. O lock é defense-in-depth pro caso de adoção futura e pro teste.)
+O context manager `pending_lock(project_root, *, state_dir=None)` é APLICADO no
+caminho real do adapter (`IntentFileAdapter._ask_loop`), envolvendo o par
+`detect_race`+`write_pending`. Expor o CM sem aplicá-lo deixaria C4-B (TOCTOU em
+produção) aberto — por isso a aplicação é parte integral desta task, não
+defense-in-depth opcional. O escopo é cirúrgico: 2 linhas no adapter (o `with`),
+sem refatorar o `_ask_loop` nem tocar outros adapters. `intent_file.py` é o
+ÚNICO adapter que chama `detect_race`/`write_pending` (o adapter de host nativo
+do Claude Code não usa o state-race em disco — scout confirmado via
+`grep -rn "detect_race\|write_pending" engine/`).
 
-> NOTA DE ESCOPO: se durante a execução ficar claro que `question.py` PRECISA
-> adotar o lock pra o teste passar de forma determinística, PARE e reporte ao
-> orquestrador (3-caminhos) — não expanda pra `question.py` sem autorização
-> (Mandamento 4).
+> NOTA DE ESCOPO: a fatia mínima é envolver o par `detect_race`+`write_pending`
+> de `_ask_loop` (291-300) com `with intent_state.pending_lock(self.project_root,
+> state_dir=self._state_dir):`. Se o scout do `_ask_loop` mostrar que o par NÃO
+> é contíguo (há lógica intermediária que não pode rodar sob lock) ou que aplicar
+> o lock exige reestruturar o método, PARE e reporte 3-caminhos ao orquestrador —
+> não refatore o adapter. (Scout deste plano confirma que 291-300 são duas
+> chamadas contíguas; a aplicação esperada é trivial.)
 
 ### Steps
 
-- [ ] **Step 3.1 — Escrever o teste de flock PRIMEIRO (RED).** Adicione a
-  `tests/integration/test_intent_state_concurrency.py` um teste que usa o CM
-  `pending_lock` pra serializar detect_race+write_pending e prova que SÓ um
-  writer vence sem RaceDetectedError espúrio:
+- [ ] **Step 3.1 — Escrever os testes PRIMEIRO (RED): seção crítica direta +
+  caminho REAL do adapter.** Adicione a
+  `tests/integration/test_intent_state_concurrency.py` DOIS testes.
+
+  **(a) Seção crítica direta sob `pending_lock`** — prova que o CM serializa
+  `detect_race`+`write_pending`:
 
 ```python
 def test_pending_lock_serializes_detect_race_and_write(tmp_path):
@@ -607,14 +626,103 @@ def test_pending_lock_serializes_detect_race_and_write(tmp_path):
     assert final is not None and final["intent-id"].startswith("locked-")
 ```
 
+  **(b) Caminho REAL de produção via o adapter** — prova que `_ask_loop` (a seção
+  crítica de PRODUÇÃO) passa pelo lock aplicado. Sem o `with pending_lock` no
+  adapter, dois `IntentFileAdapter` competindo no mesmo root podem ambos passar
+  pelo `detect_race` antes de escrever (TOCTOU). Com o lock aplicado, a seção é
+  serializada: o primeiro emite o pending + levanta `PausedForInputError`; o
+  segundo, ao adquirir o lock, vê o pending do primeiro e levanta
+  `RaceDetectedError`. Adicione no topo do módulo os imports necessários (junto
+  aos existentes, sem duplicar):
+
+```python
+from engine.host.adapters.intent_file import IntentFileAdapter
+from engine.host.adapter import AskKind, PausedForInputError
+```
+
+  E o teste:
+
+```python
+def test_adapter_ask_loop_serializes_via_applied_lock(tmp_path):
+    """C4 CONC-1 (B) — seção crítica REAL: dois IntentFileAdapter competindo
+    no mesmo root passam pelo pending_lock aplicado em _ask_loop. Sem cross-answer
+    e sem torn write: exatamente um emite o pending (PausedForInputError), os
+    demais detectam a corrida (RaceDetectedError). O pending final é válido e
+    bate com o vencedor.
+    """
+    project_root = _project(tmp_path)
+    n_threads = 6
+    barrier = threading.Barrier(n_threads)
+    outcomes: list[str] = []
+    outcomes_lock = threading.Lock()
+
+    def worker(idx: int) -> None:
+        # Cada thread tem seu próprio adapter, mas todos no MESMO project_root —
+        # disputam o mesmo forge-pending.json (a seção crítica real).
+        adapter = IntentFileAdapter(project_root)
+        barrier.wait()
+        try:
+            adapter.ask(
+                kind=AskKind.ASK,
+                question=f"probe-{idx}",
+                options={"a": "alpha", "b": "beta"},
+                default=None,
+                allow_pause=True,
+            )
+            tag = "returned"  # não esperado na primeira entrada (sem response)
+        except PausedForInputError:
+            tag = "paused"  # emitiu o pending — venceu a corrida
+        except intent_state.RaceDetectedError:
+            tag = "race"  # viu o pending do vencedor sob o lock
+        with outcomes_lock:
+            outcomes.append(tag)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+        assert not t.is_alive(), "worker hung past timeout"
+
+    assert len(outcomes) == n_threads
+    # Exatamente um emite o pending; os demais detectam a corrida de forma
+    # DETERMINÍSTICA (lock aplicado fecha o TOCTOU). Nenhuma resposta cruzada.
+    assert outcomes.count("paused") == 1, (
+        f"esperava 1 vencedor (PausedForInputError), veio {outcomes}"
+    )
+    assert outcomes.count("race") == n_threads - 1, (
+        f"os demais devem ver RaceDetectedError sob o lock; veio {outcomes}"
+    )
+    # Pending final no disco é JSON válido (sem torn write) e bate com o vencedor.
+    final = intent_state.read_pending(project_root)
+    assert final is not None
+    assert final["question"].startswith("probe-")
+```
+
+  > NOTA DE SCOUT (já confirmada): `IntentFileAdapter(project_root)` resolve
+  > `self._state_dir = forge_state_dir(project_root)` no `__init__` e
+  > `adapter.ask(...)` chega ao `_ask_loop`, que chama detect_race+write_pending
+  > com `state_dir=self._state_dir`. A assinatura de `ask` aceita
+  > `kind`/`question`/`options`/`default`/`allow_pause` (scout em intent_file.py:90).
+  > Se a assinatura real divergir, ajuste a chamada ao contrato REAL do adapter —
+  > NÃO invente kwargs.
+
 - [ ] **Step 3.2 — Rodar, confirmar RED.**
 
 ```bash
-.venv/bin/pytest tests/integration/test_intent_state_concurrency.py::test_pending_lock_serializes_detect_race_and_write -q
+.venv/bin/pytest tests/integration/test_intent_state_concurrency.py -q -k "pending_lock_serializes or adapter_ask_loop_serializes"
 ```
 
-Expected: FALHA com `AttributeError: module 'engine.ui.intent_state' has no
-attribute 'pending_lock'` (o CM ainda não existe).
+Expected: ambos FALHAM. O teste (a) falha com `AttributeError: module
+'engine.ui.intent_state' has no attribute 'pending_lock'` (o CM ainda não
+existe). O teste (b) falha porque o lock ainda NÃO está aplicado em `_ask_loop`
+— sob contenção, mais de uma thread passa pelo `detect_race` antes de escrever
+(`outcomes.count("paused") > 1` OU torn write), provando a janela TOCTOU aberta.
+Rode 3x se preciso (timing-dependent):
+
+```bash
+for i in 1 2 3; do .venv/bin/pytest tests/integration/test_intent_state_concurrency.py::test_adapter_ask_loop_serializes_via_applied_lock -q | tail -1; done
+```
 
 - [ ] **Step 3.3 — Implementar pending_lock (GREEN).** Em
   `engine/ui/intent_state.py`, adicione no topo (junto aos imports existentes):
@@ -715,22 +823,77 @@ def pending_lock(
   ``fcntl.flock`` is deferred — see the spec §..." por:
 
 ```python
-    O caller pode envolver ``detect_race`` + ``write_pending`` em
-    ``pending_lock(project_root)`` pra serializar a seção crítica
-    cross-process (C4 CONC-1 (B)). Sem o lock, o tempfile por-processo de
-    C4 (A) + ``os.replace`` atômico garantem ausência de torn write, mas a
-    detecção de corrida pode ter falso-negativo na janela TOCTOU.
+    A seção crítica ``detect_race`` + ``write_pending`` é serializada
+    cross-process pelo caller real (``IntentFileAdapter._ask_loop``), que a
+    envolve em ``pending_lock(project_root, state_dir=...)`` (C4 CONC-1 (B)).
+    Sob o lock, dois processos forge não passam mais ambos pelo ``detect_race``
+    antes de escrever. O tempfile por-processo de C4 (A) + ``os.replace``
+    atômico permanecem como última linha de defesa (sem torn write mesmo se o
+    lock for no-op numa plataforma sem suporte).
 ```
 
-- [ ] **Step 3.4 — Rodar, confirmar GREEN (estável).**
+- [ ] **Step 3.4 — APLICAR o lock na seção crítica REAL (GREEN parte 2).** Em
+  `engine/host/adapters/intent_file.py`, no método `_ask_loop`, envolva o par
+  `detect_race`+`write_pending` (linhas 291-300) com o context manager. O
+  `intent_state` já está importado no topo do módulo (intent_file.py:55 —
+  `from engine.ui import intent_state`); nenhum import novo é necessário.
+  Substitua:
+
+```python
+        intent_state.detect_race(
+            self.project_root,
+            new_intent_id=intent_id,
+            state_dir=self._state_dir,
+        )
+        intent_state.write_pending(
+            intent,
+            self.project_root,
+            state_dir=self._state_dir,
+        )
+```
+
+  por:
+
+```python
+        # C4 CONC-1 (B): a seção crítica detect_race+write_pending roda sob
+        # lock exclusivo por-root. Fecha a janela TOCTOU em que dois processos
+        # forge ambos passam pelo detect_race (pending ausente) antes de
+        # qualquer escrita. O lock file é dedicado (forge-pending.lock), não o
+        # próprio pending.json — ver intent_state.pending_lock.
+        with intent_state.pending_lock(
+            self.project_root, state_dir=self._state_dir
+        ):
+            intent_state.detect_race(
+                self.project_root,
+                new_intent_id=intent_id,
+                state_dir=self._state_dir,
+            )
+            intent_state.write_pending(
+                intent,
+                self.project_root,
+                state_dir=self._state_dir,
+            )
+```
+
+  > NOTA DE ESCOPO: a edição é exatamente o `with` + reindentação das duas
+  > chamadas existentes. NÃO mexa no `raise PausedForInputError` que vem logo
+  > depois (301-303) — ele fica FORA do `with` (o lock só precisa cobrir
+  > detect_race+write_pending; segurar o lock durante o raise é desnecessário e
+  > o `finally` do CM libera ao sair do bloco). Se a reindentação tocar mais que
+  > essas duas chamadas, PARE e reporte ao orquestrador.
+
+- [ ] **Step 3.5 — Rodar, confirmar GREEN (estável).**
 
 ```bash
 for i in 1 2 3 4 5; do .venv/bin/pytest tests/integration/test_intent_state_concurrency.py -q | tail -1; done
 ```
 
-Expected: todas as rodadas passam (incluindo o teste novo de flock), sem flake.
+Expected: todas as rodadas passam — incluindo o teste direto (a)
+`test_pending_lock_serializes_detect_race_and_write` E o teste do caminho REAL
+(b) `test_adapter_ask_loop_serializes_via_applied_lock` (que só fica verde com o
+lock aplicado em `_ask_loop`) —, sem flake.
 
-- [ ] **Step 3.5 — Suite rápida não regrediu.**
+- [ ] **Step 3.6 — Suite rápida não regrediu.**
 
 ```bash
 .venv/bin/pytest -m 'not integration and not e2e' -q | tail -1
@@ -738,11 +901,13 @@ Expected: todas as rodadas passam (incluindo o teste novo de flock), sem flake.
 
 Expected: rapid count >= baseline, 0 falhas.
 
-- [ ] **Step 3.6 — Commit atômico:** `fix(w2): C4 CONC-1 (B) — flock na seção crítica detect_race+write_pending`
+- [ ] **Step 3.7 — Commit atômico:** `fix(w2): C4 CONC-1 (B) — pending_lock aplicado na seção crítica detect_race+write_pending (IntentFileAdapter._ask_loop)`
 
-**Anti-padrões:** não tocar `engine/ui/question.py` (fora de escopo — reporte se
-parecer necessário); não segurar lock sobre o fd do próprio pending.json (use
-lock file dedicado); não duplicar o resolvedor de state dir.
+**Anti-padrões:** não tocar `engine/ui/question.py` (não é o caller real —
+`IntentFileAdapter._ask_loop` é); não estender o lock pra outros adapters (só
+`intent_file.py` chama detect_race/write_pending); não segurar lock sobre o fd
+do próprio pending.json (use lock file dedicado); não duplicar o resolvedor de
+state dir; não envolver o `raise PausedForInputError` dentro do `with`.
 
 ---
 
@@ -750,7 +915,7 @@ lock file dedicado); não duplicar o resolvedor de state dir.
 
 **Files:**
 - `engine/host/env.py` (Modify — adicionar `scrubbed_subprocess_env`)
-- `engine/ingest.py` (Modify — linha 377 e 442: passar env scrubbed aos validators)
+- `engine/ingest.py` (Modify — `_handle_post_subagent_validate` spawn na linha 377 + `_handle_ci_pr_ingest` spawn na linha 442: passar env scrubbed aos validators)
 - `tests/unit/test_host_env_scrub.py` (Create)
 
 **Interfaces:**
@@ -924,7 +1089,8 @@ def scrubbed_subprocess_env() -> dict[str, str]:
 from engine.host.env import scrubbed_subprocess_env
 ```
 
-  Na linha 377 (`_handle_subagent_stop` validators), passe `env=`:
+  Na linha 377 (dentro de `_handle_post_subagent_validate`, o loop que spawna
+  validators do `_SUBAGENT_VALIDATOR_MAP`), passe `env=`:
 
 ```python
         try:
@@ -941,9 +1107,10 @@ from engine.host.env import scrubbed_subprocess_env
             _warn(f"forge ingest: validator {v_name} failed to launch ({exc})")
 ```
 
-  Na linha 442 (`_handle_ci_pr_ingest`), adicione `env=scrubbed_subprocess_env()`
-  ao `subprocess.run([...], ...)` correspondente (mantenha os demais kwargs
-  intactos — capture_output, text, timeout etc.).
+  Na linha 442 (dentro de `_handle_ci_pr_ingest`, o loop sobre `_CI_VALIDATORS`),
+  adicione `env=scrubbed_subprocess_env()` ao `subprocess.run([...], ...)`
+  correspondente (mantenha os demais kwargs intactos — capture_output, text,
+  timeout=60, check=False).
 
   > NOTA: leia o bloco exato de `subprocess.run` em ~442 antes de editar; adicione
   > APENAS o kwarg `env=scrubbed_subprocess_env()` preservando os outros
@@ -951,56 +1118,122 @@ from engine.host.env import scrubbed_subprocess_env
   > `git rev-parse` — git não é host agêntico e o scrub é irrelevante ali; manter
   > escopo cirúrgico).
 
-- [ ] **Step 4.5 — Teste de integração do wire (ingest passa env scrubbed).**
-  Adicione a `tests/unit/test_host_env_scrub.py` um teste que mocka
-  `subprocess.run` e confirma que o ingest passa o env sem CLAUDECODE:
+- [ ] **Step 4.5 — Teste de wire que exercita os DOIS spawn-sites REAIS de ingest.**
+  Os spawn-sites reais (scout confirmado) são as funções módulo-nível
+  `_handle_post_subagent_validate(args, project_root)` (ingest.py:347, `subprocess.run`
+  na linha 377) e `_handle_ci_pr_ingest(args, project_root)` (ingest.py:415,
+  `subprocess.run` na linha 442). Ambas são diretamente chamáveis com
+  `args: dict[str, str]` + `project_root: Path`. O teste captura o kwarg `env=`
+  passado ao `subprocess.run` e asserta que NENHUMA key de host agêntico
+  (`CLAUDECODE`, `OPENCODE_*`, `CODEX*`, `CURSOR_*`, `FORGE_FORCE_*_MODE`) sobrevive
+  ao boundary. Não há fallback: o invariante só é verde se o spawn REAL rodou com
+  o `env=` scrubbed. Adicione a `tests/unit/test_host_env_scrub.py`:
 
 ```python
-def test_ingest_subagent_stop_spawns_with_scrubbed_env(tmp_path, monkeypatch):
-    """O spawn de validators em ingest não herda CLAUDECODE."""
+def _install_fake_validator(validators_root, name):
+    """Cria um validator stub executável no diretório que ingest resolve via
+    forge_home()/validators — necessário pro `v_path.is_file()` guard passar e
+    o subprocess.run ser realmente alcançado."""
+    validators_root.mkdir(parents=True, exist_ok=True)
+    (validators_root / f"{name}.py").write_text("print('{}')\n")
+
+
+def _make_run_spy():
+    """subprocess.run spy que captura o env de TODOS os spawns (lista)."""
+    captured: dict[str, list] = {"envs": []}
+
+    def _fake_run(cmd, **kwargs):
+        captured["envs"].append(kwargs.get("env"))
+
+        class _R:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return _R()
+
+    return _fake_run, captured
+
+
+_HOST_KEYS = ("CLAUDECODE", "OPENCODE_VERSION", "CODEX_CLI", "CURSOR_AGENT",
+              "FORGE_FORCE_INTENT_MODE", "FORGE_FORCE_TTY_MODE")
+
+
+def _assert_no_host_keys(env):
+    assert env is not None, "ingest deve passar env= explícito ao subprocesso"
+    for k in _HOST_KEYS:
+        assert k not in env, f"{k} vazou pro env do subprocesso de ingest"
+
+
+def test_post_subagent_validate_spawns_with_scrubbed_env(tmp_path, monkeypatch):
+    """Spawn-site real ingest.py:377 (_handle_post_subagent_validate) passa
+    env= sem nenhum sinal de host agêntico."""
     import subprocess
 
     from engine import ingest
 
-    monkeypatch.setenv("CLAUDECODE", "1")
-    captured = {}
+    for k in _HOST_KEYS:
+        monkeypatch.setenv(k, "1")
 
-    def _fake_run(cmd, **kwargs):
-        captured["env"] = kwargs.get("env")
+    # forge_home()/validators é onde _handle_post_subagent_validate resolve os
+    # validators. 'feature-intake' mapeia pra ['validate_feature_package'].
+    forge_root = tmp_path / "forge_home"
+    _install_fake_validator(forge_root / "validators", "validate_feature_package")
+    monkeypatch.setattr(ingest, "forge_home", lambda: forge_root)
 
-        class _R:
-            returncode = 0
-            stdout = b""
-            stderr = b""
+    fake_run, captured = _make_run_spy()
+    monkeypatch.setattr(subprocess, "run", fake_run)
 
-        return _R()
-
-    monkeypatch.setattr(subprocess, "run", _fake_run)
-
-    # Chama o helper interno que spawna validators. Se a assinatura exata
-    # divergir, ajuste para o entry real exercitado pelo SubagentStop handler;
-    # o invariante testado é: env passado NÃO contém CLAUDECODE.
-    validators_root = tmp_path / "validators"
-    validators_root.mkdir()
-    (validators_root / "check_x.py").write_text("print('ok')\n")
-    monkeypatch.setattr(ingest, "forge_home", lambda: tmp_path)
-
-    ingest._run_subagent_validators(  # ajuste o nome se o scout indicar outro
-        ["check_x"], project_root=tmp_path, task_id="TASK-0001"
+    ingest._handle_post_subagent_validate(
+        {"subagent": "feature-intake", "task-id": "TASK-0001"},
+        tmp_path,
     )
 
-    assert captured.get("env") is not None, "ingest deve passar env= explícito"
-    assert "CLAUDECODE" not in captured["env"]
+    assert captured["envs"], "o spawn real não foi alcançado — wire não exercitado"
+    for env in captured["envs"]:
+        _assert_no_host_keys(env)
+
+
+def test_ci_pr_ingest_spawns_with_scrubbed_env(tmp_path, monkeypatch):
+    """Spawn-site real ingest.py:442 (_handle_ci_pr_ingest) passa env= sem
+    nenhum sinal de host agêntico."""
+    import subprocess
+
+    from engine import ingest
+
+    for k in _HOST_KEYS:
+        monkeypatch.setenv(k, "1")
+
+    # _CI_VALIDATORS é uma tupla fixa; instala todos pra os spawns serem
+    # alcançados (cada v_path.is_file() precisa existir).
+    forge_root = tmp_path / "forge_home"
+    for v_name in ingest._CI_VALIDATORS:
+        _install_fake_validator(forge_root / "validators", v_name)
+    monkeypatch.setattr(ingest, "forge_home", lambda: forge_root)
+
+    fake_run, captured = _make_run_spy()
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    ingest._handle_ci_pr_ingest(
+        {"feature-slug": "auth-login", "pr-number": "42"},
+        tmp_path,
+    )
+
+    assert captured["envs"], "o spawn real não foi alcançado — wire não exercitado"
+    for env in captured["envs"]:
+        _assert_no_host_keys(env)
 ```
 
-  > NOTA DE SCOUT OBRIGATÓRIA: o nome da função interna em ingest.py:360-381 pode
-  > não ser `_run_subagent_validators`. ANTES de escrever este teste, leia o `def`
-  > que contém o `subprocess.run` da linha 377 e use o nome + assinatura REAIS.
-  > Se a função não for diretamente chamável (closure / args complexos), exercite
-  > via o entry público `ingest.run([...])` simulando o evento SubagentStop, ou
-  > reduza este teste ao invariante mínimo (env não contém CLAUDECODE) pelo
-  > caminho mais direto que o código real expõe. NÃO invente uma API que não
-  > existe.
+  > Os dois spawn-sites são exercitados pelas funções REAIS (não por um nome
+  > inventado). Não há caminho de fallback que reduza ao "invariante mínimo
+  > isolado" — se o `subprocess.run` real não for alcançado, `captured["envs"]`
+  > fica vazio e o teste FALHA (não passa silenciosamente). É a anti-regressão
+  > direta do C2 DEAD-VERIFY: o boundary só fica verde se o WIRE rodou.
+  > NOTA DE SCOUT (já confirmada): `_handle_post_subagent_validate` e
+  > `_handle_ci_pr_ingest` resolvem validators via `forge_home()/validators` e
+  > exigem que o arquivo `<validator>.py` exista (`v_path.is_file()`) — por isso
+  > o stub. Se a leitura do código real divergir desses nomes/assinaturas, PARE e
+  > reporte ao orquestrador (não invente API).
 
 - [ ] **Step 4.6 — Rodar, confirmar GREEN.**
 
@@ -1652,10 +1885,13 @@ pós-confirm) — test-update legítimo, cite no commit.
   (`tests/integration/test_git_pre_commit_delegator.py`).
 - **C4 CONC-1** — `engine/utils/json_io.write_json` usa tempfile por-processo
   (`{pid}.{uuid}.tmp`) eliminando torn write / `FileNotFoundError` quando dois
-  forge escrevem o mesmo state file. `engine/ui/intent_state.pending_lock`
-  (novo CM `fcntl`/`msvcrt`) fecha a janela TOCTOU de `detect_race`+`write_pending`.
-  Os testes de concorrência (`test_intent_state_concurrency.py`) tiveram as
-  asserções flipadas de "documenta o gap" para "sem torn write".
+  forge escrevem o mesmo state file (C4-A). `engine/ui/intent_state.pending_lock`
+  (novo CM `fcntl`/`msvcrt`) é APLICADO na seção crítica real
+  `detect_race`+`write_pending` de `engine/host/adapters/intent_file.py::_ask_loop`,
+  fechando a janela TOCTOU em produção (C4-B). Os testes de concorrência
+  (`test_intent_state_concurrency.py`) tiveram as asserções flipadas de
+  "documenta o gap" para "sem torn write" e ganharam um teste do caminho real do
+  adapter sob contenção.
 - **A3 ENV-1** — `engine/host/env.scrubbed_subprocess_env` remove sinais de host
   agêntico (CLAUDECODE / OPENCODE_* / CODEX* / CURSOR_* / FORGE_FORCE_*_MODE) do
   env de subprocessos spawnados por `engine/ingest.py`. Um forge aninhado não
@@ -1681,7 +1917,7 @@ pós-confirm) — test-update legítimo, cite no commit.
 
 ```markdown
 **Última atualização:** 2026-06-17 (W2 protocol robustness — C2/C3/C4/A3 fechados + A4 narrow)
-**Estado W2 protocol robustness:** ✅ entregue sobre `feat/w2-protocol-robustness`. Quatro findings da auditoria consolidada fechados: C2 DEAD-VERIFY (delegator pre-commit checa sub-namespace + legado), C3 EXIT-2-COLLISION (exit 2 = só pausa; escada → 1 + `[FORGE-ERR:<TAG>]`), C4 CONC-1 (tempfile por-processo + flock TOCTOU), A3 ENV-1 (scrub de host agêntico no spawn de subprocessos). A4 REPLAY tratado narrow: card-removal defere `.bak` move pós-confirm; REPLAY-2-write (config) e init "resume=restart" confirmados falso-positivos (mutação já gated pelo confirm / re-mutação idempotente) — documentados em `04-pending.md`. Sem decisão locked tocada. Counts: confirme com `.venv/bin/pytest`. Detalhes em CHANGELOG `## [Unreleased] §Fixed/Changed (W2)`.
+**Estado W2 protocol robustness:** ✅ entregue sobre `feat/w2-protocol-robustness`. Quatro findings da auditoria consolidada fechados: C2 DEAD-VERIFY (delegator pre-commit checa sub-namespace + legado), C3 EXIT-2-COLLISION (exit 2 = só pausa; escada → 1 + `[FORGE-ERR:<TAG>]`), C4 CONC-1 (tempfile por-processo C4-A + flock aplicado na seção crítica real `IntentFileAdapter._ask_loop` C4-B), A3 ENV-1 (scrub de host agêntico no spawn de subprocessos do ingest). A4 REPLAY tratado narrow: card-removal defere `.bak` move pós-confirm; REPLAY-2-write (config) e init "resume=restart" confirmados falso-positivos (mutação já gated pelo confirm / re-mutação idempotente) — documentados em `04-pending.md`. Sem decisão locked tocada. Counts: confirme com `.venv/bin/pytest`. Detalhes em CHANGELOG `## [Unreleased] §Fixed/Changed (W2)`.
 ```
 
   (Preserve as entradas "Última atualização anterior" / "Estado ..." abaixo —
@@ -1698,8 +1934,14 @@ pós-confirm) — test-update legítimo, cite no commit.
   `docs/design/06-command-surface.md §Exit codes` + `engine/ui/exit_codes.py`.
 - ~~**DEAD-VERIFY**~~ — **FECHADO em W2** (C2). delegator `hooks/git-pre-commit`
   checa sub-namespace + legado; teste de integração exercita a cadeia real.
-- ~~**CONC-1**~~ — **FECHADO em W2** (C4). tempfile por-processo em `write_json`
-  + `pending_lock` (flock) fechando a janela TOCTOU.
+- ~~**CONC-1**~~ — **FECHADO em W2** (C4), ambas as partes:
+  - **C4-A** (Task 2) — tempfile por-processo `{pid}.{uuid}.tmp` em
+    `engine/utils/json_io.write_json` elimina o torn write / `FileNotFoundError`
+    no nível de bytes.
+  - **C4-B** (Task 3) — `engine/ui/intent_state.pending_lock` (flock `LOCK_EX`)
+    APLICADO na seção crítica REAL `detect_race`+`write_pending` de
+    `engine/host/adapters/intent_file.py::_ask_loop` — fecha a janela TOCTOU em
+    produção, não só expõe o helper.
 - ~~**ENV-1**~~ — **FECHADO em W2** (A3). `scrubbed_subprocess_env` no boundary de
   spawn do ingest + pin `host: intent-file` (já honrado por `detect.py`)
   documentado.
@@ -1763,12 +2005,20 @@ registrar intenção + aplicar pós-confirm); não inventar fix pra REPLAY-2-wri
   re-mapeados pra `fail_with_tag` + tag. `127` preservado. cli.py confirmado.
   Doc canônico reescrito. Teste parametrizado ("nenhum handler retorna 2 fora da
   pausa") + por-tag.
-- **C4 CONC-1** → Tasks 2 (tempfile por-processo) + 3 (flock TOCTOU). Teste
+- **C4 CONC-1** → Tasks 2 (tempfile por-processo, C4-A) + 3 (flock TOCTOU
+  APLICADO na seção crítica real `IntentFileAdapter._ask_loop`, C4-B). Teste
   `test_concurrent_writers_document_torn_write_window` FLIPADO de "documenta
-  corrupção" pra "sem torn write". flock reusa o padrão de `l1.py`.
+  corrupção" pra "sem torn write"; teste novo `test_adapter_ask_loop_serializes_
+  via_applied_lock` exercita o caminho de produção sob contenção (só fica verde
+  com o lock aplicado). flock reusa o padrão de `l1.py`. Ambas as partes fecham
+  CONC-1 — não há débito residual de TOCTOU em produção.
 - **A3 ENV-1** → Task 4. Scrub no boundary de spawn do ingest + pin host
-  documentado. Reusa key-set canônico; coexiste com `build_safe_env` (objetivos
-  distintos, documentado).
+  documentado. O teste de wire exercita os DOIS spawn-sites REAIS
+  (`_handle_post_subagent_validate` ingest.py:377 + `_handle_ci_pr_ingest`
+  ingest.py:442) capturando o kwarg `env=` — sem fallback que reduza ao
+  invariante isolado; o boundary só fica verde se o spawn real rodou. Reusa
+  key-set canônico; coexiste com `build_safe_env` (objetivos distintos,
+  documentado).
 - **A4 REPLAY** → Task 6. Card-removal deferido pós-confirm (real); REPLAY-2-write
   e init resume=restart documentados como falso-positivo após confirmação no
   código.
