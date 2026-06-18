@@ -28,6 +28,7 @@ Exit codes follow CLI convention:
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import sys
@@ -508,6 +509,53 @@ def _ingest_screenshot(raw_input: str, feature_path: Path) -> Optional[dict]:
             "Sigo sem a imagem.\n"
         )
         return None
+
+
+def _record_screenshot_manifest(feature_path: Path, result: dict) -> None:
+    """Persiste o dict de `_ingest_screenshot` em `screenshots/manifest.json`.
+
+    spec §4 C3a / WR-02 — `_ingest_screenshot` computa `fingerprint` (dedup da
+    Wave B) + `platform_hint` (hint de baixa confiança que o conductor pode
+    sobrepor). Antes esses campos eram descartados (o `run()` lia só path+count),
+    tornando a computação trabalho morto e quebrando o link de provenance que o
+    spec desenha. O manifest fecha o handoff: o conductor herda fingerprint +
+    platform sem recomputar os pixels.
+
+    Merge por `filename` (idempotente): re-ingerir o mesmo arquivo sobrescreve a
+    entry em vez de duplicar; arquivos distintos acumulam. Um manifest
+    pré-existente corrompido (JSON inválido) é re-semeado gracioso — nunca
+    crasha (mesmo contrato "nunca crasha" de `_ingest_screenshot`). Falha de IO
+    na escrita degrada com aviso mentor-calmo no stderr; o fluxo segue (o
+    arquivo do screenshot já está em screenshots/, então o conductor o tem).
+    """
+    try:
+        filename = Path(result["path"]).name
+        manifest_path = feature_path / "screenshots" / "manifest.json"
+        manifest: dict[str, Any] = {}
+        if manifest_path.is_file():
+            try:
+                loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    manifest = loaded
+            except (json.JSONDecodeError, ValueError, OSError):
+                # Manifest corrompido → re-seed limpo (não propaga).
+                manifest = {}
+        manifest[filename] = {
+            "fingerprint": result.get("fingerprint"),
+            "platform_hint": result.get("platform_hint"),
+            "platform_confidence": result.get("platform_confidence"),
+            "ingested_at": utc_now_iso(),
+        }
+        ensure_dir(manifest_path.parent)
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        sys.stderr.write(
+            f"forge plan: manifest de screenshot não persistido — {exc}. "
+            "O screenshot foi copiado; sigo sem o registro de provenance.\n"
+        )
 
 
 def _elicit_screenshot(
@@ -1767,6 +1815,10 @@ def run(argv: list[str]) -> int:
     # threading dos tokens de source (intake_tokens → _run_waves_for_subtype →
     # Wave A render). O engine só sanitiza/fingerprint; a análise é do conductor.
     screenshot_result = _elicit_screenshot(feature_path, subtype, starting_wave)
+    if screenshot_result is not None:
+        # WR-02: persiste fingerprint + platform_hint (senão descartados) pro
+        # conductor herdar a provenance sem recomputar os pixels.
+        _record_screenshot_manifest(feature_path, screenshot_result)
     _ss_count = "1" if screenshot_result else "0"
     _ss_paths = screenshot_result["path"] if screenshot_result else "none"
     intake_tokens.update(

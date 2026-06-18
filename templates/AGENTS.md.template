@@ -27,6 +27,16 @@ Atributos, kinds e shape da response em detalhe: `docs/schemas/intent-protocol.m
 
 ## Workflow
 
-Ao rodar `forge plan`, dispatch `agents/planning-conductor.md` (do FORGE_HOME)
-e dirija a elicitação. Screenshot entra conversacionalmente (path na
-source-inquiry), sem flag.
+`forge plan` é interativo wave-a-wave — duas coisas interleaved:
+
+1. **O engine dirige o stepping das waves** e emite os próprios prompts
+   `<FORGE_INTENT>` (exit 2 a cada um): slug, subtype, sub-questão de bugfix,
+   source-inquiry de screenshot, task-count (Wave D) e o gate continuar/pausar
+   ao fim de cada wave (A→B→C→D→E). Responda cada um pelo intent loop acima.
+2. **O conductor preenche o conteúdo** de cada esqueleto que o engine renderiza:
+   entre os gates de continuar, consulte `agents/planning-conductor.md` (do
+   FORGE_HOME) pra a elicitação profunda (Phase 4).
+
+"Dispatch o conductor" não é um passo único no início — o engine continua
+dirigindo o stepping; o conductor preenche os esqueletos conforme o loop avança.
+Screenshot entra conversacionalmente (path na source-inquiry), sem flag.

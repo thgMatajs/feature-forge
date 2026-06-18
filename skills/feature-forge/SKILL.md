@@ -53,7 +53,21 @@ Atributos, kinds e shape da response em detalhe: `docs/schemas/intent-protocol.m
 | `forge verify` | cascade de validators |
 | `forge status` | estado da feature |
 
-**Ao rodar `forge plan`:** depois que o engine derivar/confirmar o slug e
-semear o intake, **dispatch `agents/planning-conductor.md` (lido do FORGE_HOME)**
-e dirija a elicitação dele — o conductor usa `AskUserQuestion` direto. O
-screenshot entra conversacionalmente (path na source-inquiry), sem flag.
+**Ao rodar `forge plan`:** o comando é interativo wave-a-wave. Duas coisas
+acontecem interleaved — não confunda:
+
+1. **O engine dirige o stepping das waves** e emite os PRÓPRIOS prompts
+   `<FORGE_INTENT>` ao longo do loop (exit 2 a cada um). Responda cada um pelo
+   intent loop acima: confirm de slug, subtype, sub-questão de bugfix (se for),
+   source-inquiry de screenshot, task-count na Wave D, e o gate
+   continuar/pausar ao fim de cada wave (A→B→C→D→E). Esses prompts são
+   mecânicos — o engine renderiza o ESQUELETO de cada wave e pausa.
+2. **O conductor preenche o CONTEÚDO** de cada esqueleto. Entre os gates de
+   continuar, **consulte `agents/planning-conductor.md` (lido do FORGE_HOME)**
+   pra saber COMO fazer a elicitação profunda e preencher os artefatos que o
+   engine renderizou — Phase 4 do conductor é onde mora a elicitação real.
+
+Ou seja: "dispatch o conductor" **não** é um passo único no início que assume o
+volante — o engine continua dirigindo o stepping. O conductor é o trabalho que
+preenche os esqueletos conforme o wave-loop avança. O screenshot entra
+conversacionalmente (path na source-inquiry que o engine emite), sem flag.

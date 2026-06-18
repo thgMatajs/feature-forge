@@ -18,6 +18,7 @@ Refs: docs/superpowers/specs/2026-06-17-ai-first-interaction-layer-design.md
 
 from __future__ import annotations
 
+import json
 import shutil
 import struct
 from pathlib import Path
@@ -161,6 +162,93 @@ def test_ingest_rejects_external_absolute_non_image(tmp_path: Path) -> None:
     external.write_text("not an image", encoding="utf-8")
 
     assert plan._ingest_screenshot(str(external), feature) is None
+
+
+# ── _record_screenshot_manifest — persiste fingerprint + platform_hint (WR-02)─
+
+
+def test_manifest_persists_fingerprint_and_platform(tmp_path: Path) -> None:
+    """O manifest grava fingerprint + platform_hint (antes descartados).
+
+    WR-02: `_ingest_screenshot` computa fingerprint (dedup Wave B) +
+    platform_hint (override do conductor), mas o `run()` só lia path+count.
+    O manifest fecha o handoff de provenance — sem ele os campos eram trabalho
+    morto.
+    """
+    feature = tmp_path / "feature"
+    (feature / "screenshots").mkdir(parents=True)
+    _write_png(feature / "screenshots" / "tela.png", width=400, height=900)
+    result = plan._ingest_screenshot("tela.png", feature)
+    assert result is not None
+
+    plan._record_screenshot_manifest(feature, result)
+
+    manifest_path = feature / "screenshots" / "manifest.json"
+    assert manifest_path.is_file()
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    entry = data["tela.png"]
+    assert entry["fingerprint"] == result["fingerprint"]
+    assert entry["platform_hint"] == result["platform_hint"]
+    assert entry["platform_confidence"] == result["platform_confidence"]
+    assert "ingested_at" in entry  # provenance timestamp
+
+
+def test_manifest_idempotent_same_file(tmp_path: Path) -> None:
+    """Dois ingests do MESMO file não duplicam entry (merge por filename)."""
+    feature = tmp_path / "feature"
+    (feature / "screenshots").mkdir(parents=True)
+    _write_png(feature / "screenshots" / "a.png")
+    r1 = plan._ingest_screenshot("a.png", feature)
+    assert r1 is not None
+
+    plan._record_screenshot_manifest(feature, r1)
+    plan._record_screenshot_manifest(feature, r1)
+
+    data = json.loads(
+        (feature / "screenshots" / "manifest.json").read_text(encoding="utf-8")
+    )
+    # Exatamente 1 chave (o filename) — merge por filename, sem duplicar.
+    assert list(data.keys()) == ["a.png"]
+
+
+def test_manifest_merges_multiple_files(tmp_path: Path) -> None:
+    """Ingests de files distintos acumulam no mesmo manifest (merge, não overwrite)."""
+    feature = tmp_path / "feature"
+    (feature / "screenshots").mkdir(parents=True)
+    _write_png(feature / "screenshots" / "a.png")
+    _write_png(feature / "screenshots" / "b.png")
+    ra = plan._ingest_screenshot("a.png", feature)
+    rb = plan._ingest_screenshot("b.png", feature)
+    assert ra is not None and rb is not None
+
+    plan._record_screenshot_manifest(feature, ra)
+    plan._record_screenshot_manifest(feature, rb)
+
+    data = json.loads(
+        (feature / "screenshots" / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert set(data.keys()) == {"a.png", "b.png"}
+    assert data["a.png"]["fingerprint"] == ra["fingerprint"]
+    assert data["b.png"]["fingerprint"] == rb["fingerprint"]
+
+
+def test_manifest_survives_corrupt_existing_file(tmp_path: Path) -> None:
+    """Manifest pré-existente corrompido → re-seed gracioso (não crasha)."""
+    feature = tmp_path / "feature"
+    (feature / "screenshots").mkdir(parents=True)
+    _write_png(feature / "screenshots" / "a.png")
+    (feature / "screenshots" / "manifest.json").write_text(
+        "{ corrupt ,,", encoding="utf-8"
+    )
+    r = plan._ingest_screenshot("a.png", feature)
+    assert r is not None
+
+    # Não deve propagar JSONDecodeError — re-seed limpo.
+    plan._record_screenshot_manifest(feature, r)
+    data = json.loads(
+        (feature / "screenshots" / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert data["a.png"]["fingerprint"] == r["fingerprint"]
 
 
 # ── _elicit_screenshot — source-inquiry só em product + Wave A ───────────────

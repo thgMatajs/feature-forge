@@ -10,6 +10,7 @@ Schema source: templates/implementation-readiness-review.template.md §verdict.
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -67,54 +68,104 @@ def _extract_verdict(text: str) -> dict[str, Any] | None:
     return None
 
 
-# Contract specs (artefatos YAML estruturados) onde needs-elicitation
-# não-promovido é block-severity. Os nomes batem com o que engine/plan.py
-# renderiza: os 5 `*-spec.yaml` (Wave B), `task-breakdown.yaml` (Wave D head)
-# e os task contracts `tasks/TASK-NNNN.yaml` (Wave D, uppercase `.yaml`).
-# NÃO globamos narrativa `.md` (PRD/intake/tech-spec) — narrativa é warning
-# do prompt readiness-reviewer, não block do validator (spec C5). Converge
-# com o `grep .../tasks/` do prompt — os dois enforcement-points alinhados.
-_CONTRACT_GLOBS = ("*-spec.yaml", "task-breakdown.yaml", "tasks/*.yaml")
-
-# Marker ATIVO (não prose/comentário). Duas formas estruturadas:
-#   - forma-valor:  `campo: needs-elicitation`  (o conductor ainda não preencheu)
-#   - forma-chave:  `needs-elicitation: <truthy>` (flag explícito ligado)
-# A prose instrucional dos templates (ui-state-spec.template.yaml L11/L15, que
-# menciona a palavra em COMENTÁRIO) vive depois do `#` — stripada antes do match,
-# então não dispara false-positive. `needs-elicitation: false` (já resolvido)
-# não casa a forma-chave (só truthy: true/yes/1).
-_NEEDS_ELICIT_RE = re.compile(
-    r":\s*['\"]?needs-elicitation\b"  # campo: needs-elicitation
-    r"|^\s*-?\s*needs-elicitation\s*:\s*(true|yes|1)\b",  # needs-elicitation: true
-    re.IGNORECASE,
+# Contract specs (artefatos estruturados) onde needs_elicitation não-promovido
+# é block-severity. Os nomes batem com o que engine/plan.py renderiza + os
+# contratos que o conductor preenche: os `*-spec.yaml` (Wave B),
+# `task-breakdown.yaml` (Wave D head), os task contracts `tasks/TASK-NNNN.yaml`
+# (Wave D, uppercase `.yaml`), `test-strategy.yaml` (lista top-level de deferral)
+# e `bdd.json` (JSON — needs_elicitation por scenario + lista top-level).
+# NÃO globamos narrativa `.md` (PRD/intake/tech-spec) — narrativa é warning do
+# prompt readiness-reviewer, não block do validator (spec C5). Converge com o
+# `grep .../tasks/` do prompt — os dois enforcement-points alinhados.
+#
+# WR-01 (holistic review): a convenção REAL da DATA é underscore
+# (`needs_elicitation`); a forma hyphen só vive em PROSE/comentário. `bdd.json`
+# e `test-strategy.yaml` não casavam o glob antigo `*-spec.yaml` e usavam a
+# forma underscore — o gate antigo era cego a eles.
+_CONTRACT_GLOBS = (
+    "*-spec.yaml",
+    "task-breakdown.yaml",
+    "tasks/*.yaml",
+    "test-strategy.yaml",
+    "bdd.json",
 )
+
+# Chave do marker. Aceita underscore (forma REAL da data) e hyphen (defensivo,
+# caso algum artefato use a variante). Comparada case-insensitive contra as
+# chaves do documento parseado — NUNCA contra prose (comentário não é DATA, o
+# parser estrutural o descarta sozinho).
+_MARKER_KEYS = {"needs_elicitation", "needs-elicitation"}
+
+
+def _is_active_marker(value: Any) -> bool:
+    """`needs_elicitation` ATIVO = truthy escalar OU lista não-vazia.
+
+    Inativo (NÃO bloqueia): `False`/`"false"`/`"no"`/`0`/`None`, lista vazia,
+    dict vazio, string vazia, ou chave ausente. Ativo: `True`/`"true"`/`"yes"`/
+    `1`/`"1"` (a forma-chave boolean per-state), ou qualquer lista/coleção com
+    ≥1 item (a forma top-level de deferral em test-strategy/bdd/task-contract).
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (list, tuple, set, dict)):
+        return len(value) > 0
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "yes", "1"}
+    return False
+
+
+def _walk_for_marker(node: Any, hits: list[str], rel: str, path_prefix: str) -> None:
+    """Percorre a estrutura recursivamente coletando chaves `needs_elicitation`
+    ATIVAS. Reporta `arquivo` + key-path (line-number não é viável pós-parse —
+    nice-to-have que cai pra só-arquivo, conforme WR-01 Caminho A)."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            key_path = f"{path_prefix}.{key}" if path_prefix else str(key)
+            if isinstance(key, str) and key.lower() in _MARKER_KEYS:
+                if _is_active_marker(value):
+                    hits.append(f"{rel}:{key_path}")
+                # Não recursa no valor do próprio marker (já avaliado).
+                continue
+            _walk_for_marker(value, hits, rel, key_path)
+    elif isinstance(node, (list, tuple)):
+        for idx, item in enumerate(node):
+            _walk_for_marker(item, hits, rel, f"{path_prefix}[{idx}]")
 
 
 def _scan_needs_elicitation(f_root: Path) -> list[str]:
-    """Retorna `arquivo:linha` com `needs-elicitation` ATIVO em contract specs.
+    """Retorna `arquivo:key-path` com `needs_elicitation` ATIVO em contract specs.
 
     spec §4 C5 — fecha o ponto-cego "thin-but-structurally-complete": um campo
-    `needs-elicitation` que o conductor não promoveu a `blocking: true` open
+    `needs_elicitation` que o conductor não promoveu a `blocking: true` open
     question pode escapar como ready se a cadeia story→task fecha nominalmente.
 
-    O match é estruturado (campo/valor YAML), não substring: a prose dos
-    templates (comentários `# … needs-elicitation …`) é stripada antes, então
-    um spec real renderizado não gera false-positive.
+    Match ESTRUTURAL (parse YAML/JSON + walk recursivo), não substring/regex: a
+    prose dos templates (comentários `# … needs_elicitation …`) nunca vira chave
+    do documento parseado, então um spec real renderizado não gera false-positive
+    sem nenhum strip de comentário. Artefato não-parseável (YAML/JSON inválido) é
+    ignorado gracioso — o gate de schema pega isso noutro lugar (WR-01 Caminho A).
     """
     hits: list[str] = []
     for pattern in _CONTRACT_GLOBS:
         for path in sorted(f_root.glob(pattern)):
             if not path.is_file():
                 continue
-            for lineno, line in enumerate(
-                path.read_text(encoding="utf-8").splitlines(), start=1
-            ):
-                # Dropa o comentário YAML (onde a prose instrucional dos
-                # templates vive) antes de testar o marker.
-                code = line.split("#", 1)[0]
-                if _NEEDS_ELICIT_RE.search(code):
-                    rel = path.relative_to(f_root)
-                    hits.append(f"{rel}:{lineno}")
+            rel = str(path.relative_to(f_root))
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            try:
+                if path.suffix == ".json":
+                    parsed = json.loads(text)
+                else:
+                    parsed = yaml.safe_load(text)
+            except (yaml.YAMLError, json.JSONDecodeError, ValueError):
+                # Inválido → ignore gracioso (schema gate cobre noutro lugar).
+                continue
+            _walk_for_marker(parsed, hits, rel, "")
     return hits
 
 
@@ -131,7 +182,7 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
 
     f_root = feature_dir(project_root, slug)
 
-    # spec C5 — needs-elicitation não-promovido bloqueia ANTES de parsear o
+    # spec C5 — needs_elicitation não-promovido bloqueia ANTES de parsear o
     # verdict (um verdict 'ready' não pode mascarar campo não-elicitado).
     elicitation_hits = _scan_needs_elicitation(f_root)
     if elicitation_hits:
@@ -141,15 +192,15 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
         extra = len(elicitation_hits) - 5
         where = f"{shown} (+{extra} more)" if extra > 0 else shown
         return result_fail(
-            f"needs-elicitation não-promovido em {len(elicitation_hits)} contract spec(s)",
-            what_failed="needs-elicitation: true sobreviveu em contract spec",
+            f"needs_elicitation não-promovido em {len(elicitation_hits)} contract spec(s)",
+            what_failed="needs_elicitation ativo sobreviveu em contract spec",
             where=where,
             why=[
-                "Campo needs-elicitation deve virar blocking:true open-question, não escapar como ready.",
+                "Campo needs_elicitation deve virar blocking:true open-question, não escapar como ready.",
                 "Fecha o ponto-cego thin-but-structurally-complete (spec C5).",
             ],
             paths=make_paths(
-                "Promover cada needs-elicitation a blocking:true em open-questions.yaml",
+                "Promover cada needs_elicitation a blocking:true em open-questions.yaml",
                 "O conductor elicita na próxima rodada de Phase 3.",
                 "Reverter pra antes do plan — `forge undo`",
                 "Se o escopo da feature mudou e o campo deixou de fazer sentido.",
