@@ -56,3 +56,17 @@ def test_write_graph_docs_idempotent(tmp_forge_project: Path) -> None:
     forge_init._write_graph_docs(tmp_forge_project)  # 2ª escrita
     assert graph_first.read_text(encoding="utf-8") == first_a  # sem append/clobber divergente
     assert graph_skill.read_text(encoding="utf-8") == first_b
+
+
+def test_skill_file_path_matches_hook_reference(tmp_forge_project: Path) -> None:
+    """A costura Camada 2 ↔ 3: o path que o hook cita é o que o init escreve.
+
+    O hook (Camada 2) imprime 'referência completa: .claude/forge/graph-skill.md'.
+    Este teste garante que esse path é exatamente onde o init grava o arquivo —
+    sem essa amarração, o hook apontaria pra um arquivo inexistente.
+    """
+    _, graph_skill = forge_init._write_graph_docs(tmp_forge_project)
+    rel = graph_skill.relative_to(tmp_forge_project)
+    assert rel.as_posix() == ".claude/forge/graph-skill.md"
+    # O conteúdo escrito é o constant canônico (não um stub divergente).
+    assert graph_skill.read_text(encoding="utf-8") == forge_init._GRAPH_SKILL_MD
