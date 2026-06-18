@@ -29,6 +29,24 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   Phase 5 agora escaneiam `needs-elicitation` não-promovido — block-severity
   em contract spec (match estruturado), warning em narrativa. Fecha o
   ponto-cego "thin-but-structurally-complete".
+- Token economy / machine-legibility (W3, A1 TOKEN-BLIND + A2): output-mode
+  global host-aware (`engine/ui/output_mode.py` — enum TTY/PLAIN/JSON + context
+  var + allowlist `_JSON_CAPABLE_COMMANDS`), consultado pelo chokepoint único
+  `renderer.write`. `FORGE_OUTPUT=json` env ativa o modo JSON pros read-commands.
+- `forge status --json` / `doctor --json` / `verify --json` / `memory --json`
+  (snapshot read-only dos 3 layers) — output machine-readable pros read-commands
+  (stdout JSON puro, erros→stderr, exit 0/1; modelo idêntico ao `graph --json`).
+- `forge status --json` inclui `suggested_next_command` — workflow router que
+  mapeia o estado da feature mais recente pro próximo verbo (A2 NO-WORKFLOW-ROUTER).
+- `forge --help --json` — manifesto machine-readable de comandos/args/flags
+  derivado do `COMMANDS` dict (A2 NO-MANIFEST); read-commands anunciam `--json`.
+
+### Changed (load-bearing)
+
+- Revisita Decisão 10: conversacional human-first + meta-flags opt-in (--json,
+  --help --json, FORGE_OUTPUT=json) pros read-commands — intent protocol
+  inalterado pros interativos. Destrava token economy / machine-legibility
+  (auditoria §3.2 A1/A2).
 
 ### Fixed
 

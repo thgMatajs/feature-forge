@@ -7,14 +7,23 @@ exists because two locked decisions are load-bearing and easy to drift from:
 - **Decision 9** — the command surface is fixed at **14 subcomandos** (após
   Revisita Decisão 9 em 2026-06-17, que adicionou `forge upgrade` como 14º comando;
   Revisita anterior em 2026-06-05 adicionou `forge qa` como 13º comando).
-- **Decision 10** — interaction is **100% conversational, sem flags**. Every
-  parameter is collected via interactive prompt or menu inside one of the 14
-  entrypoints.
+- **Decision 10 (revisitada em 2026-06-18 — row 32)** — interaction is
+  **conversational human-first by default**. Cada parâmetro de domínio é
+  coletado via prompt/menu interativo dentro de um dos 14 entrypoints. **Carve-out
+  machine-readable opt-in:** os read-commands (`status`/`doctor`/`verify`/`memory`/`graph`)
+  aceitam as meta-flags `--json` (e `forge --help --json`) e honram a env
+  `FORGE_OUTPUT=json` — emitem JSON puro em stdout pra consumo por máquina (CI,
+  hosts agentic). Esse carve-out é **meta-flags only**: flags de comportamento de
+  domínio continuam proibidas. Comandos interativos (`plan`/`implement`/`init`/
+  `reconfigure`/`evolve`/`qa`/`undo`/`raw`) IGNORAM `--json`/`FORGE_OUTPUT=json` —
+  o intent protocol (marker `<FORGE_INTENT/>` + exit-2) e a UX cinematográfica
+  ficam intactos. Ver §"Manifesto + meta-flags (Decisão 10 revisitada)" abaixo.
 
 Anything that *feels* like it needs a new command (card lifecycle, inventory
 refresh, schema migration, graph rebuild) **must route through one of the 14
 as an interactive menu choice or a sub-prompt** — never as a new top-level
-verb, never as a flag.
+verb, never as a domain-behaviour flag (meta-flags `--json`/`--help --json`
+pros read-commands são o único carve-out — Decisão 10 revisitada).
 
 If a future need does not encaixar em nenhum dos 14, the response is **not** a
 new command. The response is: revisit decisions 9 + 10 explicitly via a
@@ -225,3 +234,54 @@ Spec canônico: `docs/superpowers/specs/drift-1-intent-protocol.md` §4.
 
 POSIX nota: exit 2 às vezes é usado por shells pra "misuse of shell builtins";
 `forge` não é shell builtin, então o conflito é nominal.
+
+---
+
+## Manifesto + meta-flags (Decisão 10 revisitada — 2026-06-18)
+
+W3 (token economy / machine-legibility) destrava consumo por máquina sem quebrar
+a UX conversacional human-first. O carve-out é **meta-flags only** e GATED num
+allowlist de read-commands (`engine/ui/output_mode.py::_JSON_CAPABLE_COMMANDS =
+{status, doctor, verify, memory, graph}`).
+
+**Ativadores do modo JSON (só pros read-commands no allowlist):**
+
+- `--json` em argv (ex.: `forge status --json`).
+- env `FORGE_OUTPUT=json` (ativa o modo pros read-commands; valor desconhecido
+  é ignorado e cai pra TTY/PLAIN).
+- `forge --help --json` (manifesto — emitido direto, independente do output-mode).
+
+**Enforcement estrutural (H-001).** O modo JSON é resolvido UMA vez no startup
+do `cli.main` via `detect_output_mode(argv, command=cmd)` e publicado num context
+var lido pelo chokepoint único `renderer.write`. Comandos interativos
+(`plan`/`implement`/`init`/`reconfigure`/`evolve`/`qa`/`undo`/`raw`) NUNCA resolvem
+JSON — mesmo sob `FORGE_OUTPUT=json` ou um `--json` espúrio resolvem TTY/PLAIN.
+Isso impede que o no-op global de `renderer.write` (em JSON mode) degrade
+silenciosamente a UX cinematográfica deles. O marker `<FORGE_INTENT/>` é emitido
+via `sys.stdout.write` direto (não via `renderer.write`), então o intent protocol
+sobrevive ao modo independentemente.
+
+**Modelo de saída JSON** (idêntico ao `forge graph --json`): stdout SÓ JSON
+(`json.dumps(payload, indent=2, default=str)`), erros → stderr, exit 0 sucesso /
+1 falha. Read-only — `status`/`verify`/`memory` não mutam; `doctor` mantém o stamp
+`doctor.last-run` idêntico ao caminho interativo.
+
+**Payloads:**
+
+- `forge status --json` → `{project, active_features, memory, pending_evolutions,
+  doctor, suggested_next_command}`. `suggested_next_command` é o workflow router
+  (A2): mapeia o estado da feature mais recente pro próximo verbo
+  (planning/planned→implement, implementing/verifying→verify,
+  blocked-on-external→reconfigure, deferred→status, nenhuma→plan, desconhecido→doctor).
+- `forge doctor --json` → `{scope: "full", overall_status, exit_code, categories:
+  [{title, worst, checks: [{name, status, message, remediation}]}]}`. JSON mode é
+  non-interactive: assume scope `full` (o ask de scope não pode pausar pra máquina).
+- `forge verify --json` → `{scope: {type, target}, overall, exit_code, validators:
+  [{name, status, duration_ms, message, paths, what_failed, where, why}]}`.
+- `forge memory --json` → snapshot read-only NARROW dos 3 layers: `{l2: {size_bytes,
+  entries: [{id, kind, confidence, title, provenance}]}, l1: {active: [{slug, status,
+  last_action_kind}], archived: [slug]}, l3: [{title, hook}]}`. Search/forget/distill/
+  export permanecem no menu REPL — sem sub-flags por carve-out meta-flags-only.
+- `forge --help --json` → manifesto: `{forge_version, commands: [{name, summary,
+  interactive, hidden, flags, args}]}`. Deriva de `_VISIBLE_ORDER` (ingest oculto
+  omitido). Read-commands anunciam `flags: ["--json"]`; interativos `flags: []`.
