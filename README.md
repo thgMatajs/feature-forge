@@ -2,7 +2,7 @@
 
 A standalone CLI skill that orchestrates end-to-end planning + implementation of mobile features across Android, iOS, KMP, and Web. Backend-agnostic (Firebase, REST, GraphQL, local-only).
 
-> **State:** 1.4.0 pilot-ready + série de waves AI-first (unreleased/branch) · 2026-06-18 · rapid 1794 / integration 183 / e2e 30 passed (W-DEBT dívida residual: PHANTOM-STATES removido + CARDS-DISCONNECT + ABORTED-DEADEND + PLACEHOLDER-VERIFY + SCHEMA/STALE guards + readiness non-product + FORGE_HOME driver doctor + cleanup; W3 token economy: output-mode + read-commands `--json` + `--help --json` manifesto + workflow router, Revisita Decisão 10; W2 protocol robustness; camada de interação AI-first Wave 1: driver `SKILL.md`/`AGENTS.md` + front-door ticket/frase + grounded-challenge Phase 2.5 + readiness enforce + CASING-BUG fix; remediação cross-AI review PR #17; install.sh curl one-liner + forge upgrade + bash 3.2 portável; Wave 3 bug-fix sprint; Wave 2 host-aware execution; graph-ia-evolution ✅ shipped; PR #16 master review fix-pack Wave A+B+C aplicado integralmente) · 26 validators · 14 comandos · 29 cards · 4 bundles · 6 parsers (kotlin/swift/typescript + java/xml/objc) · driver `skills/feature-forge/SKILL.md` + `templates/AGENTS.md.template` · ~400 arquivos · ~52.5K LOC
+> **State:** 1.4.0 pilot-ready + série de waves AI-first (unreleased/branch) · 2026-06-18 · rapid 1794 / integration 183 / e2e 30 passed (W-DEBT dívida residual: PHANTOM-STATES removido + CARDS-DISCONNECT + ABORTED-DEADEND + PLACEHOLDER-VERIFY + SCHEMA/STALE guards + readiness non-product + FORGE_HOME driver doctor + cleanup; W3 token economy: output-mode + read-commands `--json` + `--help --json` manifesto + workflow router, Revisita Decisão 10; W2 protocol robustness; camada de interação AI-first Wave 1: driver `SKILL.md`/`AGENTS.md` + front-door ticket/frase + grounded-challenge Phase 2.5 + readiness enforce + CASING-BUG fix; remediação cross-AI review PR #17; install.sh curl one-liner + forge upgrade + bash 3.2 portável; Wave 3 bug-fix sprint; Wave 2 host-aware execution; graph-ia-evolution ✅ shipped; PR #16 master review fix-pack Wave A+B+C aplicado integralmente) · 22 validators · 14 comandos · 29 cards · 4 bundles · 6 parsers (kotlin/swift/typescript + java/xml/objc) · driver `skills/feature-forge/SKILL.md` + `templates/AGENTS.md.template` · ~400 arquivos · ~52.5K LOC
 
 ## What it is
 
@@ -191,7 +191,7 @@ explicitamente.
   templates/                            18 canonical templates (16 + bugfix + refactor)
   cards/                                29 canonical cards (+ overlay em consumidor)
   presets/kmp-mobile/                   canonical preset v1
-  validators/                           25 validators + 3 helpers (inclui check_cyclomatic_complexity + check_secrets + validate_extension_feature)
+  validators/                           22 validators + 3 helpers (inclui check_cyclomatic_complexity + check_secrets + check_unfilled_placeholders + validate_extension_feature)
   hooks/                                9 hooks + reuse incremental script
   tests/                                rapid 1611 / integration 168 / e2e 30 (unit + integration + e2e)
 
@@ -218,7 +218,7 @@ forge plan           plan feature (waves A-E, subtype-aware)
                      · subtypes: product / refactor / bugfix / spike / chore
                      · `forge plan refactor-{slug}` lê L1 status e pula Wave A
 forge implement      execute task-by-task
-forge verify         validator cascade (20 validators)
+forge verify         validator cascade (22 validators no diretório; 3 built-in + N contribuídos por cards ativos)
                      · check_no_behavior_change gate quando subtype=refactor
                      · check_cyclomatic_complexity gate multi-language
                      · check_secrets gate multi-tool (gitleaks per-task / trufflehog cascade)
