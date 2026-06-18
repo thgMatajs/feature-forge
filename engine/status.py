@@ -371,20 +371,47 @@ def _suggested_next_command(features: list[dict]) -> str:
     """Workflow router (A2 NO-WORKFLOW-ROUTER).
 
     Maps the most-recently-active feature state to the next verb. Falls back
-    to ``plan`` when no feature is active and ``doctor`` for unknown state.
+    to ``plan`` when no feature is active and ``doctor`` for an out-of-enum
+    state (corrupt status.json).
+
+    H-002: covers ALL 11 states of ``engine.memory.l1._VALID_STATES`` — partial
+    coverage routed real states (``not-started``/``paused``/``verified``/etc.)
+    to the bare ``doctor`` default and mis-guided the agent.
+
+    W-003: the recency selection uses an explicit, stable tie-break — features
+    that tie on ``last_action_at`` (e.g. all ``None``) are broken by feature
+    slug, so the suggested verb is a deterministic function of the input rather
+    than of iteration/filesystem order.
     """
     if not features:
         return "plan"
-    # Pick the most recently active feature by last_action_at (None sorts last).
-    recent = max(features, key=lambda f: (f.get("last_action_at") or ""))
+    # Pick the most recently active feature. Tie-break (W-003): missing/empty
+    # timestamps sort below real ones, and ties resolve by slug so the result
+    # is order-independent. Sort key returns (timestamp_or_empty, slug); max
+    # then prefers the latest timestamp, then the highest slug — both stable.
+    recent = max(
+        features,
+        key=lambda f: (
+            f.get("last_action_at") or "",
+            f.get("feature_slug") or "",
+        ),
+    )
     state = recent.get("status")
+    # H-002: one entry per _VALID_STATES. `verified` → `status` is a
+    # conservative next-verb; the PHANTOM-STATES fork (whether `verified`
+    # should exist) is reserved for W-DEBT and intentionally NOT decided here.
     mapping = {
+        "not-started": "plan",
         "planning": "implement",
         "planned": "implement",
         "implementing": "verify",
         "verifying": "verify",
-        "blocked-on-external": "reconfigure",
+        "verified": "status",
+        "done": "status",
         "deferred": "status",
+        "aborted": "plan",
+        "paused": "implement",
+        "blocked-on-external": "reconfigure",
     }
     return mapping.get(state, "doctor")
 
