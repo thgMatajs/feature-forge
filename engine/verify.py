@@ -758,6 +758,13 @@ _DEFAULT_VALIDATORS: list[dict[str, str]] = [
         "severity": "fail",
     },
     {
+        # PLACEHOLDER-VERIFY (W-DEBT): cheap scan de {{...}} crus em artefatos
+        # de feature — bloqueia early (antes do CC gate, mais caro).
+        "name": "check_unfilled_placeholders",
+        "file": "check_unfilled_placeholders.py",
+        "severity": "fail",
+    },
+    {
         "name": "check_cyclomatic_complexity",
         "file": "check_cyclomatic_complexity.py",
         "severity": "fail",

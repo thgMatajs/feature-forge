@@ -9,6 +9,13 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Added
 
+- **PLACEHOLDER-VERIFY** (W-DEBT, 2026-06-18): novo validator
+  `validators/check_unfilled_placeholders.py` no cascade default de `forge verify`
+  (entre `check_no_invented_behavior` e `check_cyclomatic_complexity` — cheap,
+  bloqueia early). Escaneia os artefatos staged DENTRO do dir da feature
+  (.md/.yaml/.yml/.json) procurando `{{token}}` crus não-substituídos — um
+  template não-preenchido passando como "verificado" é detection-failure.
+  Compõe `_common` + `_diff` + `feature_path` (subtype-aware); sem helper novo.
 - **ABORTED-DEADEND** (W-DEBT, 2026-06-18): novo op de recovery `un-abort feature`
   no menu de `forge undo` (opção 8). `_abort_feature` passa a preservar o status
   pré-abort em `raw["pre-abort-status"]` ANTES do overwrite; `_undo_abort`

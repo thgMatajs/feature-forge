@@ -95,10 +95,17 @@ def test_verify_cascade_position(tmp_path: Path) -> None:
     assert "check_no_invented_behavior" in names, (
         "expected check_no_invented_behavior to anchor the cascade"
     )
+    # PLACEHOLDER-VERIFY (W-DEBT) é inserido entre NIB e CC (cheap gate). CC
+    # continua DEPOIS de NIB; a adjacência estrita virou ordering relacional.
     assert (
         names.index("check_cyclomatic_complexity")
-        == names.index("check_no_invented_behavior") + 1
+        > names.index("check_no_invented_behavior")
     ), f"cc gate must follow check_no_invented_behavior; got order {names}"
+    assert (
+        names.index("check_no_invented_behavior")
+        < names.index("check_unfilled_placeholders")
+        < names.index("check_cyclomatic_complexity")
+    ), f"placeholder gate must sit between NIB and CC; got order {names}"
 
 
 # ── Scenario 2: fail-fast ───────────────────────────────────────────────────

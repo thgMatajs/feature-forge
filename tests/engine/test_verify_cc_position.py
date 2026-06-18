@@ -24,8 +24,14 @@ def test_cc_gate_positioned_after_no_invented_behavior() -> None:
     names = [entry["name"] for entry in verify._DEFAULT_VALIDATORS]
     idx_nib = names.index("check_no_invented_behavior")
     idx_cc = names.index("check_cyclomatic_complexity")
-    assert idx_cc == idx_nib + 1, (
-        f"CC gate must immediately follow check_no_invented_behavior; got {names}"
+    # PLACEHOLDER-VERIFY (W-DEBT) é inserido entre NIB e CC (cheap gate, bloqueia
+    # early). CC continua DEPOIS de NIB; o placeholder gate fica no meio.
+    idx_ph = names.index("check_unfilled_placeholders")
+    assert idx_cc > idx_nib, (
+        f"CC gate must follow check_no_invented_behavior; got {names}"
+    )
+    assert idx_nib < idx_ph < idx_cc, (
+        f"check_unfilled_placeholders must sit between NIB and CC; got {names}"
     )
 
 
