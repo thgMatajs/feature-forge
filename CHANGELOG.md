@@ -39,7 +39,9 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 - `forge status --json` inclui `suggested_next_command` — workflow router que
   mapeia o estado da feature mais recente pro próximo verbo (A2 NO-WORKFLOW-ROUTER).
 - `forge --help --json` — manifesto machine-readable de comandos/args/flags
-  derivado do `COMMANDS` dict (A2 NO-MANIFEST); read-commands anunciam `--json`.
+  a partir de `_VISIBLE_ORDER` + `_COMMAND_META` (metadata hand-maintained em
+  lockstep com `COMMANDS`, com drift-guard de teste; A2 NO-MANIFEST);
+  read-commands anunciam `--json`.
 
 ### Changed (load-bearing)
 
@@ -50,6 +52,31 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Fixed
 
+- **C-001 JSON carve-out vazava intent protocol** (W3 holistic review, 2026-06-18) —
+  `forge verify` e `forge graph` (read-commands no allowlist `_JSON_CAPABLE_COMMANDS`)
+  tinham caminho de prompt NÃO gateado em `output_mode.is_json_mode()`. Sob
+  `FORGE_OUTPUT=json` (ou `--json`) o modo global resolvia JSON, `renderer.write`
+  virava no-op, mas o handler ainda alcançava `question.ask` → disparava
+  `PausedForInputError` (exit-2, reservado ESTRITO pro intent protocol DRIFT-1)
+  com a prosa do prompt engolida e um `<FORGE_INTENT/>` marker órfão corrompendo
+  o stdout-puro-JSON. Agora `verify.run()` resolve scope sem prompt em JSON mode
+  e emite erro determinístico (stderr + exit 1) quando ambíguo; `graph_cli.run()`
+  exige query explícita sob JSON mode global e sai com erro em vez de cair no
+  menu interativo. Testes de regressão em `tests/unit/test_json_mode_no_intent_leak.py`.
+- **H-001 erro amigável sumia em `verify --json`** (W3) — `ProjectRootNotFound`
+  em JSON mode escrevia via `renderer.write` (no-op), perdendo a mensagem
+  descritiva. Agora espelha `status`/`doctor`/`memory`: emite `forge verify: <exc>`
+  em stderr + exit 1, stdout puro.
+- **H-002 workflow router cobria só 6 de 11 estados** (W3) —
+  `engine.status._suggested_next_command` deixava `not-started`/`verified`/`paused`/
+  `aborted`/`done` caírem no default `doctor`, mis-guiando o agente. Agora mapeia
+  os 11 estados de `_VALID_STATES` (`not-started→plan`, `paused→implement`,
+  `aborted→plan`, `verified→status`, `done→status`, etc.); o fork PHANTOM-STATES
+  do `verified` fica reservado pro W-DEBT. Teste parametrizado cobre os 11 estados.
+- **W-003 router não-determinístico com timestamps None** (W3) —
+  `max(key=last_action_at or "")` colapsava features sem timestamp em `""` e
+  retornava a primeira por ordem de iteração. Agora o tie-break é estável
+  (timestamp, depois slug), tornando o verbo sugerido independente da ordem.
 - **C2 DEAD-VERIFY** (W2 — protocol robustness, 2026-06-17) — `hooks/git-pre-commit`
   agora checa o validador em `.claude/forge/hooks/` (sub-namespace canônico de
   consumidores) além do path legado `.claude/hooks/` (repo maintainer). O gate

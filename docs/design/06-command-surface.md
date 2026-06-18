@@ -266,13 +266,26 @@ sobrevive ao modo independentemente.
 1 falha. Read-only — `status`/`verify`/`memory` não mutam; `doctor` mantém o stamp
 `doctor.last-run` idêntico ao caminho interativo.
 
+**JSON mode NUNCA pausa (C-001).** Os read-commands com caminho de prompt
+(`verify` quando ≥2 features ativas e nenhum scope explícito; `graph` quando
+invocado sem query) NÃO entram no `question.ask` sob JSON mode — fazê-lo
+dispararia exit-2 + marker `<FORGE_INTENT/>`, reservado ESTRITO pro intent
+protocol. Em vez disso emitem erro determinístico em stderr + exit 1: `verify`
+exige `feature <slug>`/`task TASK-NNNN`; `graph` exige `forge graph --json
+<query>`. Exit-2 jamais ocorre num consumo machine-readable.
+
 **Payloads:**
 
 - `forge status --json` → `{project, active_features, memory, pending_evolutions,
   doctor, suggested_next_command}`. `suggested_next_command` é o workflow router
-  (A2): mapeia o estado da feature mais recente pro próximo verbo
-  (planning/planned→implement, implementing/verifying→verify,
-  blocked-on-external→reconfigure, deferred→status, nenhuma→plan, desconhecido→doctor).
+  (A2): mapeia o estado da feature mais recente pro próximo verbo, cobrindo TODOS
+  os 11 estados de `_VALID_STATES` (H-002): not-started→plan, planning/planned→
+  implement, implementing/verifying→verify, verified→status, done→status,
+  deferred→status, aborted→plan, paused→implement, blocked-on-external→reconfigure;
+  nenhuma feature→plan; estado fora-do-enum→doctor. (O fork PHANTOM-STATES do
+  `verified` fica reservado pro W-DEBT; aqui `verified` só recebe um next-verb
+  conservador.) Tie-break de recência é estável (timestamp, depois slug) pra ser
+  determinístico quando `last_action_at` empata (W-003).
 - `forge doctor --json` → `{scope: "full", overall_status, exit_code, categories:
   [{title, worst, checks: [{name, status, message, remediation}]}]}`. JSON mode é
   non-interactive: assume scope `full` (o ask de scope não pode pausar pra máquina).
@@ -283,5 +296,8 @@ sobrevive ao modo independentemente.
   last_action_kind}], archived: [slug]}, l3: [{title, hook}]}`. Search/forget/distill/
   export permanecem no menu REPL — sem sub-flags por carve-out meta-flags-only.
 - `forge --help --json` → manifesto: `{forge_version, commands: [{name, summary,
-  interactive, hidden, flags, args}]}`. Deriva de `_VISIBLE_ORDER` (ingest oculto
-  omitido). Read-commands anunciam `flags: ["--json"]`; interativos `flags: []`.
+  interactive, hidden, flags, args}]}`. Itera `_VISIBLE_ORDER` (ingest oculto
+  omitido) e busca cada nome em `_COMMAND_META` — metadata hand-maintained em
+  lockstep com `COMMANDS`, NÃO auto-derivada (drift-guard de teste assegura
+  `set(_COMMAND_META) == set(_VISIBLE_ORDER)`; W-001). Read-commands anunciam
+  `flags: ["--json"]`; interativos `flags: []`.
