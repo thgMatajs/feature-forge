@@ -579,6 +579,21 @@ def read_response(
         return None
 
     response = json_io.read_json(path)
+    # IN-03 (holistic review W-DEBT r2): este check é INCONDICIONAL de
+    # propósito — diferente do guard `if "schema-version" in ...` que o WR-02
+    # introduziu em `read_pending` + `detect_race`. A divergência é deliberada,
+    # ancorada no schema do intent-protocol (docs/schemas/intent-protocol.md):
+    #   · Pra a response (campo `schema-version` = "Sempre? sim"), o host/
+    #     tty_bridge SEMPRE escreve o campo por construção. Uma response sem ele
+    #     é genuinamente anômala — não um legado pré-protocolo tolerável — então
+    #     a postura estrita (ausência => mismatch => raise, arquivo preservado
+    #     pra forense) é correta por contrato. A §"Schema evolution policy" do
+    #     schema nomeia `read_response` explicitamente como leitor estrito.
+    #   · Pra o pending, o WR-02 escolheu tolerar campo-AUSENTE porque um pending
+    #     sem o campo é malformed/legado (cai no sweep de stale), e `SchemaVersion
+    #     MismatchError` significa "versão errada", não "sem versão".
+    # Logo: read_pending/detect_race = tolerantes a ausência; read_response =
+    # estrito. Não unificar — alinhar enfraqueceria uma asserção de contrato.
     _check_schema_version(response, path=path, kind="response")
     written_id = response.get("intent-id")
     if written_id != intent_id:
