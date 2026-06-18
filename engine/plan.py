@@ -606,15 +606,36 @@ def _templates_dir(project_root: Path) -> Path:
 
     CARDS-DISCONNECT (W-DEBT): `forge init` materializa os templates mergeados
     (base canônico + seções contribuídas pelos cards ativos) em
-    `.claude/forge/templates/`. Quando esse dir existe, o plan lê de lá pra
+    `.claude/forge/templates/`. Quando esse dir existe, o plan o prefere pra
     enxergar as contribuições dos cards. Fallback pro global
     (`FORGE_HOME/templates/`) mantém backward-compat pra projetos sem cards de
     template ou pré-materialização.
+
+    NOTA: a preferência é per-DIR aqui (qual dir tentar PRIMEIRO). A resolução
+    real é per-FILE em ``_resolve_template`` — materialização PARCIAL (só alguns
+    targets contribuídos) não quebra templates não-contribuídos, que caem pro
+    global.
     """
     per_project = forge_dir(project_root) / _TEMPLATES_SUBDIR
     if per_project.is_dir():
         return per_project
     return _forge_home() / _TEMPLATES_SUBDIR
+
+
+def _resolve_template(project_root: Path, template_name: str) -> Path:
+    """Resolve UM template per-FILE: per-projeto se ESSE arquivo existe lá, senão global.
+
+    CARDS-DISCONNECT (W-DEBT): o dir per-projeto materializado contém APENAS os
+    templates que os cards ativos contribuíram (materialização parcial é o caso
+    comum — poucos cards contribuem seção). Resolver per-DIR (preferir o dir
+    inteiro) quebraria o primeiro template SEM contribuição com FileNotFoundError.
+    Per-FILE: tenta `_templates_dir(project_root) / template_name`; se esse arquivo
+    não existe, cai pro global `FORGE_HOME/templates/template_name`.
+    """
+    preferred = _templates_dir(project_root) / template_name
+    if preferred.is_file():
+        return preferred
+    return _forge_home() / _TEMPLATES_SUBDIR / template_name
 
 
 def _render_template(
@@ -637,7 +658,7 @@ def _render_template(
     templates (inofensivo). O guard `target.exists()` mantém o once-only no
     resume (não re-renderiza/re-preenche).
     """
-    src = _templates_dir(project_root) / template_name
+    src = _resolve_template(project_root, template_name)
     if not src.is_file():
         raise FileNotFoundError(
             f"template '{template_name}' not found at {src}. "
@@ -848,7 +869,7 @@ def _run_wave_d(
             renderer.write(f"  ├ EXIST {target.relative_to(project_root)}")
             created.append(target)
             continue
-        src = _templates_dir(project_root) / WAVE_D_TASK_TEMPLATE
+        src = _resolve_template(project_root, WAVE_D_TASK_TEMPLATE)
         if not src.is_file():
             raise FileNotFoundError(
                 f"template '{WAVE_D_TASK_TEMPLATE}' not found at {src}."

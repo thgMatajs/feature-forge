@@ -874,21 +874,51 @@ def _merge_forge_hooks_into_settings(project_root: Path) -> None:
 _FORGE_DRIVER_MARKER = "<!-- FORGE_AI_DRIVER -->"
 
 
+def _source_template_name(target: str) -> str:
+    """Mapeia o `target` de um card (nome de OUTPUT) pro template-fonte.
+
+    Convenção canônica (``docs/schemas/card.md`` + ``cards/*/card.yaml``): o campo
+    ``target`` carrega o nome do documento de saída do pacote de feature
+    (ex.: ``tech-spec.md``, ``task-contract.yaml``, ``data-contract-spec.yaml``).
+    O template-fonte em ``FORGE_HOME/templates/`` carrega o sufixo ``.template``
+    antes da extensão (ex.: ``tech-spec.template.md``) — a MESMA convenção que as
+    tuplas ``WAVE_*_TEMPLATES`` em ``plan.py`` (``(template_name, output_name)``)
+    encodam, e que ``plan._render_template`` procura por ``template_name``.
+
+    Insere ``.template`` antes da última extensão. Se o nome já carrega
+    ``.template.`` (target declarado no formato de template, defensivo), retorna
+    inalterado pra não duplicar o sufixo.
+    """
+    if ".template." in target:
+        return target
+    stem, dot, ext = target.rpartition(".")
+    if not dot:
+        # Sem extensão — nada a inserir; devolve o nome cru (será pulado se
+        # o base não existir, com aviso).
+        return target
+    return f"{stem}.template.{ext}"
+
+
 def _materialize_merged_templates(
     project_root: Path, merged: "MergedContributions"
 ) -> list[Path]:
     """CARDS-DISCONNECT — materializa os templates mergeados per-projeto.
 
-    Pra cada `target` em `merged.templates`, renderiza o template canônico do
-    FORGE_HOME com as contribuições aplicadas (reusando ``render_merged_template``
-    — o MESMO render que ``forge raw rebuild-templates`` usa) e escreve em
-    ``.claude/forge/templates/{target}``. Assim o fluxo default `init`→`plan`
-    enxerga as seções que os cards ativos contribuíram, em vez de só os templates
-    canônicos flat do FORGE_HOME.
+    Pra cada `target` em `merged.templates` (nome de OUTPUT do card, ex.
+    ``tech-spec.md``), resolve o template-fonte correspondente
+    (``tech-spec.template.md``) via ``_source_template_name`` — a MESMA convenção
+    ``(template_name, output_name)`` que as tuplas ``WAVE_*_TEMPLATES`` de
+    ``plan.py`` usam. Renderiza o base canônico do FORGE_HOME com as contribuições
+    aplicadas (reusando ``render_merged_template`` — o MESMO render que
+    ``forge raw rebuild-templates`` usa) e escreve em
+    ``.claude/forge/templates/{template_name}``. O materializado carrega o nome do
+    template-fonte (não o de output) porque ``plan._render_template`` resolve por
+    ``template_name`` — assim o fluxo default `init`→`plan` enxerga as seções que
+    os cards ativos contribuíram.
 
-    Idempotente: re-init re-renderiza por cima. Targets cujo base não existe em
-    FORGE_HOME/templates são pulados com aviso (mesma postura tolerante do
-    `rebuild-templates`). Retorna a lista de paths materializados.
+    Idempotente: re-init re-renderiza por cima. Targets cujo template-fonte não
+    existe em FORGE_HOME/templates são pulados com aviso (mesma postura tolerante
+    do `rebuild-templates`). Retorna a lista de paths materializados.
     """
     if not merged.templates:
         return []
@@ -905,16 +935,18 @@ def _materialize_merged_templates(
     dest_root = forge_dir(project_root) / "templates"
     written: list[Path] = []
     for target, contributions in sorted(merged.templates.items()):
-        base = templates_root / target
+        template_name = _source_template_name(target)
+        base = templates_root / template_name
         if not base.is_file():
             renderer.write(
                 renderer.colored(
-                    f"  ! template-alvo ausente em FORGE_HOME: {target} — pulado.",
+                    f"  ! template-fonte ausente em FORGE_HOME: {template_name} "
+                    f"(target {target}) — pulado.",
                     "yellow",
                 )
             )
             continue
-        out = dest_root / target
+        out = dest_root / template_name
         ensure_dir(out.parent)
         try:
             render_merged_template(base, contributions, out)

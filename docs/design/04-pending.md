@@ -271,6 +271,17 @@ auditoria consolidada (§6 item 11) + `auditoria-llm-first` §7-8:
   `pending_lock` é específico do intent protocol; aplicá-lo a L2 exigiria
   generalização fora do escopo). Critério de reentrada: relato concreto de L2
   corrompido OR introdução de um segundo writer concorrente.
+- **REBUILD-TEMPLATES-TARGET-MISMATCH** — **NÃO endereçado no W-DEBT (fora do
+  escopo do CR-01; afeta caminho pré-existente).** `forge raw rebuild-templates`
+  (`engine/raw.py:162-170`) resolve `templates_root / target` direto, mas o
+  `target` do card é o nome de OUTPUT (`tech-spec.md`), não o do template-fonte
+  (`tech-spec.template.md`). Logo todo target real cai em "target not found" e o
+  re-render é no-op — o MESMO mismatch que o CR-01 (holistic review W-DEBT) corrigiu
+  em `init._materialize_merged_templates` via `_source_template_name`. O fix do
+  `init`→`plan` (per-projeto) tornou o `rebuild-templates` (mutação global) menos
+  crítico, mas o comando segue inerte. Critério de reentrada: aplicar
+  `_source_template_name` em `_rebuild_templates` (e considerar promover o helper
+  pra `engine/cards/merger.py` se um terceiro caller surgir).
 - **M9 DOCTOR-MASKS-FAILURE** — **NÃO endereçado no W-DEBT (fora do escopo da
   task de cleanup).** `doctor` retorna 0 com warnings; strictness só via env
   `FORGE_DOCTOR_STRICT` não-documentada. Critério de reentrada: hardening de
