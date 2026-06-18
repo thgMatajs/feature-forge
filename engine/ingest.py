@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Optional
 
 from engine.cards.snapshotter import compute_directory_sha256
+from engine.host.env import scrubbed_subprocess_env
 from engine.graph.incremental import remove_file as graph_remove_file
 from engine.graph.incremental import update_file as graph_update_file
 from engine.utils.paths import (
@@ -374,7 +375,13 @@ def _handle_post_subagent_validate(args: dict[str, str], project_root: Path) -> 
         if task_id:
             cmd.extend(["--id", task_id])
         try:
-            subprocess.run(cmd, capture_output=True, timeout=30, check=False)
+            subprocess.run(
+                cmd,
+                capture_output=True,
+                timeout=30,
+                check=False,
+                env=scrubbed_subprocess_env(),  # A3 ENV-1: filho não herda host agêntico
+            )
         except subprocess.TimeoutExpired:
             _warn(f"forge ingest: validator {v_name} timed out")
         except OSError as exc:  # pragma: no cover - defensive
@@ -452,6 +459,7 @@ def _handle_ci_pr_ingest(args: dict[str, str], project_root: Path) -> None:
                 text=True,
                 timeout=60,
                 check=False,
+                env=scrubbed_subprocess_env(),  # A3 ENV-1: filho não herda host agêntico
             )
             tail = (proc.stdout or "").strip().split("\n")[-1] if proc.stdout else "{}"
             try:

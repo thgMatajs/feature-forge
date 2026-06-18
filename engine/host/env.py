@@ -40,3 +40,43 @@ def detect_cursor() -> bool:
 
 def detect_any_agentic() -> bool:
     return detect_claude_code() or detect_opencode() or detect_codex() or detect_cursor()
+
+
+# A3 ENV-1 — key-set canônico de sinais de host agêntico. Alinhado a
+# tests/unit/test_cli_upgrade_wired.py (_SCRUB_EXACT / _SCRUB_PREFIXES) e aos
+# detectores acima. EXATAS: comparação por igualdade. PREFIXES: startswith.
+_SCRUB_EXACT: frozenset[str] = frozenset({
+    "CLAUDECODE",
+    "FORGE_FORCE_INTENT_MODE",
+    "FORGE_FORCE_TTY_MODE",
+})
+_SCRUB_PREFIXES: tuple[str, ...] = ("OPENCODE_", "CODEX", "CURSOR_")
+
+
+def _is_agentic_host_key(name: str) -> bool:
+    """True se ``name`` é um sinal de host agêntico que um subprocesso filho
+    NÃO deve herdar."""
+    if name in _SCRUB_EXACT:
+        return True
+    return any(name.startswith(p) for p in _SCRUB_PREFIXES)
+
+
+def scrubbed_subprocess_env() -> dict[str, str]:
+    """Cópia de ``os.environ`` sem os sinais de host agêntico.
+
+    A3 ENV-1: quando o forge spawna um subprocesso (ex.: validators via
+    ``engine.ingest``), o filho não deve herdar CLAUDECODE / OPENCODE_* /
+    CODEX* / CURSOR_* / FORGE_FORCE_*_MODE. Caso contrário, um ``forge``
+    aninhado faria ``detect_host`` escolher um adapter agêntico, emitir o
+    marker ``<FORGE_INTENT/>`` + exit 2, e esperar um driver que aquele
+    contexto não tem — travando (hang).
+
+    Deny-list cirúrgica (remove só os sinais de host) — distinta de
+    ``engine._sandbox.env.build_safe_env``, que é uma allowlist agressiva pra
+    a sandbox de QA (objetivo: conter segredos). Os dois coexistem por terem
+    objetivos diferentes; aqui preservamos PATH/HOME/JAVA_HOME/etc. que um
+    validator de ingest precisa.
+
+    Não muta ``os.environ`` — retorna cópia.
+    """
+    return {k: v for k, v in os.environ.items() if not _is_agentic_host_key(k)}
