@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     # eager (validators é layer-superior na arquitetura — engine consome
     # type-only).
     from validators._common import CapabilityCatalog  # noqa: F401
+    from engine.cards.merger import MergedContributions  # noqa: F401
 
 from engine import __version__ as FORGE_VERSION
 from engine.cards.grant import (
@@ -49,7 +50,8 @@ from engine.cards.grant import (
     evaluate_sensitive_grants,
 )
 from engine.cards.loader import load_all_cards, CardManifest
-from engine.cards.merger import merge_contributions
+from engine.cards import CardError
+from engine.cards.merger import merge_contributions, render_merged_template
 from engine.cards.resolver import resolve
 from engine.cards.snapshotter import snapshot_card
 from engine.detection import _eval as _detection_eval
@@ -890,6 +892,58 @@ def _merge_forge_hooks_into_settings(project_root: Path) -> None:
 _FORGE_DRIVER_MARKER = "<!-- FORGE_AI_DRIVER -->"
 
 
+def _materialize_merged_templates(
+    project_root: Path, merged: "MergedContributions"
+) -> list[Path]:
+    """CARDS-DISCONNECT — materializa os templates mergeados per-projeto.
+
+    Pra cada `target` em `merged.templates`, renderiza o template canônico do
+    FORGE_HOME com as contribuições aplicadas (reusando ``render_merged_template``
+    — o MESMO render que ``forge raw rebuild-templates`` usa) e escreve em
+    ``.claude/forge/templates/{target}``. Assim o fluxo default `init`→`plan`
+    enxerga as seções que os cards ativos contribuíram, em vez de só os templates
+    canônicos flat do FORGE_HOME.
+
+    Idempotente: re-init re-renderiza por cima. Targets cujo base não existe em
+    FORGE_HOME/templates são pulados com aviso (mesma postura tolerante do
+    `rebuild-templates`). Retorna a lista de paths materializados.
+    """
+    if not merged.templates:
+        return []
+    templates_root = forge_home() / "templates"
+    if not templates_root.is_dir():
+        renderer.write(
+            renderer.colored(
+                f"  ! templates dir não encontrado em {templates_root} — "
+                "materialização de cards pulada.",
+                "yellow",
+            )
+        )
+        return []
+    dest_root = forge_dir(project_root) / "templates"
+    written: list[Path] = []
+    for target, contributions in sorted(merged.templates.items()):
+        base = templates_root / target
+        if not base.is_file():
+            renderer.write(
+                renderer.colored(
+                    f"  ! template-alvo ausente em FORGE_HOME: {target} — pulado.",
+                    "yellow",
+                )
+            )
+            continue
+        out = dest_root / target
+        ensure_dir(out.parent)
+        try:
+            render_merged_template(base, contributions, out)
+            written.append(out)
+        except CardError as exc:
+            renderer.write(
+                renderer.colored(f"  ! {target}: {exc}", "yellow")
+            )
+    return written
+
+
 def _install_ai_driver(project_root: Path) -> None:
     """Instala a SKILL.md (Claude Code) + AGENTS.md (opencode) no consumidor.
 
@@ -1493,6 +1547,19 @@ def _run_pipeline(project_root: Path) -> int:
     if merged.warnings:
         for w in merged.warnings[:5]:
             renderer.write(renderer.colored(f"merger warn: {w}", "yellow"))
+    # CARDS-DISCONNECT (W-DEBT): materializa os templates mergeados per-projeto
+    # em .claude/forge/templates/ — o fluxo default init→plan passa a enxergar
+    # as seções contribuídas pelos cards ativos (antes só rebuild-templates
+    # global fazia a ponte).
+    materialized = _materialize_merged_templates(project_root, merged)
+    if materialized:
+        renderer.write(
+            renderer.colored(
+                f"  ✓ {len(materialized)} template(s) de card materializado(s) "
+                "em .claude/forge/templates/",
+                "green",
+            )
+        )
 
     # ── Step 9 — Inventory snapshots ────────────────────────────────────────
     ensure_dir(inventory_dir(project_root))

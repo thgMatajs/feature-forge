@@ -9,6 +9,14 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Added
 
+- **CARDS-DISCONNECT** (W-DEBT, 2026-06-18): `forge init` agora materializa os
+  templates mergeados per-projeto em `.claude/forge/templates/`
+  (`_materialize_merged_templates` reusa `render_merged_template` — o mesmo
+  render que `forge raw rebuild-templates` usa, mas escrevendo no destino
+  per-projeto em vez de mutar o FORGE_HOME global). `plan._templates_dir(project_root)`
+  passa a preferir esse dir quando presente, com fallback pro global. O fluxo
+  default `init`→`plan` deixa de ignorar as seções de template que os cards
+  ativos contribuem (validators de card já chegavam via snapshot).
 - Camada de interação AI-first (Wave 1): driver `skills/feature-forge/SKILL.md`
   (Claude Code) + `templates/AGENTS.md.template` (opencode) instalados
   brownfield-safe por `forge init`. Ensinam o host a dirigir o intent loop

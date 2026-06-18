@@ -85,10 +85,10 @@ def test_render_template_substitutes_lowercase_token(
         "# Feature {{feature_slug}}\nslug: {{feature_slug}}\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(plan, "_templates_dir", lambda: fake_templates)
+    monkeypatch.setattr(plan, "_templates_dir", lambda _root: fake_templates)
 
     target = tmp_path / "out.md"
-    created = plan._render_template("x.template.md", target, "lembrete-rega")
+    created = plan._render_template("x.template.md", target, "lembrete-rega", tmp_path)
     assert created is True
     rendered = target.read_text(encoding="utf-8")
     assert "{{feature_slug}}" not in rendered, "lowercase token não substituído"
@@ -117,13 +117,14 @@ def test_render_template_fills_source_tokens(
     (fake_templates / "intake.template.md").write_text(
         _INTAKE_TOKEN_BODY, encoding="utf-8"
     )
-    monkeypatch.setattr(plan, "_templates_dir", lambda: fake_templates)
+    monkeypatch.setattr(plan, "_templates_dir", lambda _root: fake_templates)
 
     target = tmp_path / "feature-intake.md"
     created = plan._render_template(
         "intake.template.md",
         target,
         "detalhe-do-bonsai",
+        tmp_path,
         extra_tokens={
             "{{source_type}}": "phrase",
             "{{source_ref_or_none}}": "adicionar detalhe do bonsai",
@@ -150,13 +151,14 @@ def test_render_template_extra_tokens_noop_on_other_templates(
     (fake_templates / "tech.template.md").write_text(
         "# Tech spec {{feature_slug}}\n", encoding="utf-8"
     )
-    monkeypatch.setattr(plan, "_templates_dir", lambda: fake_templates)
+    monkeypatch.setattr(plan, "_templates_dir", lambda _root: fake_templates)
 
     target = tmp_path / "tech-spec.md"
     created = plan._render_template(
         "tech.template.md",
         target,
         "x-feature",
+        tmp_path,
         extra_tokens={
             "{{source_type}}": "phrase",
             "{{source_ref_or_none}}": "irrelevante",
@@ -183,7 +185,7 @@ def test_run_static_wave_threads_source_tokens_to_intake(
     (fake_templates / "intake.template.md").write_text(
         _INTAKE_TOKEN_BODY, encoding="utf-8"
     )
-    monkeypatch.setattr(plan, "_templates_dir", lambda: fake_templates)
+    monkeypatch.setattr(plan, "_templates_dir", lambda _root: fake_templates)
     # Não bloquear no prompt continuar/pausar.
     monkeypatch.setattr(plan, "_continue_or_pause", lambda slug, label: "continuar")
 
@@ -354,14 +356,14 @@ def _render_real_intake(
     (fake_templates / "feature-intake.template.md").write_text(
         _REAL_INTAKE_TEMPLATE.read_text(encoding="utf-8"), encoding="utf-8"
     )
-    monkeypatch.setattr(plan, "_templates_dir", lambda: fake_templates)
+    monkeypatch.setattr(plan, "_templates_dir", lambda _root: fake_templates)
 
     tokens = plan._source_tokens_for(argv)
     target = tmp_path / "feature-intake.md"
     if target.exists():
         target.unlink()
     plan._render_template(
-        "feature-intake.template.md", target, "my-slug", extra_tokens=tokens
+        "feature-intake.template.md", target, "my-slug", tmp_path, extra_tokens=tokens
     )
     rendered = target.read_text(encoding="utf-8")
     # Frontmatter = bloco entre o primeiro par de `---`.

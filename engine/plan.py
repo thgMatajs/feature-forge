@@ -67,6 +67,7 @@ from engine.utils.paths import (
     feature_dir,
     feature_path as _feature_path,
     find_project_root,
+    forge_dir,
     workflow_config_path,
 )
 from engine.utils.yaml_io import read_yaml_or_default, write_yaml
@@ -600,7 +601,19 @@ def _forge_home() -> Path:
     return _fh()
 
 
-def _templates_dir() -> Path:
+def _templates_dir(project_root: Path) -> Path:
+    """Resolve o dir de templates, preferindo o materializado per-projeto.
+
+    CARDS-DISCONNECT (W-DEBT): `forge init` materializa os templates mergeados
+    (base canônico + seções contribuídas pelos cards ativos) em
+    `.claude/forge/templates/`. Quando esse dir existe, o plan lê de lá pra
+    enxergar as contribuições dos cards. Fallback pro global
+    (`FORGE_HOME/templates/`) mantém backward-compat pra projetos sem cards de
+    template ou pré-materialização.
+    """
+    per_project = forge_dir(project_root) / _TEMPLATES_SUBDIR
+    if per_project.is_dir():
+        return per_project
     return _forge_home() / _TEMPLATES_SUBDIR
 
 
@@ -608,6 +621,7 @@ def _render_template(
     template_name: str,
     target: Path,
     slug: str,
+    project_root: Path,
     *,
     extra_tokens: Optional[dict[str, str]] = None,
 ) -> bool:
@@ -623,7 +637,7 @@ def _render_template(
     templates (inofensivo). O guard `target.exists()` mantém o once-only no
     resume (não re-renderiza/re-preenche).
     """
-    src = _templates_dir() / template_name
+    src = _templates_dir(project_root) / template_name
     if not src.is_file():
         raise FileNotFoundError(
             f"template '{template_name}' not found at {src}. "
@@ -762,7 +776,7 @@ def _run_static_wave(
     for template_name, output_name in templates:
         target = feature_path / output_name
         was_new = _render_template(
-            template_name, target, slug, extra_tokens=extra_tokens
+            template_name, target, slug, project_root, extra_tokens=extra_tokens
         )
         marker = "NEW " if was_new else "EXIST"
         renderer.write(f"  ├ {marker}  {target.relative_to(project_root)}")
@@ -820,7 +834,7 @@ def _run_wave_d(
 
     head_template, head_output = WAVE_D_HEAD_TEMPLATE
     breakdown_target = feature_path / head_output
-    was_new = _render_template(head_template, breakdown_target, slug)
+    was_new = _render_template(head_template, breakdown_target, slug, project_root)
     marker = "NEW " if was_new else "EXIST"
     renderer.write(f"  ├ {marker}  {breakdown_target.relative_to(project_root)}")
 
@@ -834,7 +848,7 @@ def _run_wave_d(
             renderer.write(f"  ├ EXIST {target.relative_to(project_root)}")
             created.append(target)
             continue
-        src = _templates_dir() / WAVE_D_TASK_TEMPLATE
+        src = _templates_dir(project_root) / WAVE_D_TASK_TEMPLATE
         if not src.is_file():
             raise FileNotFoundError(
                 f"template '{WAVE_D_TASK_TEMPLATE}' not found at {src}."
@@ -902,7 +916,7 @@ def _run_wave_e(
     created: list[Path] = []
     for template_name, output_name in WAVE_E_TEMPLATES:
         target = feature_path / output_name
-        was_new = _render_template(template_name, target, slug)
+        was_new = _render_template(template_name, target, slug, project_root)
         marker = "NEW " if was_new else "EXIST"
         renderer.write(f"  ├ {marker}  {target.relative_to(project_root)}")
         created.append(target)

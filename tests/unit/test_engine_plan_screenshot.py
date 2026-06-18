@@ -319,7 +319,7 @@ def _render_intake_with(
     (fake_templates / "intake.template.md").write_text(
         _INTAKE_SCREENSHOT_BODY, encoding="utf-8"
     )
-    monkeypatch.setattr(plan, "_templates_dir", lambda: fake_templates)
+    monkeypatch.setattr(plan, "_templates_dir", lambda _root: fake_templates)
     monkeypatch.setattr(plan, "_continue_or_pause", lambda slug, label: "continuar")
 
     feature_path = tmp_path / "feature"
@@ -401,7 +401,7 @@ def test_render_source_ref_literal_token_not_mangled(
         "{{screenshots_relative_paths_csv}}\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(plan, "_templates_dir", lambda: fake_templates)
+    monkeypatch.setattr(plan, "_templates_dir", lambda _root: fake_templates)
     monkeypatch.setattr(plan, "_continue_or_pause", lambda slug, label: "continuar")
 
     feature_path = tmp_path / "feature"
