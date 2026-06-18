@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from engine.memory.l1 import (
+    _VALID_STATES,
     L1State,
     append_history,
     current_subtype,
@@ -468,6 +469,13 @@ def _undo_abort(project_root: Path, feature_slug: str) -> bool:
     quando ausente — feature abortada por engine antigo). Limpa os markers
     `pre-abort-status`/`aborted-reason` e loga no undo-log. NÃO-destrutivo
     (só re-escreve o status), então confirm simples — não o 2-step do git revert.
+
+    WR-01 (holistic review W-DEBT, T1×T3): valida `pre-abort-status` contra
+    `_VALID_STATES` ANTES de restaurar. Um valor ausente OU não-membro do enum
+    (abort legado, OR um estado removido por uma wave futura — exatamente o que
+    T1 acabou de fazer com `verified`/`paused`) cai pro default seguro `deferred`
+    com aviso mentor-calmo, em vez de propagar o `MemoryError` cru de
+    `write_l1_status` como traceback no dispatch.
     """
     state = read_l1_status(feature_slug, project_root)
     if state is None or state.status != "aborted":
@@ -476,7 +484,17 @@ def _undo_abort(project_root: Path, feature_slug: str) -> bool:
             "yellow",
         ))
         return False
-    prior = state.raw.get("pre-abort-status") or "deferred"
+    raw_prior = state.raw.get("pre-abort-status") or "deferred"
+    if raw_prior in _VALID_STATES:
+        prior = raw_prior
+    else:
+        renderer.write(renderer.colored(
+            f"  pre-abort-status '{raw_prior}' não é um estado válido "
+            f"(provável abort legado ou estado removido) — restaurando para "
+            f"'deferred', o estado seguro auto-resumável.",
+            "yellow",
+        ))
+        prior = "deferred"
     if not question.confirm(
         f"Restaurar {feature_slug} de 'aborted' para '{prior}'?", default=False
     ):

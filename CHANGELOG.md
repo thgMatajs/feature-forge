@@ -104,6 +104,14 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Fixed
 
+- **un-abort enum guard** (W-DEBT holistic review CR/WR-01, 2026-06-18) —
+  `_undo_abort` (`engine/undo.py`) valida `pre-abort-status` contra
+  `_VALID_STATES` ANTES de restaurar. Um valor ausente OU não-membro do enum
+  (abort legado, OR um estado removido por wave futura — exatamente o que T1 fez
+  com `verified`/`paused`) cai pro default seguro `deferred` com aviso
+  mentor-calmo, em vez de propagar o `MemoryError` cru de `write_l1_status` como
+  traceback no dispatch do `forge undo`. Fecha a assimetria T1×T3 (recovery não
+  defendia contra estados que deixaram de ser válidos).
 - **SCHEMA-1 / SCHEMA-LEAK** (W-DEBT, 2026-06-18) — `_check_schema_version`
   (`engine/ui/intent_state.py`) agora roda simetricamente em `read_pending` e
   `detect_race`, não só em `read_response`: version skew num pending vira a

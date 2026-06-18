@@ -72,6 +72,34 @@ def test_undo_abort_defaults_deferred_when_no_marker(
     assert st.status == "deferred"
 
 
+def test_undo_abort_restores_deferred_when_prior_status_invalid(
+    tmp_project_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WR-01 (T1×T3): pre-abort-status com valor que não é mais membro de
+    `_VALID_STATES` (ex.: `verified` — removido por T1, ou abort de versão mista)
+    cai pro default seguro `deferred` SEM traceback (não propaga o `MemoryError`
+    de `write_l1_status`).
+    """
+    monkeypatch.setattr("engine.undo.question.confirm", lambda *a, **k: True)
+    write_l1_status(
+        L1State(
+            feature_slug="stale",
+            status="aborted",
+            last_action_at="2026-06-18T00:00:00Z",
+            last_action_kind="aborted",
+            # `verified` foi removido de _VALID_STATES por T1 (PHANTOM-STATES).
+            raw={"state": "aborted", "pre-abort-status": "verified"},
+        ),
+        tmp_project_root,
+    )
+    # Não deve levantar — restaura `deferred` em vez de explodir no write.
+    assert _undo_abort(tmp_project_root, "stale") is True
+    st = read_l1_status("stale", tmp_project_root)
+    assert st is not None
+    assert st.status == "deferred"
+    assert "pre-abort-status" not in st.raw
+
+
 def test_undo_abort_noop_when_not_aborted(
     tmp_project_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
