@@ -1,5 +1,7 @@
 # W3: Token Economy / Machine-Legibility Implementation Plan
 
+<!-- audit-override: C2 — plano-driven sem spec dedicado; fonte de-facto é docs/reports/auditoria-consolidada-2026-06-17.md §3.2 A1/A2 + §4 + §6 (roadmap P0 item 5), com cobertura task-a-task confirmada na review r1 (A1 → T1-T5, A2 → T2+T6). Aceitável por "Quando NÃO há spec" do plan-auditor. -->
+
 > **For agentic workers:** REQUIRED SUB-SKILL: use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Each task ends with an atomic commit.
 
 **Spec:** nenhum (plano-driven; W3 não tem spec dedicado — escopo deriva de `docs/reports/auditoria-consolidada-2026-06-17.md` §3.2 A1/A2 + §4 + §6, roadmap P0 item 5).
@@ -51,10 +53,12 @@ A1 + A2 na §3.2 da auditoria) e fecha os gaps correspondentes em `04-pending.md
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
 │ engine/cli.py::main()                                                      │
-│   1. resolve output-mode (detect_output_mode):                            │
-│        meta-flag --json em argv  ─┐                                        │
+│   1. resolve output-mode (detect_output_mode(argv, command=cmd)):         │
+│        JSON SÓ resolve se cmd ∈ _JSON_CAPABLE_COMMANDS                     │
+│        (status/doctor/verify/memory/graph — read-commands).               │
+│        meta-flag --json em argv  ─┐  (gated no allowlist)                  │
 │        FORGE_OUTPUT=json env      ├─▶ OutputMode.JSON                      │
-│        else: isatty? ──▶ TTY  : PLAIN                                      │
+│        else / comando interativo: isatty? ──▶ TTY  : PLAIN                 │
 │   2. set context var (engine/ui/output_mode.py::set_output_mode)          │
 │   3. dispatch handler(rest)                                               │
 └──────────────────────────────────────────────────────────────────────────┘
@@ -76,13 +80,28 @@ flag por callsite). Isso significa que, em JSON mode, qualquer `renderer.write` 
 cinematográfica vira no-op no stdout — o handler do read-command, em JSON mode, NÃO
 chama os `_render_*` de prosa; ele monta a estrutura e dá um único `print(json.dumps(...))`.
 
-**Escopo do JSON mode (Decisão de design 2, baked-in):** `FORGE_OUTPUT=json` e o
-meta-flag `--json` afetam **somente read-commands** (`status`/`doctor`/`verify`/`memory`/`graph`).
-Comandos INTERATIVOS (`plan`/`implement`/`init`/`reconfigure`/`evolve`/`qa`) MANTÊM o intent
+**Escopo do JSON mode (Decisão de design 2, baked-in — ENFORCE via allowlist):**
+`FORGE_OUTPUT=json` e o meta-flag `--json` afetam **somente read-commands**
+(`status`/`doctor`/`verify`/`memory`/`graph`). Comandos INTERATIVOS
+(`plan`/`implement`/`init`/`reconfigure`/`evolve`/`qa`/`undo`/`raw`) MANTÊM o intent
 protocol intacto — `FORGE_OUTPUT`/`--json` NÃO alteram comportamento deles, não tocam o
-marker `<FORGE_INTENT/>` nem o exit-2. Se um comando interativo for invocado com
-`FORGE_OUTPUT=json` no env, o output-mode resolve normalmente mas o handler interativo
-simplesmente não consulta JSON mode — segue intent protocol.
+marker `<FORGE_INTENT/>` nem o exit-2.
+
+O enforcement é **estrutural, não por convenção** (a defesa anterior — "o handler
+interativo simplesmente não consulta JSON mode" — cobria o `print(json.dumps(...))` mas
+NÃO o silenciamento global de `renderer.write`, que vira no-op pra TODO callsite quando o
+modo resolve JSON). Por isso o gatilho de JSON mode é GATED num allowlist explícito de
+read-commands. `detect_output_mode` só resolve `OutputMode.JSON` quando o subcomando
+despachado pertence a `_JSON_CAPABLE_COMMANDS = {"status","doctor","verify","memory","graph"}`.
+Pra qualquer comando fora desse conjunto (todos os interativos), `FORGE_OUTPUT=json` no env
+ou um `--json` espúrio no argv são IGNORADOS pro rendering: o modo resolve `TTY`/`PLAIN`
+normalmente, a UX cinematográfica não degrada, e o intent protocol roda como sempre.
+
+Fato técnico que sustenta isso (verificado no código pelo auditor): o marker é emitido por
+`engine/host/adapters/claude_code.py` via `sys.stdout.write(marker)` DIRETO (não via
+`renderer.write`) — então o no-op do chokepoint em JSON mode jamais engole o marker. O
+allowlist NÃO existe pra proteger o marker (que já sobrevive); existe pra impedir a
+DEGRADAÇÃO silenciosa da UX cinematográfica dos interativos sob `FORGE_OUTPUT=json` no env.
 
 **Modelo de saída (Decisão de design 3, baked-in):** idêntico ao `forge graph --json`
 (`engine/graph_cli.py::_run_json_query`): stdout SÓ JSON, `print(json.dumps(result,
@@ -92,7 +111,8 @@ padrão; não duplica infra.
 Módulos NOVOS:
 
 - `engine/ui/output_mode.py` — enum `OutputMode` (`TTY`/`PLAIN`/`JSON`) + context var +
-  `detect_output_mode(argv, *, stream)` + `set_output_mode`/`get_output_mode`/`reset_output_mode`.
+  constante `_JSON_CAPABLE_COMMANDS` (allowlist de read-commands) +
+  `detect_output_mode(argv, *, command=None, stream)` + `set_output_mode`/`get_output_mode`/`reset_output_mode`.
 
 Módulos MODIFICADOS:
 
@@ -216,14 +236,15 @@ Valem para TODAS as tasks. Subagente executor relê antes de cada commit:
 **Files:**
 - Create: `engine/ui/output_mode.py`
 - Modify: `engine/ui/renderer.py:198` (`write`)
-- Modify: `engine/cli.py:254` (`main` — resolve + set + reset output-mode)
+- Modify: `engine/cli.py:254` (`main` — resolve + set + reset output-mode, gated no allowlist)
 - Create: `tests/unit/test_output_mode.py`
 - Create: `tests/unit/test_renderer_output_mode.py`
+- Create: `tests/unit/test_output_mode_interactive_safety.py` (guard H-001 — JSON mode não vaza pro caminho interativo)
 
 **Interfaces:**
-- Produces: `engine.ui.output_mode.OutputMode` (enum TTY/PLAIN/JSON), `detect_output_mode(argv, *, stream=None) -> OutputMode`, `set_output_mode(mode) -> token`, `get_output_mode() -> OutputMode`, `reset_output_mode(token) -> None`.
+- Produces: `engine.ui.output_mode.OutputMode` (enum TTY/PLAIN/JSON), constante `_JSON_CAPABLE_COMMANDS` (allowlist), `detect_output_mode(argv, *, command=None, stream=None) -> OutputMode`, `set_output_mode(mode) -> token`, `get_output_mode() -> OutputMode`, `reset_output_mode(token) -> None`, `is_json_mode() -> bool`.
 - Consumes (renderer): `output_mode.get_output_mode()` em `renderer.write`.
-- Consumes (cli): `output_mode.detect_output_mode` + set/reset no `main`.
+- Consumes (cli): `output_mode.detect_output_mode(argv, command=cmd)` + set/reset no `main`. O `command` é o subcomando (`argv[0]`); só read-commands no allowlist resolvem JSON.
 
 **Steps:**
 
@@ -259,18 +280,64 @@ Valem para TODAS as tasks. Subagente executor relê antes de cada commit:
           def isatty(self):
               return True
 
-      # --json wins even over a tty.
-      assert om.detect_output_mode(["status", "--json"], stream=_TTY()) is om.OutputMode.JSON
+      # --json wins even over a tty — for a read-command in the allowlist.
+      assert (
+          om.detect_output_mode(["status", "--json"], command="status", stream=_TTY())
+          is om.OutputMode.JSON
+      )
 
 
   def test_forge_output_env_yields_json(monkeypatch):
       monkeypatch.setenv("FORGE_OUTPUT", "json")
-      assert om.detect_output_mode(["status"], stream=io.StringIO()) is om.OutputMode.JSON
+      assert (
+          om.detect_output_mode(["status"], command="status", stream=io.StringIO())
+          is om.OutputMode.JSON
+      )
 
 
   def test_forge_output_env_unknown_value_ignored(monkeypatch):
       monkeypatch.setenv("FORGE_OUTPUT", "yaml")  # unsupported → ignored
-      assert om.detect_output_mode(["status"], stream=io.StringIO()) is om.OutputMode.PLAIN
+      assert (
+          om.detect_output_mode(["status"], command="status", stream=io.StringIO())
+          is om.OutputMode.PLAIN
+      )
+
+
+  def test_json_gated_to_read_commands_allowlist(monkeypatch):
+      # H-001 — Decisão de design 2 enforced structurally: FORGE_OUTPUT=json on an
+      # INTERACTIVE command resolves to PLAIN/TTY, NEVER JSON. The cinematic UX of
+      # plan/implement/init/... must not degrade just because the env var is set.
+      monkeypatch.setenv("FORGE_OUTPUT", "json")
+      for interactive in ("plan", "implement", "init", "reconfigure", "evolve", "qa", "undo", "raw"):
+          assert (
+              om.detect_output_mode([interactive], command=interactive, stream=io.StringIO())
+              is om.OutputMode.PLAIN
+          ), f"{interactive} must ignore FORGE_OUTPUT=json (interactive carve-out)"
+
+
+  def test_json_meta_flag_ignored_on_interactive_command(monkeypatch):
+      # A spurious --json in argv for an interactive command is ignored too.
+      monkeypatch.delenv("FORGE_OUTPUT", raising=False)
+      assert (
+          om.detect_output_mode(["plan", "--json"], command="plan", stream=io.StringIO())
+          is om.OutputMode.PLAIN
+      )
+
+
+  def test_all_read_commands_are_json_capable(monkeypatch):
+      monkeypatch.setenv("FORGE_OUTPUT", "json")
+      for read_cmd in ("status", "doctor", "verify", "memory", "graph"):
+          assert (
+              om.detect_output_mode([read_cmd], command=read_cmd, stream=io.StringIO())
+              is om.OutputMode.JSON
+          ), f"{read_cmd} is a read-command and must honour JSON mode"
+
+
+  def test_no_command_falls_back_to_stream_mode(monkeypatch):
+      # When command is None (e.g. bare invocation / library caller), JSON is not
+      # resolved — the allowlist cannot be satisfied, so we degrade to TTY/PLAIN.
+      monkeypatch.setenv("FORGE_OUTPUT", "json")
+      assert om.detect_output_mode([], command=None, stream=io.StringIO()) is om.OutputMode.PLAIN
 
 
   def test_set_get_reset_roundtrip():
@@ -293,9 +360,14 @@ Valem para TODAS as tasks. Subagente executor relê antes de cada commit:
   can consult it without per-callsite flags. Thread-safe by construction —
   covers the validator-dispatch path that subprocesses (Decisão de design 1).
 
-  Scope (Decisão de design 2): ``OutputMode.JSON`` is only ever ACTED ON by
-  read-commands (status/doctor/verify/memory/graph). Interactive commands keep
-  the intent protocol regardless of mode — they simply never consult JSON mode.
+  Scope (Decisão de design 2 — ENFORCED via allowlist): ``OutputMode.JSON`` is
+  only ever RESOLVED for read-commands (status/doctor/verify/memory/graph). For
+  interactive commands (plan/implement/init/reconfigure/evolve/qa/undo/raw) the
+  mode resolution refuses to return JSON even when ``FORGE_OUTPUT=json`` is set
+  or a spurious ``--json`` is in argv — it falls through to TTY/PLAIN. This is
+  structural: relying on interactive handlers to "just not consult JSON mode"
+  would not stop the global ``renderer.write`` no-op from silently degrading
+  their cinematic UX. The allowlist removes that failure mode at the source.
 
   Modes:
       TTY    — interactive terminal: Unicode box-drawing + SGR colours.
@@ -321,6 +393,17 @@ Valem para TODAS as tasks. Subagente executor relê antes de cada commit:
       JSON = "json"
 
 
+  # H-001 / Decisão de design 2 — JSON mode is a READ-COMMAND-ONLY carve-out.
+  # Only these commands may ever resolve to OutputMode.JSON. Interactive commands
+  # (plan/implement/init/reconfigure/evolve/qa/undo/raw) intentionally fall through
+  # to TTY/PLAIN even under FORGE_OUTPUT=json, so the intent protocol and their
+  # cinematic UX are never degraded by the global renderer.write no-op. Keep this
+  # set in sync with the read-commands that gained --json (T2-T5 + pre-existing graph).
+  _JSON_CAPABLE_COMMANDS: frozenset[str] = frozenset(
+      {"status", "doctor", "verify", "memory", "graph"}
+  )
+
+
   # Default is PLAIN: a write that happens before cli.main sets the mode
   # (library/test callers) degrades safely rather than leaking SGR/Unicode.
   _output_mode: contextvars.ContextVar[OutputMode] = contextvars.ContextVar(
@@ -333,31 +416,43 @@ Valem para TODAS as tasks. Subagente executor relê antes de cada commit:
 
       Decisão 10 revisitada: ``--json`` is a permitted meta-flag for read-commands.
       We detect it positionally without argparse (the engine deliberately avoids
-      argparse — Decisão 19/10). Interactive handlers ignore the resolved mode.
+      argparse — Decisão 19/10). The allowlist in ``detect_output_mode`` is what
+      restricts the effect to read-commands; this only reports presence.
       """
       return "--json" in argv
 
 
   def detect_output_mode(
-      argv: list[str], *, stream: TextIO | None = None
+      argv: list[str], *, command: str | None = None, stream: TextIO | None = None
   ) -> OutputMode:
       """Resolve the process output-mode.
 
-      Precedence (highest first):
-          1. ``--json`` meta-flag in argv          → JSON
-          2. ``FORGE_OUTPUT=json`` env             → JSON
+      ``command`` is the dispatched subcommand (``argv[0]`` at ``cli.main``). JSON
+      mode is GATED on it: only read-commands in ``_JSON_CAPABLE_COMMANDS`` may
+      resolve to JSON. For any other command — or when ``command`` is ``None``
+      (bare/library invocation) — ``--json`` and ``FORGE_OUTPUT=json`` are ignored
+      for the purpose of JSON resolution and we fall through to TTY/PLAIN. This is
+      the structural enforcement of Decisão de design 2 (H-001).
+
+      Precedence (highest first), AFTER the allowlist gate:
+          1. ``--json`` meta-flag in argv          → JSON  (read-command only)
+          2. ``FORGE_OUTPUT=json`` env             → JSON  (read-command only)
           3. stream.isatty()                       → TTY
           4. otherwise                             → PLAIN
 
       Unknown ``FORGE_OUTPUT`` values are ignored (fall through to TTY/PLAIN)
       so a typo never silently corrupts output. ``--json`` wins over a tty so a
-      human can force machine output for inspection.
+      human can force machine output for inspection — but only for read-commands.
       """
       stream = stream if stream is not None else sys.stdout
-      if _json_requested(argv):
-          return OutputMode.JSON
-      if os.environ.get("FORGE_OUTPUT", "").strip().lower() == "json":
-          return OutputMode.JSON
+      json_capable = command in _JSON_CAPABLE_COMMANDS
+      if json_capable:
+          if _json_requested(argv):
+              return OutputMode.JSON
+          if os.environ.get("FORGE_OUTPUT", "").strip().lower() == "json":
+              return OutputMode.JSON
+      # Interactive commands (or no command): JSON is never resolved — the
+      # cinematic UX and intent protocol stay intact regardless of env/argv.
       if bool(getattr(stream, "isatty", lambda: False)()):
           return OutputMode.TTY
       return OutputMode.PLAIN
@@ -392,6 +487,9 @@ Valem para TODAS as tasks. Subagente executor relê antes de cada commit:
       "is_json_mode",
   ]
   ```
+  (``_JSON_CAPABLE_COMMANDS`` é constante interna — não vai no ``__all__``; os tests a
+  referenciam pelo módulo (`om._JSON_CAPABLE_COMMANDS`) quando precisam, mas o contrato
+  público é o comportamento de `detect_output_mode`.)
   Run: `.venv/bin/pytest tests/unit/test_output_mode.py -q` → MUST pass.
 
 - [ ] **RED** — escreve `tests/unit/test_renderer_output_mode.py`:
@@ -475,26 +573,117 @@ Valem para TODAS as tasks. Subagente executor relê antes de cada commit:
 
 - [ ] **GREEN** — modifica `engine/cli.py::main` (linha 254) pra resolver + setar + resetar o
   output-mode no startup, antes do dispatch. Adiciona import top-level: `from engine.ui import output_mode`.
-  Logo após `argv = list(...)` e ANTES do bloco `if not argv`, insere:
+  O `command` é o subcomando despachado — `cmd` só existe APÓS `cmd, rest = argv[0], argv[1:]`
+  (linha 262, dentro do caminho `argv` não-vazio). Por isso a resolução ocorre LOGO APÓS `cmd, rest`
+  serem extraídos, passando `command=cmd` pra ENFORÇAR o allowlist (H-001 — Decisão de design 2):
   ```python
+      cmd, rest = argv[0], argv[1:]
+
       # A1 TOKEN-BLIND — resolve the process output-mode ONCE at startup and
       # publish it on the context var so renderer.write (the single chokepoint)
-      # and read-command handlers consult a single source of truth. Reset in the
-      # finally below so concurrent test cases never leak mode across each other.
+      # and read-command handlers consult a single source of truth. ``command=cmd``
+      # GATES JSON resolution to the read-command allowlist (Decisão de design 2):
+      # an interactive command never resolves JSON even under FORGE_OUTPUT=json,
+      # so its cinematic UX + intent protocol are never silently degraded.
       _output_mode_token = output_mode.set_output_mode(
-          output_mode.detect_output_mode(argv)
+          output_mode.detect_output_mode(argv, command=cmd)
       )
   ```
-  Envolve o corpo de `main` num `try/finally` que faz `output_mode.reset_output_mode(_output_mode_token)`
-  no finally (espelha a disciplina set/reset de `_cli_command_context`). Se já houver try/finally
-  estrutural, aninhar o reset no finally mais externo.
+  Envolve o corpo de `main` (a partir deste ponto) num `try/finally` que faz
+  `output_mode.reset_output_mode(_output_mode_token)` no finally (espelha a disciplina set/reset de
+  `_cli_command_context`). O `_cli_command_context.set((cmd, list(rest)))` já existente (linha 312)
+  e seu reset no finally permanecem; aninhar o reset do output-mode no mesmo finally mais externo.
+  **Nota:** o bloco `if cmd in ("-h", "--help", "help")` (linha 264) roda APÓS o set — pra `--help`
+  o `command` é `"--help"`, fora do allowlist, então o modo resolve TTY/PLAIN; o branch `--help --json`
+  da T6 emite o manifesto via `print(json.dumps(...))` direto (não depende de JSON mode resolvido).
   Run: `.venv/bin/pytest tests/unit/test_output_mode.py tests/unit/test_renderer_output_mode.py -q` → MUST pass.
+
+- [ ] **RED (guard H-001 — intent protocol safety)** — escreve
+  `tests/unit/test_output_mode_interactive_safety.py`. É o teste de NÃO-REGRESSÃO que ancora a
+  afirmação "intent protocol intocado": prova que, com `FORGE_OUTPUT=json` no env, o caminho
+  interativo (a) ainda emite o marker `<FORGE_INTENT.../>` em stdout, (b) levanta/propaga o exit-2
+  (`PausedForInputError` / `EXIT_PAUSED`), e (c) não degrada a UX cinematográfica do caminho
+  não-JSON-capable (o modo resolve PLAIN, não JSON):
+  ```python
+  import io
+
+  import pytest
+
+  from engine.host.adapter import AskKind, PausedForInputError
+  from engine.host.adapters.claude_code import ClaudeCodeAdapter
+  from engine.ui import output_mode as om
+
+
+  def test_interactive_command_resolves_plain_under_forge_output_json(monkeypatch):
+      # (c) — under FORGE_OUTPUT=json, an interactive command resolves PLAIN/TTY,
+      # never JSON: renderer.write is NOT globally suppressed for it, so its
+      # cinematic UX never degrades. This is the structural allowlist guard.
+      monkeypatch.setenv("FORGE_OUTPUT", "json")
+      assert (
+          om.detect_output_mode(["plan", "auth"], command="plan", stream=io.StringIO())
+          is om.OutputMode.PLAIN
+      )
+
+
+  def test_marker_emitted_under_forge_output_json(tmp_path, monkeypatch, capsys):
+      # (a) — the intent marker is written via sys.stdout.write DIRECTLY by the
+      # claude_code adapter (engine/host/adapters/claude_code.py::_emit_marker),
+      # so it survives regardless of output-mode. Force JSON mode on the context
+      # var to prove the marker is NOT swallowed by the renderer.write no-op.
+      monkeypatch.setenv("FORGE_OUTPUT", "json")
+      token = om.set_output_mode(om.OutputMode.JSON)
+      try:
+          adapter = ClaudeCodeAdapter(project_root=tmp_path)
+          # First entry (no response file) → emit marker, then raise PausedForInputError.
+          with pytest.raises(PausedForInputError):
+              adapter.ask(
+                  kind=AskKind.ASK,
+                  question="Continuar?",
+                  options={"sim": "Sim", "nao": "Não"},
+                  default=None,
+                  allow_pause=True,
+              )
+      finally:
+          om.reset_output_mode(token)
+      out = capsys.readouterr().out
+      assert "<FORGE_INTENT" in out  # marker survived JSON mode (direct sys.stdout.write)
+
+
+  def test_exit_2_preserved_under_forge_output_json(tmp_path, monkeypatch):
+      # (b) — the paused-for-input contract (exit-2 / PausedForInputError) is
+      # unchanged under FORGE_OUTPUT=json. The first-entry ask path must still
+      # raise PausedForInputError (the engine bubbles it up as exit code 2).
+      monkeypatch.setenv("FORGE_OUTPUT", "json")
+      token = om.set_output_mode(om.OutputMode.JSON)
+      try:
+          adapter = ClaudeCodeAdapter(project_root=tmp_path)
+          with pytest.raises(PausedForInputError):
+              adapter.ask(
+                  kind=AskKind.ASK,
+                  question="Continuar?",
+                  options={"sim": "Sim", "nao": "Não"},
+                  default=None,
+                  allow_pause=True,
+              )
+      finally:
+          om.reset_output_mode(token)
+  ```
+  **Nota de implementação pro executor:** as assinaturas acima batem com o contrato real lido em
+  `engine/host/adapters/claude_code.py` (construtor `ClaudeCodeAdapter(project_root=...)`; `ask`
+  kw-only com `kind`/`question`/`options` (dict)/`default`/`allow_pause`; marker via `_emit_marker`
+  → `sys.stdout.write`; `PausedForInputError` importado de `engine.host.adapter`). Se o adapter
+  evoluir até o GREEN, reconfirme a assinatura antes de implementar — o invariante testado NÃO muda:
+  marker via `sys.stdout.write` + exit-2 sobrevivem ao JSON mode, e o allowlist resolve PLAIN pros
+  interativos. Test (c) FALHA enquanto o allowlist não estiver em vigor (hoje `detect_output_mode`
+  resolveria JSON pra `plan`); (a)/(b) provam que marker + exit-2 são imunes ao modo.
+  Run: `.venv/bin/pytest tests/unit/test_output_mode_interactive_safety.py -q` → MUST fail antes do
+  GREEN do allowlist (test (c)); após o GREEN, os 3 passam.
 
 - [ ] **REGRESSION** — `.venv/bin/pytest -m 'not integration and not e2e' -q | tail -1` → ≥ 1729
   rapid + 0 falhas (a mudança no chokepoint não pode regredir os renderers existentes — modo PLAIN
   preserva o comportamento non-TTY anterior; modo default PLAIN cobre callers de lib/teste).
 
-- [ ] **COMMIT:** `feat(w3): output-mode infra (context var) + renderer host-aware (A1 T1)`
+- [ ] **COMMIT:** `feat(w3): output-mode infra (context var, allowlist) + renderer host-aware + guard H-001 (A1 T1)`
 
 ---
 
@@ -1175,6 +1364,13 @@ do manifesto, espelhando `_VISIBLE_ORDER`.)
   - `### Changed (load-bearing)`:
     - Texto LITERAL: `Revisita Decisão 10: conversacional human-first + meta-flags opt-in (--json, --help --json, FORGE_OUTPUT=json) pros read-commands — intent protocol inalterado pros interativos. Destrava token economy / machine-legibility (auditoria §3.2 A1/A2).`
 
+**Nota de casing (L-001 — verificado contra o hook):** o plano usa consistentemente "Revisita
+**Decisão** 10" (D maiúsculo) em decisão/CHANGELOG/commit. O hard-block do pre-commit
+(`.claude/hooks/pre-commit-feature-forge.sh:24`) casa via `grep -qiE 'revisita decisão|revisit decision'`
+— o flag `-i` é case-insensitive, então "Revisita Decisão 10" satisfaz o gate normalmente (o hook só
+exige a frase `revisita decisão` no diff staged do CHANGELOG, não a grafia exata). Casing mantido
+maiúsculo por consistência interna do plano; nenhuma ação adicional necessária.
+
 **Steps:**
 
 - [ ] Edita `docs/design/01-decisions.md`: marca linha 10 como superseded (append `(superseded by row 32 — 2026-06-18)`)
@@ -1208,7 +1404,7 @@ Antes do execution-handoff, confirme:
 **Cobertura A1 (TOKEN-BLIND):**
 - [ ] Output-mode global via context var (T1) — `engine/ui/output_mode.py` ✓
 - [ ] `renderer.write` host-aware (T1) — chokepoint consulta o modo ✓
-- [ ] `FORGE_OUTPUT=json` env (T1 — `detect_output_mode`) ✓
+- [ ] `FORGE_OUTPUT=json` env (T1 — `detect_output_mode`), GATED no allowlist `_JSON_CAPABLE_COMMANDS` ✓
 - [ ] `--json` read-commands: status (T2) / doctor (T3) / verify (T4) / memory (T5, narrow) ✓
 - [ ] `graph --json` pré-existente reusado como modelo (Decisão de design 3) ✓
 
@@ -1234,8 +1430,20 @@ Antes do execution-handoff, confirme:
 - [ ] `_all_categories` (T3) / `_memory_snapshot` (T5) / `_print_help_json` / `_COMMAND_META` (T6) ✓
 - [ ] `suggested_next_command` (chave JSON, snake_case) consistente entre T2 e o manifesto/router ✓
 
-**Intent protocol intocado:**
+**Intent protocol intocado (H-001 — enforce + guard):**
 - [ ] Nenhuma task altera marker `<FORGE_INTENT/>`, `EXIT_PAUSED`, ou handlers interativos ✓
-- [ ] JSON mode é carve-out read-command-only ✓
+- [ ] JSON mode é carve-out read-command-only ENFORÇADO via `_JSON_CAPABLE_COMMANDS`
+  (allowlist em `detect_output_mode`, gated por `command=cmd` no `cli.main` — T1) ✓
+- [ ] Comando interativo sob `FORGE_OUTPUT=json` resolve PLAIN/TTY, nunca JSON (Caminho B) ✓
+- [ ] Guard `tests/unit/test_output_mode_interactive_safety.py` (Caminho A) prova: (a) marker
+  emitido em stdout sob JSON mode, (b) exit-2 (`PausedForInputError`) preservado, (c) interativo
+  resolve PLAIN — teste de NÃO-REGRESSÃO que ancora a afirmação "intent protocol intocado" ✓
 
-**Baseline:** rapid 1729 / integration 180 / e2e 30 — nenhuma task reduz; cada uma adiciona tests.
+**Spec coverage (M-001 / C2):** plano-driven sem spec dedicado; override C2 no header reconhece a
+fonte auditoria-consolidada §3.2/§4/§6 como spec de-facto, com cobertura task-a-task confirmada.
+
+**Casing (L-001):** "Revisita Decisão 10" consistente interno; hook casa case-insensitive (verificado).
+
+**Baseline:** rapid 1729 / integration 180 / e2e 30 — nenhuma task reduz; cada uma adiciona tests
+(T1 agora adiciona 3 grupos: `test_output_mode.py` + `test_renderer_output_mode.py` +
+`test_output_mode_interactive_safety.py`).
