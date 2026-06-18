@@ -9,6 +9,13 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Added
 
+- **ABORTED-DEADEND** (W-DEBT, 2026-06-18): novo op de recovery `un-abort feature`
+  no menu de `forge undo` (opção 8). `_abort_feature` passa a preservar o status
+  pré-abort em `raw["pre-abort-status"]` ANTES do overwrite; `_undo_abort`
+  restaura esse status (default `deferred` p/ features abortadas por engine
+  antigo, sem o marker), limpa os markers `pre-abort-status`/`aborted-reason` e
+  loga no undo-log. Fecha o dead-end onde abortar uma feature só deixava o
+  caminho de deletar a L1 + recomeçar. Op não-destrutivo (confirm simples).
 - **CARDS-DISCONNECT** (W-DEBT, 2026-06-18): `forge init` agora materializa os
   templates mergeados per-projeto em `.claude/forge/templates/`
   (`_materialize_merged_templates` reusa `render_merged_template` — o mesmo

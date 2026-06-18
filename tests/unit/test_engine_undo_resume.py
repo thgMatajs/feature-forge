@@ -133,6 +133,7 @@ def test_resume_from_checkpoint(
         "5": "abort feature — marcar feature como aborted (terminal)",
         "6": "delete feature artifacts — apagar pasta (irreversível)",
         "7": "init — apagar .claude/ inteira (raríssimo)",
+        "8": "un-abort feature — reverter abort, restaura o status anterior",
         "c": "cancelar",
     }
     intent_id = question._stable_intent_id(

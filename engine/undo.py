@@ -435,6 +435,11 @@ def _abort_feature(project_root: Path, feature_slug: str, reason: str) -> bool:
             phase_lock=None,
         )
     else:
+        # ABORTED-DEADEND (W-DEBT): preserva o status pré-abort no raw ANTES do
+        # overwrite, pra que `_undo_abort` possa restaurar de forma determinística
+        # (sem reconstruir do history.jsonl). No branch `state is None` não há
+        # status prévio — `_undo_abort` defaulta `deferred`.
+        state.raw["pre-abort-status"] = state.status
         state.status = "aborted"
         state.last_action_kind = "aborted"
         state.last_action_at = _utc_now_iso()
@@ -452,6 +457,46 @@ def _abort_feature(project_root: Path, feature_slug: str, reason: str) -> bool:
     )
     renderer.write(renderer.colored(
         f"  ✓ feature {feature_slug} marcada como aborted.", "green"
+    ))
+    return True
+
+
+def _undo_abort(project_root: Path, feature_slug: str) -> bool:
+    """ABORTED-DEADEND recovery — restaura uma feature de 'aborted'.
+
+    Restaura `status` a partir de `raw["pre-abort-status"]` (default `deferred`
+    quando ausente — feature abortada por engine antigo). Limpa os markers
+    `pre-abort-status`/`aborted-reason` e loga no undo-log. NÃO-destrutivo
+    (só re-escreve o status), então confirm simples — não o 2-step do git revert.
+    """
+    state = read_l1_status(feature_slug, project_root)
+    if state is None or state.status != "aborted":
+        renderer.write(renderer.colored(
+            f"  Feature {feature_slug} não está em 'aborted' — nada a reverter.",
+            "yellow",
+        ))
+        return False
+    prior = state.raw.get("pre-abort-status") or "deferred"
+    if not question.confirm(
+        f"Restaurar {feature_slug} de 'aborted' para '{prior}'?", default=False
+    ):
+        return False
+    state.status = prior
+    state.last_action_kind = "un-aborted"
+    state.last_action_at = _utc_now_iso()
+    state.raw.pop("pre-abort-status", None)
+    state.raw.pop("aborted-reason", None)
+    write_l1_status(state, project_root)
+    _append_undo_log(
+        project_root,
+        kind="undo",
+        target=f"un-abort:{feature_slug}",
+        reverted_at=_utc_now_iso(),
+        slug=feature_slug,
+        extras={"restored-to": prior},
+    )
+    renderer.write(renderer.colored(
+        f"  ✓ feature {feature_slug} restaurada para '{prior}'.", "green"
     ))
     return True
 
@@ -608,6 +653,7 @@ def run(argv: list[str]) -> int:
         "5": "abort feature — marcar feature como aborted (terminal)",
         "6": "delete feature artifacts — apagar pasta (irreversível)",
         "7": "init — apagar .claude/ inteira (raríssimo)",
+        "8": "un-abort feature — reverter abort, restaura o status anterior",
         "c": "cancelar",
     }
 
@@ -733,6 +779,15 @@ def run(argv: list[str]) -> int:
 
         if choice == "7":
             rc = 0 if _undo_init(project_root) else 1
+            _clear_undo_checkpoint(project_root)
+            return rc
+
+        if choice == "8":
+            slug = _pick_feature(project_root, "Qual feature reverter o abort?")
+            if slug is None:
+                _clear_undo_checkpoint(project_root)
+                return 0
+            rc = 0 if _undo_abort(project_root, slug) else 1
             _clear_undo_checkpoint(project_root)
             return rc
 
