@@ -683,7 +683,7 @@ def _initialize_status(slug: str, project_root: Path) -> L1State:
         )
         write_l1_status(state, project_root)
         return state
-    if state.status not in {"planning", "deferred", "paused", "planned"}:
+    if state.status not in {"planning", "deferred", "planned"}:
         # Status set by another command — refuse to clobber.
         raise SystemExit(
             f"forge plan: feature '{slug}' is in status '{state.status}'. "

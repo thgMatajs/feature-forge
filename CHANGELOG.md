@@ -43,6 +43,20 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   lockstep com `COMMANDS`, com drift-guard de teste; A2 NO-MANIFEST);
   read-commands anunciam `--json`.
 
+### Removed
+
+- **PHANTOM-STATES** (W-DEBT, 2026-06-18) — estados `verified` e `paused`
+  removidos de `engine.memory.l1._VALID_STATES`. Nenhum dos dois era escrito
+  por handler: `verify` restaura o status anterior no sucesso (nunca grava
+  `verified`); `implement` vai `implementing → done` direto; pausa é `deferred`
+  auto-resumable (Decisão 27 — `07-discipline.md:670` já afirmava "Não há
+  `state: paused` separado de `deferred`"). O router de `forge status`
+  (`_suggested_next_command`) simplificou de 11 → 9 estados; o resume-set de
+  `forge plan` perdeu o literal morto `paused`. Docs de state-machine
+  reconciliados (`ROADMAP.md`, `07-discipline.md`, `06-command-surface.md`).
+  Não toca `01-decisions.md` — alinhamento doc↔código, sem cerimônia "Revisita
+  decisão N". Clean-break pré-produção.
+
 ### Changed (load-bearing)
 
 - Revisita Decisão 10: conversacional human-first + meta-flags opt-in (--json,
@@ -68,11 +82,12 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   descritiva. Agora espelha `status`/`doctor`/`memory`: emite `forge verify: <exc>`
   em stderr + exit 1, stdout puro.
 - **H-002 workflow router cobria só 6 de 11 estados** (W3) —
-  `engine.status._suggested_next_command` deixava `not-started`/`verified`/`paused`/
-  `aborted`/`done` caírem no default `doctor`, mis-guiando o agente. Agora mapeia
-  os 11 estados de `_VALID_STATES` (`not-started→plan`, `paused→implement`,
-  `aborted→plan`, `verified→status`, `done→status`, etc.); o fork PHANTOM-STATES
-  do `verified` fica reservado pro W-DEBT. Teste parametrizado cobre os 11 estados.
+  `engine.status._suggested_next_command` deixava `not-started`/`aborted`/`done`/etc.
+  caírem no default `doctor`, mis-guiando o agente. Agora mapeia todos os estados
+  de `_VALID_STATES` (`not-started→plan`, `aborted→plan`, `done→status`, etc.).
+  Teste parametrizado cobre o enum inteiro. (O fork PHANTOM-STATES do `verified`
+  foi resolvido em W-DEBT — `verified`/`paused` removidos do enum, router de
+  11 → 9 estados; ver `### Removed`.)
 - **W-003 router não-determinístico com timestamps None** (W3) —
   `max(key=last_action_at or "")` colapsava features sem timestamp em `""` e
   retornava a primeira por ordem de iteração. Agora o tie-break é estável

@@ -374,8 +374,8 @@ def _suggested_next_command(features: list[dict]) -> str:
     to ``plan`` when no feature is active and ``doctor`` for an out-of-enum
     state (corrupt status.json).
 
-    H-002: covers ALL 11 states of ``engine.memory.l1._VALID_STATES`` — partial
-    coverage routed real states (``not-started``/``paused``/``verified``/etc.)
+    H-002: covers ALL 9 states of ``engine.memory.l1._VALID_STATES`` — partial
+    coverage routed real states (``not-started``/``aborted``/``done``/etc.)
     to the bare ``doctor`` default and mis-guided the agent.
 
     W-003: the recency selection uses an explicit, stable tie-break — features
@@ -397,20 +397,19 @@ def _suggested_next_command(features: list[dict]) -> str:
         ),
     )
     state = recent.get("status")
-    # H-002: one entry per _VALID_STATES. `verified` → `status` is a
-    # conservative next-verb; the PHANTOM-STATES fork (whether `verified`
-    # should exist) is reserved for W-DEBT and intentionally NOT decided here.
+    # H-002: one entry per _VALID_STATES (9 states). PHANTOM-STATES fork
+    # resolved in W-DEBT — `verified`/`paused` removed (never written: verify
+    # restores the prior status; implement goes implementing→done; pause is
+    # `deferred` per Decisão 27).
     mapping = {
         "not-started": "plan",
         "planning": "implement",
         "planned": "implement",
         "implementing": "verify",
         "verifying": "verify",
-        "verified": "status",
         "done": "status",
         "deferred": "status",
         "aborted": "plan",
-        "paused": "implement",
         "blocked-on-external": "reconfigure",
     }
     return mapping.get(state, "doctor")

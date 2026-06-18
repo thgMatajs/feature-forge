@@ -279,12 +279,12 @@ exige `feature <slug>`/`task TASK-NNNN`; `graph` exige `forge graph --json
 - `forge status --json` → `{project, active_features, memory, pending_evolutions,
   doctor, suggested_next_command}`. `suggested_next_command` é o workflow router
   (A2): mapeia o estado da feature mais recente pro próximo verbo, cobrindo TODOS
-  os 11 estados de `_VALID_STATES` (H-002): not-started→plan, planning/planned→
-  implement, implementing/verifying→verify, verified→status, done→status,
-  deferred→status, aborted→plan, paused→implement, blocked-on-external→reconfigure;
-  nenhuma feature→plan; estado fora-do-enum→doctor. (O fork PHANTOM-STATES do
-  `verified` fica reservado pro W-DEBT; aqui `verified` só recebe um next-verb
-  conservador.) Tie-break de recência é estável (timestamp, depois slug) pra ser
+  os 9 estados de `_VALID_STATES` (H-002): not-started→plan, planning/planned→
+  implement, implementing/verifying→verify, done→status, deferred→status,
+  aborted→plan, blocked-on-external→reconfigure; nenhuma feature→plan; estado
+  fora-do-enum→doctor. (PHANTOM-STATES resolvido em W-DEBT: `verified`/`paused`
+  removidos do enum — nunca foram escritos; pausa é `deferred` por Decisão 27.)
+  Tie-break de recência é estável (timestamp, depois slug) pra ser
   determinístico quando `last_action_at` empata (W-003).
 - `forge doctor --json` → `{scope: "full", overall_status, exit_code, categories:
   [{title, worst, checks: [{name, status, message, remediation}]}]}`. JSON mode é
