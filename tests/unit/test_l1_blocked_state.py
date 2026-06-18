@@ -504,6 +504,7 @@ def _seed_implementable_feature(
 def test_implement_refuses_blocked_task_and_flips_state(
     tmp_forge_project: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     """Run with only a blocked task → exit 7 + state=blocked-on-external."""
     # Single task, blocked.
@@ -543,6 +544,12 @@ def test_implement_refuses_blocked_task_and_flips_state(
     rc = implement.run(["lembrete-rega"])
     # C3 EXIT-2-COLLISION: return 7 (blocked-external) colapsou em exit 1 + tag.
     assert rc == 1
+    # WR-01: trava a CATEGORIA do erro via tag — ==1 sozinho passaria pra
+    # qualquer falha; a tag prova que é o caminho blocked-on-external.
+    captured = capsys.readouterr()
+    assert "[FORGE-ERR:BLOCKED-EXTERNAL]" in captured.err, (
+        f"esperado tag BLOCKED-EXTERNAL no stderr, obtido: {captured.err!r}"
+    )
 
     s = l1.read_l1_status("lembrete-rega", tmp_forge_project)
     assert s is not None

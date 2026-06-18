@@ -80,6 +80,19 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   + tabela de tags em `docs/design/06-command-surface.md §Exit codes`. Clean-break
   pré-produção (sem migrator; único caller é o driver host). Decisão 27 honrada
   (pausa), não revisitada.
+- **BL-01: C3 EXIT-2-COLLISION — fecha o último escape** (W2 review holístico,
+  2026-06-18) — `engine/undo.py` ainda retornava `2` puro em
+  `ProjectRootNotFoundError` (fora de projeto forge) — colidia com `EXIT_PAUSED`
+  e o host lia como paused-for-input, procurando um pending nunca escrito (hang).
+  Migrado pra `fail_with_tag(ERR_PROJECT_NOT_FOUND)` (exit 1 + tag). O teste de
+  contrato (`tests/unit/test_exit_code_contract.py`) deixou de varrer uma lista
+  hardcoded de 8 handlers (que escondia `undo`) e agora AUTO-DESCOBRE todos os
+  handlers despachados a partir de `engine.cli.COMMANDS` — qualquer handler novo
+  entra no contrato sem editar o teste. `undo` adicionado à linha `PROJECT-NOT-FOUND`
+  da tabela de tags; descrição de exit codes do `forge upgrade` corrigida (era
+  "exit 4", agora "exit 1 + `[FORGE-ERR:UPGRADE-FAILED]`"). 7 testes legados que
+  trocaram `==N` por `==1` ganharam assert da tag (`[FORGE-ERR:<TAG>]`), travando
+  a categoria do erro além do código.
 
 ## [1.4.0] - 2026-06-17
 

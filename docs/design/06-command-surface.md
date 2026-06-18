@@ -39,7 +39,7 @@ dedicated PR. Silent expansion is forbidden.
 | 11 | `forge undo` | Revert the last state-mutating action (task commit, reconfigure apply, init). Interactive prompt picks target if ambiguous — `last` is not a CLI suffix, é a opção default no menu. |
 | 12 | `forge raw` | Escape hatch. Direct invocation of internal scripts (`migrator-N-to-M`, `verify-card`, `edit-config`, `rebuild-templates`). Documented per-script. **NÃO** é uma porta pra inventar novos comandos via raw — é a porta pra operações pontuais sem UX. |
 | 13 | `forge qa` | Adversarial red-team gate. Audita artefatos do lifecycle inventando cenários hostis (4 attack vectors: spec-vs-spec, chaos, coverage, validator-claim), executa fixtures sintéticos em sandbox isolado, emite findings actionable em proposed-evolutions. Scope: feature / screen / task / paranoid (cross-feature). Trigger: manual + opt-in auto via `qa.auto-run-on-feature-done`. Verdict (BLOCK/FLAG/PASS) NÃO bloqueia retrospective nem commit — alinha Decisão 5 (code review final out-of-scope). |
-| 14 | `forge upgrade` | Self-updater do forge (v1.3+). Opera no FORGE_HOME (`~/.local/share/feature-forge/` ou FORGE_HOME env). Fluxo: git fetch → check HEAD vs origin → git pull → pip install --upgrade → smoke (`./bin/forge --version`). Se smoke falhar: git reset --hard ao commit anterior (rollback automático). Não interativo: sem prompts, sem menus. Idempotente: "já no latest" → exit 0 sem mutação. Exit codes: 0 = atualizado com sucesso / já no latest; 1 = falha geral; 4 = falha no smoke + rollback executado. Não toca `.claude/forge/` do projeto — só atualiza o canonical repo. |
+| 14 | `forge upgrade` | Self-updater do forge (v1.3+). Opera no FORGE_HOME (`~/.local/share/feature-forge/` ou FORGE_HOME env). Fluxo: git fetch → check HEAD vs origin → git pull → pip install --upgrade → smoke (`./bin/forge --version`). Se smoke falhar: git reset --hard ao commit anterior (rollback automático). Não interativo: sem prompts, sem menus. Idempotente: "já no latest" → exit 0 sem mutação. Exit codes: 0 = atualizado com sucesso / já no latest; 1 = falha (carrega tag `[FORGE-ERR:UPGRADE-FAILED]` em stderr no caso de smoke/pip falho + rollback executado — recontratado em W2, C3 EXIT-2-COLLISION; antes era exit 4). Não toca `.claude/forge/` do projeto — só atualiza o canonical repo. |
 
 ---
 
@@ -196,7 +196,7 @@ sem depender de código numérico ambíguo. Tags canônicas (fonte única:
 
 | TAG | Quando | Comandos |
 |---|---|---|
-| `PROJECT-NOT-FOUND` | fora de um projeto forge | plan, implement, verify, evolve |
+| `PROJECT-NOT-FOUND` | fora de um projeto forge | plan, implement, verify, evolve, undo |
 | `LOCKED` | feature phase-locked por outro comando | plan, implement |
 | `FEATURE-MISSING` | feature não existe (rode `forge plan` antes) | implement |
 | `NOT-READY` | readiness != 'ready' (finalize Wave E) | implement |

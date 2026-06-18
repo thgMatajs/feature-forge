@@ -217,6 +217,7 @@ def test_phase_lock_released_when_read_l1_status_raises_after_acquire(
 def test_blocked_on_external_does_not_release_foreign_lock(
     tmp_forge_project: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
 ):
     """A3 regression: the blocked-on-external early-return path must NOT
     strip a phase lock owned by another flow.
@@ -274,6 +275,12 @@ def test_blocked_on_external_does_not_release_foreign_lock(
     # C3 EXIT-2-COLLISION: a escada legada return 7 colapsou em exit 1 + tag
     # [FORGE-ERR:BLOCKED-EXTERNAL].
     assert rc == 1, f"expected blocked-on-external exit 1, got {rc}"
+    # WR-01: trava a CATEGORIA do erro via tag — ==1 sozinho passaria pra
+    # qualquer falha; a tag prova que é o caminho blocked-on-external.
+    captured = capsys.readouterr()
+    assert "[FORGE-ERR:BLOCKED-EXTERNAL]" in captured.err, (
+        f"esperado tag BLOCKED-EXTERNAL no stderr, obtido: {captured.err!r}"
+    )
 
     # The critical assertion — the foreign lock survives.
     assert current_phase_lock(slug, tmp_forge_project) == foreign_id, (

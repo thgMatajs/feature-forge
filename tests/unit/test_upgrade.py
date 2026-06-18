@@ -54,7 +54,7 @@ def test_upgrade_no_op_when_no_tags(
     )
 
 
-def test_upgrade_rollback_on_smoke_fail(tmp_path: Path) -> None:
+def test_upgrade_rollback_on_smoke_fail(tmp_path: Path, capsys) -> None:
     """When smoke check fails after checkout, rollback checkout is called and exit != 0."""
     from engine.upgrade import run_upgrade
 
@@ -69,6 +69,12 @@ def test_upgrade_rollback_on_smoke_fail(tmp_path: Path) -> None:
 
     # C3 EXIT-2-COLLISION: return 4 colapsou em exit 1 + tag [FORGE-ERR:UPGRADE-FAILED].
     assert result == 1, f"expected 1 on smoke failure + rollback, got {result}"
+    # WR-01: trava a CATEGORIA do erro, não só o código. ==1 sozinho passaria
+    # pra qualquer falha; a tag prova que é o caminho upgrade-failed.
+    captured = capsys.readouterr()
+    assert "[FORGE-ERR:UPGRADE-FAILED]" in captured.err, (
+        f"expected UPGRADE-FAILED tag on stderr, got: {captured.err!r}"
+    )
     # checkout called at least twice: once forward to tag, once back to prev_sha
     assert checkout.call_count >= 2, (
         f"expected forward + rollback checkout, got {checkout.call_count} calls"
@@ -86,7 +92,7 @@ def test_upgrade_rollback_on_smoke_fail(tmp_path: Path) -> None:
     )
 
 
-def test_upgrade_rollback_on_pip_fail_re_runs_pip(tmp_path: Path) -> None:
+def test_upgrade_rollback_on_pip_fail_re_runs_pip(tmp_path: Path, capsys) -> None:
     """When pip refresh fails after checkout, rollback restores BOTH code and venv.
 
     Simetria com o path de smoke-fail: o rollback faz git checkout pro prev_sha
@@ -118,6 +124,11 @@ def test_upgrade_rollback_on_pip_fail_re_runs_pip(tmp_path: Path) -> None:
 
     # C3 EXIT-2-COLLISION: return 4 colapsou em exit 1 + tag [FORGE-ERR:UPGRADE-FAILED].
     assert result == 1, f"expected 1 on pip failure + rollback, got {result}"
+    # WR-01: trava a CATEGORIA do erro via tag, não só o código.
+    captured = capsys.readouterr()
+    assert "[FORGE-ERR:UPGRADE-FAILED]" in captured.err, (
+        f"expected UPGRADE-FAILED tag on stderr, got: {captured.err!r}"
+    )
     # rollback checkout pro prev_sha aconteceu
     assert checkout.call_count >= 2, (
         f"expected forward + rollback checkout, got {checkout.call_count} calls"

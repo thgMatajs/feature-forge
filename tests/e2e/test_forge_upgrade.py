@@ -207,7 +207,7 @@ def test_forge_upgrade_tag_checkout_cycle(tmp_path: Path, capsys) -> None:
 
 @pytest.mark.e2e
 @pytest.mark.skipif(not _RUN_E2E, reason="set RUN_E2E=1 to run e2e tests")
-def test_forge_upgrade_rollback_on_smoke_fail(tmp_path: Path) -> None:
+def test_forge_upgrade_rollback_on_smoke_fail(tmp_path: Path, capsys) -> None:
     """Smoke falha após checkout → rollback, HEAD volta ao sha anterior, retorna 4.
 
     Cenário: fake_home em detached HEAD na v1.4.0; origin ganha release
@@ -228,6 +228,11 @@ def test_forge_upgrade_rollback_on_smoke_fail(tmp_path: Path) -> None:
 
     # C3 EXIT-2-COLLISION: return 4 colapsou em exit 1 + tag [FORGE-ERR:UPGRADE-FAILED].
     assert result == 1, f"esperado 1 (smoke fail + rollback), obtido {result}"
+    # WR-01: trava a CATEGORIA do erro via tag machine-readable.
+    captured = capsys.readouterr()
+    assert "[FORGE-ERR:UPGRADE-FAILED]" in captured.err, (
+        f"esperado tag UPGRADE-FAILED no stderr, obtido: {captured.err!r}"
+    )
     assert sha_after == sha_before, (
         f"HEAD não voltou ao sha anterior após rollback. "
         f"antes={sha_before[:8]}, depois={sha_after[:8]}"
