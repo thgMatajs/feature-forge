@@ -254,8 +254,11 @@ def _print_help() -> None:
 
 
 # A2 NO-MANIFEST — static per-command metadata for the machine manifest.
-# Derived from COMMANDS + _VISIBLE_ORDER; read-commands advertise --json
-# (Decisão 10 revisitada — meta-flags carve-out). Voz mentor-calmo nos summaries.
+# Hand-maintained in lockstep with `_VISIBLE_ORDER`/`COMMANDS` (NOT auto-derived
+# from them) — `_print_help_json` iterates `_VISIBLE_ORDER` and looks each name
+# up here. The drift guard `test_command_meta_keys_match_visible_order` fails if
+# a command is added without a metadata entry (W-001). Read-commands advertise
+# --json (Decisão 10 revisitada — meta-flags carve-out). Voz mentor-calmo nos summaries.
 _COMMAND_META: dict[str, dict] = {
     "init":        {"summary": "Inicializa forge no projeto (mapa cinemático).", "interactive": True,  "flags": [],         "args": []},
     "plan":        {"summary": "Planeja uma feature (conversacional).",          "interactive": True,  "flags": [],         "args": ["feature-slug?"]},

@@ -34,3 +34,27 @@ def test_plain_help_still_prose(capsys, monkeypatch):
     cli.main(["--help"])  # no --json
     out = capsys.readouterr().out
     assert "Subcomandos" in out  # prose help unchanged
+
+
+def test_command_meta_keys_match_visible_order():
+    """W-001 drift guard: every visible command has hand-maintained metadata.
+
+    ``_COMMAND_META`` is a parallel hand-written dict, NOT derived from
+    ``COMMANDS``. The manifest iterates ``_VISIBLE_ORDER`` and looks each name
+    up in ``_COMMAND_META``; a command added to ``_VISIBLE_ORDER``/``COMMANDS``
+    without a metadata entry would silently emit ``summary=""``,
+    ``interactive=True``, ``flags=[]``, ``args=[]`` — the manifest lying about
+    the surface. This test fails the moment the two diverge.
+    """
+    assert set(cli._COMMAND_META) == set(cli._VISIBLE_ORDER)
+
+
+def test_visible_order_subset_of_commands():
+    """Every advertised command resolves to a real handler in COMMANDS."""
+    assert set(cli._VISIBLE_ORDER) <= set(cli.COMMANDS)
+
+
+def test_manifest_has_no_empty_summary():
+    """No visible command ships an empty summary (would mean missing metadata)."""
+    for name, meta in cli._COMMAND_META.items():
+        assert meta.get("summary"), f"{name!r} has no summary in _COMMAND_META"
