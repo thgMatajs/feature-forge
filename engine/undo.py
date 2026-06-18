@@ -37,6 +37,7 @@ from engine.memory.l1 import (
 )
 from engine.memory.l2 import remove_entry as l2_remove_entry
 from engine.ui import question, renderer
+from engine.ui.exit_codes import ERR_PROJECT_NOT_FOUND, fail_with_tag
 from engine.ui.question import PromptAbortedError
 from engine.utils.paths import (
     ProjectRootNotFoundError,
@@ -592,8 +593,11 @@ def run(argv: list[str]) -> int:
     try:
         project_root = find_project_root()
     except ProjectRootNotFoundError as exc:
-        sys.stderr.write(f"forge undo: {exc}\n")
-        return 2
+        # C3 EXIT-2-COLLISION (BL-01 do review W2): este site retornava `2`
+        # puro — colidia com EXIT_PAUSED e o host lia como paused-for-input,
+        # procurando um pending que nunca foi escrito (hang). Colapsa em
+        # exit 1 + tag machine-readable, como os demais handlers.
+        return fail_with_tag(ERR_PROJECT_NOT_FOUND, f"forge undo: {exc}")
 
     renderer.write(renderer.bold("forge undo — escolha:"))
     options = {

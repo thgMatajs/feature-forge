@@ -53,34 +53,81 @@ def test_all_canonical_tags_emit_consistently(tag):
     assert f"[FORGE-ERR:{tag}]" in buf.getvalue()
 
 
-# (b) Nenhum handler não-pausa retorna 2 -------------------------------------
+# (b) Nenhum handler não-pausa retorna 2 (nem 3-8) ---------------------------
+
+
+def _discover_handler_modules():
+    """Descobre TODOS os handlers despachados a partir de ``engine.cli.COMMANDS``.
+
+    Em vez de uma lista hardcoded (que escondeu o escape de ``undo.py`` —
+    BL-01 do review W2), varremos o registry de dispatch real. Assim nenhum
+    handler atual OU futuro escapa do contrato: registrou em ``COMMANDS`` →
+    entra na varredura automaticamente.
+
+    ``engine.cli`` é excluído do conjunto de varredura porque é o ÚNICO lugar
+    onde ``return EXIT_PAUSED`` (== 2) é legítimo — é o chokepoint que ramifica
+    o exit-code da pausa (``PausedForInputError`` / ``UserPausedError``). O
+    wrapper ``qa`` aponta pra ``engine.cli:_qa_run``, então essa entrada também
+    resolve pra ``cli.py`` e é deduplicada junto.
+
+    Retorna lista de ``(rel_path, abs_path)`` ordenada e deduplicada por módulo.
+    """
+    import importlib
+    from pathlib import Path
+
+    from engine.cli import COMMANDS
+
+    engine_root = Path(exit_codes.__file__).resolve().parent.parent
+    cli_path = (engine_root / "cli.py").resolve()
+
+    seen: set[Path] = set()
+    discovered: list[tuple[str, Path]] = []
+    for _cmd, (mod_path, _fn_name) in sorted(COMMANDS.items()):
+        mod = importlib.import_module(mod_path)
+        src = Path(mod.__file__).resolve()
+        if src == cli_path:
+            # engine.cli — pause-branch chokepoint, EXIT_PAUSED legítimo.
+            continue
+        if src in seen:
+            continue
+        seen.add(src)
+        rel = src.relative_to(engine_root).as_posix()
+        discovered.append((rel, src))
+    return discovered
 
 
 def test_no_handler_source_returns_bare_two_outside_pause():
-    """Varredura estática: fora de cli.py (onde EXIT_PAUSED=2 é legítimo) e de
-    raw.py:111 (127), nenhum exit-site dos handlers deve usar `return 2`/`3`/
-    `4`/`5`/`6`/`7`/`8` como código de erro. Eles devem usar fail_with_tag.
+    """Varredura estática AUTO-DESCOBERTA: nenhum handler despachado deve usar
+    ``return 2`` / ``3`` / ... / ``8`` (nem ``sys.exit(N)`` / ``exit(N)`` no
+    mesmo range) como código de erro. Erros colapsam em ``fail_with_tag`` (1 +
+    tag). Exit 2 é reservado SÓ pra pausa, que vive em ``cli.py`` (excluído da
+    varredura). Exit 127 (``raw edit-config``, editor-not-found) é exceção
+    POSIX documentada e fica fora do range 2-8.
+
+    A descoberta vem de ``engine.cli.COMMANDS`` (registry real de dispatch), de
+    modo que qualquer handler NOVO entra no contrato sem editar este teste —
+    fechando o buraco do BL-01 (lista hardcoded escondia ``undo.py``).
     """
     import re
-    from pathlib import Path
 
-    engine_root = Path(exit_codes.__file__).resolve().parent.parent
-    handlers = [
-        "plan.py", "implement.py", "verify.py", "upgrade.py", "evolve.py",
-        "raw.py", "init.py", "qa/__init__.py",
-    ]
+    handlers = _discover_handler_modules()
+    assert handlers, "auto-discovery não encontrou nenhum handler em COMMANDS"
+
     offenders: list[str] = []
-    bad_return = re.compile(r"return\s+([2345678])\b")
-    for rel in handlers:
-        path = engine_root / rel
+    # ``return 2`` … ``return 8`` (numérico cru) OU ``sys.exit(2..8)`` /
+    # ``exit(2..8)``. ``return EXIT_PAUSED`` simbólico nunca casa — só vive em
+    # cli.py de qualquer forma. Linhas de comentário são puladas.
+    bad_return = re.compile(r"\breturn\s+([2-8])\b")
+    bad_exit = re.compile(r"\b(?:sys\.)?exit\(\s*([2-8])\s*\)")
+    for rel, path in handlers:
         for lineno, line in enumerate(path.read_text().splitlines(), 1):
             stripped = line.strip()
             if stripped.startswith("#"):
                 continue
-            m = bad_return.search(stripped)
-            if m:
+            if bad_return.search(stripped) or bad_exit.search(stripped):
                 offenders.append(f"{rel}:{lineno}: {stripped}")
     assert not offenders, (
-        "exit-sites legados de erro ainda usam return N numérico — devem usar "
-        "fail_with_tag:\n" + "\n".join(offenders)
+        "exit-sites legados de erro ainda usam código numérico fora do "
+        "contrato (return/exit 2-8) — devem usar fail_with_tag (1 + tag); "
+        "exit 2 é reservado só pra pausa em cli.py:\n" + "\n".join(offenders)
     )
