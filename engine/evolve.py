@@ -84,7 +84,7 @@ def _write_checkpoint(
     (status, saved-at, remaining-proposal-ids, note) e adicionamos o
     campo ``intent-id``. Default ``None`` quando o pause nao vem do
     chokepoint de prompts (L2 overflow, por ex.); quando vem, o campo
-    correlaciona com ``.claude/state/forge-response.json`` na re-invocacao.
+    correlaciona com ``.claude/forge/state/forge-response.json`` na re-invocacao.
     """
     _save_yaml_checkpoint_io(
         _checkpoint_path(project_root),

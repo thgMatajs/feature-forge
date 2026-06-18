@@ -99,9 +99,9 @@ def _setup_brownfield_project(tmp_path: Path) -> Path:
       - ``.claude/hooks/`` (post-edit.sh, pre-commit-user.sh)
       - ``CLAUDE.md`` raiz
 
-    O init vai detectar brownfield via ``_detect_brownfield`` (skills +
-    agents + settings.json preenchidos). O sub-namespace ``.claude/forge/``
-    deve ser criado sem tocar nos assets acima.
+    O init é brownfield-safe por construção (merge append-only + delegator
+    encadeado + isolamento via sub-namespace), sem switch de modo: o
+    ``.claude/forge/`` deve ser criado sem tocar nos assets acima.
 
     Adiciona ``.git/`` pra ``_is_git_repo`` passar — a fixture não inclui
     ``.git/`` pra não comprometer o git do repo de testes.

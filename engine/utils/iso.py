@@ -30,6 +30,7 @@ def utc_now_iso() -> str:
 
     Segundos truncados (sem microssegundos) preservam a parity com os
     checkpoints gravados antes do consolidação — diffs binários dos
-    arquivos ``.claude/state/*.yaml`` continuam idênticos.
+    arquivos de checkpoint ``.claude/*.yaml`` (ex.: .init-checkpoint.yaml,
+    .doctor-checkpoint.yaml) continuam idênticos.
     """
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

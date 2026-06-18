@@ -3,8 +3,8 @@
 Originally this module bridged subcommands to ``sys.stdin``. Post DRIFT-1
 W2 (spec ``docs/superpowers/specs/drift-1-intent-protocol.md``) it does
 the opposite: each ``ask*`` entrypoint either consumes a matching response
-from ``.claude/state/forge-response.json`` (returning the value) or emits
-a canonical pending intent to ``.claude/state/forge-pending.json`` and
+from ``.claude/forge/state/forge-response.json`` (returning the value) or emits
+a canonical pending intent to ``.claude/forge/state/forge-pending.json`` and
 raises ``PausedForInputError``. The top-level handler in ``engine.cli``
 maps that sentinel to exit code 2.
 
@@ -36,7 +36,7 @@ Invariants honoured here (the refactor preserves them bit-a-bit):
 - ``allow_pause=False`` semantics preserved: a paused response raises
   ``ValueError`` (pause forbidden in this context).
 - Forensic state preservation (SPEC §3): invalid schema/value branches
-  raise ``ValueError`` WITHOUT clearing ``.claude/state/*`` — the files
+  raise ``ValueError`` WITHOUT clearing ``.claude/forge/state/*`` — the files
   remain on disk so the host can inspect what arrived. Only success
   paths and user-initiated termination (pause / cancel) clear state.
 
@@ -94,7 +94,7 @@ class PausedForInputError(Exception):
     """Sentinel raised by the chokepoint when no response is available yet.
 
     ``intent`` carries the dict that was just written to
-    ``.claude/state/forge-pending.json`` — the host (Claude Code,
+    ``.claude/forge/state/forge-pending.json`` — the host (Claude Code,
     opencode, or ``TtyAdapter`` in the TTY path) reads that file and
     writes a response;
     the engine is then re-invoked with the same argv and consumes the
@@ -254,13 +254,13 @@ _stable_intent_id = stable_intent_id
 
 
 def _project_root_for_io() -> Path:
-    """Resolve the project root used to anchor ``.claude/state/*``.
+    """Resolve the project root used to anchor ``.claude/forge/state/*``.
 
     Walks up from ``cwd`` looking for ``.claude/workflow-config.yaml``;
     falls back to ``cwd`` when no marker is found. The fallback keeps
     smoke tests (and one-off ``python -m engine.cli`` invocations from
     odd directories) operational — they will write into the current
-    directory's ``.claude/state/``.
+    directory's ``.claude/forge/state/``.
     """
     found = try_find_project_root()
     return found if found is not None else Path.cwd()

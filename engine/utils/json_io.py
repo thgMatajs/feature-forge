@@ -1,8 +1,8 @@
 """Atomic JSON read/write helpers.
 
 Mirrors `engine.utils.yaml_io` for the JSON case used by the intent
-protocol (`.claude/state/forge-pending.json` and
-`.claude/state/forge-response.json`). Why a separate module:
+protocol (`.claude/forge/state/forge-pending.json` and
+`.claude/forge/state/forge-response.json`). Why a separate module:
 
 - JSON and YAML use distinct serializers; one wrapper over both would
   obscure error context and force callers to think about format flags.

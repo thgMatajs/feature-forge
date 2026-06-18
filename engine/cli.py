@@ -237,6 +237,7 @@ def _check_bootstrap_state(project_root: Path) -> Optional[str]:
 def _print_help() -> None:
     """Render the top-level help. No flags listed — by design."""
     from engine import __version__
+    from engine.utils.paths import forge_home
 
     lines: list[str] = []
     lines.append(f"forge {__version__} — feature-forge")
@@ -249,7 +250,11 @@ def _print_help() -> None:
     lines.append("")
     lines.append("Sem flags — todos os parâmetros são interativos (decisão 10).")
     lines.append("")
-    lines.append("Mais: ~/Documents/feature-forge/docs/design/06-command-surface.md")
+    # M9 HELP-DOC-PATH (W-DEBT): resolver via forge_home() — respeita XDG
+    # (~/.local/share/feature-forge) e qualquer FORGE_HOME custom, em vez do
+    # ~/Documents/... hardcoded que não resolvia em instalações XDG.
+    doc_path = forge_home() / "docs" / "design" / "06-command-surface.md"
+    lines.append(f"Mais: {doc_path}")
     sys.stdout.write("\n".join(lines) + "\n")
 
 
@@ -424,7 +429,7 @@ def _main_dispatch(cmd: str, rest: list[str], argv: list[str]) -> int:
         try:
             result = handler(rest)
         except PausedForInputError as exc:
-            # DRIFT-1 §8 — chokepoint emitted .claude/state/forge-pending.json.
+            # DRIFT-1 §8 — chokepoint emitted .claude/forge/state/forge-pending.json.
             # The caller (Claude Code host or the in-process TtyAdapter) is expected
             # to read that file, write a response, and re-invoke us with the
             # same argv. No traceback, no message on stdout — the host renders
@@ -479,7 +484,7 @@ def _main_dispatch(cmd: str, rest: list[str], argv: list[str]) -> int:
             return 1
         except json_io.JsonIOError as exc:
             # PR #11 review #1 — falha ao decodificar state files
-            # (.claude/state/forge-pending.json ou forge-response.json) é
+            # (.claude/forge/state/forge-pending.json ou forge-response.json) é
             # erro de I/O, não bug interno do engine. Reportar limpo e
             # sair 1 em vez de traceback.
             #

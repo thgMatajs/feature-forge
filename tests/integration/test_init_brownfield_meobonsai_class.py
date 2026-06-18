@@ -3,13 +3,18 @@
 Strategy: since `engine.init.run` is interactive (Decision 10 — no flags), this
 test SIMULATES init's brownfield path by:
   1. Copying the fixture to tmp
-  2. Asserting `_detect_brownfield` returns True
-  3. Running the WRITE helpers in pipeline order
-  4. Invoking `merge_settings_json` as init's brownfield branch would (or should)
-  5. Asserting the post-state matches the brownfield contract:
+  2. Running the WRITE helpers in pipeline order
+  3. Invoking `merge_settings_json` as init's brownfield branch would (or should)
+  4. Asserting the post-state matches the brownfield contract:
      - User files byte-unchanged
      - Forge sub-namespace populated
      - Settings.json merged append-only (user entries preserved + forge added)
+
+Nota (M6, W-DEBT): o init é brownfield-safe SEM um switch de modo — o
+mecanismo real é sempre-ativo (merge append-only + hook delegator encadeado +
+isolamento via sub-namespace .claude/forge/), não condicionado a um
+`_detect_brownfield`. A função de detecção foi removida por ser dead-code; o
+que importa pro contrato são as assertions de preservação byte-a-byte abaixo.
 
 Limitation: this is a "composition" test, not a true e2e through `init.run`.
 A future task (Decision-10-respecting interactive harness) would replace this
@@ -28,15 +33,6 @@ FIXTURE = Path(__file__).parent.parent / "fixtures" / "meobonsai-class"
 
 def _sha256(p: Path) -> str:
     return hashlib.sha256(p.read_bytes()).hexdigest()
-
-
-@pytest.mark.integration
-def test_brownfield_detected_for_fixture(tmp_path):
-    """_detect_brownfield returns True for the meobonsai-class fixture."""
-    proj = tmp_path / "project"
-    shutil.copytree(FIXTURE, proj)
-    from engine.init import _detect_brownfield
-    assert _detect_brownfield(proj) is True
 
 
 @pytest.mark.integration

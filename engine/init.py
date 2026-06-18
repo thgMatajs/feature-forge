@@ -122,7 +122,7 @@ class _InitCheckpoint:
     """State serialized on Ctrl+C, so a follow-up `forge init` can offer resume.
 
     DRIFT-1 W2.T3b — extend: campo ``intent_id`` adicionado pra correlacao
-    com ``.claude/state/forge-response.json`` no protocolo intent. Default
+    com ``.claude/forge/state/forge-response.json`` no protocolo intent. Default
     ``None`` preserva o contract dos call sites legacy (Ctrl+C pause sem
     prompt ativo). Quando o pause vem do chokepoint (PausedForInputError),
     o handler grava intent_id ANTES do ask — re-invocacao usa esse campo
@@ -208,30 +208,12 @@ def _is_git_repo(root: Path) -> bool:
     return (root / ".git").exists()
 
 
-def _detect_brownfield(project_root: Path) -> bool:
-    """True if the project's `.claude/` directory already carries user-owned
-    content that forge must not touch.
-
-    Signals:
-    - `.claude/skills/` exists and is non-empty
-    - `.claude/agents/` exists and is non-empty
-    - `.claude/settings.json` exists with non-zero size
-
-    Used by init to switch into brownfield-safe mode (Wave 1) — append-only
-    settings merge, hook delegator chained, sub-namespace `.claude/forge/`
-    isolation. Spec §3 / §4.
-    """
-    claude_dir = project_root / ".claude"
-    if not claude_dir.exists():
-        return False
-    for sub in ("skills", "agents"):
-        d = claude_dir / sub
-        if d.exists() and any(d.iterdir()):
-            return True
-    settings = claude_dir / "settings.json"
-    if settings.exists() and settings.stat().st_size > 0:
-        return True
-    return False
+# M6 (W-DEBT): `_detect_brownfield` removido — era dead-code (zero caller em
+# engine/, só testes) e seu docstring anunciava um switch de modo que não
+# existe. O init JÁ é brownfield-safe por outros meios, sempre-ativos e
+# independentes de detecção: merge_settings_json append-only, hook delegator
+# encadeado, e isolamento via sub-namespace .claude/forge/. Não há "modo
+# brownfield" condicional pra ligar.
 
 
 @dataclass

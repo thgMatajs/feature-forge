@@ -31,15 +31,26 @@ def detect_opencode() -> bool:
 
 
 def detect_codex() -> bool:
+    """Detecção aspiracional / não-wirada em ``detect_host`` (DETECT-1).
+
+    Paralela a ``detect_opencode``: future-proofing pra um host codex futuro.
+    ``detect_host`` NÃO consulta esta função — codex cai no fallback
+    TTY→INTENT_FILE como qualquer host sem detector dedicado. Mantida (a) como
+    future-proofing e (b) como superfície de verificação do scrub ENV-1
+    (``_SCRUB_PREFIXES`` carrega ``CODEX``; os testes de scrub provam que o
+    detector cai através após o scrub).
+    """
     return any(k.startswith("CODEX") for k in os.environ.keys())
 
 
 def detect_cursor() -> bool:
+    """Detecção aspiracional / não-wirada em ``detect_host`` (DETECT-1).
+
+    Mesmo contrato de ``detect_codex``: future-proofing + superfície de
+    verificação do scrub ENV-1 (``_SCRUB_PREFIXES`` carrega ``CURSOR_``). Não
+    consultada por ``detect_host``.
+    """
     return _truthy("CURSOR_AGENT") or any(k.startswith("CURSOR_") for k in os.environ.keys())
-
-
-def detect_any_agentic() -> bool:
-    return detect_claude_code() or detect_opencode() or detect_codex() or detect_cursor()
 
 
 # A3 ENV-1 — key-set canônico de sinais de host agêntico. Alinhado a

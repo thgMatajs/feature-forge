@@ -346,7 +346,11 @@ def test_race_detection_rejects_stale_concurrent(tmp_path):
         "default": None,
         "allow-pause": True,
         "created-at": recent.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "pid": 99999,
+        # PID vivo (o processo de teste, vivo enquanto o subprocess do engine
+        # roda): desde STALE-1 (W-DEBT) o engine faz os.kill(pid, 0) e varre
+        # pendings de PID morto. Pra provar a race rejection, o pending precisa
+        # de um PID que o subprocess consiga confirmar vivo.
+        "pid": os.getpid(),
         "checkpoint-path": None,
     }
     _pending_path(project_root).write_text(
