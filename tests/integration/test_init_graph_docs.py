@@ -1,7 +1,8 @@
 """Graph-first docs escritos por forge init (W-GRAPH Camadas 1+3).
 
 Cobre: forge init escreve .claude/forge/GRAPH-FIRST.md + graph-skill.md com
-markers de conteúdo esperados; idempotência (canonical wins, sem append).
+markers de conteúdo esperados; canonical-wins (re-init sobrescreve edições do
+usuário com a versão canônica — docs forge-managed, comportamento deliberado).
 
 Refs: docs/reports/auditoria-consolidada-2026-06-17.md §5/§6 (NO-ONBOARDING P1)
 """
@@ -49,13 +50,26 @@ def test_graph_skill_has_task_query_table(tmp_forge_project: Path) -> None:
     assert "Read" in body
 
 
-def test_write_graph_docs_idempotent(tmp_forge_project: Path) -> None:
+def test_write_graph_docs_canonical_wins_over_user_edits(tmp_forge_project: Path) -> None:
+    """Re-init sobrescreve edições do usuário com a versão canônica (canonical-wins).
+
+    Estes dois `.md` são instrução-pro-host forge-managed, não conteúdo do
+    usuário — o design (init.py:_write_graph_docs docstring) é deliberadamente
+    canonical-wins: re-escreve o conteúdo a cada init, sem marker-guard nem
+    backup. Este teste PROVA o comportamento destrutivo intencional: escreve
+    conteúdo divergente, re-roda, e assere que o canônico sobrescreveu a edição.
+    """
     graph_first, graph_skill = forge_init._write_graph_docs(tmp_forge_project)
-    first_a = graph_first.read_text(encoding="utf-8")
-    first_b = graph_skill.read_text(encoding="utf-8")
-    forge_init._write_graph_docs(tmp_forge_project)  # 2ª escrita
-    assert graph_first.read_text(encoding="utf-8") == first_a  # sem append/clobber divergente
-    assert graph_skill.read_text(encoding="utf-8") == first_b
+
+    # Usuário edita ambos os arquivos com conteúdo divergente do canônico.
+    graph_first.write_text("EDIÇÃO DO USUÁRIO — graph first", encoding="utf-8")
+    graph_skill.write_text("EDIÇÃO DO USUÁRIO — graph skill", encoding="utf-8")
+
+    # Re-init (2ª escrita) — canonical-wins: a edição é descartada.
+    forge_init._write_graph_docs(tmp_forge_project)
+
+    assert graph_first.read_text(encoding="utf-8") == forge_init._GRAPH_FIRST_MD
+    assert graph_skill.read_text(encoding="utf-8") == forge_init._GRAPH_SKILL_MD
 
 
 def test_skill_file_path_matches_hook_reference(tmp_forge_project: Path) -> None:
