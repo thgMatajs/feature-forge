@@ -256,6 +256,11 @@ auditoria consolidada (§6 item 11) + `auditoria-llm-first` §7-8:
   resolve o doc via `forge_home()` (XDG-aware).
 - ~~**L-1 docstrings legados**~~ — **FECHADO em W-DEBT (T7).** `.claude/state/` →
   `.claude/forge/state/`; helpers nativos mortos já tinham sido removidos.
+  Escopo (WR-03 holistic review): além dos callsites na whitelist da T7
+  (`question.py`, `json_io.py`, `cli.py`, `intent_file.py`), o cleanup L-1 também
+  corrigiu o MESMO anchor legado em `engine/evolve.py:84` e `engine/utils/iso.py:30`
+  (doc-only, sem mudança de behavior) — incluídos sob L-1 por coerência temática
+  (path-cleanup consistente), não scope creep funcional.
 - ~~**IMPLEMENT-HANDOFF**~~ — **FECHADO em W-DEBT (T8).** Docstring de
   `engine/implement.py` clarificado (orquestra + handoff de autoria pro host,
   Decisão 22 — não é stub).
