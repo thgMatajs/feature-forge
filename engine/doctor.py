@@ -233,6 +233,7 @@ def _all_categories(
                 _check_graph(project_root),
                 _check_reuse_findings(project_root),
                 _check_hooks(project_root, config),
+                _check_forge_home_driver(project_root),
                 _check_mcps(config),
                 _check_i18n(project_root, config),
                 _check_bak_overdue(project_root, config),
@@ -726,6 +727,39 @@ def _check_hooks(project_root: Path, config: dict) -> _CategoryReport:
             continue
         checks.append(_Check(name, _STATUS_OK, "executável"))
     return _CategoryReport("Hooks", checks)
+
+
+def _check_forge_home_driver(project_root: Path) -> _CategoryReport:
+    """FORGE_HOME-carries-skills (W-DEBT, follow-up Wave 1 DRIVER-001).
+
+    Espelha a categoria de Hooks: assere a presença de um arquivo esperado no
+    FORGE_HOME. Aqui o arquivo é o driver do host —
+    ``skills/feature-forge/SKILL.md`` — que o Claude Code / opencode lê pra
+    dirigir o lifecycle do forge. Um clone parcial/sparse de FORGE_HOME deixa o
+    SKILL.md ausente e o driver fica dormente sem aviso; esta categoria pega
+    isso cedo, no health-check.
+
+    ``project_root`` não é usado (o driver vive no FORGE_HOME global, não no
+    projeto) — recebido por uniformidade com as demais categorias.
+    """
+    checks: list[_Check] = []
+    skill = forge_home() / "skills" / "feature-forge" / "SKILL.md"
+    if skill.is_file():
+        checks.append(
+            _Check("driver SKILL.md", _STATUS_OK, f"presente em {skill}")
+        )
+    else:
+        checks.append(
+            _Check(
+                "driver SKILL.md",
+                _STATUS_FAIL,
+                f"ausente: {skill}",
+                "FORGE_HOME não carrega o driver do host — clone parcial/sparse "
+                "deixa skills/feature-forge/SKILL.md de fora. Refaça o clone "
+                "completo do feature-forge no FORGE_HOME (sem sparse-checkout).",
+            )
+        )
+    return _CategoryReport("FORGE_HOME driver", checks)
 
 
 def _check_mcps(config: dict) -> _CategoryReport:
@@ -1365,7 +1399,6 @@ def _config_get_path(config: dict, keys: list[str], default):
     return cursor
 
 
-# Keep imports referenced (forge_home is reserved for future absolute-path
-# remediation hints; do not drop the import).
-_ = forge_home                              # reserved for future absolute-path remediation hints
+# forge_home agora é consumido por _check_forge_home_driver (W-DEBT
+# FORGE_HOME-carries-skills); o shim antigo `_ = forge_home` saiu.
 _safe_read_yaml_ref: Callable = _safe_read_yaml  # noqa: F841 — keep reference

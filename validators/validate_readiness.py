@@ -28,7 +28,8 @@ from _common import (
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from engine.utils.paths import feature_dir  # noqa: E402
+from engine.memory.l1 import current_subtype  # noqa: E402
+from engine.utils.paths import feature_path  # noqa: E402
 
 # Capture the LAST fenced ```yaml block that contains `readiness_verdict:` —
 # the template ends with this block as the machine-readable verdict.
@@ -180,7 +181,13 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
             why=["readiness is per-feature"],
         )
 
-    f_root = feature_dir(project_root, slug)
+    # W-DEBT: resolver subtype-aware. feature_dir era hardcoded em features/ —
+    # cego pra features non-product (refactor/spike/chore/bugfix) que vivem em
+    # non-product/{slug}/. feature_path(subtype) conserta o needs_elicitation
+    # scan E o lookup do review de uma vez (mesmo pattern de
+    # undo._delete_feature_artifacts).
+    subtype = current_subtype(slug, project_root)
+    f_root = feature_path(project_root, slug, subtype=subtype)
 
     # spec C5 — needs_elicitation não-promovido bloqueia ANTES de parsear o
     # verdict (um verdict 'ready' não pode mascarar campo não-elicitado).
