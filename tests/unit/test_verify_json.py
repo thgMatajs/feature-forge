@@ -42,3 +42,23 @@ def test_verify_json_clean_project_emits_pass(tmp_forge_project, capsys, monkeyp
 def test_verify_json_stdout_pure(tmp_forge_project, capsys, monkeypatch):
     _, payload = _run_json(capsys, tmp_forge_project, monkeypatch)
     assert isinstance(payload, dict)
+
+
+def test_verify_json_project_root_missing_writes_stderr(tmp_path, capsys, monkeypatch):
+    """H-001: ProjectRootNotFound in JSON mode emits the full message on stderr.
+
+    `renderer.write` is a no-op in JSON mode, so the friendly text must go to
+    stderr (mirroring status/doctor/memory) instead of vanishing. stdout stays
+    pure (no JSON payload, no orphan text) and the exit code is 1.
+    """
+    # tmp_path has no .claude/forge marker → find_project_root raises.
+    monkeypatch.chdir(tmp_path)
+    token = om.set_output_mode(om.OutputMode.JSON)
+    try:
+        code = verify.run([])
+    finally:
+        om.reset_output_mode(token)
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "forge verify" in captured.err
+    assert captured.out == ""

@@ -21,7 +21,7 @@ from typing import Any, Callable
 _logger = logging.getLogger("engine.graph_cli")
 
 from engine.graph import queries as gq
-from engine.ui import question, renderer
+from engine.ui import output_mode, question, renderer
 from engine.ui.question import PromptAbortedError
 from engine.ui.tree import render_tree
 from engine.utils.paths import (
@@ -666,11 +666,21 @@ def run(argv: list[str]) -> int:
     if argv and argv[0] == "detect-incremental":
         return _run_detect_incremental(project_root, argv[1:])
 
-    # --json non-interactive path (AC-3). Validamos argv ANTES do lazy
-    # auto-build (H-005): user que invoca `forge graph --json` sem query
-    # deve receber usage e exit 1 imediatamente, sem pagar ~30s-2min de
-    # build_full. Mesma lógica pra query desconhecida.
-    json_mode = bool(argv and argv[0] == "--json")
+    # C-001: o modo JSON global (FORGE_OUTPUT=json) também conta como
+    # non-interactive — sob ele `renderer.write` vira no-op e cair no menu
+    # interativo dispararia o intent protocol (exit-2 + marker órfão), que é
+    # reservado ESTRITAMENTE pra pausa (DRIFT-1). Se o modo global resolve JSON
+    # mas NÃO há `--json` posicional em argv, exigimos a query explícita e
+    # saímos com erro determinístico (stderr + exit 1) em vez de prompar.
+    json_flag = bool(argv and argv[0] == "--json")
+    global_json = output_mode.is_json_mode()
+    if global_json and not json_flag:
+        sys.stderr.write(
+            "forge graph: modo JSON exige query explícita — use "
+            "`forge graph --json <query> [args...]`.\n"
+        )
+        return 1
+    json_mode = json_flag
     if json_mode:
         if len(argv) < 2:
             sys.stderr.write(_JSON_USAGE)

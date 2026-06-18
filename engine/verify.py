@@ -177,11 +177,45 @@ def run(argv: list[str]) -> int:
     Return codes: 0 OK / warn-only; 1 hard fail; 130 user paused (raised by
     cli.main on KeyboardInterrupt / `para`).
     """
+    json_mode = output_mode.is_json_mode()
+
     try:
         project_root = find_project_root()
     except ProjectRootNotFoundError as exc:
+        # H-001: in JSON mode `renderer.write` is a no-op, so the friendly text
+        # would silently vanish. Mirror status/doctor/memory — emit the full
+        # message on stderr (stdout stays pure JSON) and exit 1.
+        if json_mode:
+            sys.stderr.write(f"forge verify: {exc}\n")
+            return 1
         renderer.write(renderer.colored(str(exc), "red"))
         return fail_with_tag(ERR_PROJECT_NOT_FOUND)
+
+    # C-001: in JSON mode we MUST NOT prompt — exit-2 is reserved strictly for
+    # the intent protocol (DRIFT-1), and a machine consumer cannot answer an
+    # interactive ask. Resolve scope without prompting; if it stays ambiguous
+    # (≥2 active features, no argv to disambiguate), emit a deterministic JSON
+    # error on stderr + exit 1 (the contract the other read-commands honour)
+    # instead of pausing.
+    if json_mode:
+        try:
+            scope_kind, scope_target = _resolve_scope(
+                argv, project_root, allow_prompt=False
+            )
+        except _AmbiguousScopeError as exc:
+            sys.stderr.write(
+                f"forge verify: scope ambíguo em JSON mode ({exc}) — passe "
+                "`feature <slug>` ou `task TASK-NNNN`.\n"
+            )
+            return 1
+        feature_hint = _extract_feature_slug_hint(argv)
+        return run_scope(
+            scope_kind,
+            scope_target,
+            project_root,
+            interactive=False,
+            feature_slug_hint=feature_hint,
+        )
 
     try:
         scope_kind, scope_target = _resolve_scope(argv, project_root)
@@ -561,30 +595,55 @@ def _write_verify_log_entry(
 # ── Scope resolution ─────────────────────────────────────────────────────────
 
 
-def _resolve_scope(argv: list[str], project_root: Path) -> tuple[str, str]:
+class _AmbiguousScopeError(Exception):
+    """Raised when scope inference is ambiguous and prompting is disallowed.
+
+    C-001: JSON mode never prompts. When ≥2 features are active and no argv
+    disambiguates, the caller turns this into a deterministic hard error
+    (stderr + exit 1) instead of either pausing (intent protocol leak) or
+    silently picking the first feature.
+    """
+
+
+def _resolve_scope(
+    argv: list[str], project_root: Path, *, allow_prompt: bool = True
+) -> tuple[str, str]:
     """Return ``(scope_kind, target)``.
 
     ``scope_kind`` ∈ {task, feature}. ``target`` is the task id or feature
-    slug. Asks the user when ambiguous (more than one active feature).
+    slug. Asks the user when ambiguous (more than one active feature) — unless
+    ``allow_prompt=False`` (C-001: JSON mode never prompts). With prompting
+    disabled, an ambiguous inference raises ``_AmbiguousScopeError`` so the
+    caller can emit a deterministic error rather than silently picking one
+    feature; an empty target still means "no active feature" (valid: cascade
+    runs with 0 validators).
     """
     if argv:
         first = argv[0]
         if first.upper().startswith("TASK-"):
             return "task", first.upper()
         if first == ".":
-            return "feature", _infer_active_feature(project_root, allow_prompt=True)
+            return "feature", _infer_active_feature(
+                project_root, allow_prompt=allow_prompt
+            )
         if len(argv) >= 2 and argv[0] == "task":
             return "task", argv[1].upper()
         if len(argv) >= 2 and argv[0] == "feature":
             return "feature", argv[1]
         return "feature", first
 
-    inferred = _infer_active_feature(project_root, allow_prompt=True)
+    inferred = _infer_active_feature(project_root, allow_prompt=allow_prompt)
     return "feature", inferred
 
 
 def _infer_active_feature(project_root: Path, *, allow_prompt: bool) -> str:
-    """Choose the single in-progress feature, asking when there is more than one."""
+    """Choose the single in-progress feature, asking when there is more than one.
+
+    When ``allow_prompt=False`` and the inference is ambiguous (≥2 candidates),
+    raises ``_AmbiguousScopeError`` (C-001) — the JSON-mode caller turns this
+    into a hard error instead of pausing or silently picking the first. No
+    active feature still returns ``""`` (a valid empty scope).
+    """
     active = list_active_features(project_root)
     candidates: list[str] = []
     for slug in active:
@@ -601,7 +660,9 @@ def _infer_active_feature(project_root: Path, *, allow_prompt: bool) -> str:
     if len(candidates) == 1:
         return candidates[0]
     if not allow_prompt:
-        return candidates[0]
+        raise _AmbiguousScopeError(
+            f"{len(candidates)} features ativas: {', '.join(sorted(candidates))}"
+        )
     options = {slug: f"feature {slug}" for slug in candidates}
     # DRIFT-1 W2.T3b — persist checkpoint with the deterministic intent-id
     # for this ask BEFORE invoking ``question.ask``. On exit-2 + re-invoke,
