@@ -39,6 +39,7 @@ import sys
 from pathlib import Path
 from typing import Callable, Optional
 
+from engine.ui import output_mode
 from engine.ui.exit_codes import EXIT_CANCELLED, EXIT_PAUSED
 from engine.ui.question import (
     PausedForInputError,
@@ -261,6 +262,25 @@ def main(argv: list[str] | None = None) -> int:
 
     cmd, rest = argv[0], argv[1:]
 
+    # A1 TOKEN-BLIND — resolve the process output-mode ONCE at startup and
+    # publish it on the context var so renderer.write (the single chokepoint)
+    # and read-command handlers consult a single source of truth. ``command=cmd``
+    # GATES JSON resolution to the read-command allowlist (Decisão de design 2):
+    # an interactive command never resolves JSON even under FORGE_OUTPUT=json,
+    # so its cinematic UX + intent protocol are never silently degraded. The
+    # reset lives in the outermost ``finally`` below, mirroring the set/reset
+    # discipline of ``_cli_command_context``.
+    _output_mode_token = output_mode.set_output_mode(
+        output_mode.detect_output_mode(argv, command=cmd)
+    )
+    try:
+        return _main_dispatch(cmd, rest, argv)
+    finally:
+        output_mode.reset_output_mode(_output_mode_token)
+
+
+def _main_dispatch(cmd: str, rest: list[str], argv: list[str]) -> int:
+    """Resolve + dispatch a subcommand. Output-mode is already set by ``main``."""
     if cmd in ("-h", "--help", "help"):
         _print_help()
         return 0

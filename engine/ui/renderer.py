@@ -24,6 +24,8 @@ import sys
 import unicodedata
 from typing import Iterable, TextIO
 
+from engine.ui import output_mode
+
 # Box-drawing constants.
 TL, TR, BL, BR = "┌", "┐", "└", "┘"
 H, V = "─", "│"
@@ -196,24 +198,33 @@ def box(title: str | None, lines: Iterable[str], *, width: int = 80) -> str:
 
 
 def write(text: str, *, stream: TextIO | None = None, newline: bool = True) -> None:
-    """Single canonical write path.
+    """Single canonical write path (A1 TOKEN-BLIND — output-mode aware).
 
-    For TTY streams: writes `text` as-is (Unicode box-drawing + SGR colours
-    preserved).
+    Consults the process output-mode (engine.ui.output_mode):
 
-    For non-TTY streams (pipes, CI, redirects): strips SGR escape sequences
-    via `strip_ansi()` AND degrades box-drawing Unicode to plain ASCII via
-    `to_ascii_box()`.  Both transformations are applied here — the single
-    chokepoint — so every caller is covered without per-callsite changes.
+    - JSON  → cinematic UI is suppressed (no-op). Read-command handlers emit
+              their own ``json.dumps`` payload to stdout; letting prose through
+              here would corrupt that payload.
+    - PLAIN → strip SGR escapes AND degrade box-drawing Unicode to ASCII.
+    - TTY   → write ``text`` as-is (Unicode box-drawing + SGR preserved).
+
+    When the mode was never set (library/test callers that bypass cli.main),
+    ``get_output_mode()`` returns PLAIN and we additionally honour ``_is_tty``
+    for the stream so direct-stream callers still get colour on a real tty.
 
     TTY detection respects `NO_COLOR` (force off) and `FORGE_FORCE_COLOR`
     (force on) via `_is_tty()`.
     """
     stream = stream or sys.stdout
-    if _is_tty(stream):
+    mode = output_mode.get_output_mode()
+    if mode is output_mode.OutputMode.JSON:
+        return  # cinematic UI suppressed — handler owns stdout in JSON mode.
+    if mode is output_mode.OutputMode.TTY:
         payload = text
-    else:
-        payload = to_ascii_box(strip_ansi(text))
+    elif mode is output_mode.OutputMode.PLAIN:
+        payload = text if _is_tty(stream) else to_ascii_box(strip_ansi(text))
+    else:  # pragma: no cover — enum is exhaustive
+        payload = text if _is_tty(stream) else to_ascii_box(strip_ansi(text))
     stream.write(payload)
     if newline:
         stream.write("\n")
