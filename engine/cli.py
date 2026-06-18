@@ -35,6 +35,7 @@ Refs:
 from __future__ import annotations
 
 import importlib
+import json
 import sys
 from pathlib import Path
 from typing import Callable, Optional
@@ -252,6 +253,55 @@ def _print_help() -> None:
     sys.stdout.write("\n".join(lines) + "\n")
 
 
+# A2 NO-MANIFEST — static per-command metadata for the machine manifest.
+# Derived from COMMANDS + _VISIBLE_ORDER; read-commands advertise --json
+# (Decisão 10 revisitada — meta-flags carve-out). Voz mentor-calmo nos summaries.
+_COMMAND_META: dict[str, dict] = {
+    "init":        {"summary": "Inicializa forge no projeto (mapa cinemático).", "interactive": True,  "flags": [],         "args": []},
+    "plan":        {"summary": "Planeja uma feature (conversacional).",          "interactive": True,  "flags": [],         "args": ["feature-slug?"]},
+    "implement":   {"summary": "Implementa a feature planejada.",                "interactive": True,  "flags": [],         "args": ["feature-slug?"]},
+    "verify":      {"summary": "Roda o cascade de validators (read-only).",      "interactive": False, "flags": ["--json"], "args": ["task TASK-NNNN | feature SLUG?"]},
+    "status":      {"summary": "Board read-only do projeto.",                    "interactive": False, "flags": ["--json"], "args": []},
+    "doctor":      {"summary": "Health check read-only.",                        "interactive": False, "flags": ["--json"], "args": []},
+    "reconfigure": {"summary": "Atualiza config com diff incremental.",          "interactive": True,  "flags": [],         "args": []},
+    "graph":       {"summary": "Consulta o codebase graph.",                     "interactive": False, "flags": ["--json"], "args": ["query args"]},
+    "memory":      {"summary": "Inspeciona/gerencia memory layers.",             "interactive": False, "flags": ["--json"], "args": []},
+    "evolve":      {"summary": "Review-and-apply de proposed evolutions.",       "interactive": True,  "flags": [],         "args": []},
+    "undo":        {"summary": "Reverte mutações (2-step abort).",               "interactive": True,  "flags": [],         "args": []},
+    "raw":         {"summary": "Passthrough cru.",                               "interactive": True,  "flags": [],         "args": ["args"]},
+    "qa":          {"summary": "QA red-team (auditores hostis).",                "interactive": True,  "flags": [],         "args": ["target?"]},
+    "upgrade":     {"summary": "Atualiza snapshot da forge.",                    "interactive": True,  "flags": [],         "args": []},
+}
+
+
+def _print_help_json() -> None:
+    """Emit the machine-readable command manifest (A2 NO-MANIFEST).
+
+    Only visible commands (``_VISIBLE_ORDER``) are listed — the hidden
+    ``ingest`` entrypoint is intentionally omitted, mirroring the prose help.
+    stdout is pure JSON (graph model); a consumer parses this instead of
+    inferring the surface from prose (the failure mode that made the audit's
+    second LLM hallucinate ~75% of its findings).
+    """
+    from engine import __version__
+
+    commands = []
+    for name in _VISIBLE_ORDER:
+        meta = _COMMAND_META.get(name, {})
+        commands.append(
+            {
+                "name": name,
+                "summary": meta.get("summary", ""),
+                "interactive": meta.get("interactive", True),
+                "hidden": False,
+                "flags": list(meta.get("flags", [])),
+                "args": list(meta.get("args", [])),
+            }
+        )
+    manifest = {"forge_version": __version__, "commands": commands}
+    print(json.dumps(manifest, indent=2, default=str))
+
+
 def main(argv: list[str] | None = None) -> int:
     """Top-level entry point. Returns a process exit code."""
     argv = list(sys.argv[1:] if argv is None else argv)
@@ -282,7 +332,13 @@ def main(argv: list[str] | None = None) -> int:
 def _main_dispatch(cmd: str, rest: list[str], argv: list[str]) -> int:
     """Resolve + dispatch a subcommand. Output-mode is already set by ``main``."""
     if cmd in ("-h", "--help", "help"):
-        _print_help()
+        # A2 NO-MANIFEST — ``forge --help --json`` emits the machine manifest.
+        # It does NOT depend on the resolved output-mode (``--help`` is not in
+        # the read-command allowlist), so we detect ``--json`` positionally.
+        if "--json" in rest or "--json" in argv:
+            _print_help_json()
+        else:
+            _print_help()
         return 0
     if cmd in ("-v", "--version"):
         from engine import __version__
