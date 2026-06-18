@@ -951,6 +951,139 @@ def _install_ai_driver(project_root: Path) -> None:
         )
 
 
+# ── Graph-first docs install (Step 11.7, W-GRAPH Camadas 1+3) ────────────────
+
+_GRAPH_FIRST_MD = """\
+# Graph-first — consulte o grafo antes de ler o source
+
+> Instalado por `forge init`. Voz: mentor calmo.
+
+Este projeto tem um codebase graph em `.claude/graph.db` (SQLite, WAL mode)
+com símbolos, imports, body-text e dependências. **Antes de ler arquivos
+fonte pra entender o projeto, consulte o grafo** — ele responde em uma
+chamada o que custaria várias leituras de arquivo, e protege seu contexto.
+Essa é a regra graph first: o grafo vem antes do source.
+
+## A regra
+
+1. Vai mexer/entender uma área do código? Pergunte ao grafo primeiro.
+2. O grafo respondeu com o que você precisava? Use a resposta — não abra o
+   arquivo "só pra confirmar".
+3. O grafo não cobre o que você precisa (string literal exata, contexto
+   multi-linha, arquivo pedido explicitamente)? Aí sim leia o source.
+
+A skill de referência completa — tabela tarefa→query→exemplo — está em
+`.claude/forge/graph-skill.md`.
+
+## Quick-start (as 5 queries de orientação)
+
+Todas as queries rodam em modo non-interactive com `forge graph --json <query>`:
+
+```bash
+# q1 — features similares por slug (antes de criar uma feature nova)
+forge graph --json q1 <slug>
+
+# q2 — blast radius de um ou mais arquivos (o que quebra se eu mexer aqui?)
+forge graph --json q2 path/to/File.kt [outro/Arquivo.swift ...]
+
+# q3 — arquivos órfãos (sem referências de entrada)
+forge graph --json q3
+
+# q4 — símbolos de um módulo (o que esse módulo expõe?)
+forge graph --json q4 <module>
+
+# q8 — dependências de DI de uma classe (o que essa classe injeta?)
+forge graph --json q8 <ClassName>
+```
+
+`<query>` aceita as três formas: numérica (`1`..`17`, `r`), com prefixo
+(`q1`..`q17`, `qr`), ou o label textual (`orphan-files`, `blast-radius`, …).
+O catálogo completo está em `.claude/forge/graph-skill.md`.
+
+## Quando NÃO usar o grafo
+
+- Precisa do texto exato de uma string literal ou comentário → use `Grep`.
+- Precisa de contexto de múltiplas linhas em torno de um símbolo → use `Read`.
+- O usuário pediu explicitamente "leia o arquivo X" → leia o arquivo.
+
+Fora desses três casos: **grafo primeiro.**
+"""
+
+
+_GRAPH_SKILL_MD = """\
+# Graph skill — tarefa → query → exemplo
+
+> Instalado por `forge init`. Voz: mentor calmo. Referência das 17 graph
+> queries canônicas + o alias combinado `r`.
+
+O grafo (`.claude/graph.db`) responde perguntas estruturais sobre o código
+sem você abrir os arquivos. Toda query roda em modo non-interactive:
+
+```bash
+forge graph --json <query> [args...]
+```
+
+`<query>` aceita três grafias equivalentes:
+
+- **Numérica:** `1`..`17`, `r`
+- **Prefixo:** `q1`..`q17`, `qr`
+- **Label textual:** `orphan-files`, `blast-radius`, `symbols`, …
+
+## Tabela tarefa → query → exemplo
+
+| Quero… | Query | Exemplo |
+|---|---|---|
+| Ver se já existe feature parecida | `q1` (similar-features) | `forge graph --json q1 lembrete-de-rega` |
+| Saber o que quebra se eu mexer aqui | `q2` (blast-radius) | `forge graph --json q2 app/src/Login.kt` |
+| Achar arquivos órfãos (dead code candidato) | `q3` (orphan-files) | `forge graph --json q3` |
+| Listar símbolos de um módulo | `q4` (symbols) | `forge graph --json q4 :feature:auth` |
+| Achar rotas de uma feature | `q7` (routes) | `forge graph --json q7 checkout` |
+| Ver dependências de DI de uma classe | `q8` (di-deps) | `forge graph --json q8 LoginViewModel` |
+| Achar os testes que cobrem um arquivo | `q9` (tests-for) | `forge graph --json q9 app/src/Login.kt` |
+| Achar helper reusável antes de criar um | `q11` (reusable-helpers) | `forge graph --json q11` |
+| Ver duplicação dentro do mesmo módulo | `q12` (dup-within-module) | `forge graph --json q12` |
+| Ver duplicação entre módulos | `q13` (dup-cross-module) | `forge graph --json q13` |
+| Ver candidatos a migração KMP | `q14` (kmp-migration) | `forge graph --json q14` |
+| Ver todos os achados de reuso combinados | `r` (reuse-findings) | `forge graph --json r` |
+
+## Reuso antes de criar (Mandamento 3)
+
+Antes de escrever helper/função novo, rode `q11` (reusable-helpers) e `r`
+(reuse-findings combinado, cobre `q12`/`q13`/`q14`). Se o grafo aponta um
+equivalente, use-o; se aponta near-duplicate, decida entre consolidar,
+promover pra shared, ou criar novo com justificativa.
+
+## Quando NÃO usar o grafo
+
+O grafo é estrutural — ele sabe quem chama quem, quem expõe o quê, e onde
+há duplicação. Ele NÃO substitui ler o source quando:
+
+- **String literal exata** — precisa do texto cru de uma mensagem,
+  comentário ou constante? Use `Grep`.
+- **Contexto multi-linha** — precisa entender o corpo de uma função, várias
+  linhas em torno de um símbolo? Use `Read`.
+- **Arquivo pedido explicitamente** — o usuário disse "leia o arquivo X"?
+  Leia o arquivo X.
+
+Fora desses três: **grafo primeiro** — é mais rápido e barato em contexto.
+"""
+
+
+def _write_graph_docs(project_root: Path) -> tuple[Path, Path]:
+    """Escreve os docs graph-first no sub-namespace `.claude/forge/`.
+
+    Camadas 1 + 3 (W-GRAPH): GRAPH-FIRST.md ensina a regra "consulte o grafo
+    antes de ler o source"; graph-skill.md é a referência tarefa→query→exemplo.
+    Canonical wins — re-escreve o conteúdo a cada init (idempotente).
+    """
+    forge_root = ensure_dir(forge_dir(project_root))
+    graph_first = forge_root / "GRAPH-FIRST.md"
+    graph_skill = forge_root / "graph-skill.md"
+    graph_first.write_text(_GRAPH_FIRST_MD, encoding="utf-8")
+    graph_skill.write_text(_GRAPH_SKILL_MD, encoding="utf-8")
+    return graph_first, graph_skill
+
+
 # ── Entry point ──────────────────────────────────────────────────────────────
 
 
@@ -1606,6 +1739,15 @@ def _run_pipeline(project_root: Path) -> int:
     renderer.write(
         "  · hook em `.claude/hooks/post-edit-detect-duplications.sh` "
         "(referencie em settings.local.json pra detection inline)"
+    )
+
+    # ── Step 11.7 — Graph-first docs (W-GRAPH) ──────────────────────────────
+    # Ensina o consumidor a usar o graph.db recém-construído (Steps 11/11.5).
+    # Sem este step, o grafo nasce órfão (NO-ONBOARDING, auditoria §5/§6 P1).
+    graph_first, _graph_skill = _write_graph_docs(project_root)
+    renderer.write(
+        f"  · graph-first docs em `{graph_first.parent.relative_to(project_root)}/` "
+        "(GRAPH-FIRST.md + graph-skill.md)"
     )
 
     checkpoint.step = "step-12-write-config"
