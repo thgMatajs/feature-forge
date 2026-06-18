@@ -72,6 +72,7 @@ Refs:
 from __future__ import annotations
 
 import json
+import os
 import sys
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -464,11 +465,17 @@ def read_pending(
 
     ``state_dir`` (Task 0.5) overrides the default anchor; ``None``
     resolves to ``forge_state_dir(project_root)`` (v1.3 canonical).
+
+    SCHEMA-1 (W-DEBT): aplica ``_check_schema_version`` simetricamente a
+    ``read_response`` — um pending de outra wire-version vira uma mensagem
+    friendly em vez de consumir o shape errado downstream.
     """
     path = _pending_path(project_root, state_dir=state_dir)
     if not path.exists():
         return None
-    return json_io.read_json(path)
+    payload = json_io.read_json(path)
+    _check_schema_version(payload, path=path, kind="pending")
+    return payload
 
 
 # --- write_response (W3 companion) -----------------------------------------
@@ -739,6 +746,16 @@ def detect_race(
         json_io.delete_if_exists(pending_path)
         return None
 
+    # SCHEMA-1 (W-DEBT): version skew num pending deve dar a mensagem friendly
+    # de schema ANTES de qualquer decisão de race/sweep. Sem isto, um pending de
+    # outra wire-version cairia no sweep ou viraria "race" confusa em vez de
+    # dizer claramente "atualize o forge". Só dispara quando `schema-version`
+    # está PRESENTE e diverge — um pending sem o campo é malformed/legado e cai
+    # no sweep normal abaixo (mesma família do guard de created-at ausente),
+    # não numa mensagem de skew enganosa.
+    if "schema-version" in existing:
+        _check_schema_version(existing, path=pending_path, kind="pending")
+
     existing_id = existing.get("intent-id")
     if existing_id == new_intent_id:
         return None
@@ -781,6 +798,27 @@ def detect_race(
         return None
 
     pid = existing.get("pid", "?")
+
+    # STALE-1 (W-DEBT): liveness probe. Um pending recente de processo morto
+    # (crash sem cleanup) travaria a raia até o stale threshold (~10 min). Antes
+    # de declarar race, confirma que o PID ainda vive via os.kill(pid, 0):
+    #   - ProcessLookupError → processo morreu → varre + segue (return None).
+    #   - ValueError/TypeError → pid inutilizável como probe → varre + segue.
+    #   - PermissionError → processo VIVO de outro dono → race genuína (raise).
+    #   - sem erro → processo vivo → race genuína (raise).
+    try:
+        probe_pid = int(pid)
+        if probe_pid <= 0:
+            # pid<=0 não identifica um processo específico (0 = grupo,
+            # negativos = grupos/todos) — não dá pra provar vivo → varre.
+            raise ValueError
+        os.kill(probe_pid, 0)
+    except (ProcessLookupError, ValueError, TypeError):
+        json_io.delete_if_exists(pending_path)
+        return None
+    except PermissionError:
+        pass  # processo vivo de outro dono — segue pro raise abaixo.
+
     raise RaceDetectedError(
         "outra invocação do forge ainda está aguardando resposta "
         f"(PID {pid}, intent-id '{existing_id}').\n"

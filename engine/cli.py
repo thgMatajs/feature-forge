@@ -460,11 +460,16 @@ def _main_dispatch(cmd: str, rest: list[str], argv: list[str]) -> int:
         except (
             intent_state.RaceDetectedError,
             intent_state.IntentMismatchError,
+            intent_state.SchemaVersionMismatchError,
         ) as exc:
             # PR #11 review #1 — DRIFT-1 intent-protocol sentinels carregam
             # mensagem mentor-calmo em ``exc.args[0]``. Sem este catch a
             # mensagem nunca chega ao usuário; em vez disso vaza traceback
             # cru, contrariando SPEC §3/§8 ("emite mensagem clara e exita 1").
+            #
+            # SCHEMA-LEAK (W-DEBT): SchemaVersionMismatchError (RuntimeError)
+            # entra aqui pra version skew dar exit 1 mentor-calmo em vez de
+            # traceback cru. É caminho forense (forensic_exit = True).
             #
             # BL-001: caminho de erro do intent-protocol — preserva
             # pending/response pra forense (SPEC §3); o ``finally`` limpa só

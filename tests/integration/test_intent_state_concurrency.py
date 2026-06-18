@@ -32,6 +32,7 @@ Refs:
 from __future__ import annotations
 
 import json
+import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -49,8 +50,17 @@ pytestmark = pytest.mark.integration
 # --- Helpers ---------------------------------------------------------------
 
 
-def _make_payload(intent_id: str, *, pid: int) -> dict:
-    """Minimally-valid pending payload distinguishable per-thread."""
+def _make_payload(intent_id: str, *, pid: int | None = None) -> dict:
+    """Minimally-valid pending payload distinguishable per-thread.
+
+    ``pid`` defaults ao PID do processo de teste (vivo). Desde STALE-1
+    (W-DEBT), ``detect_race`` faz ``os.kill(pid, 0)`` e varre pendings de PID
+    morto — payloads de race determinística PRECISAM de um PID vivo, e todas
+    estas threads rodam no mesmo processo, então ``os.getpid()`` é o correto.
+    A distinção por-thread vem do ``intent_id``, não do PID.
+    """
+    if pid is None:
+        pid = os.getpid()
     return {
         "schema-version": 1,
         "intent-id": intent_id,
@@ -260,7 +270,9 @@ def test_pending_lock_serializes_detect_race_and_write(tmp_path):
 
     def worker(idx: int) -> None:
         intent_id = f"locked-{idx:08d}-0000-4000-8000-000000000000"
-        payload = _make_payload(intent_id, pid=30_000 + idx)
+        # PID vivo (default = processo de teste): STALE-1 varre PID morto, então
+        # a race determinística exige um PID vivo. Threads do mesmo processo.
+        payload = _make_payload(intent_id)
         barrier.wait()
         try:
             with intent_state.pending_lock(project_root):

@@ -15,6 +15,7 @@ Refs:
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -531,7 +532,10 @@ def test_ask_race_detection_raises_when_pending_recent_other_intent(
                 "default": None,
                 "allow-pause": True,
                 "created-at": recent_iso,
-                "pid": 99999,
+                # PID vivo (o próprio processo do teste): desde STALE-1 (W-DEBT)
+                # detect_race varre pendings de PID morto; a race só dispara se
+                # o processo ainda vive.
+                "pid": os.getpid(),
                 "checkpoint-path": None,
             }
         ),
