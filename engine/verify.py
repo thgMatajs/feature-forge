@@ -29,7 +29,7 @@ import os
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -42,7 +42,7 @@ from engine.memory.l1 import (
     write_l1_status,
 )
 from engine.persona import mentor_calmo
-from engine.ui import question, renderer
+from engine.ui import output_mode, question, renderer
 from engine.ui.exit_codes import ERR_PROJECT_NOT_FOUND, fail_with_tag
 from engine.ui.question import PromptAbortedError
 from engine.utils.paths import (
@@ -313,6 +313,14 @@ def run_scope(
         _restore_l1_status(project_root, previous_state, failed=False, note="")
         # DRIFT-1 W2.T3b — clear intent-resume checkpoint on clean completion.
         _clear_verify_checkpoint(project_root)
+        if output_mode.is_json_mode():
+            payload = {
+                "scope": {"type": scope_type, "target": scope_target or None},
+                "overall": "pass",
+                "exit_code": 0,
+                "validators": [],
+            }
+            print(json.dumps(payload, indent=2, default=str))
         return 0
 
     fail_fast = _resolve_fail_fast(config)
@@ -340,6 +348,19 @@ def run_scope(
         hard_fails=hard_fails,
         warnings_list=warnings_list,
     )
+
+    if output_mode.is_json_mode():
+        # A1 — emit the machine-readable cascade result. The exit code matches
+        # the interactive path (0 pass/warn, 1 hard fail). L1 restore + verify
+        # log + checkpoint clear below stay identical (read-only observability
+        # does not change between modes).
+        payload = {
+            "scope": {"type": scope_type, "target": scope_target or None},
+            "overall": overall,
+            "exit_code": (1 if hard_fail is not None else 0),
+            "validators": [asdict(r) for r in results],
+        }
+        print(json.dumps(payload, indent=2, default=str))
 
     if hard_fail is not None:
         if interactive:
