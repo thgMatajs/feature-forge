@@ -13,6 +13,7 @@ into a context-pack file).
 
 from __future__ import annotations
 
+import json
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -41,7 +42,7 @@ from engine.memory.l2 import (
     remove_entry as l2_remove_entry,
 )
 from engine.memory.l3 import read_l3_entry, read_l3_index
-from engine.ui import question, renderer
+from engine.ui import output_mode, question, renderer
 from engine.ui.question import PromptAbortedError
 from engine.ui.tree import render_tree
 from engine.utils.paths import (
@@ -418,6 +419,50 @@ def _export_l2(project_root: Path) -> None:
 # ── Entry point ─────────────────────────────────────────────────────────────
 
 
+def _memory_snapshot(project_root: Path) -> dict:
+    """Read-only machine snapshot of the 3 memory layers (A1, narrow).
+
+    Mutating submenus (forget/distill) and interactive ones (search, inspect
+    with selection prompt) are intentionally excluded — they have no
+    unambiguous machine contract under the meta-flags-only carve-out of
+    Decisão 10 revisitada. Export keeps its own stdout-pipe path.
+    """
+    l2_entries = read_l2(project_root)
+    l2_size = l2_size_bytes(project_root) if memory_l2_path(project_root).exists() else 0
+    active = list_active_features(project_root)
+    archived = list_archived_features(project_root)
+    active_payload = []
+    for slug in active:
+        st = read_l1_status(slug, project_root)
+        active_payload.append(
+            {
+                "slug": slug,
+                "status": (st.status if st is not None else None),
+                "last_action_kind": (st.last_action_kind if st is not None else None),
+            }
+        )
+    return {
+        "l2": {
+            "size_bytes": l2_size,
+            "entries": [
+                {
+                    "id": e.id,
+                    "kind": e.kind,
+                    "confidence": e.confidence,
+                    "title": e.title,
+                    "provenance": list(e.provenance) if e.provenance else [],
+                }
+                for e in l2_entries
+            ],
+        },
+        "l1": {"active": active_payload, "archived": list(archived)},
+        "l3": [
+            {"title": entry["title"], "hook": entry["hook"]}
+            for entry in read_l3_index()
+        ],
+    }
+
+
 def run(argv: list[str]) -> int:
     """Interactive memory menu."""
     _ = argv
@@ -427,6 +472,16 @@ def run(argv: list[str]) -> int:
     except ProjectRootNotFoundError as exc:
         sys.stderr.write(f"forge memory: {exc}\n")
         return 1
+
+    # A1 (narrow) — JSON mode emits a read-only snapshot of the 3 memory
+    # layers and returns BEFORE any renderer.write / question.ask, so the
+    # interactive menu is never entered. Mutating/interactive submenus
+    # (forget/distill/search) have no machine contract under the meta-flags-only
+    # carve-out of Decisão 10 revisitada (documented in 04-pending.md).
+    if output_mode.is_json_mode():
+        payload = _memory_snapshot(project_root)
+        print(json.dumps(payload, indent=2, default=str))
+        return 0
 
     # Hint when L2 file just doesn't exist yet.
     if not memory_l2_path(project_root).exists():
