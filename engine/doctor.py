@@ -26,10 +26,12 @@ chosen conversationally at the prompt (decision 10: no flags).
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sqlite3
-from dataclasses import dataclass
+import sys
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -40,7 +42,7 @@ from engine.cards import CardError  # B-002 (master review PR #15)
 from engine.cards.snapshotter import compute_directory_sha256
 from engine.memory.l1 import list_active_features, list_archived_features
 from engine.memory.l2 import l2_size_bytes
-from engine.ui import question, renderer
+from engine.ui import output_mode, question, renderer
 from engine.ui.question import PromptAbortedError
 from engine.utils.paths import (
     ProjectRootNotFoundError,
@@ -210,14 +212,86 @@ def _doctor_scope_intent_id() -> str:
 # ── Public API ───────────────────────────────────────────────────────────────
 
 
+def _all_categories(
+    project_root: Path, config_path: Path, config: dict, *, scope: str
+) -> list[_CategoryReport]:
+    """Assemble the category reports for a given scope.
+
+    Single source of truth for which ``_check_*`` run per scope — reused by
+    both the interactive path and the JSON-mode path so the two never drift.
+    """
+    categories: list[_CategoryReport] = [
+        _check_config(project_root, config_path, config),
+        _check_cards(project_root, config),
+        _check_memory_l2(project_root, config),
+    ]
+    if scope == "full":
+        categories.extend(
+            [
+                _check_inventory(project_root),
+                _check_memory_l1(project_root),
+                _check_graph(project_root),
+                _check_reuse_findings(project_root),
+                _check_hooks(project_root, config),
+                _check_mcps(config),
+                _check_i18n(project_root, config),
+                _check_bak_overdue(project_root, config),
+                _check_forge_version_lock(project_root),
+                _check_cc_gate_tools(project_root),
+                _check_secrets_tools(project_root),
+                _check_qa_coherence(project_root, config),
+                _check_gradle_catalogs(project_root),
+            ]
+        )
+    return categories
+
+
 def run(argv: list[str]) -> int:
     """Entry point. ``argv`` is ignored — scope is asked interactively."""
     try:
         project_root = find_project_root()
     except ProjectRootNotFoundError as exc:
+        if output_mode.is_json_mode():
+            sys.stderr.write(f"forge doctor: {exc}\n")
+            return 1
         renderer.write(renderer.colored(str(exc), "red"))
         renderer.write("Próximo passo: forge init")
         return 1
+
+    # A1 — JSON mode is non-interactive by nature: the ``scope`` ask cannot
+    # pause for a machine consumer, so we assume ``full`` (a machine wants the
+    # complete diagnosis). The ``doctor.last-run`` stamp (the one legitimate
+    # read-only mutation) stays identical to the interactive path. ``_render_*``
+    # writes inside ``_render_verdict`` are suppressed by the renderer no-op in
+    # JSON mode, so calling it only yields ``(code, overall_status)``.
+    if output_mode.is_json_mode():
+        config_path = active_config_path(project_root)
+        config = _safe_read_yaml(config_path) or {}
+        categories = _all_categories(project_root, config_path, config, scope="full")
+        code, overall_status = _render_verdict(categories, scope="full")
+        _stamp_last_doctor_run(
+            project_root,
+            config_path,
+            config,
+            categories,
+            exit_code=code,
+            overall_status=overall_status,
+        )
+        payload = {
+            "scope": "full",
+            "overall_status": overall_status,
+            "exit_code": code,
+            "categories": [
+                {
+                    "title": cat.title,
+                    "worst": cat.worst,
+                    "checks": [asdict(c) for c in cat.checks],
+                }
+                for cat in categories
+            ],
+        }
+        print(json.dumps(payload, indent=2, default=str))
+        return code
 
     renderer.write("")
     renderer.write(renderer.bold("forge doctor — health check"))
@@ -255,29 +329,7 @@ def run(argv: list[str]) -> int:
     config_path = active_config_path(project_root)
     config = _safe_read_yaml(config_path) or {}
 
-    categories: list[_CategoryReport] = [
-        _check_config(project_root, config_path, config),
-        _check_cards(project_root, config),
-        _check_memory_l2(project_root, config),
-    ]
-    if scope == "full":
-        categories.extend(
-            [
-                _check_inventory(project_root),
-                _check_memory_l1(project_root),
-                _check_graph(project_root),
-                _check_reuse_findings(project_root),
-                _check_hooks(project_root, config),
-                _check_mcps(config),
-                _check_i18n(project_root, config),
-                _check_bak_overdue(project_root, config),
-                _check_forge_version_lock(project_root),
-                _check_cc_gate_tools(project_root),
-                _check_secrets_tools(project_root),
-                _check_qa_coherence(project_root, config),
-                _check_gradle_catalogs(project_root),
-            ]
-        )
+    categories = _all_categories(project_root, config_path, config, scope=scope)
 
     for cat in categories:
         _render_category(cat)
