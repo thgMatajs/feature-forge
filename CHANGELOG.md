@@ -112,12 +112,17 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   mentor-calmo, em vez de propagar o `MemoryError` cru de `write_l1_status` como
   traceback no dispatch do `forge undo`. Fecha a assimetria T1×T3 (recovery não
   defendia contra estados que deixaram de ser válidos).
-- **SCHEMA-1 / SCHEMA-LEAK** (W-DEBT, 2026-06-18) — `_check_schema_version`
-  (`engine/ui/intent_state.py`) agora roda simetricamente em `read_pending` e
-  `detect_race`, não só em `read_response`: version skew num pending vira a
-  mensagem friendly "atualize o forge" em vez de cair no sweep ou virar "race"
-  confusa (em `detect_race` só dispara quando `schema-version` está presente —
-  pending sem o campo é malformed e segue no sweep normal). `SchemaVersionMismatchError`
+- **SCHEMA-1 / SCHEMA-LEAK** (W-DEBT, 2026-06-18; tratamento de campo-ausente
+  alinhado em WR-02) — `_check_schema_version` (`engine/ui/intent_state.py`) agora
+  roda em `read_pending` e `detect_race`, não só em `read_response`: version skew
+  num pending vira a mensagem friendly "atualize o forge" em vez de cair no sweep
+  ou virar "race" confusa. **Contrato simétrico de campo-ausente (WR-02):** os
+  DOIS caminhos só disparam o check quando `schema-version` está PRESENTE e
+  diverge (guard `if "schema-version" in payload:`). Ausência = pending
+  malformed/legado (pré-protocolo), tratada idêntica em ambos — não version-skew
+  (`SchemaVersionMismatch` significa "versão errada", não "sem versão"). Antes,
+  `read_pending` levantava em campo-ausente enquanto `detect_race` tolerava — a
+  assimetria que esta entrada vendia como "simétrico". `SchemaVersionMismatchError`
   entrou na tupla de except do `engine/cli.py` (junto de `RaceDetectedError`/
   `IntentMismatchError`) → exit 1 mentor-calmo em vez de traceback cru.
 - **STALE-1** (W-DEBT, 2026-06-18) — `detect_race` faz liveness probe

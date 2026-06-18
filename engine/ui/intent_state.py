@@ -469,12 +469,21 @@ def read_pending(
     SCHEMA-1 (W-DEBT): aplica ``_check_schema_version`` simetricamente a
     ``read_response`` — um pending de outra wire-version vira uma mensagem
     friendly em vez de consumir o shape errado downstream.
+
+    WR-02 (holistic review W-DEBT): o tratamento de campo-AUSENTE é agora idêntico
+    ao de ``detect_race`` — o guard ``if "schema-version" in payload:`` só dispara
+    o check quando o campo está PRESENTE e diverge. Ausência = pending
+    malformed/legado (pré-protocolo), não version-skew: ``SchemaVersionMismatch``
+    significa "versão errada", não "sem versão". Antes, ``read_pending`` levantava
+    em campo-ausente (``written=None != _SCHEMA_VERSION``) enquanto ``detect_race``
+    tolerava — a assimetria que o CHANGELOG vendia como "simétrico".
     """
     path = _pending_path(project_root, state_dir=state_dir)
     if not path.exists():
         return None
     payload = json_io.read_json(path)
-    _check_schema_version(payload, path=path, kind="pending")
+    if "schema-version" in payload:
+        _check_schema_version(payload, path=path, kind="pending")
     return payload
 
 
