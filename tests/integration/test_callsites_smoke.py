@@ -184,17 +184,21 @@ def test_smoke_init_greenfield_emits_intent(tmp_path):
     assert payload.get("command") == "init", payload
 
 
-def test_smoke_init_brownfield_exits_2_no_pending(tmp_path):
+def test_smoke_init_brownfield_aborts_no_pending(tmp_path):
     """``init`` em brownfield (config presente) renderiza 3-caminhos
-    block e sai com exit 2 SEM emitir pending — caminho não-protocolo
-    legítimo, predates DRIFT-1 e preservado.
+    block e ABORTA SEM emitir pending. C3 EXIT-2-COLLISION: o abort não é
+    pausa — exit 2 ficou reservado pra pausa, então este caminho colapsou em
+    exit 1 + tag [FORGE-ERR:ABORTED].
     """
     project_root = _scaffold_brownfield(tmp_path)
     result = _run_engine(project_root, "init")
 
-    assert result.returncode == 2, (
-        f"init brownfield: expected exit 2, got {result.returncode}; "
+    assert result.returncode == 1, (
+        f"init brownfield: expected exit 1 (ABORTED), got {result.returncode}; "
         f"stderr={result.stderr!r}"
+    )
+    assert "[FORGE-ERR:ABORTED]" in result.stderr, (
+        f"init brownfield abort deve carregar a tag ABORTED; stderr={result.stderr!r}"
     )
     assert not _pending_path(project_root).exists(), (
         "init brownfield should NOT emit pending — it short-circuits "

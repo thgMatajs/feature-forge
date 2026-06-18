@@ -226,7 +226,8 @@ def test_forge_upgrade_rollback_on_smoke_fail(tmp_path: Path) -> None:
 
     sha_after = _git(["rev-parse", "HEAD"], cwd=fake_home)
 
-    assert result == 4, f"esperado 4 (smoke fail + rollback), obtido {result}"
+    # C3 EXIT-2-COLLISION: return 4 colapsou em exit 1 + tag [FORGE-ERR:UPGRADE-FAILED].
+    assert result == 1, f"esperado 1 (smoke fail + rollback), obtido {result}"
     assert sha_after == sha_before, (
         f"HEAD não voltou ao sha anterior após rollback. "
         f"antes={sha_before[:8]}, depois={sha_after[:8]}"

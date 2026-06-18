@@ -71,6 +71,12 @@ from engine.ui import progress as ui_progress
 from engine.ui import question as ui_question
 from engine.ui import question  # alias para mock-friendly access (engine.init.question.ask)
 from engine.ui import renderer
+from engine.ui.exit_codes import (
+    ERR_ABORTED,
+    ERR_INIT_FAILED,
+    ERR_USAGE,
+    fail_with_tag,
+)
 from engine.utils.paths import (
     cards_canonical_dir,
     cards_dir,
@@ -972,7 +978,7 @@ def run(argv: list[str]) -> int:
                 "yellow",
             )
         )
-        return 2
+        return fail_with_tag(ERR_USAGE)
 
     project_root = Path.cwd().resolve()
     try:
@@ -987,7 +993,7 @@ def run(argv: list[str]) -> int:
     except InitError as exc:
         renderer.write("")
         renderer.write(renderer.colored(f"forge init falhou: {exc}", "red"))
-        return 2
+        return fail_with_tag(ERR_INIT_FAILED)
 
 
 def _run_pipeline(project_root: Path) -> int:
@@ -1053,7 +1059,7 @@ def _run_pipeline(project_root: Path) -> int:
                 ],
             )
         )
-        return 2
+        return fail_with_tag(ERR_ABORTED)
 
     existing_checkpoint = _load_checkpoint(project_root)
     if existing_checkpoint:
@@ -1114,7 +1120,7 @@ def _run_pipeline(project_root: Path) -> int:
             renderer.write(
                 "Ok, abortado. O checkpoint segue intacto pra inspeção manual."
             )
-            return 2
+            return fail_with_tag(ERR_ABORTED)
         # resume → segue sem apagar o checkpoint; o pipeline regrava no
         # final via _clear_checkpoint quando completar com sucesso.
 
@@ -1335,7 +1341,7 @@ def _run_pipeline(project_root: Path) -> int:
                 ],
             )
         )
-        return 2
+        return fail_with_tag(ERR_ABORTED)
 
     if res.warnings:
         for w in res.warnings:

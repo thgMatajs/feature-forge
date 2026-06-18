@@ -43,6 +43,7 @@ from engine.memory.l1 import (
 )
 from engine.persona import mentor_calmo
 from engine.ui import question, renderer
+from engine.ui.exit_codes import ERR_PROJECT_NOT_FOUND, fail_with_tag
 from engine.ui.question import PromptAbortedError
 from engine.utils.paths import (
     ProjectRootNotFoundError,
@@ -180,7 +181,7 @@ def run(argv: list[str]) -> int:
         project_root = find_project_root()
     except ProjectRootNotFoundError as exc:
         renderer.write(renderer.colored(str(exc), "red"))
-        return 1
+        return fail_with_tag(ERR_PROJECT_NOT_FOUND)
 
     try:
         scope_kind, scope_target = _resolve_scope(argv, project_root)

@@ -30,6 +30,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from engine.ui.exit_codes import ERR_UPGRADE_FAILED, fail_with_tag
+
 
 # ── helpers testáveis ─────────────────────────────────────────────────────────
 
@@ -227,7 +229,7 @@ def run_upgrade(
                 f"forge upgrade: rollback ou pip re-refresh falhou. Estado pode estar inconsistente.\n"
                 f"  Rode manualmente: cd {home} && git checkout --detach {prev_sha}\n"
             )
-        return 4
+        return fail_with_tag(ERR_UPGRADE_FAILED)
 
     # 6. Smoke
     smoke_ok = _smoke_version(home)
@@ -246,7 +248,7 @@ def run_upgrade(
                 f"forge upgrade: rollback ou pip re-refresh falhou.\n"
                 f"  Rode manualmente: cd {home} && git checkout --detach {prev_sha}\n"
             )
-        return 4
+        return fail_with_tag(ERR_UPGRADE_FAILED)
 
     sys.stdout.write(f"forge: atualizado para {latest_tag} com sucesso.\n")
     return 0

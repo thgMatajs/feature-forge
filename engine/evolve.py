@@ -30,6 +30,7 @@ from engine.memory.distiller import (
 from engine.memory.l1 import append_history
 from engine.memory.l2 import l2_size_bytes
 from engine.ui import question, renderer
+from engine.ui.exit_codes import ERR_PROJECT_NOT_FOUND, fail_with_tag
 from engine.ui.question import PromptAbortedError
 from engine.utils.paths import (
     ProjectRootNotFoundError,
@@ -360,7 +361,7 @@ def run(argv: list[str]) -> int:
         project_root = find_project_root()
     except ProjectRootNotFoundError as exc:
         sys.stderr.write(f"forge evolve: {exc}\n")
-        return 2
+        return fail_with_tag(ERR_PROJECT_NOT_FOUND)
 
     cfg = _load_workflow_config(project_root)
 

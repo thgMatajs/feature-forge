@@ -169,10 +169,11 @@ def test_resume_from_checkpoint(
 
     # Stage 3 — invoca implement.run([]). question.ask_text deve consumir
     # o response, voltar "ghost-feature", run descobre que feature nao
-    # existe e retorna 4 (feature missing).
+    # existe e retorna exit 1 + tag FEATURE-MISSING (C3 EXIT-2-COLLISION:
+    # a escada legada return 4 colapsou em 1 + [FORGE-ERR:<TAG>]).
     rc = implement.run([])
 
-    assert rc == 4, f"unexpected exit code from implement.run: {rc}"
+    assert rc == 1, f"unexpected exit code from implement.run: {rc}"
 
     # Task 0.7b — CR-002 invariant: state files MUST remain on disk
     # after happy-path consume. cli.py finally block performs the

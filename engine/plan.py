@@ -53,6 +53,12 @@ from engine.memory.l1 import (
 )
 from engine.persona import mentor_calmo
 from engine.ui import question, renderer
+from engine.ui.exit_codes import (
+    ERR_ABORTED,
+    ERR_LOCKED,
+    ERR_PROJECT_NOT_FOUND,
+    fail_with_tag,
+)
 from engine.ui.question import PromptAbortedError
 from engine.utils.paths import (
     ProjectRootNotFoundError,
@@ -1562,7 +1568,7 @@ def _handle_stub_subtype(subtype: str, slug: str, project_root: Path) -> int:
     release_phase_lock(slug, project_root)
     renderer.write("")
     renderer.write(renderer.dim("Abortado. Nada mais escrito."))
-    return 3
+    return fail_with_tag(ERR_ABORTED)
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────
@@ -1672,7 +1678,7 @@ def run(argv: list[str]) -> int:
         project_root = find_project_root()
     except ProjectRootNotFoundError as exc:
         sys.stderr.write(f"forge plan: {exc}\n")
-        return 2
+        return fail_with_tag(ERR_PROJECT_NOT_FOUND)
 
     argv_slug = argv[0] if argv else None
     try:
@@ -1724,7 +1730,7 @@ def run(argv: list[str]) -> int:
             f"forge plan: '{slug}' phase-locked by '{held}'. "
             "Run `forge undo` to release, or wait for the other command to finish.\n"
         )
-        return 3
+        return fail_with_tag(ERR_LOCKED)
 
     # Cena 2.5 — subtype inference + confirmation. Persisted before any
     # wave renders so resume sees the same subtype.

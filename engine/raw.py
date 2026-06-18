@@ -28,6 +28,7 @@ from engine.utils.paths import (
     try_find_project_root,
 )
 from engine.utils.yaml_io import backup_file, read_yaml
+from engine.ui.exit_codes import ERR_USAGE, fail_with_tag
 
 
 def run(argv: list[str]) -> int:
@@ -43,7 +44,7 @@ def run(argv: list[str]) -> int:
             return _migrator(script, rest)
         print(f"forge raw: unknown script '{script}'", file=sys.stderr)
         _print_help()
-        return 2
+        return fail_with_tag(ERR_USAGE)
     return handler(rest)
 
 
@@ -62,15 +63,15 @@ def _print_help() -> None:
 def _verify_card(argv: list[str]) -> int:
     if not argv:
         print("usage: forge raw verify-card <card-dir>", file=sys.stderr)
-        return 2
+        return fail_with_tag(ERR_USAGE)
     card_dir = Path(argv[0]).resolve()
     if not card_dir.is_dir():
         print(f"forge raw verify-card: not a directory: {card_dir}", file=sys.stderr)
-        return 2
+        return fail_with_tag(ERR_USAGE)
     yaml_path = card_dir / "card.yaml"
     if not yaml_path.is_file():
         print(f"forge raw verify-card: card.yaml not found in {card_dir}", file=sys.stderr)
-        return 2
+        return fail_with_tag(ERR_USAGE)
     try:
         data = read_yaml(yaml_path)
     except Exception as exc:
@@ -97,11 +98,11 @@ def _edit_config(argv: list[str]) -> int:
     project_root = try_find_project_root()
     if project_root is None:
         print("forge raw edit-config: no project root", file=sys.stderr)
-        return 2
+        return fail_with_tag(ERR_USAGE)
     path = active_config_path(project_root)
     if not path.is_file():
         print(f"forge raw edit-config: not found {path}", file=sys.stderr)
-        return 2
+        return fail_with_tag(ERR_USAGE)
     editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"
     print(f"opening {path} in {editor}")
     try:
@@ -130,11 +131,11 @@ def _rebuild_templates(argv: list[str]) -> int:
     project_root = try_find_project_root()
     if project_root is None:
         print("forge raw rebuild-templates: no project root", file=sys.stderr)
-        return 2
+        return fail_with_tag(ERR_USAGE)
     cards_root = cards_dir(project_root)
     if not cards_root.is_dir():
         print("no cards snapshot directory — run `forge init` first", file=sys.stderr)
-        return 2
+        return fail_with_tag(ERR_USAGE)
 
     print(f"scanning {cards_root}")
     try:
@@ -220,7 +221,7 @@ def _migrator(name: str, argv: list[str]) -> int:
     """Stub for schema migrators. Real impls land in Phase 5."""
     del argv
     print(f"forge raw {name}: not implemented yet (stub — Phase 5)", file=sys.stderr)
-    return 3
+    return fail_with_tag(ERR_USAGE)
 
 
 # ── Dispatch table ──────────────────────────────────────────────────────────

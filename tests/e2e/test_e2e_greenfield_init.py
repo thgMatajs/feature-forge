@@ -171,16 +171,20 @@ def test_forge_version_exits_zero(tmp_path: Path) -> None:
 @pytest.mark.e2e
 @pytest.mark.skipif(not _RUN_E2E, reason="set RUN_E2E=1 to run e2e tests")
 def test_forge_init_rejects_unknown_arg(tmp_path: Path) -> None:
-    """Regression guard: ``forge init bogus`` continua exit 2 (rejeitado).
+    """Regression guard: ``forge init bogus`` é rejeitado.
 
-    NOTA: exit 2 aqui é o ``cli.py`` flagando arg desconhecido, distinto
-    do exit 2 paused-for-input que os tests novos exercitam. Ambos os
-    paths convergem no mesmo código mas têm semântica diferente —
-    diferenciados pelo stderr / state files.
+    C3 EXIT-2-COLLISION fechou exatamente o overload que a NOTA antiga
+    descrevia: arg inválido não é pausa. exit 2 ficou reservado pra
+    paused-for-input; o usage error colapsou em exit 1 + tag
+    [FORGE-ERR:USAGE] em stderr (diferenciado da pausa pela tag + ausência
+    de state files).
     """
     scaffold_minimal_project(tmp_path, with_firebase_signals=False)
     result = run_forge(["init", "bogus"], cwd=tmp_path, timeout=15)
-    assert result.returncode == 2, (
-        f"init bogus deveria exit 2 (arg inválido), got {result.returncode}.\n"
+    assert result.returncode == 1, (
+        f"init bogus deveria exit 1 (USAGE), got {result.returncode}.\n"
         f"stderr: {result.stderr[-300:]}"
+    )
+    assert "[FORGE-ERR:USAGE]" in result.stderr, (
+        f"usage error deve carregar a tag USAGE; stderr={result.stderr[-300:]}"
     )

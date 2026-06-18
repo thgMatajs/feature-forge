@@ -126,10 +126,11 @@ def test_resume_from_checkpoint(
     )
 
     # Invoca init.run([]) — chega no gate resume, consome response,
-    # retorna 2 (abort path, codigo definido em engine/init.py:866).
+    # retorna exit 1 + tag ABORTED (C3 EXIT-2-COLLISION: o abort NÃO é pausa;
+    # exit 2 ficou reservado pra pausa, abort colapsou em 1 + [FORGE-ERR:ABORTED]).
     rc = init.run([])
 
-    assert rc == 2, f"expected abort exit 2, got {rc}"
+    assert rc == 1, f"expected abort exit 1, got {rc}"
 
     # Task 0.7b — CR-002 invariant: state files MUST remain on disk
     # after happy-path consume. cli.py finally block performs the

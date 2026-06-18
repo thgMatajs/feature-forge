@@ -337,6 +337,11 @@ def main(argv: list[str] | None = None) -> int:
     paused_exc: PausedForInputError | None = None
     forensic_exit = False
     try:
+        # C3 EXIT-2-COLLISION — exit 2 é reservado ESTRITAMENTE pra pausa
+        # (PausedForInputError + UserPausedError). Todos os erros dos handlers
+        # colapsaram em exit 1 + tag [FORGE-ERR:<TAG>] (ver engine/ui/exit_codes.py
+        # fail_with_tag). Nenhuma exceção não-pausa pode retornar 2 a partir
+        # daqui.
         try:
             result = handler(rest)
         except PausedForInputError as exc:

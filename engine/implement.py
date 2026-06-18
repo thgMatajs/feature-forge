@@ -41,6 +41,15 @@ from engine.memory.l1 import (
 )
 from engine.persona import mentor_calmo
 from engine.ui import question, renderer
+from engine.ui.exit_codes import (
+    ERR_BLOCKED_EXTERNAL,
+    ERR_FEATURE_MISSING,
+    ERR_LOCKED,
+    ERR_NOT_READY,
+    ERR_PROJECT_NOT_FOUND,
+    ERR_WAVE_INCOMPLETE,
+    fail_with_tag,
+)
 from engine.ui.question import PromptAbortedError
 from engine.utils.paths import (
     ProjectRootNotFoundError,
@@ -1135,7 +1144,7 @@ def run(argv: list[str]) -> int:
         project_root = find_project_root()
     except ProjectRootNotFoundError as exc:
         sys.stderr.write(f"forge implement: {exc}\n")
-        return 2
+        return fail_with_tag(ERR_PROJECT_NOT_FOUND)
 
     argv_slug = argv[0] if argv else None
     try:
@@ -1165,7 +1174,7 @@ def run(argv: list[str]) -> int:
             f"{feature_path}. Rode `forge plan {slug}` primeiro.\n"
         )
         _clear_implement_checkpoint(project_root)
-        return 4
+        return fail_with_tag(ERR_FEATURE_MISSING)
 
     is_ready, observed = _check_readiness(feature_path)
     if not is_ready:
@@ -1174,7 +1183,7 @@ def run(argv: list[str]) -> int:
             f"Rode `forge plan {slug}` e finalize Wave E.\n"
         )
         _clear_implement_checkpoint(project_root)
-        return 5
+        return fail_with_tag(ERR_NOT_READY)
 
     tasks = _collect_tasks(feature_path)
     if not tasks:
@@ -1183,7 +1192,7 @@ def run(argv: list[str]) -> int:
             "Wave D do plano não foi concluída.\n"
         )
         _clear_implement_checkpoint(project_root)
-        return 6
+        return fail_with_tag(ERR_WAVE_INCOMPLETE)
 
     # Discipline §9 — recompute feature blocked state at startup.
     # When state was blocked-on-external from a previous session and the user
@@ -1312,7 +1321,7 @@ def run(argv: list[str]) -> int:
         # undo` is the canonical recovery path.
         # DRIFT-1 W2.T3b — clear intent-resume checkpoint on hard-gate return.
         _clear_implement_checkpoint(project_root)
-        return 7  # distinct exit code — caller scripts can switch behavior
+        return fail_with_tag(ERR_BLOCKED_EXTERNAL)
 
     # Acquire task-scoped phase lock via context manager (MD-03 refactor).
     # The CM owns acquire + release bookkeeping — every exit path (normal
@@ -1330,7 +1339,7 @@ def run(argv: list[str]) -> int:
             )
             # DRIFT-1 W2.T3b — clear intent-resume checkpoint on lock-deny.
             _clear_implement_checkpoint(project_root)
-            return 3
+            return fail_with_tag(ERR_LOCKED)
 
         try:
             # Cinematic header + auto-resume detection.

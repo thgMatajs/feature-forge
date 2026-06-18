@@ -176,32 +176,52 @@ superfície. 14 verbos, zero flags, zero exceções.
 ## Exit codes
 
 Contrato canônico do dispatcher (`bin/forge` → `engine/cli.py::main()`).
-Adicionado em v1.2-dev (Phase A DRIFT-1, 2026-06-10) com a introdução do
-exit code **2** pra sinalizar pausa aguardando input.
+Recontratado em W2 (protocol robustness, 2026-06-17, finding C3
+EXIT-2-COLLISION): exit 2 é reservado ESTRITAMENTE pra pausa; a escada legada
+(3/4/5/6/7/8 + not-a-project=2) colapsou em `exit 1` + tag machine-readable em
+stderr.
 
 | Code | Significado | Origem |
 |---|---|---|
 | 0 | comando completou com sucesso | handler retornou normalmente |
-| 1 | erro / validator fail / input inválido | exceptions não-listadas, response mismatch, schema invalid |
-| 2 | paused for input (needs response) | `PausedForInputError` (engine emitiu pending) + `UserPausedError` (response com `paused: true`) |
-| 130 | user cancelou | `KeyboardInterrupt` (TTY) + `UserCancelledError` (response com `cancelled: true`) |
+| 1 | erro (carrega tag `[FORGE-ERR:<TAG>]` em stderr) | todo erro de handler via `fail_with_tag` + exceções não-listadas |
+| 2 | paused for input (needs response) | SÓ `PausedForInputError` (engine emitiu pending) + `UserPausedError` (response `paused: true`) |
+| 127 | editor não encontrado | exceção POSIX documentada — só `forge raw edit-config` |
+| 130 | user cancelou | `KeyboardInterrupt` (TTY) + `UserCancelledError` (response `cancelled: true`) |
 
-O host (Claude Code OR `engine.ui.tty_bridge` em fallback) loop-reads
-exit code 2 + state files (`.claude/state/forge-pending.json` /
-`forge-response.json`) pra continuação. Subagent invocando `forge` que
-receba exit 2 NÃO deve responder sozinho — ver
-`.claude/rules/subagent-workflow.md §Quando subagent invoca \`forge\``.
+**Tags machine-readable (exit 1).** Toda saída de erro de handler emite uma tag
+estável em stderr no formato `[FORGE-ERR:<TAG>]`. O host/driver ramifica por ela
+sem depender de código numérico ambíguo. Tags canônicas (fonte única:
+`engine/ui/exit_codes.py`):
+
+| TAG | Quando | Comandos |
+|---|---|---|
+| `PROJECT-NOT-FOUND` | fora de um projeto forge | plan, implement, verify, evolve |
+| `LOCKED` | feature phase-locked por outro comando | plan, implement |
+| `FEATURE-MISSING` | feature não existe (rode `forge plan` antes) | implement |
+| `NOT-READY` | readiness != 'ready' (finalize Wave E) | implement |
+| `WAVE-INCOMPLETE` | sem tasks (Wave D do plano incompleta) | implement |
+| `BLOCKED-EXTERNAL` | task bloqueada por ticket externo | implement |
+| `QA-BLOCK` | verdict do `forge qa` = BLOCK | qa |
+| `UPGRADE-FAILED` | rollback após checkout/smoke falho | upgrade |
+| `USAGE` | uso inválido / sem projeto / arquivo ausente / migrator stub | raw, init |
+| `ABORTED` | usuário abortou um gate (subtype-stub, resume de init, config-presente) | plan, init |
+| `INIT-FAILED` | pipeline de `forge init` levantou InitError | init |
+
+O host (Claude Code OR adapter intent-file) loop-reads exit code 2 + state files
+(`.claude/forge/state/forge-pending.json` / `forge-response.json`) pra
+continuação. Subagent invocando `forge` que receba exit 2 NÃO deve responder
+sozinho — ver `.claude/rules/subagent-workflow.md §Quando subagent invoca \`forge\``.
 
 **Exit 130 — duas rotas convergentes:**
 - (a) `KeyboardInterrupt` (Ctrl+C / SIGINT) em modo TTY.
 - (b) Host response `cancelled: true` (`UserCancelledError`) em modo intent.
 
-Callers tratam identicamente — usuário desistiu. Distinção fica em
-`engine/cli.py` na captura (Decision 27 cobre a rota TTY; CR-001 do W2
-review cobre a rota intent).
+Callers tratam identicamente — usuário desistiu (Decisão 27 cobre a rota TTY;
+CR-001 do W2 review cobre a rota intent).
 
 Schema dos state files: `docs/schemas/intent-protocol.md`.
 Spec canônico: `docs/superpowers/specs/drift-1-intent-protocol.md` §4.
 
-POSIX nota: exit 2 às vezes é usado por shells pra "misuse of shell
-builtins"; `forge` não é shell builtin, então o conflito é nominal.
+POSIX nota: exit 2 às vezes é usado por shells pra "misuse of shell builtins";
+`forge` não é shell builtin, então o conflito é nominal.

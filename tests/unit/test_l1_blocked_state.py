@@ -541,7 +541,8 @@ def test_implement_refuses_blocked_task_and_flips_state(
     monkeypatch.chdir(tmp_forge_project)
 
     rc = implement.run(["lembrete-rega"])
-    assert rc == 7
+    # C3 EXIT-2-COLLISION: return 7 (blocked-external) colapsou em exit 1 + tag.
+    assert rc == 1
 
     s = l1.read_l1_status("lembrete-rega", tmp_forge_project)
     assert s is not None

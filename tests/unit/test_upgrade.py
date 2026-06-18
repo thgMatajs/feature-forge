@@ -67,7 +67,8 @@ def test_upgrade_rollback_on_smoke_fail(tmp_path: Path) -> None:
          patch("engine.upgrade._git_checkout") as checkout:
         result = run_upgrade(forge_home=tmp_path)
 
-    assert result == 4, f"expected 4 on smoke failure + rollback, got {result}"
+    # C3 EXIT-2-COLLISION: return 4 colapsou em exit 1 + tag [FORGE-ERR:UPGRADE-FAILED].
+    assert result == 1, f"expected 1 on smoke failure + rollback, got {result}"
     # checkout called at least twice: once forward to tag, once back to prev_sha
     assert checkout.call_count >= 2, (
         f"expected forward + rollback checkout, got {checkout.call_count} calls"
@@ -115,7 +116,8 @@ def test_upgrade_rollback_on_pip_fail_re_runs_pip(tmp_path: Path) -> None:
          patch("engine.upgrade._git_checkout") as checkout:
         result = run_upgrade(forge_home=tmp_path)
 
-    assert result == 4, f"expected 4 on pip failure + rollback, got {result}"
+    # C3 EXIT-2-COLLISION: return 4 colapsou em exit 1 + tag [FORGE-ERR:UPGRADE-FAILED].
+    assert result == 1, f"expected 1 on pip failure + rollback, got {result}"
     # rollback checkout pro prev_sha aconteceu
     assert checkout.call_count >= 2, (
         f"expected forward + rollback checkout, got {checkout.call_count} calls"

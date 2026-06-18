@@ -50,6 +50,7 @@ from engine.qa.checkpoint import (
     write_checkpoint,
 )
 from engine.qa.emit import emit_proposed_evolutions
+from engine.ui.exit_codes import ERR_QA_BLOCK, fail_with_tag
 from engine.qa.ingest import (
     QAConfig,
     RunTree,
@@ -377,7 +378,9 @@ def run_qa(
         except FileNotFoundError:
             pass
 
-        return 8 if result.verdict == "BLOCK" else 0
+        if result.verdict == "BLOCK":
+            return fail_with_tag(ERR_QA_BLOCK)
+        return 0
     finally:
         signal.signal(signal.SIGINT, prev_handler)
 

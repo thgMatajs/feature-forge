@@ -271,7 +271,9 @@ def test_blocked_on_external_does_not_release_foreign_lock(
     )
 
     rc = implement.run([slug])
-    assert rc == 7, f"expected blocked-on-external exit 7, got {rc}"
+    # C3 EXIT-2-COLLISION: a escada legada return 7 colapsou em exit 1 + tag
+    # [FORGE-ERR:BLOCKED-EXTERNAL].
+    assert rc == 1, f"expected blocked-on-external exit 1, got {rc}"
 
     # The critical assertion — the foreign lock survives.
     assert current_phase_lock(slug, tmp_forge_project) == foreign_id, (
