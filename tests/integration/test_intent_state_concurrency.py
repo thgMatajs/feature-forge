@@ -2,23 +2,24 @@
 
 Endereça finding #19 do master review do PR #11 (DRIFT-1): nenhum teste
 exercia ``detect_race`` + ``write_pending`` sob contenção real via
-``threading.Thread``. SPEC §9 documenta explicitamente que a janela
-TOCTOU entre detect_race e write_pending existe (lock via flock está
-DEFERRED pra v1.2.x). Estes testes não fecham essa janela — documentam
-que o estado final permanece **coerente** (single-writer-wins via
-``os.replace`` atômico do ``write_json``) mesmo quando múltiplas threads
-disputam ao mesmo tempo.
+``threading.Thread``.
 
-O que NÃO se assert:
-- Ordem do vencedor (não-determinístico — depende do scheduling).
-- Que apenas uma thread escreva (todas podem entrar na janela TOCTOU).
+C4 CONC-1 fechou o gap TOCTOU/torn-write que estes testes antes apenas
+documentavam:
+- **C4-A** (``engine/utils/json_io.write_json``) — tempfile por-processo
+  (``{pid}.{uuid}.tmp``) elimina o torn write / ``FileNotFoundError`` no
+  ``os.replace`` do escritor tardio (nome de tempfile compartilhado era a
+  fonte da corrupção de bytes).
+- **C4-B** (``engine/ui/intent_state.pending_lock``) — flock ``LOCK_EX``
+  aplicado na seção crítica real ``detect_race``+``write_pending`` de
+  ``IntentFileAdapter._ask_loop`` serializa a janela TOCTOU em produção.
 
-O que se assert:
-- O pending final é JSON válido (sem torn write).
-- O conteúdo do pending corresponde a UM dos payloads candidatos
-  (não mistura — atomicidade via ``os.replace``).
-- A thread cujo payload venceu o ``os.replace`` consegue ler de volta
-  seu próprio intent-id.
+O que se assert agora (gap FECHADO, não documentado):
+- O pending final é SEMPRE JSON válido (sem torn write).
+- O conteúdo do pending corresponde EXATAMENTE a UM dos payloads
+  candidatos (nunca bytes concatenados, nunca mistura de campos).
+- ``write_pending`` / ``write_json`` NUNCA levantam ``FileNotFoundError``
+  no ``os.replace`` (cada escritor tem seu próprio tmp).
 
 Refs:
 - ``docs/superpowers/specs/drift-1-intent-protocol.md`` §9 "Concurrent
@@ -154,27 +155,17 @@ def test_concurrent_writers_detect_race_or_serialize(tmp_path):
 
 
 def test_concurrent_writers_document_torn_write_window(tmp_path):
-    """N threads escrevendo payloads distintos: documenta a janela de
-    torn write conhecida do ``write_json`` atual.
+    """N threads escrevendo payloads distintos: SEM torn write (C4 CONC-1).
 
-    SPEC §9 reconhece que sem ``fcntl.flock`` (DEFERRED pra v1.2.x) o
-    protocolo é single-writer; este teste exercita o gap concreto:
-    múltiplas threads que compartilham o mesmo nome de tempfile
-    (``forge-pending.json.tmp``) podem produzir um dos três outcomes:
+    Antes de C4, este teste tolerava três outcomes (incluindo torn write e
+    ``FileNotFoundError``) por causa do nome de tempfile compartilhado
+    (``forge-pending.json.tmp``). Com o tempfile por-processo de C4-A
+    (``{pid}.{uuid}.tmp``), cada escritor tem seu próprio tmp e o
+    ``os.replace`` final é a única fronteira atômica: last-writer-wins por
+    syscall, NUNCA conteúdo corrompido.
 
-      (a) Final == UM dos payloads (single-writer-wins via os.replace).
-      (b) ``FileNotFoundError`` em writers tardios (o tmp já foi
-          renomeado por outro thread).
-      (c) JSON inválido no destino (duas threads truncando o mesmo
-          tempfile e concorrendo no flush → bytes concatenados).
-
-    O teste NÃO assert ausência de (c) — documenta que ele PODE ocorrer
-    no protocolo atual. O fix definitivo é per-thread tempfile name
-    (incorporando ``os.getpid()`` + ``threading.get_ident()`` no sufixo),
-    rastreado como follow-up. Aqui apenas garantimos que o estado é
-    determinístico segundo um dos três outcomes — nunca um quarto modo
-    de falha silencioso (ex.: conteúdo bem-formado mas semanticamente
-    inválido, vindo de mistura de campos).
+    Invariante forte: o pending final SEMPRE parseia como JSON válido e bate
+    EXATAMENTE com um dos payloads submetidos.
     """
     project_root = _project(tmp_path)
     n_threads = 8
@@ -188,13 +179,9 @@ def test_concurrent_writers_document_torn_write_window(tmp_path):
         payload["question"] = f"unique-marker-{idx}-{'x' * (idx * 7)}"
         payloads[idx] = payload
         barrier.wait()
-        # Skip detect_race here — this test is purely about write atomicity,
-        # not race signaling. Some writers lose the os.replace race when
-        # the shared tempfile name collides — non-fatal pra este invariante.
-        try:
-            intent_state.write_pending(payload, project_root)
-        except FileNotFoundError:
-            pass
+        # C4 CONC-1 fix: com tempfile por-processo, write_pending NUNCA levanta
+        # FileNotFoundError no os.replace — cada writer tem seu próprio tmp.
+        intent_state.write_pending(payload, project_root)
 
     threads = [threading.Thread(target=worker, args=(i,)) for i in range(n_threads)]
     for t in threads:
@@ -207,33 +194,20 @@ def test_concurrent_writers_document_torn_write_window(tmp_path):
     pending_path = (
         project_root / ".claude" / "forge" / "state" / "forge-pending.json"
     )
-    if not pending_path.is_file():
-        # All writers lost the os.replace race; nothing to inspect.
-        # Invariant ("no torn write") trivially holds.
-        return
+    assert pending_path.is_file(), (
+        "com tempfile por-processo, ao menos um writer vence o os.replace e "
+        "o pending final DEVE existir (nenhum perde o tmp compartilhado)"
+    )
     raw = pending_path.read_bytes()
 
-    # Outcome (c) — torn write — documenta o gap. Se ocorrer, o teste
-    # passa mas registra warning pra trazer atenção ao follow-up.
-    try:
-        parsed = json.loads(raw.decode("utf-8"))
-    except json.JSONDecodeError:
-        # Janela TOCTOU + shared tempfile name expôs torn write. SPEC §9
-        # gap conhecido. Não-fatal pra este teste: documenta a presença
-        # do gap em vez de fingir que ele não existe.
-        return
-
-    # Se o JSON parseou, o conteúdo DEVE bater com UM dos payloads
-    # submetidos — nunca uma mistura semântica de campos.
-    matched_any = False
-    for candidate in payloads.values():
-        if parsed == candidate:
-            matched_any = True
-            break
+    # C4 CONC-1 fix: tempfile por-processo elimina o torn write. O destino
+    # SEMPRE parseia como JSON válido e bate EXATAMENTE com um dos payloads
+    # submetidos — nunca bytes concatenados, nunca mistura de campos.
+    parsed = json.loads(raw.decode("utf-8"))  # não deve levantar
+    matched_any = any(parsed == candidate for candidate in payloads.values())
     assert matched_any, (
         "final pending content matches no submitted payload — "
-        "writes likely interleaved at field level (worse than torn "
-        f"write). parsed={parsed!r}"
+        f"atomicidade violada. parsed={parsed!r}"
     )
 
 
@@ -252,12 +226,7 @@ def test_concurrent_writers_via_json_io_directly(tmp_path):
 
     def worker(idx: int) -> None:
         barrier.wait()
-        try:
-            json_io.write_json(target, payloads[idx])
-        except FileNotFoundError:
-            # Shared tempfile name lost the os.replace race; final state
-            # still must be coherent — invariant validated below.
-            pass
+        json_io.write_json(target, payloads[idx])
 
     threads = [threading.Thread(target=worker, args=(i,)) for i in range(n_threads)]
     for t in threads:
@@ -265,16 +234,9 @@ def test_concurrent_writers_via_json_io_directly(tmp_path):
     for t in threads:
         t.join(timeout=10)
 
-    if not target.is_file():
-        # All writers lost the shared-tempfile race; invariant trivial.
-        return
-    try:
-        parsed = json.loads(target.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        # Torn write documented (see test_concurrent_writers_document_
-        # torn_write_window). Non-fatal for this targeted cross-check.
-        return
+    assert target.is_file(), "algum writer deve vencer; destino deve existir"
+    parsed = json.loads(target.read_text(encoding="utf-8"))  # não deve levantar
     assert parsed in payloads, (
-        "json_io.write_json under contention produced a payload no writer "
-        f"submitted; parsed={parsed!r}"
+        "json_io.write_json sob contenção produziu payload que nenhum writer "
+        f"submeteu; parsed={parsed!r}"
     )

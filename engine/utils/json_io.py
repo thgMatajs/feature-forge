@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -103,7 +104,13 @@ def write_json(
         _apply_mode(path, mode)
         return
 
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    # C4 CONC-1: tempfile por-processo. O nome fixo (path + ".tmp") fazia dois
+    # processos forge no mesmo root colidirem no mesmo arquivo intermediário —
+    # torn write OU FileNotFoundError no os.replace do escritor tardio. O sufixo
+    # {pid}.{uuid} garante que cada escritor tenha seu próprio tmp; o os.replace
+    # final continua sendo a fronteira atômica (last-writer-wins por syscall,
+    # nunca conteúdo corrompido).
+    tmp = path.with_suffix(f"{path.suffix}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     try:
         with tmp.open("w", encoding="utf-8") as fh:
             fh.write(serialized)
