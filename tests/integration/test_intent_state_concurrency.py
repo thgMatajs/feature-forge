@@ -38,6 +38,8 @@ from pathlib import Path
 
 import pytest
 
+from engine.host.adapter import AskKind, PausedForInputError
+from engine.host.adapters.intent_file import IntentFileAdapter
 from engine.ui import intent_state
 from engine.utils import json_io
 
@@ -240,3 +242,106 @@ def test_concurrent_writers_via_json_io_directly(tmp_path):
         "json_io.write_json sob contenção produziu payload que nenhum writer "
         f"submeteu; parsed={parsed!r}"
     )
+
+
+# --- C4 CONC-1 (B): pending_lock serializa a seção crítica ------------------
+
+
+def test_pending_lock_serializes_detect_race_and_write(tmp_path):
+    """C4 CONC-1 (B): sob pending_lock, detect_race+write_pending viram seção
+    crítica serializada — o primeiro escreve, os demais veem o pending do
+    primeiro e levantam RaceDetectedError DETERMINÍSTICO (não corrida de bytes).
+    """
+    project_root = _project(tmp_path)
+    n_threads = 6
+    barrier = threading.Barrier(n_threads)
+    outcomes: list[str] = []
+    outcomes_lock = threading.Lock()
+
+    def worker(idx: int) -> None:
+        intent_id = f"locked-{idx:08d}-0000-4000-8000-000000000000"
+        payload = _make_payload(intent_id, pid=30_000 + idx)
+        barrier.wait()
+        try:
+            with intent_state.pending_lock(project_root):
+                intent_state.detect_race(project_root, intent_id)
+                intent_state.write_pending(payload, project_root)
+            tag = "wrote"
+        except intent_state.RaceDetectedError:
+            tag = "race"
+        with outcomes_lock:
+            outcomes.append(tag)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+        assert not t.is_alive(), "worker hung past timeout"
+
+    assert len(outcomes) == n_threads
+    # Exatamente um writer vence; os demais veem o pending do vencedor e
+    # levantam RaceDetectedError de forma DETERMINÍSTICA (sem janela TOCTOU).
+    assert outcomes.count("wrote") == 1, f"esperava 1 vencedor, veio {outcomes}"
+    assert outcomes.count("race") == n_threads - 1, (
+        f"os demais devem detectar a corrida; veio {outcomes}"
+    )
+    # Pending final é válido e bate com o vencedor.
+    final = intent_state.read_pending(project_root)
+    assert final is not None and final["intent-id"].startswith("locked-")
+
+
+def test_adapter_ask_loop_serializes_via_applied_lock(tmp_path):
+    """C4 CONC-1 (B) — seção crítica REAL: dois IntentFileAdapter competindo
+    no mesmo root passam pelo pending_lock aplicado em _ask_loop. Sem cross-answer
+    e sem torn write: exatamente um emite o pending (PausedForInputError), os
+    demais detectam a corrida (RaceDetectedError). O pending final é válido e
+    bate com o vencedor.
+    """
+    project_root = _project(tmp_path)
+    n_threads = 6
+    barrier = threading.Barrier(n_threads)
+    outcomes: list[str] = []
+    outcomes_lock = threading.Lock()
+
+    def worker(idx: int) -> None:
+        # Cada thread tem seu próprio adapter, mas todos no MESMO project_root —
+        # disputam o mesmo forge-pending.json (a seção crítica real).
+        adapter = IntentFileAdapter(project_root=project_root)
+        barrier.wait()
+        try:
+            adapter.ask(
+                kind=AskKind.ASK,
+                question=f"probe-{idx}",
+                options={"a": "alpha", "b": "beta"},
+                default=None,
+                allow_pause=True,
+            )
+            tag = "returned"  # não esperado na primeira entrada (sem response)
+        except PausedForInputError:
+            tag = "paused"  # emitiu o pending — venceu a corrida
+        except intent_state.RaceDetectedError:
+            tag = "race"  # viu o pending do vencedor sob o lock
+        with outcomes_lock:
+            outcomes.append(tag)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+        assert not t.is_alive(), "worker hung past timeout"
+
+    assert len(outcomes) == n_threads
+    # Exatamente um emite o pending; os demais detectam a corrida de forma
+    # DETERMINÍSTICA (lock aplicado fecha o TOCTOU). Nenhuma resposta cruzada.
+    assert outcomes.count("paused") == 1, (
+        f"esperava 1 vencedor (PausedForInputError), veio {outcomes}"
+    )
+    assert outcomes.count("race") == n_threads - 1, (
+        f"os demais devem ver RaceDetectedError sob o lock; veio {outcomes}"
+    )
+    # Pending final no disco é JSON válido (sem torn write) e bate com o vencedor.
+    final = intent_state.read_pending(project_root)
+    assert final is not None
+    assert final["question"].startswith("probe-")

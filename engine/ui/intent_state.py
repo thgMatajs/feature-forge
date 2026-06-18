@@ -72,9 +72,11 @@ Refs:
 from __future__ import annotations
 
 import json
+import sys
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from engine.utils import json_io
 from engine.utils.paths import forge_state_dir
@@ -150,6 +152,76 @@ def _state_dir(
 
 def _pending_path(project_root: Path, *, state_dir: Path | None = None) -> Path:
     return _state_dir(project_root, state_dir) / "forge-pending.json"
+
+
+def _pending_lock_path(project_root: Path, *, state_dir: Path | None = None) -> Path:
+    """Path do lock file dedicado pra seção crítica detect_race+write_pending.
+
+    Separado do pending.json: o write_json substitui o inode do pending via
+    os.replace; segurar lock sobre um fd que vai ser substituído é frágil.
+    Um lock file dedicado é o padrão robusto (mesmo princípio do sentinel
+    O_EXCL em engine/memory/l1.py).
+    """
+    return _state_dir(project_root, state_dir) / "forge-pending.lock"
+
+
+@contextmanager
+def pending_lock(
+    project_root: Path, *, state_dir: Path | None = None
+) -> Iterator[None]:
+    """Lock advisory exclusivo sobre a seção crítica detect_race+write_pending.
+
+    C4 CONC-1 (B): fecha a janela TOCTOU em que dois processos forge ambos
+    passam por detect_race (pending ausente) antes de qualquer escrita. Sob
+    este lock, a sequência "checar corrida + escrever pending" é atômica
+    cross-process.
+
+    POSIX usa fcntl.flock(LOCK_EX); Windows usa msvcrt.locking. Plataformas
+    sem suporte caem em no-op (o tempfile por-processo de C4(A) + os.replace
+    atômico permanecem como última linha de defesa).
+    """
+    lock_path = _pending_lock_path(project_root, state_dir=state_dir)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(lock_path, "a", encoding="utf-8")
+    locked_posix = False
+    locked_win = False
+    try:
+        if sys.platform == "win32":
+            try:
+                import msvcrt  # type: ignore[import-not-found]
+
+                try:
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+                    locked_win = True
+                except OSError:
+                    pass
+            except ImportError:
+                pass
+        else:
+            try:
+                import fcntl  # type: ignore[import-not-found]
+
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+                locked_posix = True
+            except ImportError:
+                pass
+        yield
+    finally:
+        try:
+            if locked_posix:
+                import fcntl  # type: ignore[import-not-found]
+
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            elif locked_win:
+                import msvcrt  # type: ignore[import-not-found]
+
+                try:
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+                except OSError:
+                    pass
+        except (ImportError, OSError):
+            pass
+        fh.close()
 
 
 def _response_path(project_root: Path, *, state_dir: Path | None = None) -> Path:
@@ -646,8 +718,13 @@ def detect_race(
       raises ``RaceDetectedError`` with a mentor-calmo message pointing
       at the PID and the file path.
 
-    Lock file via ``fcntl.flock`` is deferred — see the spec
-    §"Anti-goals + Considerações futuras".
+    A seção crítica ``detect_race`` + ``write_pending`` é serializada
+    cross-process pelo caller real (``IntentFileAdapter._ask_loop``), que a
+    envolve em ``pending_lock(project_root, state_dir=...)`` (C4 CONC-1 (B)).
+    Sob o lock, dois processos forge não passam mais ambos pelo ``detect_race``
+    antes de escrever. O tempfile por-processo de C4 (A) + ``os.replace``
+    atômico permanecem como última linha de defesa (sem torn write mesmo se o
+    lock for no-op numa plataforma sem suporte).
     """
     pending_path = _pending_path(project_root, state_dir=state_dir)
     if not pending_path.exists():
