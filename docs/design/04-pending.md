@@ -242,9 +242,28 @@ trabalho pendente da Wave 1.
 - ~~**ENV-1**~~ — **FECHADO em W2** (A3). `scrubbed_subprocess_env` no boundary de
   spawn do ingest + pin `host: intent-file` (já honrado por `detect.py`)
   documentado.
-- **TOKEN-BLIND / `--json` / manifesto / `forge status` router** — wave de
-  token economy. Saídas estruturadas pro host consumir sem reparse caro +
-  roteador de status. Critério: wave dedicada a economia de token no driver.
+- ~~**TOKEN-BLIND / `--json` / manifesto / `forge status` router**~~ —
+  **FECHADO em W3** (token economy / machine-legibility). Output-mode infra
+  (context var + allowlist `_JSON_CAPABLE_COMMANDS` + renderer host-aware);
+  read-commands `--json` (`status`/`doctor`/`verify`/`memory`); `forge --help
+  --json` manifesto de comandos (derivado de `_VISIBLE_ORDER` + `_COMMAND_META`
+  com drift-guard); `forge status` ganha `suggested_next_command` via workflow
+  router (estado→verbo, 11 estados de `_VALID_STATES`). Revisita Decisão 10
+  (meta-flags opt-in, row 32). Ver CHANGELOG `## [Unreleased] §Added/Changed
+  (load-bearing)/Fixed (W3)` + `docs/design/06-command-surface.md §JSON mode`.
+
+#### Fork reservado pro W-DEBT (descoberto em W3)
+
+- **PHANTOM-STATES (`verified`)** — o workflow router de `forge status`
+  (`_suggested_next_command`, fix H-002) mapeia conservadoramente os 11 estados
+  de `_VALID_STATES` pra um next-verb, mas o estado `verified` é semanticamente
+  ambíguo: pode significar "feature verificada, aguardando done" OU resíduo de
+  um ciclo que não fechou. O router só dá `verified→status` (next-verb seguro,
+  não destrutivo); o fork de resolver a semântica real do `verified` (consolidar
+  vs. distinguir de `done`/`paused`) NÃO foi tratado em W3 — está reservado pro
+  W-DEBT. Referenciado em CHANGELOG (H-002) + `06-command-surface.md`.
+  **Critério de reentrada:** W-DEBT, ou quando o piloto reportar que o
+  next-verb sugerido pro `verified` mis-guia o agente.
 
 #### REPLAY — veredito W2 (2026-06-17)
 
