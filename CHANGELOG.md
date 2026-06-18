@@ -51,6 +51,12 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   Phase 5 agora escaneiam `needs-elicitation` não-promovido — block-severity
   em contract spec (match estruturado), warning em narrativa. Fecha o
   ponto-cego "thin-but-structurally-complete".
+- **FORGE_HOME-carries-skills** (W-DEBT, 2026-06-18): nova categoria de
+  `forge doctor` (`_check_forge_home_driver`, 17ª no full scope) que assere a
+  presença de `FORGE_HOME/skills/feature-forge/SKILL.md` — o driver do host
+  (DRIVER-001). Espelha a categoria de Hooks (presença de arquivo esperado no
+  FORGE_HOME); FAIL com hint mentor-calmo quando ausente, pegando clone
+  parcial/sparse que deixaria o driver dormente sem aviso.
 - Token economy / machine-legibility (W3, A1 TOKEN-BLIND + A2): output-mode
   global host-aware (`engine/ui/output_mode.py` — enum TTY/PLAIN/JSON + context
   var + allowlist `_JSON_CAPABLE_COMMANDS`), consultado pelo chokepoint único
@@ -88,6 +94,55 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Fixed
 
+- **SCHEMA-1 / SCHEMA-LEAK** (W-DEBT, 2026-06-18) — `_check_schema_version`
+  (`engine/ui/intent_state.py`) agora roda simetricamente em `read_pending` e
+  `detect_race`, não só em `read_response`: version skew num pending vira a
+  mensagem friendly "atualize o forge" em vez de cair no sweep ou virar "race"
+  confusa (em `detect_race` só dispara quando `schema-version` está presente —
+  pending sem o campo é malformed e segue no sweep normal). `SchemaVersionMismatchError`
+  entrou na tupla de except do `engine/cli.py` (junto de `RaceDetectedError`/
+  `IntentMismatchError`) → exit 1 mentor-calmo em vez de traceback cru.
+- **STALE-1** (W-DEBT, 2026-06-18) — `detect_race` faz liveness probe
+  (`os.kill(pid, 0)`) antes de levantar `RaceDetectedError`: pending recente de
+  processo morto (crash sem cleanup) é varrido em vez de travar a raia até o
+  stale threshold (~10 min). `ProcessLookupError`/pid inválido (≤0) → varre;
+  `PermissionError` (processo vivo de outro dono) → race genuína. Testes de race
+  pré-existentes migrados pra `pid=os.getpid()` (PID vivo) — a race determinística
+  agora exige processo vivo.
+- **validate_readiness non-product blind** (W-DEBT, 2026-06-18) —
+  `validators/validate_readiness.py` resolve o dir da feature via
+  `feature_path(project_root, slug, subtype=current_subtype(...))` em vez do
+  `feature_dir` hardcoded em `features/`. Features non-product (refactor/spike/
+  chore/bugfix) param de varrer o dir product vazio e reportar "review ausente"
+  falso. Conserta o needs_elicitation scan E o lookup do review de uma vez
+  (mesmo pattern de `undo._delete_feature_artifacts`).
+- **DETECT-1 / M6 dead-code** (W-DEBT, 2026-06-18) — `detect_any_agentic`
+  (`engine/host/env.py`) e `_detect_brownfield` (`engine/init.py`) removidos:
+  ambos eram dead-code (zero caller de produção, só testes). `detect_codex`/
+  `detect_cursor` MANTIDOS (paralelo a `detect_opencode` future-proofing +
+  superfície de verificação do scrub ENV-1) com docstrings honestas
+  ("não-wirada em `detect_host`"). O init é brownfield-safe por construção (merge
+  append-only + delegator encadeado + sub-namespace), sem switch de modo — o
+  docstring de `_detect_brownfield` que anunciava "em-uso" era drift.
+- **L-1 docstrings legados** (W-DEBT, 2026-06-18) — docstrings/comentários
+  citando o anchor legado `.claude/state/` corrigidos pra `.claude/forge/state/`
+  (anchor canônico v1.3) em `question.py`/`json_io.py`/`cli.py`/`intent_file.py`/
+  `evolve.py`/`init.py`; `iso.py` corrigido pra `.claude/*.yaml` (checkpoints
+  vivem em `claude_dir`, não em `state/`).
+- **M9 HELP-DOC-PATH** (W-DEBT, 2026-06-18) — `cli._print_help` resolve o
+  caminho do doc de command-surface via `forge_home()` (XDG-aware) em vez do
+  `~/Documents/feature-forge/docs/...` hardcoded que não resolvia em instalações
+  XDG.
+- **M8 template rules** (W-DEBT, 2026-06-18) — `templates/qa-finding.template.json`
+  e `templates/qa-report.template.json` ganharam `_template_description` +
+  `_template_rules` (guide-keys `_*` toleradas pelos validators). Spec YAML
+  `data-contract-spec.template.yaml` trocou o free-text enum
+  `{{server_only_local_only_both_none}}` por placeholder + comment-enum
+  (`# one of: server-only | local-only | both | none`).
+- **IMPLEMENT-HANDOFF docstring** (W-DEBT, 2026-06-18) — docstring de
+  `engine/implement.py` clarificado: `forge implement` ORQUESTRA o lifecycle e
+  faz handoff de autoria-de-código pro host (Decisão 22), NÃO gera código nem é
+  stub quebrado a completar. É o exec model canônico.
 - **C-001 JSON carve-out vazava intent protocol** (W3 holistic review, 2026-06-18) —
   `forge verify` e `forge graph` (read-commands no allowlist `_JSON_CAPABLE_COMMANDS`)
   tinham caminho de prompt NÃO gateado em `output_mode.is_json_mode()`. Sob

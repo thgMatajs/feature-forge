@@ -1,16 +1,24 @@
 """`forge implement` — execution conductor (Plan Mode → Apply → next task).
 
-Single Task Contract per invocation. Walks the user through:
+IMPLEMENT-HANDOFF (BY-DESIGN, Decisão 22): `forge implement` ORQUESTRA o
+lifecycle de implementação — NÃO gera código. A autoria do código é handoff
+explícito pro host (Claude Code / opencode), que escreve contra o Task Contract
+que o forge surfa. Isso é o exec model canônico (engine emite intent + gates;
+o host implementa), não um stub quebrado a completar. O engine nunca importa
+nem invoca outra skill pra gerar código (Decisão 22 — zero runtime dep).
+
+Single Task Contract per invocation. Walks the user/host through:
 
     1. Resolve feature slug + state guard (readiness must be 'ready').
     2. Pick next task via task-breakdown DAG topo-sort + status filter.
     3. Plan Mode: surface contract + bdd_scenarios_covered + allowed_files
        + gates + validations. Block on user 'sim'.
-    4. Apply Mode (v1 stub): instruct user/Claude to implement against the
-       contract. Out-of-scope edits surface as findings/FND-*.yaml via the
+    4. Apply Mode: handoff de autoria pro host — o forge surfa o contrato e
+       o host escreve o código contra ele (não é stub a preencher; é o
+       exec model). Edits fora de escopo viram findings/FND-*.yaml via o
        three-paths block.
-    5. Verify + Commit are user-driven in v1 — emit hand-off copy that
-       points at `forge verify` + a conventional commit message.
+    5. Verify + Commit são user/host-driven — emite hand-off copy que aponta
+       pra `forge verify` + uma mensagem de commit convencional.
 
 Exit codes:
     0    task acknowledged / parked between tasks

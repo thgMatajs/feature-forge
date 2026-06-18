@@ -91,7 +91,7 @@ entities:
 
     # --- persistence ---------------------------------------------------
     # Estratégia macro POR ENTITY. Drive Repository/UseCase shape em tech-spec.
-    persistence: "{{server_only_local_only_both_none}}"
+    persistence: "{{persistence_scope}}"                 # one of: server-only | local-only | both | none
 
     # --- conflict_strategy ---------------------------------------------
     # Pull de memory L2 patterns. Valores aceitos:

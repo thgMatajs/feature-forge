@@ -249,7 +249,7 @@ $ forge verify
 
 ## forge doctor — Diagnóstico da instalação
 
-**O que faz:** Health check em 16 categorias. Lê tudo, não muda nada (exceto
+**O que faz:** Health check em 17 categorias. Lê tudo, não muda nada (exceto
 marcar `doctor.last-run` no config). Tem modo `quick` (crítico) e `full`.
 
 **Quando usar:** "Algo parece estranho." — o status mostra algo vermelho,
