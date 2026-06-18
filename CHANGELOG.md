@@ -32,6 +32,30 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Fixed
 
+- **C2 DEAD-VERIFY** (W2 — protocol robustness, 2026-06-17) — `hooks/git-pre-commit`
+  agora checa o validador em `.claude/forge/hooks/` (sub-namespace canônico de
+  consumidores) além do path legado `.claude/hooks/` (repo maintainer). O gate
+  pre-commit deixou de ser no-op silencioso em projetos inicializados via
+  `forge init`. Teste de integração exercita a cadeia REAL do delegator
+  (`tests/integration/test_git_pre_commit_delegator.py`).
+- **C4 CONC-1** (W2) — `engine/utils/json_io.write_json` usa tempfile por-processo
+  (`{pid}.{uuid}.tmp`) eliminando torn write / `FileNotFoundError` quando dois
+  forge escrevem o mesmo state file (C4-A). `engine/ui/intent_state.pending_lock`
+  (novo CM `fcntl`/`msvcrt`) é APLICADO na seção crítica real
+  `detect_race`+`write_pending` de `engine/host/adapters/intent_file.py::_ask_loop`,
+  fechando a janela TOCTOU em produção (C4-B). Os testes de concorrência
+  (`test_intent_state_concurrency.py`) tiveram as asserções flipadas de
+  "documenta o gap" para "sem torn write" e ganharam um teste do caminho real do
+  adapter sob contenção.
+- **A3 ENV-1** (W2) — `engine/host/env.scrubbed_subprocess_env` remove sinais de
+  host agêntico (CLAUDECODE / OPENCODE_* / CODEX* / CURSOR_* / FORGE_FORCE_*_MODE)
+  do env de subprocessos spawnados por `engine/ingest.py`. Um forge aninhado não
+  escolhe mais o adapter errado nem pende esperando driver inexistente.
+- **A4 REPLAY (card-removal)** (W2) — `forge reconfigure` defere o `shutil.move`
+  (snap → `.bak`) da remoção de card pra DEPOIS do apply-confirm. Cancelar não
+  deixa mais o snapshot removido sem a config correspondente. O campo interno
+  `_pending_card_removals` nunca é persistido (nem na config, nem no draft) —
+  um resume não re-dispara o move.
 - CASING-BUG: `_render_template` agora preenche `{{feature_slug}}` lowercase
   (a forma que os templates usam) + os tokens de origem — antes só substituía
   `{{FEATURE_SLUG}}` uppercase e o token lowercase sobrava cru nos artefatos
@@ -47,6 +71,15 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   é só hint de baixa confiança que o conductor pode sobrepor.
 - `_render_template` passou a fazer substituição single-pass (sem reinjection
   de token entre passos).
+- **C3 EXIT-2-COLLISION (load-bearing UX/contract)** (W2 — protocol robustness,
+  2026-06-17) — recontrato estrito de exit codes: `2` é reservado SÓ pra pausa
+  (`PausedForInputError` + `UserPausedError`); a escada legada (3/4/5/6/7/8 +
+  not-a-project=2) colapsou em `exit 1` + tag machine-readable `[FORGE-ERR:<TAG>]`
+  em stderr. `127` (editor-not-found) preservado como exceção POSIX. Tags
+  canônicas centralizadas em `engine/ui/exit_codes.py` (`fail_with_tag`). Contrato
+  + tabela de tags em `docs/design/06-command-surface.md §Exit codes`. Clean-break
+  pré-produção (sem migrator; único caller é o driver host). Decisão 27 honrada
+  (pausa), não revisitada.
 
 ## [1.4.0] - 2026-06-17
 

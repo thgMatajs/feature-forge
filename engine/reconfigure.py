@@ -373,10 +373,28 @@ def run(argv: list[str]) -> int:
         _clear_reconfigure_checkpoint(project_root)
         return 0
 
+    # A4 REPLAY: extrai as remoções pendentes ANTES do write_yaml pra que o
+    # campo interno _pending_card_removals NUNCA polua a config persistida.
+    # Segura numa var local; aplica os shutil.move SÓ após a escrita da config
+    # (apply-confirm passou). M-201: já é popado aqui, então nem a config nem
+    # qualquer draft subsequente carrega a lista.
+    pending_removals = working.pop("_pending_card_removals", [])
+
     before_sha = file_sha256(config_path)
     backup_file(config_path)
     write_yaml(config_path, working, atomic=True)
     after_sha = file_sha256(config_path)
+
+    # A4 REPLAY: aplica as remoções de card SÓ agora — pós apply-confirm
+    # bem-sucedido. shutil já está importado no topo do módulo.
+    if pending_removals:
+        project_cards_root = cards_dir(project_root)
+        for name in pending_removals:
+            snap_dir = project_cards_root / name
+            if snap_dir.exists():
+                shutil.move(
+                    str(snap_dir), str(snap_dir.with_name(name + ".bak"))
+                )
 
     _append_history(
         project_root,
@@ -548,10 +566,14 @@ def _cards_remove(project_root: Path, working: dict[str, Any]) -> None:
         return
 
     for name in picked:
-        snap_dir = project_cards_root / name
-        if snap_dir.exists():
-            shutil.move(str(snap_dir), str(snap_dir.with_name(name + ".bak")))
-        renderer.write(renderer.colored(f"  - {name} (snapshot → .bak)", "yellow"))
+        # A4 REPLAY: NÃO move o snapshot agora. Registra a intenção; o move
+        # físico (snap → .bak) é aplicado SÓ após o apply-confirm passar (em
+        # run(), pós-write_yaml). Cancelar o confirm deixa o snapshot intacto —
+        # sem drift entre cards/ e a config.
+        working.setdefault("_pending_card_removals", []).append(name)
+        renderer.write(renderer.colored(
+            f"  - {name} (remoção pendente — aplica no confirm)", "yellow"
+        ))
     working.setdefault("cards", {})["active"] = [
         c for c in (working.get("cards") or {}).get("active") or []
         if c.get("name") not in picked
@@ -2137,9 +2159,16 @@ def _save_draft(draft_path: Path, working: dict[str, Any]) -> None:
     silently-swallowed — agora surface via renderer pra user ver, mas
     ainda não re-raise (rascunho é best-effort; perda do draft não
     bloqueia o reconfigure rodando).
+
+    A4 REPLAY / M-201: o campo interno ``_pending_card_removals`` NUNCA é
+    persistido no draft. Se ficasse no draft, um resume recarregaria a lista
+    e re-dispararia o ``shutil.move`` (snap → .bak) — o exato replay que A4
+    fecha. A lista é estado transiente da sessão atual, aplicada só no
+    apply-confirm; um resume re-coleta a intenção pelo menu, não pelo disco.
     """
+    serializable = {k: v for k, v in working.items() if k != "_pending_card_removals"}
     try:
-        write_yaml(draft_path, working, atomic=True)
+        write_yaml(draft_path, serializable, atomic=True)
     except OSError as exc:
         renderer.write(
             renderer.colored(

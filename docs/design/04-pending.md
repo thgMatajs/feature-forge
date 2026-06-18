@@ -226,19 +226,41 @@ trabalho pendente da Wave 1.
   vez de (ou além de) driver SKILL.md/AGENTS.md. É a evolução do mecanismo de
   driver, não uma correção. Critério de reentrada: piloto reportar fricção no
   intent loop file-based OR host adicional sem suporte a AskUserQuestion nativo.
-- **EXIT-2-COLLISION (amplo)** — wave de robustez. A Wave 1 trata o intent loop
-  pelo contract atual (exit 2 = pausa); a colisão ampla de exit 2 com outros
-  significados de saída fica pra uma wave dedicada. Critério: primeiro caso
-  real de exit-2 ambíguo observado.
-- **DEAD-VERIFY** — wave de hooks. Detecção de verificação que "passa" sem ter
-  rodado nada útil. Cross-cutting com o sistema de hooks. Critério: wave de
-  hardening de hooks.
-- **CONC-1** — wave de concorrência. Múltiplos drivers/sessões dirigindo o
-  mesmo `forge` concorrentemente (state file race além do já coberto por
-  DRIFT-1). Critério: piloto multi-dev na mesma feature.
+- ~~**EXIT-2-COLLISION (amplo)**~~ — **FECHADO em W2** (C3). exit 2 reservado pra
+  pausa; escada legada → exit 1 + `[FORGE-ERR:<TAG>]`. Ver
+  `docs/design/06-command-surface.md §Exit codes` + `engine/ui/exit_codes.py`.
+- ~~**DEAD-VERIFY**~~ — **FECHADO em W2** (C2). delegator `hooks/git-pre-commit`
+  checa sub-namespace + legado; teste de integração exercita a cadeia real.
+- ~~**CONC-1**~~ — **FECHADO em W2** (C4), ambas as partes:
+  - **C4-A** (Task 2) — tempfile por-processo `{pid}.{uuid}.tmp` em
+    `engine/utils/json_io.write_json` elimina o torn write / `FileNotFoundError`
+    no nível de bytes.
+  - **C4-B** (Task 3) — `engine/ui/intent_state.pending_lock` (flock `LOCK_EX`)
+    APLICADO na seção crítica REAL `detect_race`+`write_pending` de
+    `engine/host/adapters/intent_file.py::_ask_loop` — fecha a janela TOCTOU em
+    produção, não só expõe o helper.
+- ~~**ENV-1**~~ — **FECHADO em W2** (A3). `scrubbed_subprocess_env` no boundary de
+  spawn do ingest + pin `host: intent-file` (já honrado por `detect.py`)
+  documentado.
 - **TOKEN-BLIND / `--json` / manifesto / `forge status` router** — wave de
   token economy. Saídas estruturadas pro host consumir sem reparse caro +
   roteador de status. Critério: wave dedicada a economia de token no driver.
+
+#### REPLAY — veredito W2 (2026-06-17)
+
+- **REPLAY card-removal** — **FECHADO em W2** (A4). `forge reconfigure` defere o
+  `shutil.move(snap → .bak)` da remoção de card pra pós apply-confirm.
+  `_pending_card_removals` não é persistido (config nem draft) — sem replay no
+  resume.
+- **REPLAY-2 WRITE path (config)** — **FALSO-POSITIVO confirmado.**
+  `reconfigure.py`: o `confirm("Aplicar essas mudanças?")` ocorre ANTES de
+  `backup_file` + `write_yaml`; o cancel retorna 0 sem escrever. A mutação de
+  config já é gated pelo confirm. Não endereçado por design.
+- **REPLAY init "resume=restart"** — **FALSO-POSITIVO.** `init.py` re-roda o
+  pipeline, mas as mutações são idempotentes (driver install marker-guarded
+  canonical-wins; hook copy overwrite). Não é replay-antes-de-confirm. (O
+  `init.py:1117` abort=2 foi corrigido na Task 5 como EXIT-2-COLLISION, não
+  REPLAY.)
 
 ### Follow-ups NOVOS descobertos na Wave 1 AI-first (2026-06-17)
 
