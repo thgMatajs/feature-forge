@@ -15,6 +15,7 @@ Pure read. No prompts, no writes.
 from __future__ import annotations
 
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -27,7 +28,7 @@ from engine.memory.l1 import (
     read_l1_status,
 )
 from engine.memory.l2 import l2_size_bytes
-from engine.ui import renderer
+from engine.ui import output_mode, renderer
 from engine.utils.paths import (
     ProjectRootNotFoundError,
     active_config_path,
@@ -49,11 +50,19 @@ def run(argv: list[str]) -> int:  # noqa: ARG001 — no args by design
     try:
         project_root = find_project_root()
     except ProjectRootNotFoundError as exc:
+        if output_mode.is_json_mode():
+            sys.stderr.write(f"forge status: {exc}\n")
+            return 1
         renderer.write(renderer.colored(str(exc), "red"))
         renderer.write("Rode `forge init` antes.")
         return 1
 
     config = _safe_read_yaml(active_config_path(project_root)) or {}
+
+    if output_mode.is_json_mode():
+        payload = _status_payload(project_root, config)
+        print(json.dumps(payload, indent=2, default=str))
+        return 0
 
     renderer.write("")
     renderer.write(renderer.bold("forge status"))
@@ -303,6 +312,81 @@ def _render_recent_activity(project_root: Path) -> None:
     for at, source, kind in events[:5]:
         delta = _humanize_delta(at)
         renderer.write(f"  · {at[:19] or '?':<19} {source:<22} {kind}  ({delta})")
+
+
+# ── Machine-readable payload (A1 + A2) ────────────────────────────────────────
+
+
+def _status_payload(project_root: Path, config: dict) -> dict:
+    """Machine-readable snapshot of the project board (A1 + A2)."""
+    identity = (config.get("identity") or {}) if isinstance(config, dict) else {}
+    cards_active = (config.get("cards") or {}).get("active") or []
+    features: list[dict] = []
+    for slug in list_active_features(project_root):
+        st = read_l1_status(slug, project_root)
+        features.append(
+            {
+                "slug": slug,
+                "status": (st.status if st is not None else None),
+                "last_action_kind": (st.last_action_kind if st is not None else None),
+                "last_action_at": (st.last_action_at if st is not None else None),
+            }
+        )
+    doctor_block = (config.get("doctor") or {}) if isinstance(config, dict) else {}
+    return {
+        "project": {
+            "name": identity.get("project-name", project_root.name),
+            "slug": identity.get("project-slug", project_root.name),
+            "preset": identity.get("preset"),
+            "cards_active": len(cards_active),
+            "forge_version": identity.get("forge-version", FORGE_VERSION),
+        },
+        "active_features": features,
+        "memory": {
+            "l1_active": len(list_active_features(project_root)),
+            "l1_archived": len(list_archived_features(project_root)),
+        },
+        "pending_evolutions": _pending_evolutions_count(project_root),
+        "doctor": {
+            "last_run": doctor_block.get("last-run"),
+            "last_status": doctor_block.get("last-status"),
+        },
+        "suggested_next_command": _suggested_next_command(features),
+    }
+
+
+def _pending_evolutions_count(project_root: Path) -> int:
+    path = claude_dir(project_root) / "proposed-evolutions.yaml"
+    if not path.exists():
+        return 0
+    try:
+        data = read_yaml(path)
+    except YamlIOError:
+        return 0
+    proposals = (data or {}).get("proposals") or [] if isinstance(data, dict) else []
+    return len(proposals)
+
+
+def _suggested_next_command(features: list[dict]) -> str:
+    """Workflow router (A2 NO-WORKFLOW-ROUTER).
+
+    Maps the most-recently-active feature state to the next verb. Falls back
+    to ``plan`` when no feature is active and ``doctor`` for unknown state.
+    """
+    if not features:
+        return "plan"
+    # Pick the most recently active feature by last_action_at (None sorts last).
+    recent = max(features, key=lambda f: (f.get("last_action_at") or ""))
+    state = recent.get("status")
+    mapping = {
+        "planning": "implement",
+        "planned": "implement",
+        "implementing": "verify",
+        "verifying": "verify",
+        "blocked-on-external": "reconfigure",
+        "deferred": "status",
+    }
+    return mapping.get(state, "doctor")
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
