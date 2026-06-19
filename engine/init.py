@@ -2620,13 +2620,14 @@ def _handle_backend_multi_axis_brownfield(
         },
     ]
 
-    # Render mentor-calmo body + tabela. ``ask_three_paths`` carrega
-    # ``paths-detail`` no payload, mas a tabela detectada precisa estar
-    # visível ANTES do host renderizar as 3 opções — entra no gate_name
-    # como prefix textual (host concatena com o block de paths).
-    gate_name = "init-brownfield-detection\n\nDetection composta:\n" + table
-
-    choice_key = ui_question.ask_three_paths(gate_name, paths)
+    # P-04: a tabela (20+ linhas) ia embutida no gate_name → virava um blob
+    # gigante como "pergunta" no AskUserQuestion. Agora imprime via renderer
+    # como CONTEXTO antes do prompt; o gate_name fica curto e estável.
+    renderer.write("")
+    renderer.write("Detecção composta (axis × plataforma):")
+    renderer.write(table)
+    renderer.write("")
+    choice_key = ui_question.ask_three_paths("init-brownfield-detection", paths)
 
     if choice_key == "a":
         return {

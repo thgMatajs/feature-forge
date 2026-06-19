@@ -207,11 +207,17 @@ def test_brownfield_handler_emits_three_paths_intent_with_detection_table(
     firebase_auth = _load_real_card("firebase-auth")
     active_cards = [firebase_auth]
 
-    with pytest.raises(PausedForInputError):
-        _handle_backend_multi_axis_brownfield(
-            project_root=tmp_path,
-            active_cards=active_cards,
-        )
+    import contextlib
+    import io
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        with pytest.raises(PausedForInputError):
+            _handle_backend_multi_axis_brownfield(
+                project_root=tmp_path,
+                active_cards=active_cards,
+            )
+    rendered = buf.getvalue()
 
     pending = intent_state.read_pending(tmp_path)
     assert pending is not None, "handler must emit forge-pending.json on first call"
@@ -235,16 +241,14 @@ def test_brownfield_handler_emits_three_paths_intent_with_detection_table(
     assert "ajust" in labels_lower or "adjust" in labels_lower
     assert "zero" in labels_lower or "scratch" in labels_lower
 
-    # The table goes into the question body (or motive[0]) — searching
-    # the whole pending payload is the most resilient assertion: we
-    # don't pin to a particular field name, only to the fact that the
-    # detected card surfaces somewhere visible.
-    serialized = json.dumps(pending, ensure_ascii=False)
-    assert "firebase-auth" in serialized, (
+    # P-04: a tabela detectada agora vai como CONTEXTO via renderer (stdout),
+    # NÃO embutida no payload do intent. O card detectado deve surgir na
+    # saída renderizada (visível ao auditor antes das 3 opções).
+    assert "firebase-auth" in rendered, (
         "detected card 'firebase-auth' must appear in the rendered table "
-        f"so the user can confirm/adjust; pending payload: {serialized[:400]}"
+        f"so the user can confirm/adjust; rendered output: {rendered[:400]}"
     )
-    assert "auth" in serialized, "axis label 'auth' must appear in the table"
+    assert "auth" in rendered, "axis label 'auth' must appear in the table"
 
 
 @pytest.mark.integration
@@ -423,24 +427,31 @@ fun newClient() = HttpClient()
     ktor_card = _load_real_card("ktor-client")
     active_cards = [retrofit_card, ktor_card]
 
-    with pytest.raises(PausedForInputError):
-        _handle_backend_multi_axis_brownfield(
-            project_root=tmp_path,
-            active_cards=active_cards,
-        )
+    import contextlib
+    import io
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        with pytest.raises(PausedForInputError):
+            _handle_backend_multi_axis_brownfield(
+                project_root=tmp_path,
+                active_cards=active_cards,
+            )
+    rendered = buf.getvalue()
 
     pending = intent_state.read_pending(tmp_path)
     assert pending is not None
 
-    # Both candidates must appear so the user can disambiguate.
-    serialized = json.dumps(pending, ensure_ascii=False)
-    assert "retrofit-client" in serialized, (
+    # P-04: a tabela (com os candidatos do Conflict) agora é renderizada como
+    # CONTEXTO (stdout), não no payload do intent. Ambos candidates devem
+    # aparecer na saída renderizada pro auditor desambiguar.
+    assert "retrofit-client" in rendered, (
         "Conflict cell must expose both candidates; "
-        f"retrofit-client absent from pending: {serialized[:500]}"
+        f"retrofit-client absent from rendered table: {rendered[:500]}"
     )
-    assert "ktor-client" in serialized, (
+    assert "ktor-client" in rendered, (
         "Conflict cell must expose both candidates; "
-        f"ktor-client absent from pending: {serialized[:500]}"
+        f"ktor-client absent from rendered table: {rendered[:500]}"
     )
 
 
@@ -611,3 +622,45 @@ def test_drop_unresolvable_parses_card_names() -> None:
     kept = _drop_unresolvable_cards(cards, errors)
     kept_names = {c.name for c in kept}
     assert kept_names == {"alpha", "gamma"}, kept_names
+
+
+# ── WS-B-4: tabela de detecção vira contexto, question curto (P-04) ─────────
+
+
+@pytest.mark.integration
+def test_detection_table_not_embedded_in_question(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tabela de detecção NÃO deve estar no gate_name/question do intent
+    ask_three_paths — apenas um gate_name curto (P-04)."""
+    from engine.init import _handle_backend_multi_axis_brownfield
+
+    _scaffold_project(tmp_path)
+    _build_uniform_firebase_project(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    firebase_auth = _load_real_card("firebase-auth")
+
+    with pytest.raises(PausedForInputError):
+        _handle_backend_multi_axis_brownfield(
+            project_root=tmp_path,
+            active_cards=[firebase_auth],
+        )
+
+    pending = intent_state.read_pending(tmp_path)
+    assert pending is not None
+    question = pending.get("question", "")
+    # O gate_name curto não pode carregar a tabela: nem o card detectado, nem
+    # "(todas plataformas)", nem múltiplas linhas. Só "init-brownfield-detection".
+    assert "firebase-auth" not in question, (
+        f"tabela ainda embutida no question: {question!r}"
+    )
+    assert "todas plataformas" not in question, (
+        f"tabela ainda embutida no question: {question!r}"
+    )
+    assert "Detection composta" not in question, (
+        f"prefixo da tabela ainda no question: {question!r}"
+    )
+    assert "init-brownfield-detection" in question, (
+        f"gate_name esperado não aparece no question: {question!r}"
+    )
