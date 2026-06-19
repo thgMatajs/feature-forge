@@ -639,6 +639,56 @@ def _index_cards(canonical: list[CardManifest]) -> dict[str, CardManifest]:
     return {c.name: c for c in canonical}
 
 
+def _close_provider_deps(
+    selected_card_names: list[str],
+    card_index: dict[str, CardManifest],
+) -> list[str]:
+    """Fecha deps de provider de 1 nível antes do resolver (pilot R1, P-09).
+
+    Pra cada card selecionado, se algum label em `requires` não é provido por
+    nenhum card já selecionado, procura no catálogo canônico um card que o
+    provê e o inclui. Conservador: 1 nível (o provider incluído pode trazer
+    seus próprios requires — esses caem no resolver, que reporta DEP-MISSING
+    real se ainda faltar; daí o gate de recuperação do WS-B-3). NÃO inventa
+    cards — só puxa do catálogo existente. Determinístico: ordem de inclusão
+    alfabética por nome do provider.
+
+    Latentes (android-platform/ios-platform/...) NÃO são fechados aqui — são
+    user_provided_capabilities passados ao resolver.
+    """
+    closed = list(selected_card_names)
+    selected_set = set(closed)
+    # provider index: label -> sorted card names que o provêem (catálogo todo).
+    label_providers: dict[str, list[str]] = {}
+    for name, card in card_index.items():
+        for label in (card.provides or []):
+            label_providers.setdefault(label, []).append(name)
+    for plist in label_providers.values():
+        plist.sort()
+    # Labels já cobertos pelos cards selecionados.
+    covered: set[str] = set()
+    for name in closed:
+        card = card_index.get(name)
+        if card:
+            covered.update(card.provides or [])
+    for name in list(closed):
+        card = card_index.get(name)
+        if not card:
+            continue
+        for need in (card.requires or []):
+            if need in covered:
+                continue
+            providers = label_providers.get(need, [])
+            if not providers:
+                continue  # nenhum card canônico provê → resolver reporta DEP-MISSING
+            provider = providers[0]
+            if provider not in selected_set:
+                closed.append(provider)
+                selected_set.add(provider)
+                covered.update(card_index[provider].provides or [])
+    return closed
+
+
 # ── Hooks install (Step 13) ──────────────────────────────────────────────────
 
 
@@ -1605,6 +1655,13 @@ def _run_pipeline(project_root: Path) -> int:
     for name in bundle_cards:
         if name not in selected_card_names:
             selected_card_names.append(name)
+
+    # P-09: dep-closure de provider de 1 nível antes do resolver. Quando um
+    # card detectado (ex.: firestore-security-rules) requer um label que a
+    # detecção não puxou (persistence-server), incluímos o card canônico que
+    # o provê — evitando um DEP-MISSING que abortaria o init. Deps genuinamente
+    # órfãs (sem provider no catálogo) caem no gate de recuperação do resolver.
+    selected_card_names = _close_provider_deps(selected_card_names, card_index)
 
     checkpoint.selected_card_names = selected_card_names
     checkpoint.backend_cells = backend_cells

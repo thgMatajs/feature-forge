@@ -535,3 +535,40 @@ def test_per_platform_cards_partition_to_own_platform(
     assert "compose-screens" not in _cell_card_ids(ui.get("ios"))
     # swiftui-screens (ios) NÃO deve estar em (ui, android).
     assert "swiftui-screens" not in _cell_card_ids(ui.get("android"))
+
+
+# ── WS-B-2: dep-closure de provider antes do resolver (P-09) ────────────────
+
+
+@pytest.mark.integration
+def test_security_rule_detection_pulls_persistence_provider(tmp_path: Path) -> None:
+    """firestore-security-rules selecionado sem o provider → o init deve
+    incluir firestore-persistence (provê persistence-server) antes do
+    resolver, tornando o conjunto resolvível (P-09)."""
+    from engine.init import _close_provider_deps
+
+    cards = load_all_cards(cards_canonical_dir())
+    card_index = {c.name: c for c in cards}
+    selected = ["firestore-security-rules"]
+    closed = _close_provider_deps(selected, card_index)
+    assert "firestore-persistence" in closed, (
+        "dep-closure não puxou o provider de persistence-server (P-09)"
+    )
+
+
+@pytest.mark.integration
+def test_closed_set_resolves_without_dep_missing(tmp_path: Path) -> None:
+    """O conjunto fechado por _close_provider_deps resolve sem DEP-MISSING."""
+    from engine.cards.resolver import resolve
+    from engine.init import LATENT_CAPS, _close_provider_deps
+
+    cards = load_all_cards(cards_canonical_dir())
+    card_index = {c.name: c for c in cards}
+    closed = _close_provider_deps(["firestore-security-rules"], card_index)
+    res = resolve(
+        [card_index[n] for n in closed if n in card_index],
+        user_provided_capabilities=LATENT_CAPS,
+    )
+    assert not any("DEP-MISSING" in e for e in res.errors), (
+        f"resolver ainda reporta DEP-MISSING: {res.errors}"
+    )
