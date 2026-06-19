@@ -27,8 +27,8 @@ from engine.utils.paths import (
     forge_home,
     try_find_project_root,
 )
-from engine.utils.yaml_io import backup_file, read_yaml
-from engine.ui.exit_codes import ERR_USAGE, fail_with_tag
+from engine.utils.yaml_io import YamlIOError, backup_file, read_yaml
+from engine.ui.exit_codes import ERR_CARD_INVALID, ERR_USAGE, fail_with_tag
 
 
 def run(argv: list[str]) -> int:
@@ -74,12 +74,15 @@ def _verify_card(argv: list[str]) -> int:
         return fail_with_tag(ERR_USAGE)
     try:
         data = read_yaml(yaml_path)
-    except Exception as exc:
+    except YamlIOError as exc:
+        # B3 (PR20-B3): narrow de `except Exception` → YamlIOError. read_yaml
+        # encapsula parse + OS errors em YamlIOError; capturar Exception cru
+        # mascarava bugs não-relacionados (telemetria perdida).
         print(f"yaml parse error: {exc}", file=sys.stderr)
-        return 1
+        return fail_with_tag(ERR_CARD_INVALID)
     if not isinstance(data, dict):
         print("card.yaml: top-level must be a mapping", file=sys.stderr)
-        return 1
+        return fail_with_tag(ERR_CARD_INVALID)
     violations = validate_card_yaml(data, card_dir)
     if not violations:
         print(f"OK: {card_dir.name} valid")
@@ -87,7 +90,7 @@ def _verify_card(argv: list[str]) -> int:
     print(f"FAIL: {card_dir.name} ({len(violations)} violation(s))")
     for v in violations:
         print(f"  · {v}")
-    return 1
+    return fail_with_tag(ERR_CARD_INVALID)
 
 
 # ── edit-config ──────────────────────────────────────────────────────────────
@@ -142,7 +145,7 @@ def _rebuild_templates(argv: list[str]) -> int:
         cards = load_all_cards(cards_root)
     except CardError as exc:
         print(f"  ! load_all_cards failed: {exc}", file=sys.stderr)
-        return 1
+        return fail_with_tag(ERR_CARD_INVALID)
     if not cards:
         print("  no active cards — nothing to rebuild")
         return 0
@@ -155,7 +158,7 @@ def _rebuild_templates(argv: list[str]) -> int:
     templates_root = forge_home() / "templates"
     if not templates_root.is_dir():
         print(f"  ! templates dir not found: {templates_root}", file=sys.stderr)
-        return 1
+        return fail_with_tag(ERR_USAGE)
 
     re_rendered = 0
     failures: list[str] = []
@@ -177,7 +180,7 @@ def _rebuild_templates(argv: list[str]) -> int:
     print(f"re-rendered: {re_rendered} template(s)")
     if failures:
         print(f"failures: {len(failures)}", file=sys.stderr)
-        return 1
+        return fail_with_tag(ERR_CARD_INVALID)
     return 0
 
 

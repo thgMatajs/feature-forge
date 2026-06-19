@@ -131,3 +131,33 @@ def test_no_handler_source_returns_bare_two_outside_pause():
         "contrato (return/exit 2-8) — devem usar fail_with_tag (1 + tag); "
         "exit 2 é reservado só pra pausa em cli.py:\n" + "\n".join(offenders)
     )
+
+
+def test_error_handlers_have_no_bare_return_one():
+    """C-23 (PR20-R2): nos handlers onde TODO error-path foi tagueado
+    (raw/reconfigure/upgrade), nenhum ``return 1`` bare pode reaparecer —
+    error sem tag é cego pro host/driver.
+
+    Escopo restrito a esses 3 módulos (em vez de todos os handlers) porque
+    outros têm ``return 1`` legítimos NÃO-erro (exit code de verify hard-fail,
+    doctor unhealthy, etc.) que não carregam tag por design — o 1 ali É o
+    veredito, não um erro de plumbing. Nos 3 módulos cobertos, todo ``return 1``
+    era erro de plumbing e foi roteado via ``fail_with_tag``.
+    """
+    import re
+    from pathlib import Path
+
+    engine_root = Path(exit_codes.__file__).resolve().parent.parent
+    bare_one = re.compile(r"^\s*return\s+1\s*$")
+    offenders: list[str] = []
+    for name in ("raw.py", "reconfigure.py", "upgrade.py"):
+        path = engine_root / name
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            if line.strip().startswith("#"):
+                continue
+            if bare_one.match(line):
+                offenders.append(f"{name}:{lineno}: {line.strip()}")
+    assert not offenders, (
+        "error-path com `return 1` bare (sem tag) reintroduzido — use "
+        "fail_with_tag(ERR_*):\n" + "\n".join(offenders)
+    )

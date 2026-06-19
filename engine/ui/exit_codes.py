@@ -48,6 +48,11 @@ ERR_UPGRADE_FAILED: str = "UPGRADE-FAILED"
 ERR_USAGE: str = "USAGE"
 ERR_ABORTED: str = "ABORTED"
 ERR_INIT_FAILED: str = "INIT-FAILED"
+# C-23 (PR20-R2): card.yaml inválido (parse error / shape errado / violações de
+# schema CARD-001..018) em ``forge raw verify-card``.
+ERR_CARD_INVALID: str = "CARD-INVALID"
+# C-23: config inválida (shape/schema) em error-paths de reconfigure.
+ERR_CONFIG_INVALID: str = "CONFIG-INVALID"
 
 
 def fail_with_tag(
@@ -78,5 +83,6 @@ __all__ = [
     "ERR_PROJECT_NOT_FOUND", "ERR_LOCKED", "ERR_FEATURE_MISSING",
     "ERR_NOT_READY", "ERR_WAVE_INCOMPLETE", "ERR_BLOCKED_EXTERNAL",
     "ERR_QA_BLOCK", "ERR_UPGRADE_FAILED", "ERR_USAGE", "ERR_ABORTED",
-    "ERR_INIT_FAILED", "fail_with_tag",
+    "ERR_INIT_FAILED", "ERR_CARD_INVALID", "ERR_CONFIG_INVALID",
+    "fail_with_tag",
 ]

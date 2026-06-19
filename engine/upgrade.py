@@ -158,7 +158,7 @@ def run_upgrade(
             f"forge upgrade: erro ao ler HEAD — certifique-se de que "
             f"{home} é um repositório git.\n  {exc}\n"
         )
-        return 1
+        return fail_with_tag(ERR_UPGRADE_FAILED)
 
     # 1. Fetch (traz tags novas)
     try:
@@ -167,7 +167,7 @@ def run_upgrade(
         sys.stderr.write(
             f"forge upgrade: git fetch falhou. Verifique conexão e credenciais.\n  {exc}\n"
         )
-        return 1
+        return fail_with_tag(ERR_UPGRADE_FAILED)
 
     # 2. Descobre a última release tag
     try:
@@ -206,7 +206,7 @@ def run_upgrade(
             f"  C) Contate suporte se o problema persistir.\n"
             f"  Detalhe: {exc}\n"
         )
-        return 1
+        return fail_with_tag(ERR_UPGRADE_FAILED)
 
     # 5. Venv refresh
     try:

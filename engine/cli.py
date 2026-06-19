@@ -41,7 +41,12 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from engine.ui import output_mode
-from engine.ui.exit_codes import EXIT_CANCELLED, EXIT_PAUSED
+from engine.ui.exit_codes import (
+    EXIT_CANCELLED,
+    EXIT_PAUSED,
+    ERR_PROJECT_NOT_FOUND,
+    fail_with_tag,
+)
 from engine.ui.question import (
     PausedForInputError,
     UserCancelledError,
@@ -394,8 +399,11 @@ def _main_dispatch(cmd: str, rest: list[str], argv: list[str]) -> int:
             # roda e dá mensagem canônica pro caso esperado.
             err = None
         if err:
+            # C-23: emite a prosa friendly + a tag machine-readable (host
+            # ramifica por ela). A prosa já foi montada em `err`; fail_with_tag
+            # acrescenta só a tag.
             sys.stderr.write(err + "\n")
-            return 1
+            return fail_with_tag(ERR_PROJECT_NOT_FOUND)
 
     handler = _resolve(cmd)
     # Lazy imports — keeps cli.main decoupled from foundation modules

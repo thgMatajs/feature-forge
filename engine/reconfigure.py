@@ -57,6 +57,7 @@ from engine.inventory import (
 from engine.ui import progress as ui_progress
 from engine.ui import question, renderer
 from engine.utils.paths import (
+    ProjectRootNotFoundError,
     active_config_path,
     cards_canonical_dir,
     cards_dir,
@@ -67,7 +68,18 @@ from engine.utils.paths import (
 )
 from engine.utils.sha256 import file_sha256
 from engine.utils.paths import ensure_dir as _ensure_dir
-from engine.utils.yaml_io import backup_file, read_yaml, read_yaml_or_default, write_yaml
+from engine.utils.yaml_io import (
+    YamlIOError,
+    backup_file,
+    read_yaml,
+    read_yaml_or_default,
+    write_yaml,
+)
+from engine.ui.exit_codes import (
+    ERR_CONFIG_INVALID,
+    ERR_PROJECT_NOT_FOUND,
+    fail_with_tag,
+)
 from engine.utils.checkpoint_io import (
     clear_checkpoint as _clear_checkpoint_io,
     load_yaml_checkpoint as _load_yaml_checkpoint_io,
@@ -182,9 +194,11 @@ def run(argv: list[str]) -> int:
 
     try:
         project_root = find_project_root()
-    except Exception as exc:
+    except ProjectRootNotFoundError as exc:
+        # C-23: narrow + tag machine-readable (era `except Exception` + return 1
+        # bare). Outras exceptions propagam — telemetria preservada.
         sys.stderr.write(f"forge reconfigure: {exc}\n")
-        return 1
+        return fail_with_tag(ERR_PROJECT_NOT_FOUND)
 
     # Resolve a config ativa (forge-config primário → legado). Ler e gravar
     # caem no MESMO arquivo, então reconfigure nunca splita a config entre os
@@ -196,13 +210,15 @@ def run(argv: list[str]) -> int:
             "forge reconfigure: nenhuma forge-config.yaml encontrada — "
             "rode `forge init` primeiro.\n"
         )
-        return 1
+        return fail_with_tag(ERR_PROJECT_NOT_FOUND)
 
     try:
         current = read_yaml(config_path) or {}
-    except Exception as exc:
+    except YamlIOError as exc:
+        # C-23 + B3: narrow de `except Exception` → YamlIOError (read_yaml
+        # encapsula parse + OS errors). Tag machine-readable.
         renderer.write(renderer.colored(f"config inválido: {exc}", "red"))
-        return 1
+        return fail_with_tag(ERR_CONFIG_INVALID)
 
     draft_path = claude_dir(project_root) / _DRAFT_NAME
     draft = _load_draft(draft_path)
