@@ -196,6 +196,20 @@ def _clear_checkpoint(project_root: Path) -> None:
     _clear_checkpoint_io(_checkpoint_path(project_root))
 
 
+def _resume_option_labels() -> dict[str, str]:
+    """Labels do prompt de resume — honestas pós pilot R1 (P-11).
+
+    ``resume`` CONTINUA do step salvo (reaproveita o progresso); ``discard``
+    recomeça limpo; ``abort`` sai sem mexer. Extraído pra função testável
+    (o ``stable_intent_id`` do resume é derivado destas labels).
+    """
+    return {
+        "resume": "continuar de onde o init parou (reaproveita o progresso salvo)",
+        "discard": "descartar o checkpoint e recomeçar do zero",
+        "abort": "sair sem mexer em nada",
+    }
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
@@ -1310,66 +1324,81 @@ def _run_pipeline(project_root: Path) -> int:
 
     existing_checkpoint = _load_checkpoint(project_root)
     if existing_checkpoint:
-        renderer.write(
-            renderer.colored(
-                f"Encontrei um checkpoint anterior (step={existing_checkpoint.get('step')}) "
-                f"em {_checkpoint_path(project_root)}.",
-                "yellow",
-            )
-        )
-        # Decision 27 — sempre 3 caminhos em gate violation legítimo. Resume
-        # completo entra plenamente em Phase 5+; por enquanto resume = restart
-        # mantendo o checkpoint pra audit, discard apaga, abort sai sem tocar.
-        #
-        # DRIFT-1 W2.T3b — persist intent-id da pergunta de resume ANTES de
-        # invocar ``ui_question.ask``. Mantemos o resto do payload do
-        # checkpoint anterior intacto (preset, selected_card_names,
-        # backend_cells) — só atualizamos o campo intent_id. Re-invocacao
-        # apos exit 2 consome o response correspondente sem re-perguntar.
-        _resume_options = {
-            "resume": "começar do zero mantendo o checkpoint como audit",
-            "discard": "apagar o checkpoint e começar limpo",
-            "abort": "sair sem mexer em nada",
-        }
-        _saved_cells = existing_checkpoint.get("backend-cells")
-        _save_checkpoint(
-            _InitCheckpoint(
-                step=str(existing_checkpoint.get("step") or "step-1-greeting"),
-                at=_utc_now_iso(),
-                project_root=str(project_root),
-                preset=existing_checkpoint.get("preset"),
-                selected_card_names=list(
-                    existing_checkpoint.get("selected-card-names") or []
-                ),
-                backend_cells=(
-                    _saved_cells if isinstance(_saved_cells, dict) else None
-                ),
-                intent_id=ui_question.stable_intent_id(
-                    "ask",
-                    "Resume de init pendente?",
-                    _resume_options,
-                    extra={
-                        "default": "discard",
-                        "min-selected": None,
-                        "validator-hint": None,
-                    },
-                ),
-            )
-        )
-        resume_choice = ui_question.ask(
-            "Resume de init pendente?",
-            _resume_options,
-            default="discard",
-        )
-        if resume_choice == "discard":
-            _clear_checkpoint(project_root)
-        elif resume_choice == "abort":
+        # Gate do resume (pilot R1, P-01): durante o loop mecânico do host
+        # existe uma ``forge-response.json`` pendente que pertence a uma
+        # pergunta DOWNSTREAM (preset, backend, ...). Emitir o prompt de
+        # resume aqui injetaria um intent cujo id NÃO casa com essa response
+        # → IntentMismatchError (deadlock do piloto MeoBonsai). Só emitimos o
+        # resume em re-entrada HUMANA genuína: quando NÃO há response pendente
+        # no disco. O pipeline fresh consome a response via o consumed-log
+        # (idempotência §4 do schema intent-protocol). Aditivo a Decisão 27.
+        from engine.ui import intent_state  # noqa: PLC0415
+
+        _response_file = intent_state._response_path(project_root)
+        _host_loop_in_progress = _response_file.exists()
+
+        if _host_loop_in_progress:
             renderer.write(
-                "Ok, abortado. O checkpoint segue intacto pra inspeção manual."
+                renderer.colored(
+                    f"Checkpoint anterior detectado (step={existing_checkpoint.get('step')}); "
+                    "há response pendente — sigo o pipeline sem reabrir o prompt de resume.",
+                    "dim_grey",
+                )
             )
-            return fail_with_tag(ERR_ABORTED)
-        # resume → segue sem apagar o checkpoint; o pipeline regrava no
-        # final via _clear_checkpoint quando completar com sucesso.
+        else:
+            renderer.write(
+                renderer.colored(
+                    f"Encontrei um checkpoint anterior (step={existing_checkpoint.get('step')}) "
+                    f"em {_checkpoint_path(project_root)}.",
+                    "yellow",
+                )
+            )
+            # Decision 27 — sempre 3 caminhos em gate violation legítimo.
+            # DRIFT-1 W2.T3b — persist intent-id da pergunta de resume ANTES
+            # de invocar ``ui_question.ask``. Mantemos o resto do payload do
+            # checkpoint anterior intacto (preset, selected_card_names,
+            # backend_cells) — só atualizamos o campo intent_id. Re-invocacao
+            # apos exit 2 consome o response correspondente sem re-perguntar.
+            _resume_options = _resume_option_labels()
+            _saved_cells = existing_checkpoint.get("backend-cells")
+            _save_checkpoint(
+                _InitCheckpoint(
+                    step=str(existing_checkpoint.get("step") or "step-1-greeting"),
+                    at=_utc_now_iso(),
+                    project_root=str(project_root),
+                    preset=existing_checkpoint.get("preset"),
+                    selected_card_names=list(
+                        existing_checkpoint.get("selected-card-names") or []
+                    ),
+                    backend_cells=(
+                        _saved_cells if isinstance(_saved_cells, dict) else None
+                    ),
+                    intent_id=ui_question.stable_intent_id(
+                        "ask",
+                        "Resume de init pendente?",
+                        _resume_options,
+                        extra={
+                            "default": "discard",
+                            "min-selected": None,
+                            "validator-hint": None,
+                        },
+                    ),
+                )
+            )
+            resume_choice = ui_question.ask(
+                "Resume de init pendente?",
+                _resume_options,
+                default="discard",
+            )
+            if resume_choice == "discard":
+                _clear_checkpoint(project_root)
+            elif resume_choice == "abort":
+                renderer.write(
+                    "Ok, abortado. O checkpoint segue intacto pra inspeção manual."
+                )
+                return fail_with_tag(ERR_ABORTED)
+            # resume → segue sem apagar o checkpoint; o pipeline regrava no
+            # final via _clear_checkpoint quando completar com sucesso.
 
     # ── Step 2 — Discovery (cinematic) ───────────────────────────────────────
     checkpoint.step = "step-2-discovery"

@@ -151,3 +151,148 @@ def test_resume_from_checkpoint(
     assert init._load_checkpoint(tmp_project_root) is not None, (
         "checkpoint should remain when user picks 'abort'"
     )
+
+
+# ── Pilot R1 helpers (P-01 / P-11) ──────────────────────────────────────────
+
+
+def _pin_intent_file_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Força host=intent-file via escape-hatch env (NÃO escreve config).
+
+    Escrever ``.claude/forge/forge-config.yaml`` dispararia o gate
+    INIT-BROWNFIELD ('config já existe') ANTES do bloco de resume — então
+    pinamos pelo env ``FORGE_FORCE_INTENT_MODE`` (detect_host §2), que não
+    cria o config-path checado pelo gate.
+    """
+    monkeypatch.setenv("FORGE_FORCE_INTENT_MODE", "1")
+    from engine.host import detect as _host_detect
+
+    _host_detect._clear_cache()
+
+
+def _seed_init_checkpoint(
+    project_root: Path, *, step: str, preset: str | None = None
+) -> None:
+    init._save_checkpoint(
+        init._InitCheckpoint(
+            step=step,
+            at="2026-06-19T00:00:00Z",
+            project_root=str(project_root),
+            preset=preset,
+            intent_id=None,
+        )
+    )
+
+
+def _current_resume_labels() -> dict[str, str]:
+    """Labels do resume conforme o init atual.
+
+    Pós WS-A-2 existe ``init._resume_option_labels``; antes (WS-A-1) o init
+    usa o literal histórico. O helper acompanha o que o init de fato emite.
+    """
+    fn = getattr(init, "_resume_option_labels", None)
+    if callable(fn):
+        return fn()
+    return {
+        "resume": "começar do zero mantendo o checkpoint como audit",
+        "discard": "apagar o checkpoint e começar limpo",
+        "abort": "sair sem mexer em nada",
+    }
+
+
+def _resume_intent_id(project_root: Path) -> str:
+    """intent-id da ask de resume — acompanha as labels que o init emite."""
+    return question.stable_intent_id(
+        "ask",
+        "Resume de init pendente?",
+        _current_resume_labels(),
+        extra={
+            "default": "discard",
+            "min-selected": None,
+            "validator-hint": None,
+        },
+    )
+
+
+def _seed_pending_response(
+    project_root: Path, *, intent_id: str, value: str
+) -> None:
+    state_dir = project_root / ".claude" / "forge" / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "forge-response.json").write_text(
+        json.dumps(
+            {
+                "schema-version": 1,
+                "intent-id": intent_id,
+                "value": value,
+                "responded-at": "2026-06-19T00:01:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+_MISMATCH_SENTINEL = {"intent-id": "__downstream-mismatch__"}
+
+
+def _capture_first_pending(project_root: Path) -> dict | None:
+    """Roda init.run([]) e devolve o intent do primeiro pending emitido.
+
+    Sob host=intent-file, a primeira pausa levanta ``PausedForInputError``
+    cujo ``.intent`` carrega o payload (com ``intent-id``). Se o init
+    consumir a response sem pausar, pode retornar normalmente → None.
+
+    ``IntentMismatchError`` significa que a response no disco não casou com
+    o próximo intent do pipeline — mas NÃO é o resume (um leak de resume
+    seria CONSUMIDO como resume, não geraria mismatch). Devolvemos um
+    sentinel cujo intent-id nunca é o resume_id, provando ausência de leak.
+    """
+    from engine.ui.question import PausedForInputError
+    from engine.ui.intent_state import IntentMismatchError
+
+    try:
+        init.run([])
+    except PausedForInputError as exc:
+        return dict(exc.intent or {})
+    except IntentMismatchError:
+        return dict(_MISMATCH_SENTINEL)
+    return None
+
+
+def test_resume_prompt_suppressed_when_response_pending(
+    tmp_project_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Loop mecânico do host: existe forge-response.json pendente (pra a
+    pergunta real do pipeline, NÃO pro resume) → o init NÃO deve emitir o
+    prompt 'Resume de init pendente?'. Caso contrário o intent-id do resume
+    colide com a response → IntentMismatchError (P-01 deadlock)."""
+    monkeypatch.chdir(tmp_project_root)
+    _pin_intent_file_host(monkeypatch)
+    _seed_init_checkpoint(tmp_project_root, step="step-5-backend-selection")
+    # Loop mecânico do host: existe response pendente pra uma pergunta
+    # downstream (não pro resume). Com o gate de P-01, o resume é suprimido —
+    # então o pending emitido (se houver) NUNCA é o resume_id. Sem o gate, o
+    # resume era emitido e a response orfã colidia → IntentMismatchError.
+    _seed_pending_response(
+        tmp_project_root, intent_id="qualquer-intent-downstream", value="sim"
+    )
+    resume_id = _resume_intent_id(tmp_project_root)
+    pending = _capture_first_pending(tmp_project_root)
+    assert pending is None or pending.get("intent-id") != resume_id, (
+        "resume prompt vazou durante loop mecânico — P-01 não corrigido"
+    )
+
+
+def test_resume_prompt_shown_on_genuine_human_reentry(
+    tmp_project_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-entrada humana: checkpoint existe mas NÃO há forge-response.json
+    pendente → o prompt de resume DEVE aparecer (comportamento preservado)."""
+    monkeypatch.chdir(tmp_project_root)
+    _pin_intent_file_host(monkeypatch)
+    _seed_init_checkpoint(tmp_project_root, step="step-5-backend-selection")
+    resume_id = _resume_intent_id(tmp_project_root)
+    pending = _capture_first_pending(tmp_project_root)
+    assert pending is not None and pending.get("intent-id") == resume_id, (
+        "resume prompt deve aparecer em re-entrada humana sem response pendente"
+    )
