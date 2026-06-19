@@ -211,3 +211,30 @@ def test_materialize_noop_when_no_template_contributions(tmp_forge_project: Path
     written = _materialize_merged_templates(tmp_forge_project, merged)
     assert written == []
     assert not (forge_dir(tmp_forge_project) / "templates").exists()
+
+
+def test_materialize_raises_init_error_on_active_card_render_failure(
+    tmp_forge_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C-47 (PR22-R-005): falha de render de card ATIVO é FALHA DE INIT.
+
+    Antes era rebaixada a warning + continue → template set parcial silencioso.
+    Agora coleta + levanta InitError APÓS o loop (init não shippa parcial).
+    """
+    import engine.init as init_mod
+    from engine.cards.loader import CardError
+
+    card = _seed_card_with_template_section(
+        tmp_forge_project, target_output="tech-spec.md"
+    )
+    merged = merge_contributions([card])
+
+    def _boom(base, contributions, out):
+        raise CardError("fragmento faltante no card ativo")
+
+    monkeypatch.setattr(init_mod, "render_merged_template", _boom)
+
+    with pytest.raises(init_mod.InitError) as exc:
+        _materialize_merged_templates(tmp_forge_project, merged)
+    assert "tech-spec.md" in str(exc.value)
+    assert "parcial" in str(exc.value).lower()

@@ -14,12 +14,33 @@ def merge_settings_json(existing: dict[str, Any], additions: dict[str, Any]) -> 
     - dict keys: union; for `hooks.<stage>` (list type), append additions
     - top-level keys other than `hooks`: only add when absent in existing
     - dedupe identical entries via `entry not in existing_entries` (idempotent)
+
+    C-07b (PR18-R6): um `.claude/settings.json` editado à mão pode trazer
+    `hooks` num shape inesperado (`"hooks": "x"`, `"hooks": []`) ou
+    `hooks.<stage>` não-lista. Antes, `.setdefault`/`.append` estouravam
+    AttributeError e derrubavam o init inteiro. Agora coercimos defensivamente:
+    `hooks` não-dict → preserva o valor original sob `hooks.__forge_backup__` e
+    trata como `{}`; `hooks.<stage>` não-lista → idem sob a chave de stage com
+    sufixo `__forge_backup__`. O conteúdo do usuário nunca é perdido — só movido
+    pra um campo de backup — e o merge segue.
     """
     result = deepcopy(existing)
     add_hooks = additions.get("hooks", {})
-    res_hooks = result.setdefault("hooks", {})
+    res_hooks = result.get("hooks")
+    if not isinstance(res_hooks, dict):
+        if res_hooks is not None:
+            # Preserva o valor não-dict sob backup antes de resetar.
+            result["hooks"] = {"__forge_backup__": res_hooks}
+        else:
+            result["hooks"] = {}
+        res_hooks = result["hooks"]
     for stage, entries in add_hooks.items():
-        existing_entries = res_hooks.setdefault(stage, [])
+        existing_entries = res_hooks.get(stage)
+        if not isinstance(existing_entries, list):
+            if existing_entries is not None:
+                res_hooks[f"{stage}__forge_backup__"] = existing_entries
+            existing_entries = []
+            res_hooks[stage] = existing_entries
         for entry in entries:
             if entry not in existing_entries:
                 existing_entries.append(entry)

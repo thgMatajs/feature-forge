@@ -725,6 +725,12 @@ def _install_git_hooks(project_root: Path) -> None:
                 except OSError:
                     continue
 
+        # C-09 (PR18-R7): resolve o forge hook RELATIVO ao wrapper (como o user
+        # hook já faz com `$(dirname "$0")`). Antes embutia o path ABSOLUTO de
+        # forge_hook → o wrapper quebrava se o repo fosse movido/clonado pra
+        # outro caminho. `os.path.relpath` calcula `.git/hooks` → forge hooks
+        # dir (tipicamente `../../.claude/forge/hooks/<name>`) — move/clone-safe.
+        forge_hook_rel = os.path.relpath(forge_hook, target.parent)
         # Escreve o wrapper encadeado
         wrapper = (
             "#!/usr/bin/env bash\n"
@@ -734,8 +740,8 @@ def _install_git_hooks(project_root: Path) -> None:
             f'if [ -x "$(dirname "$0")/{git_name}.user" ]; then\n'
             f'    "$(dirname "$0")/{git_name}.user" "$@"\n'
             "fi\n"
-            "# Then run forge hook\n"
-            f'exec "{forge_hook}" "$@"\n'
+            "# Then run forge hook (resolved relative to this wrapper — C-09)\n"
+            f'exec "$(dirname "$0")/{forge_hook_rel}" "$@"\n'
         )
         try:
             target.write_text(wrapper)
@@ -934,10 +940,19 @@ def _materialize_merged_templates(
         return []
     dest_root = forge_dir(project_root) / "templates"
     written: list[Path] = []
+    # C-47 (PR22-R-005): falha de render de um card ATIVO (fragmento faltante,
+    # conflito YAML) é FALHA DE INIT, não warning. Antes era rebaixada a aviso
+    # amarelo + continue → template set parcial silencioso (o `forge plan`
+    # downstream renderizava sem a seção contribuída, sem ninguém saber).
+    # Coletamos as falhas e levantamos InitError APÓS o loop (mensagem agregada).
+    render_failures: list[str] = []
     for target, contributions in sorted(merged.templates.items()):
         template_name = _source_template_name(target)
         base = templates_root / template_name
         if not base.is_file():
+            # Base ausente em FORGE_HOME (clone parcial) = tolerância DOCUMENTADA
+            # — pula com aviso (mantido do comportamento anterior, NÃO é falha de
+            # card ativo). C-47 só promove a falha de RENDER.
             renderer.write(
                 renderer.colored(
                     f"  ! template-fonte ausente em FORGE_HOME: {template_name} "
@@ -952,9 +967,13 @@ def _materialize_merged_templates(
             render_merged_template(base, contributions, out)
             written.append(out)
         except CardError as exc:
-            renderer.write(
-                renderer.colored(f"  ! {target}: {exc}", "yellow")
-            )
+            render_failures.append(f"{target}: {exc}")
+    if render_failures:
+        raise InitError(
+            "materialização de templates falhou — card(s) ativo(s) com "
+            "fragmento/conflito (init NÃO pode shippar template set parcial):\n  · "
+            + "\n  · ".join(render_failures)
+        )
     return written
 
 
@@ -989,10 +1008,19 @@ def _install_ai_driver(project_root: Path) -> None:
         if not skill_dst.exists():
             ensure_dir(skill_dst.parent)
             skill_dst.write_text(canonical, encoding="utf-8")
-        elif _FORGE_DRIVER_MARKER in skill_dst.read_text(encoding="utf-8"):
-            # É a nossa skill (carrega o marker) → canonical wins (idempotente).
-            skill_dst.write_text(canonical, encoding="utf-8")
-        # else: existe mas é do usuário (sem marker) → preserva, não clobber.
+        else:
+            # C-07 (PR18-R6): o SKILL.md do usuário pode não decodar em UTF-8
+            # (binário/encoding exótico). Ler pra checar o marker estouraria
+            # UnicodeDecodeError → derrubava o init. Tratamos não-decodável como
+            # "é do usuário" (sem marker confiável) → PRESERVA, não clobber.
+            try:
+                existing_skill = skill_dst.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                existing_skill = ""  # não-decodável → preserva (não é a nossa)
+            if _FORGE_DRIVER_MARKER in existing_skill:
+                # É a nossa skill (carrega o marker) → canonical wins (idempotente).
+                skill_dst.write_text(canonical, encoding="utf-8")
+            # else: existe mas é do usuário (sem marker) → preserva, não clobber.
 
     # AGENTS.md (append-only via marker)
     agents_tpl = home / "templates" / "AGENTS.md.template"
@@ -1002,7 +1030,20 @@ def _install_ai_driver(project_root: Path) -> None:
         if not agents_dst.exists():
             agents_dst.write_text(block + "\n", encoding="utf-8")
         else:
-            current = agents_dst.read_text(encoding="utf-8")
+            # C-07: AGENTS.md não-decodável → warn + skip (não corrompe o
+            # arquivo do usuário com um append cego sobre bytes não-UTF8).
+            try:
+                current = agents_dst.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                renderer.write(
+                    renderer.colored(
+                        "AGENTS.md existente não decodável em UTF-8 — "
+                        "driver opencode não anexado (preservando o arquivo). "
+                        "Reinstale após normalizar o encoding.",
+                        "yellow",
+                    )
+                )
+                return
             if _FORGE_DRIVER_MARKER not in current:
                 agents_dst.write_text(
                     current.rstrip("\n") + "\n\n" + block + "\n", encoding="utf-8"
@@ -1784,12 +1825,16 @@ def _run_pipeline(project_root: Path) -> int:
         _install_ai_driver(project_root)
         if n_hooks:
             renderer.write(f"  └─ {n_hooks} hooks instalados em .claude/forge/hooks/")
-    except (OSError, shutil.Error) as exc:  # pragma: no cover - hooks must not block init
-        # MD-03 (final review 2026-06-15): narrow scope is intentional —
-        # `_install_hooks` + `_install_git_hooks` only use shutil.copy*/chmod/
-        # symlink today, so (OSError, shutil.Error) is exhaustive. If hooks
-        # ever adopt tar/zip extraction, expand to include `tarfile.TarError`
-        # / `zipfile.BadZipFile`, or re-broaden with `BLE001` noqa + comment.
+    except (OSError, shutil.Error, AttributeError, TypeError, ValueError) as exc:  # pragma: no cover - hooks must not block init
+        # MD-03 (final review 2026-06-15): scope inicial era (OSError,
+        # shutil.Error). C-07 (PR18-R6): ampliado pra
+        # (AttributeError, TypeError, ValueError) porque este bloco agora cobre
+        # tambem `_merge_forge_hooks_into_settings` (settings.json de shape
+        # inesperado → AttributeError/TypeError) e `_install_ai_driver`
+        # (UnicodeDecodeError ⊂ ValueError ao ler SKILL/AGENTS do usuario). O
+        # contrato "hooks/driver não bloqueiam init" é preservado — qualquer
+        # falha vira warn amarelo, nunca derruba o init. UnicodeDecodeError já é
+        # tratado dentro de `_install_ai_driver`; este catch é defense-in-depth.
         renderer.write(
             renderer.colored(f"hooks install warn: {exc}", "yellow")
         )
