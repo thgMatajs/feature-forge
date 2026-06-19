@@ -116,6 +116,47 @@ def test_delegator_no_pre_existing_hook(tmp_path: Path) -> None:
 
 
 @pytest.mark.integration
+def test_delegator_uses_relative_forge_hook_path(tmp_path: Path) -> None:
+    """C-09 (PR18-R7): o wrapper resolve o forge hook RELATIVO ao próprio script
+    (`$(dirname "$0")/../../.claude/forge/hooks/...`), NÃO um path absoluto —
+    move/clone-safe."""
+    _init_git(tmp_path)
+    _seed_forge_hook(tmp_path)
+    _install_git_hooks(tmp_path)
+
+    content = (tmp_path / ".git" / "hooks" / "pre-commit").read_text()
+    # Não embute o path absoluto do tmp_path.
+    assert str(tmp_path) not in content, (
+        "wrapper não pode embutir path absoluto (quebra em move/clone)"
+    )
+    # Usa dirname-relativo pro forge hook.
+    assert 'exec "$(dirname "$0")/' in content
+    assert "../../.claude/forge/hooks/git-pre-commit" in content
+
+
+@pytest.mark.integration
+def test_delegator_survives_repo_move(tmp_path: Path) -> None:
+    """C-09: depois de mover o repo inteiro, o wrapper ainda exec'a o forge hook
+    (path relativo resolve no novo local)."""
+    src = tmp_path / "orig"
+    src.mkdir()
+    _init_git(src)
+    _seed_forge_hook(src)
+    _install_git_hooks(src)
+
+    moved = tmp_path / "moved"
+    src.rename(moved)
+
+    pc = moved / ".git" / "hooks" / "pre-commit"
+    output = subprocess.run(
+        [str(pc)], capture_output=True, text=True, cwd=moved
+    )
+    assert "FORGE_HOOK_MARKER" in output.stdout, (
+        "após mover o repo, o wrapper deve resolver o forge hook pelo path relativo"
+    )
+
+
+@pytest.mark.integration
 def test_delegator_upgrades_old_style_symlink(tmp_path: Path) -> None:
     """Install antigo deixou symlink; novo install substitui por wrapper."""
     _init_git(tmp_path)

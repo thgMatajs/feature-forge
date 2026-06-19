@@ -32,7 +32,7 @@ Hoje `forge implement` é stub manual. Phase 6 fecha o loop:
 ### 6.3 Atomic commit + completion evidence
 - `forge implement` commita com mensagem canônica `{TASK-NNNN}: {description}`
 - Evidence record em `{feature}/completion-evidence/TASK-NNNN-evidence.json`
-- L1 status update automático (`implementing` → `verified` → `done`)
+- L1 status update automático (`implementing` → `done`)
 
 ### 6.4 Retrospective auto-trigger
 - Cena 14 do roteiro: última task verificada → dispara `retrospective-agent` automaticamente

@@ -7,14 +7,23 @@ exists because two locked decisions are load-bearing and easy to drift from:
 - **Decision 9** — the command surface is fixed at **14 subcomandos** (após
   Revisita Decisão 9 em 2026-06-17, que adicionou `forge upgrade` como 14º comando;
   Revisita anterior em 2026-06-05 adicionou `forge qa` como 13º comando).
-- **Decision 10** — interaction is **100% conversational, sem flags**. Every
-  parameter is collected via interactive prompt or menu inside one of the 14
-  entrypoints.
+- **Decision 10 (revisitada em 2026-06-18 — row 32)** — interaction is
+  **conversational human-first by default**. Cada parâmetro de domínio é
+  coletado via prompt/menu interativo dentro de um dos 14 entrypoints. **Carve-out
+  machine-readable opt-in:** os read-commands (`status`/`doctor`/`verify`/`memory`/`graph`)
+  aceitam as meta-flags `--json` (e `forge --help --json`) e honram a env
+  `FORGE_OUTPUT=json` — emitem JSON puro em stdout pra consumo por máquina (CI,
+  hosts agentic). Esse carve-out é **meta-flags only**: flags de comportamento de
+  domínio continuam proibidas. Comandos interativos (`plan`/`implement`/`init`/
+  `reconfigure`/`evolve`/`qa`/`undo`/`raw`) IGNORAM `--json`/`FORGE_OUTPUT=json` —
+  o intent protocol (marker `<FORGE_INTENT/>` + exit-2) e a UX cinematográfica
+  ficam intactos. Ver §"Manifesto + meta-flags (Decisão 10 revisitada)" abaixo.
 
 Anything that *feels* like it needs a new command (card lifecycle, inventory
 refresh, schema migration, graph rebuild) **must route through one of the 14
 as an interactive menu choice or a sub-prompt** — never as a new top-level
-verb, never as a flag.
+verb, never as a domain-behaviour flag (meta-flags `--json`/`--help --json`
+pros read-commands são o único carve-out — Decisão 10 revisitada).
 
 If a future need does not encaixar em nenhum dos 14, the response is **not** a
 new command. The response is: revisit decisions 9 + 10 explicitly via a
@@ -29,7 +38,7 @@ dedicated PR. Silent expansion is forbidden.
 | 1 | `forge init` | Greenfield / brownfield install: scan project, propose cards, write `.claude/workflow-config.yaml`, seed memory L2/L3, build initial graph. |
 | 2 | `forge plan` | Conduct planning-conductor pipeline (Waves A–E) to produce a full feature package with `readiness=ready`. Aceita `<ticket\|frase\|slug>` como argv **posicional** (Decisão 10 preservada — argv, não flag): slug válido entra direto; ticket-id (ex.: `IN-37234`) ou frase livre são derivados pra slug kebab-case determinístico, confirmados conversacionalmente, e o texto cru é semeado no `feature-intake.md`. Screenshot/mockup entra conversacionalmente na source-inquiry (sem flag). Subtype-aware (product / refactor / bugfix / spike / chore): no bugfix detecta o ticket (ex: IN-37234) e exige regression-test-first; no refactor entra com contrato no-behavior-change. |
 | 3 | `forge implement` | Conduct execution-conductor pipeline (Plan Mode → Apply Mode → review → commit) for one task at a time. |
-| 4 | `forge verify` | Read-only verification gate (task-scope, feature-scope, or inferred-scope). Runs hard-gate validators numa cascade fail-fast (para no primeiro erro duro). Inclui os gates fortes: `check_cyclomatic_complexity` (multi-lang), `check_secrets` (gitleaks/trufflehog), `check_no_behavior_change` (refactor) — cada gate forte com override-justify auditável no commit body + bypass de emergência logado em `.claude/state/`. |
+| 4 | `forge verify` | Verification gate (task-scope, feature-scope, or inferred-scope). Não muta código nem artefatos, mas é um **observador com side-effects de L1** (C-34d): transita o status pra `verifying` enquanto roda + dá append no `verify-log.jsonl`. Runs hard-gate validators numa cascade fail-fast (para no primeiro erro duro). Inclui os gates fortes: `check_cyclomatic_complexity` (multi-lang), `check_secrets` (gitleaks/trufflehog), `check_no_behavior_change` (refactor) — cada gate forte com override-justify auditável no commit body + bypass de emergência logado em `.claude/state/`. |
 | 5 | `forge status` | Read-only board: in-flight features, current task, last verify, pending evolutions, doctor freshness. |
 | 6 | `forge doctor` | Read-only health check across config, cards, inventory, memory, graph, hooks, MCPs, i18n, connectivity. Interactive choice of scope (full / quick). |
 | 7 | `forge reconfigure` | **Single entrypoint for any post-init mutation**: cards, paths, conventions, backend, ticketing, workflow, persona, memory policy, external-docs, hooks, inventory re-extract, graph rebuild. Diff → confirm → apply → auto-doctor. |
@@ -39,7 +48,7 @@ dedicated PR. Silent expansion is forbidden.
 | 11 | `forge undo` | Revert the last state-mutating action (task commit, reconfigure apply, init). Interactive prompt picks target if ambiguous — `last` is not a CLI suffix, é a opção default no menu. |
 | 12 | `forge raw` | Escape hatch. Direct invocation of internal scripts (`migrator-N-to-M`, `verify-card`, `edit-config`, `rebuild-templates`). Documented per-script. **NÃO** é uma porta pra inventar novos comandos via raw — é a porta pra operações pontuais sem UX. |
 | 13 | `forge qa` | Adversarial red-team gate. Audita artefatos do lifecycle inventando cenários hostis (4 attack vectors: spec-vs-spec, chaos, coverage, validator-claim), executa fixtures sintéticos em sandbox isolado, emite findings actionable em proposed-evolutions. Scope: feature / screen / task / paranoid (cross-feature). Trigger: manual + opt-in auto via `qa.auto-run-on-feature-done`. Verdict (BLOCK/FLAG/PASS) NÃO bloqueia retrospective nem commit — alinha Decisão 5 (code review final out-of-scope). |
-| 14 | `forge upgrade` | Self-updater do forge (v1.3+). Opera no FORGE_HOME (`~/.local/share/feature-forge/` ou FORGE_HOME env). Fluxo: git fetch → check HEAD vs origin → git pull → pip install --upgrade → smoke (`./bin/forge --version`). Se smoke falhar: git reset --hard ao commit anterior (rollback automático). Não interativo: sem prompts, sem menus. Idempotente: "já no latest" → exit 0 sem mutação. Exit codes: 0 = atualizado com sucesso / já no latest; 1 = falha geral; 4 = falha no smoke + rollback executado. Não toca `.claude/forge/` do projeto — só atualiza o canonical repo. |
+| 14 | `forge upgrade` | Self-updater do forge (v1.3+). Opera no FORGE_HOME (`~/.local/share/feature-forge/` ou FORGE_HOME env). Fluxo: git fetch → check HEAD vs origin → git pull → pip install --upgrade → smoke (`./bin/forge --version`). Se smoke falhar: git reset --hard ao commit anterior (rollback automático). Não interativo: sem prompts, sem menus. Idempotente: "já no latest" → exit 0 sem mutação. Exit codes: 0 = atualizado com sucesso / já no latest; 1 = falha (carrega tag `[FORGE-ERR:UPGRADE-FAILED]` em stderr no caso de smoke/pip falho + rollback executado — recontratado em W2, C3 EXIT-2-COLLISION; antes era exit 4). Não toca `.claude/forge/` do projeto — só atualiza o canonical repo. |
 
 ---
 
@@ -176,32 +185,127 @@ superfície. 14 verbos, zero flags, zero exceções.
 ## Exit codes
 
 Contrato canônico do dispatcher (`bin/forge` → `engine/cli.py::main()`).
-Adicionado em v1.2-dev (Phase A DRIFT-1, 2026-06-10) com a introdução do
-exit code **2** pra sinalizar pausa aguardando input.
+Recontratado em W2 (protocol robustness, 2026-06-17, finding C3
+EXIT-2-COLLISION): exit 2 é reservado ESTRITAMENTE pra pausa; a escada legada
+(3/4/5/6/7/8 + not-a-project=2) colapsou em `exit 1` + tag machine-readable em
+stderr.
 
 | Code | Significado | Origem |
 |---|---|---|
 | 0 | comando completou com sucesso | handler retornou normalmente |
-| 1 | erro / validator fail / input inválido | exceptions não-listadas, response mismatch, schema invalid |
-| 2 | paused for input (needs response) | `PausedForInputError` (engine emitiu pending) + `UserPausedError` (response com `paused: true`) |
-| 130 | user cancelou | `KeyboardInterrupt` (TTY) + `UserCancelledError` (response com `cancelled: true`) |
+| 1 | erro (carrega tag `[FORGE-ERR:<TAG>]` em stderr) | todo erro de handler via `fail_with_tag` + exceções não-listadas |
+| 2 | paused for input (needs response) | SÓ `PausedForInputError` (engine emitiu pending) + `UserPausedError` (response `paused: true`) |
+| 127 | editor não encontrado | exceção POSIX documentada — só `forge raw edit-config` |
+| 130 | user cancelou | `KeyboardInterrupt` (TTY) + `UserCancelledError` (response `cancelled: true`) |
 
-O host (Claude Code OR `engine.ui.tty_bridge` em fallback) loop-reads
-exit code 2 + state files (`.claude/state/forge-pending.json` /
-`forge-response.json`) pra continuação. Subagent invocando `forge` que
-receba exit 2 NÃO deve responder sozinho — ver
-`.claude/rules/subagent-workflow.md §Quando subagent invoca \`forge\``.
+**Tags machine-readable (exit 1).** Toda saída de erro de handler emite uma tag
+estável em stderr no formato `[FORGE-ERR:<TAG>]`. O host/driver ramifica por ela
+sem depender de código numérico ambíguo. Tags canônicas (fonte única:
+`engine/ui/exit_codes.py`):
+
+| TAG | Quando | Comandos |
+|---|---|---|
+| `PROJECT-NOT-FOUND` | fora de um projeto forge | plan, implement, verify, evolve, undo |
+| `LOCKED` | feature phase-locked por outro comando | plan, implement |
+| `FEATURE-MISSING` | feature não existe (rode `forge plan` antes) | implement |
+| `NOT-READY` | readiness != 'ready' (finalize Wave E) | implement |
+| `WAVE-INCOMPLETE` | sem tasks (Wave D do plano incompleta) | implement |
+| `BLOCKED-EXTERNAL` | task bloqueada por ticket externo | implement |
+| `QA-BLOCK` | verdict do `forge qa` = BLOCK | qa |
+| `UPGRADE-FAILED` | rollback após checkout/smoke falho | upgrade |
+| `USAGE` | uso inválido / sem projeto / arquivo ausente / migrator stub | raw, init |
+| `ABORTED` | usuário abortou um gate (subtype-stub, resume de init, config-presente) | plan, init |
+| `INIT-FAILED` | pipeline de `forge init` levantou InitError | init |
+
+O host (Claude Code OR adapter intent-file) loop-reads exit code 2 + state files
+(`.claude/forge/state/forge-pending.json` / `forge-response.json`) pra
+continuação. Subagent invocando `forge` que receba exit 2 NÃO deve responder
+sozinho — ver `.claude/rules/subagent-workflow.md §Quando subagent invoca \`forge\``.
 
 **Exit 130 — duas rotas convergentes:**
 - (a) `KeyboardInterrupt` (Ctrl+C / SIGINT) em modo TTY.
 - (b) Host response `cancelled: true` (`UserCancelledError`) em modo intent.
 
-Callers tratam identicamente — usuário desistiu. Distinção fica em
-`engine/cli.py` na captura (Decision 27 cobre a rota TTY; CR-001 do W2
-review cobre a rota intent).
+Callers tratam identicamente — usuário desistiu (Decisão 27 cobre a rota TTY;
+CR-001 do W2 review cobre a rota intent).
 
 Schema dos state files: `docs/schemas/intent-protocol.md`.
 Spec canônico: `docs/superpowers/specs/drift-1-intent-protocol.md` §4.
 
-POSIX nota: exit 2 às vezes é usado por shells pra "misuse of shell
-builtins"; `forge` não é shell builtin, então o conflito é nominal.
+POSIX nota: exit 2 às vezes é usado por shells pra "misuse of shell builtins";
+`forge` não é shell builtin, então o conflito é nominal.
+
+---
+
+## Manifesto + meta-flags (Decisão 10 revisitada — 2026-06-18)
+
+W3 (token economy / machine-legibility) destrava consumo por máquina sem quebrar
+a UX conversacional human-first. O carve-out é **meta-flags only** e GATED num
+allowlist de read-commands (`engine/ui/output_mode.py::_JSON_CAPABLE_COMMANDS =
+{status, doctor, verify, memory, graph}`).
+
+**Ativadores do modo JSON (só pros read-commands no allowlist):**
+
+- `--json` em argv (ex.: `forge status --json`).
+- env `FORGE_OUTPUT=json` (ativa o modo pros read-commands; valor desconhecido
+  é ignorado e cai pra TTY/PLAIN).
+- `forge --help --json` (manifesto — emitido direto, independente do output-mode).
+
+**Enforcement estrutural (H-001).** O modo JSON é resolvido UMA vez no startup
+do `cli.main` via `detect_output_mode(argv, command=cmd)` e publicado num context
+var lido pelo chokepoint único `renderer.write`. Comandos interativos
+(`plan`/`implement`/`init`/`reconfigure`/`evolve`/`qa`/`undo`/`raw`) NUNCA resolvem
+JSON — mesmo sob `FORGE_OUTPUT=json` ou um `--json` espúrio resolvem TTY/PLAIN.
+Isso impede que o no-op global de `renderer.write` (em JSON mode) degrade
+silenciosamente a UX cinematográfica deles. O marker `<FORGE_INTENT/>` é emitido
+via `sys.stdout.write` direto (não via `renderer.write`), então o intent protocol
+sobrevive ao modo independentemente.
+
+**Modelo de saída JSON** (idêntico ao `forge graph --json`): stdout SÓ JSON
+(`json.dumps(payload, indent=2, default=str)`), erros → stderr, exit 0 sucesso /
+1 falha. `status`/`memory` são read-only puros. `doctor` mantém o stamp
+`doctor.last-run` idêntico ao caminho interativo. `verify` é um **observador com
+side-effects de L1** (C-34d): mesmo em JSON mode ele transita o status da feature
+pra `verifying` enquanto roda (restaurando ao status anterior no pass; anotando
+`verify-failed` no `raw.notes` no fail) e dá append num registro por invocação em
+`.claude/memory/L1/{slug}/verify-log.jsonl`. NÃO muta código nem artefatos — daí
+"observador" — mas a observabilidade de L1 é idêntica entre os modos
+interativo e JSON. Em scope `task` ambíguo (≥2 features ativas, sem
+`--feature-slug`) o JSON mode emite erro determinístico + exit 1 ANTES de
+qualquer escrita de L1 (C-34) — nunca muta a feature errada por fallback.
+
+**JSON mode NUNCA pausa (C-001).** Os read-commands com caminho de prompt
+(`verify` quando ≥2 features ativas e nenhum scope explícito; `graph` quando
+invocado sem query) NÃO entram no `question.ask` sob JSON mode — fazê-lo
+dispararia exit-2 + marker `<FORGE_INTENT/>`, reservado ESTRITO pro intent
+protocol. Em vez disso emitem erro determinístico em stderr + exit 1: `verify`
+exige `feature <slug>`/`task TASK-NNNN`; `graph` exige `forge graph --json
+<query>`. Exit-2 jamais ocorre num consumo machine-readable.
+
+**Payloads:**
+
+- `forge status --json` → `{project, active_features, memory, pending_evolutions,
+  doctor, suggested_next_command}`. `suggested_next_command` é o workflow router
+  (A2): mapeia o estado da feature mais recente pro próximo verbo, cobrindo TODOS
+  os 9 estados de `_VALID_STATES` (H-002): not-started→plan, planning/planned→
+  implement, implementing/verifying→verify, done→status, deferred→status,
+  aborted→plan, blocked-on-external→reconfigure; nenhuma feature→plan; estado
+  fora-do-enum→doctor. (PHANTOM-STATES resolvido em W-DEBT: `verified`/`paused`
+  removidos do enum — nunca foram escritos; pausa é `deferred` por Decisão 27.)
+  Tie-break de recência é estável (timestamp, depois slug) pra ser
+  determinístico quando `last_action_at` empata (W-003).
+- `forge doctor --json` → `{scope: "full", overall_status, exit_code, categories:
+  [{title, worst, checks: [{name, status, message, remediation}]}]}`. JSON mode é
+  non-interactive: assume scope `full` (o ask de scope não pode pausar pra máquina).
+- `forge verify --json` → `{scope: {type, target}, overall, exit_code, validators:
+  [{name, status, duration_ms, message, paths, what_failed, where, why}]}`.
+- `forge memory --json` → snapshot read-only NARROW dos 3 layers: `{l2: {size_bytes,
+  entries: [{id, kind, confidence, title, provenance}]}, l1: {active: [{slug, status,
+  last_action_kind}], archived: [slug]}, l3: [{title, hook}]}`. Search/forget/distill/
+  export permanecem no menu REPL — sem sub-flags por carve-out meta-flags-only.
+- `forge --help --json` → manifesto: `{forge_version, commands: [{name, summary,
+  interactive, hidden, flags, args}]}`. Itera `_VISIBLE_ORDER` (ingest oculto
+  omitido) e busca cada nome em `_COMMAND_META` — metadata hand-maintained em
+  lockstep com `COMMANDS`, NÃO auto-derivada (drift-guard de teste assegura
+  `set(_COMMAND_META) == set(_VISIBLE_ORDER)`; W-001). Read-commands anunciam
+  `flags: ["--json"]`; interativos `flags: []`.

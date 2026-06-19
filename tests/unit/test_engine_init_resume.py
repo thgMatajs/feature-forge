@@ -57,6 +57,7 @@ def test_init_checkpoint_intent_id_roundtrip(tmp_project_root: Path) -> None:
 def test_resume_from_checkpoint(
     tmp_project_root: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     """Resume-resume gate: checkpoint anterior + response 'abort' no disco
     → init pergunta resume?, consome response, retorna 2 (abort path).
@@ -126,10 +127,17 @@ def test_resume_from_checkpoint(
     )
 
     # Invoca init.run([]) — chega no gate resume, consome response,
-    # retorna 2 (abort path, codigo definido em engine/init.py:866).
+    # retorna exit 1 + tag ABORTED (C3 EXIT-2-COLLISION: o abort NÃO é pausa;
+    # exit 2 ficou reservado pra pausa, abort colapsou em 1 + [FORGE-ERR:ABORTED]).
     rc = init.run([])
 
-    assert rc == 2, f"expected abort exit 2, got {rc}"
+    assert rc == 1, f"expected abort exit 1, got {rc}"
+    # WR-01: trava a CATEGORIA do erro via tag — ==1 sozinho passaria pra
+    # qualquer falha; a tag prova que é o caminho de abort explícito.
+    captured = capsys.readouterr()
+    assert "[FORGE-ERR:ABORTED]" in captured.err, (
+        f"esperado tag ABORTED no stderr, obtido: {captured.err!r}"
+    )
 
     # Task 0.7b — CR-002 invariant: state files MUST remain on disk
     # after happy-path consume. cli.py finally block performs the

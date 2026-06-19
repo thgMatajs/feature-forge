@@ -240,45 +240,148 @@ v1.3 ship completo cobrindo A+B+C+D — 6 waves entregues:
 Escopo declarado OUT desta wave — registrados aqui como norte, não como
 trabalho pendente da Wave 1.
 
-- **MCP server** — norte estratégico (D1): expor o forge como servidor MCP em
-  vez de (ou além de) driver SKILL.md/AGENTS.md. É a evolução do mecanismo de
-  driver, não uma correção. Critério de reentrada: piloto reportar fricção no
-  intent loop file-based OR host adicional sem suporte a AskUserQuestion nativo.
-- **EXIT-2-COLLISION (amplo)** — wave de robustez. A Wave 1 trata o intent loop
-  pelo contract atual (exit 2 = pausa); a colisão ampla de exit 2 com outros
-  significados de saída fica pra uma wave dedicada. Critério: primeiro caso
-  real de exit-2 ambíguo observado.
-- **DEAD-VERIFY** — wave de hooks. Detecção de verificação que "passa" sem ter
-  rodado nada útil. Cross-cutting com o sistema de hooks. Critério: wave de
-  hardening de hooks.
-- **CONC-1** — wave de concorrência. Múltiplos drivers/sessões dirigindo o
-  mesmo `forge` concorrentemente (state file race além do já coberto por
-  DRIFT-1). Critério: piloto multi-dev na mesma feature.
-- **TOKEN-BLIND / `--json` / manifesto / `forge status` router** — wave de
-  token economy. Saídas estruturadas pro host consumir sem reparse caro +
-  roteador de status. Critério: wave dedicada a economia de token no driver.
+- **MCP server / McpAdapter (MCP-dormant)** — norte estratégico (D1): expor o
+  forge como servidor MCP em vez de (ou além de) driver SKILL.md/AGENTS.md. É a
+  evolução do mecanismo de driver, não uma correção. **DEFERIDO pós-piloto
+  (confirmado na campanha W-DEBT, decisão D-2)** — os providers MCP dormentes
+  (`NotImplementedError`) são non-goal explícito; McpAdapter FORA. Critério de
+  reentrada: piloto reportar fricção no intent loop file-based OR host adicional
+  sem suporte a AskUserQuestion nativo.
+
+#### P2 / dívida residual — veredito W-DEBT (2026-06-18)
+
+A última wave da campanha pré-piloto fechou a dívida P2 catalogada na
+auditoria consolidada (§6 item 11) + `auditoria-llm-first` §7-8:
+
+- ~~**SCHEMA-1 / SCHEMA-LEAK**~~ — **FECHADO em W-DEBT (T5).** `_check_schema_version`
+  simétrico em `read_pending`+`detect_race`; `SchemaVersionMismatchError` no
+  catch do `cli.py` (exit 1, sem traceback).
+- ~~**STALE-1**~~ — **FECHADO em W-DEBT (T5).** `detect_race` faz `os.kill(pid,0)`
+  antes de `RaceDetectedError` — pending de PID morto é varrido (não trava a
+  raia ~10 min).
+- ~~**DETECT-1**~~ — **FECHADO em W-DEBT (T7).** `detect_any_agentic` deletado
+  (dead-code); `detect_codex`/`detect_cursor` mantidos com docstrings honestas
+  ("não-wirada em detect_host", paralelo a `detect_opencode`).
+- ~~**M6 BROWNFIELD-DEADCODE**~~ — **FECHADO em W-DEBT (T7).** `_detect_brownfield`
+  deletado (dead-code; init é brownfield-safe por construção, sem switch de
+  modo). Handoff corrigido.
+- ~~**M8 JSON-GUIDEKEY + ENUM-FREETEXT**~~ — **FECHADO em W-DEBT (T8).**
+  `_template_rules` nos qa JSON; comment-enum no `data-contract-spec` (entity
+  `persistence`). Demais free-text enums de menor cardinalidade no
+  `data-contract-spec` (provider, store, mock) seguem como cleanup incremental
+  de baixa prioridade.
+- ~~**M9 HELP-DOC-PATH-FRAGILE**~~ — **FECHADO em W-DEBT (T7).** `cli._print_help`
+  resolve o doc via `forge_home()` (XDG-aware).
+- ~~**L-1 docstrings legados**~~ — **FECHADO em W-DEBT (T7).** `.claude/state/` →
+  `.claude/forge/state/`; helpers nativos mortos já tinham sido removidos.
+  Escopo (WR-03 holistic review): além dos callsites na whitelist da T7
+  (`question.py`, `json_io.py`, `cli.py`, `intent_file.py`), o cleanup L-1 também
+  corrigiu o MESMO anchor legado em `engine/evolve.py:84` e `engine/utils/iso.py:30`
+  (doc-only, sem mudança de behavior) — incluídos sob L-1 por coerência temática
+  (path-cleanup consistente), não scope creep funcional.
+- ~~**IMPLEMENT-HANDOFF**~~ — **FECHADO em W-DEBT (T8).** Docstring de
+  `engine/implement.py` clarificado (orquestra + handoff de autoria pro host,
+  Decisão 22 — não é stub).
+- **PORT-CC-TOOLS** — **ANOTADO em W-DEBT (T8), não abstraído.** Nota no
+  `agents/planning-conductor.md` documenta o acoplamento das tools CC-específicas
+  (`AskUserQuestion`, `mcp__claude_ai_*`) sem análogo opencode. Abstração
+  completa do registry de tools CC↔opencode é P2+ pós-piloto. Critério de
+  reentrada: opencode adotado como host de planning real.
+- **L2-RMW** — **DEFERIDO (baixa-prob, conhecido).** `write_l2`/`add_entry`
+  (`engine/memory/l2.py`) fazem read-modify-write sem lock inter-processo. Baixa
+  probabilidade real: o único writer é `forge evolve` (single-writer por
+  convenção). Não fixado no W-DEBT pra evitar over-engineering (o flock helper
+  `pending_lock` é específico do intent protocol; aplicá-lo a L2 exigiria
+  generalização fora do escopo). Critério de reentrada: relato concreto de L2
+  corrompido OR introdução de um segundo writer concorrente.
+- **REBUILD-TEMPLATES-TARGET-MISMATCH** — **NÃO endereçado no W-DEBT (fora do
+  escopo do CR-01; afeta caminho pré-existente).** `forge raw rebuild-templates`
+  (`engine/raw.py:162-170`) resolve `templates_root / target` direto, mas o
+  `target` do card é o nome de OUTPUT (`tech-spec.md`), não o do template-fonte
+  (`tech-spec.template.md`). Logo todo target real cai em "target not found" e o
+  re-render é no-op — o MESMO mismatch que o CR-01 (holistic review W-DEBT) corrigiu
+  em `init._materialize_merged_templates` via `_source_template_name`. O fix do
+  `init`→`plan` (per-projeto) tornou o `rebuild-templates` (mutação global) menos
+  crítico, mas o comando segue inerte. Critério de reentrada: aplicar
+  `_source_template_name` em `_rebuild_templates` (e considerar promover o helper
+  pra `engine/cards/merger.py` se um terceiro caller surgir).
+- **M9 DOCTOR-MASKS-FAILURE** — **NÃO endereçado no W-DEBT (fora do escopo da
+  task de cleanup).** `doctor` retorna 0 com warnings; strictness só via env
+  `FORGE_DOCTOR_STRICT` não-documentada. Critério de reentrada: hardening de
+  `forge doctor` OR piloto reportar warning mascarado como sucesso.
+- **STDOUT-1** — **NÃO endereçado no W-DEBT.** Roteamento UI cinematográfica →
+  stderr (separar do marker no stdout). Pré-existente, baixa prioridade pós a
+  infra de output-mode do W3 (que já gateia JSON mode). Critério de reentrada:
+  relato de UI poluindo stdout-puro fora do JSON mode.
+- ~~**EXIT-2-COLLISION (amplo)**~~ — **FECHADO em W2** (C3). exit 2 reservado pra
+  pausa; escada legada → exit 1 + `[FORGE-ERR:<TAG>]`. Ver
+  `docs/design/06-command-surface.md §Exit codes` + `engine/ui/exit_codes.py`.
+- ~~**DEAD-VERIFY**~~ — **FECHADO em W2** (C2). delegator `hooks/git-pre-commit`
+  checa sub-namespace + legado; teste de integração exercita a cadeia real.
+- ~~**CONC-1**~~ — **FECHADO em W2** (C4), ambas as partes:
+  - **C4-A** (Task 2) — tempfile por-processo `{pid}.{uuid}.tmp` em
+    `engine/utils/json_io.write_json` elimina o torn write / `FileNotFoundError`
+    no nível de bytes.
+  - **C4-B** (Task 3) — `engine/ui/intent_state.pending_lock` (flock `LOCK_EX`)
+    APLICADO na seção crítica REAL `detect_race`+`write_pending` de
+    `engine/host/adapters/intent_file.py::_ask_loop` — fecha a janela TOCTOU em
+    produção, não só expõe o helper.
+- ~~**ENV-1**~~ — **FECHADO em W2** (A3). `scrubbed_subprocess_env` no boundary de
+  spawn do ingest + pin `host: intent-file` (já honrado por `detect.py`)
+  documentado.
+- ~~**TOKEN-BLIND / `--json` / manifesto / `forge status` router**~~ —
+  **FECHADO em W3** (token economy / machine-legibility). Output-mode infra
+  (context var + allowlist `_JSON_CAPABLE_COMMANDS` + renderer host-aware);
+  read-commands `--json` (`status`/`doctor`/`verify`/`memory`); `forge --help
+  --json` manifesto de comandos (derivado de `_VISIBLE_ORDER` + `_COMMAND_META`
+  com drift-guard); `forge status` ganha `suggested_next_command` via workflow
+  router (estado→verbo, 11 estados de `_VALID_STATES`). Revisita Decisão 10
+  (meta-flags opt-in, row 32). Ver CHANGELOG `## [Unreleased] §Added/Changed
+  (load-bearing)/Fixed (W3)` + `docs/design/06-command-surface.md §JSON mode`.
+
+#### Fork reservado pro W-DEBT (descoberto em W3)
+
+- ~~**PHANTOM-STATES (`verified`)**~~ — **FECHADO em W-DEBT (Caminho B).**
+  `verified` e `paused` removidos de `_VALID_STATES` (nunca foram escritos por
+  handler; pausa é `deferred` por Decisão 27). O router de `forge status`
+  simplificou 11→9 estados; resume-set de `forge plan` perdeu o literal morto
+  `paused`; docs de state-machine (ROADMAP/07-discipline/06-command-surface)
+  reconciliados. Sem cerimônia "Revisita decisão N" (não toca `01-decisions.md`
+  — alinhamento doc↔código). Ver CHANGELOG `## [Unreleased] §Removed`.
+
+#### REPLAY — veredito W2 (2026-06-17)
+
+- **REPLAY card-removal** — **FECHADO em W2** (A4). `forge reconfigure` defere o
+  `shutil.move(snap → .bak)` da remoção de card pra pós apply-confirm.
+  `_pending_card_removals` não é persistido (config nem draft) — sem replay no
+  resume.
+- **REPLAY-2 WRITE path (config)** — **FALSO-POSITIVO confirmado.**
+  `reconfigure.py`: o `confirm("Aplicar essas mudanças?")` ocorre ANTES de
+  `backup_file` + `write_yaml`; o cancel retorna 0 sem escrever. A mutação de
+  config já é gated pelo confirm. Não endereçado por design.
+- **REPLAY init "resume=restart"** — **FALSO-POSITIVO.** `init.py` re-roda o
+  pipeline, mas as mutações são idempotentes (driver install marker-guarded
+  canonical-wins; hook copy overwrite). Não é replay-antes-de-confirm. (O
+  `init.py:1117` abort=2 foi corrigido na Task 5 como EXIT-2-COLLISION, não
+  REPLAY.)
 
 ### Follow-ups NOVOS descobertos na Wave 1 AI-first (2026-06-17)
 
-- **FORGE_HOME-carries-skills** — não há teste positivo nem categoria
-  `forge doctor` asserindo que o FORGE_HOME carrega
-  `skills/feature-forge/SKILL.md`. Um clone parcial/sparse deixaria o driver
-  dormente (o install já emite warning quando a fonte falta, mas não há gate
-  de saúde). Candidato: nova categoria de `forge doctor` espelhando a de
-  `hooks/`. Critério: hardening de `forge doctor` OR primeiro relato de driver
-  ausente pós-install.
-- **question.py stale `.claude/state/` docstrings** — docstrings em
-  `engine/ui/question.py` ainda citam o anchor legado `.claude/state/`
-  (cleanup "Task 0.7b"). Confundem leitura/auditoria, mas não afetam runtime:
-  o path canônico é `.claude/forge/state/` via adapters. Cosmético/doc. Critério:
-  próxima passada de cleanup em `engine/ui/`.
-- **validate_readiness non-product blind** — `validate()` resolve o diretório
-  da feature via `feature_dir` (hardcoded `features/`), mas feature non-product
-  vive em `non-product/{slug}/` (`feature_path`). O needs-elicitation scan novo
-  (Task 5) — e os demais checks — varrem dir vazio pra features non-product.
-  Pré-existente + cross-cutting (afeta todo o validator, não só o scan novo).
-  Critério: wave que unifique a resolução de path product vs non-product no
-  validate_readiness.
+- ~~**FORGE_HOME-carries-skills**~~ — **FECHADO em W-DEBT (T6).** Nova categoria
+  `forge doctor` `_check_forge_home_driver` (17ª no full scope) assere
+  `FORGE_HOME/skills/feature-forge/SKILL.md`, espelhando a de `hooks/`; FAIL com
+  hint quando ausente (pega clone parcial/sparse). Test em
+  `tests/unit/test_doctor_forge_home_skills.py`.
+- ~~**question.py stale `.claude/state/` docstrings**~~ — **FECHADO em W-DEBT
+  (T7, L-1).** Docstrings/comentários `.claude/state/` → `.claude/forge/state/`
+  em `question.py` + json_io/cli/intent_file/evolve/init; `iso.py` corrigido pra
+  `.claude/*.yaml` (checkpoints vivem em claude_dir, não em state/). Só
+  docstring/comentário — runtime já usava o anchor canônico.
+- ~~**validate_readiness non-product blind**~~ — **FECHADO em W-DEBT (T6).**
+  `validate()` resolve via `feature_path(project_root, slug, subtype=current_subtype(...))`
+  — non-product (refactor/spike/chore/bugfix) para de varrer o dir product
+  vazio. Conserta o needs_elicitation scan E o lookup do review de uma vez. Test
+  em `tests/validators/test_validate_readiness_nonproduct.py`.
 
 - **Sem migrator v1.2 → v1.3** — clean-break deliberado. Projetos
   experimentais em v1.2 (pré-production) limpam `.claude/` e re-rodam

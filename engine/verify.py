@@ -29,7 +29,7 @@ import os
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -42,7 +42,8 @@ from engine.memory.l1 import (
     write_l1_status,
 )
 from engine.persona import mentor_calmo
-from engine.ui import question, renderer
+from engine.ui import output_mode, question, renderer
+from engine.ui.exit_codes import ERR_PROJECT_NOT_FOUND, fail_with_tag
 from engine.ui.question import PromptAbortedError
 from engine.utils.paths import (
     ProjectRootNotFoundError,
@@ -176,11 +177,60 @@ def run(argv: list[str]) -> int:
     Return codes: 0 OK / warn-only; 1 hard fail; 130 user paused (raised by
     cli.main on KeyboardInterrupt / `para`).
     """
+    json_mode = output_mode.is_json_mode()
+
     try:
         project_root = find_project_root()
     except ProjectRootNotFoundError as exc:
+        # H-001: in JSON mode `renderer.write` is a no-op, so the friendly text
+        # would silently vanish. Mirror status/doctor/memory — emit the full
+        # message on stderr (stdout stays pure JSON) and exit 1.
+        if json_mode:
+            sys.stderr.write(f"forge verify: {exc}\n")
+            return 1
         renderer.write(renderer.colored(str(exc), "red"))
-        return 1
+        return fail_with_tag(ERR_PROJECT_NOT_FOUND)
+
+    # C-001: in JSON mode we MUST NOT prompt — exit-2 is reserved strictly for
+    # the intent protocol (DRIFT-1), and a machine consumer cannot answer an
+    # interactive ask. Resolve scope without prompting; if it stays ambiguous
+    # (≥2 active features, no argv to disambiguate), emit a deterministic JSON
+    # error on stderr + exit 1 (the contract the other read-commands honour)
+    # instead of pausing.
+    if json_mode:
+        try:
+            scope_kind, scope_target = _resolve_scope(
+                argv, project_root, allow_prompt=False
+            )
+            feature_hint = _extract_feature_slug_hint(argv)
+            # C-34: pre-resolve o feature slug AQUI com raise_on_ambiguous=True
+            # pra o path `task` também. Sem isso, `verify --json task TASK-N`
+            # com ≥2 features ativas caía no fallback sorted(active)[0] DENTRO
+            # de run_scope → mutava a L1 da feature errada (status=verifying +
+            # verify-log). Resolvido eagerly: ou um slug determinístico (vira
+            # hint pra run_scope não re-resolver), ou _AmbiguousScopeError →
+            # exit 1 ZERO escrita.
+            resolved_slug = _scope_to_feature_slug(
+                scope_kind,
+                scope_target,
+                project_root,
+                interactive=False,
+                argv_hint=feature_hint,
+                raise_on_ambiguous=True,
+            )
+        except _AmbiguousScopeError as exc:
+            sys.stderr.write(
+                f"forge verify: scope ambíguo em JSON mode ({exc}) — passe "
+                "`feature <slug>` ou `task TASK-NNNN --feature-slug <slug>`.\n"
+            )
+            return 1
+        return run_scope(
+            scope_kind,
+            scope_target,
+            project_root,
+            interactive=False,
+            feature_slug_hint=resolved_slug or feature_hint,
+        )
 
     try:
         scope_kind, scope_target = _resolve_scope(argv, project_root)
@@ -312,6 +362,14 @@ def run_scope(
         _restore_l1_status(project_root, previous_state, failed=False, note="")
         # DRIFT-1 W2.T3b — clear intent-resume checkpoint on clean completion.
         _clear_verify_checkpoint(project_root)
+        if output_mode.is_json_mode():
+            payload = {
+                "scope": {"type": scope_type, "target": scope_target or None},
+                "overall": "pass",
+                "exit_code": 0,
+                "validators": [],
+            }
+            print(json.dumps(payload, indent=2, default=str))
         return 0
 
     fail_fast = _resolve_fail_fast(config)
@@ -320,6 +378,8 @@ def run_scope(
         fail_fast=fail_fast,
         project_root=project_root,
         interactive=interactive,
+        scope_type=scope_type,
+        scope_target=scope_target,
     )
     if interactive:
         _render_summary(results)
@@ -339,6 +399,19 @@ def run_scope(
         hard_fails=hard_fails,
         warnings_list=warnings_list,
     )
+
+    if output_mode.is_json_mode():
+        # A1 — emit the machine-readable cascade result. The exit code matches
+        # the interactive path (0 pass/warn, 1 hard fail). L1 restore + verify
+        # log + checkpoint clear below stay identical (read-only observability
+        # does not change between modes).
+        payload = {
+            "scope": {"type": scope_type, "target": scope_target or None},
+            "overall": overall,
+            "exit_code": (1 if hard_fail is not None else 0),
+            "validators": [asdict(r) for r in results],
+        }
+        print(json.dumps(payload, indent=2, default=str))
 
     if hard_fail is not None:
         if interactive:
@@ -372,6 +445,7 @@ def _scope_to_feature_slug(
     *,
     interactive: bool = True,
     argv_hint: str | None = None,
+    raise_on_ambiguous: bool = False,
 ) -> str:
     """Resolve the feature slug owning a verify scope.
 
@@ -386,6 +460,13 @@ def _scope_to_feature_slug(
        - múltiplas + ``interactive=False`` → emite warn e retorna a 1ª em
          ordem alfabética (determinístico, não-bloqueante).
        - 0 ativas → string vazia.
+
+    C-34 (PR21-I2): quando ``raise_on_ambiguous`` é True (JSON mode), o ramo
+    "múltiplas ativas sem desambiguação" levanta ``_AmbiguousScopeError`` em vez
+    de cair no ``sorted(active)[0]`` — esse fallback silencioso mutava a L1 da
+    feature ERRADA (status=verifying transiente + verify-log) num consumidor
+    machine que não pode responder o prompt. O guard C-001 cobria só o path de
+    inferência de scope; ``verify --json task TASK-N`` escapava por aqui.
     """
     if scope_type == "feature":
         return scope_target or ""
@@ -412,6 +493,14 @@ def _scope_to_feature_slug(
     ]
     if len(implementing) == 1:
         return implementing[0]
+
+    # C-34: ≥2 ativas, sem hint, sem mapping único → ambíguo. Em JSON mode
+    # (raise_on_ambiguous), erro determinístico ANTES de qualquer escrita de L1
+    # — nunca mutar a feature errada por fallback silencioso.
+    if raise_on_ambiguous:
+        raise _AmbiguousScopeError(
+            f"{len(active)} features ativas: {', '.join(sorted(active))}"
+        )
 
     if interactive:
         try:
@@ -539,30 +628,63 @@ def _write_verify_log_entry(
 # ── Scope resolution ─────────────────────────────────────────────────────────
 
 
-def _resolve_scope(argv: list[str], project_root: Path) -> tuple[str, str]:
+class _AmbiguousScopeError(Exception):
+    """Raised when scope inference is ambiguous and prompting is disallowed.
+
+    C-001: JSON mode never prompts. When ≥2 features are active and no argv
+    disambiguates, the caller turns this into a deterministic hard error
+    (stderr + exit 1) instead of either pausing (intent protocol leak) or
+    silently picking the first feature.
+    """
+
+
+def _resolve_scope(
+    argv: list[str], project_root: Path, *, allow_prompt: bool = True
+) -> tuple[str, str]:
     """Return ``(scope_kind, target)``.
 
     ``scope_kind`` ∈ {task, feature}. ``target`` is the task id or feature
-    slug. Asks the user when ambiguous (more than one active feature).
+    slug. Asks the user when ambiguous (more than one active feature) — unless
+    ``allow_prompt=False`` (C-001: JSON mode never prompts). With prompting
+    disabled, an ambiguous inference raises ``_AmbiguousScopeError`` so the
+    caller can emit a deterministic error rather than silently picking one
+    feature; an empty target still means "no active feature" (valid: cascade
+    runs with 0 validators).
+
+    C-39 (PR21-I8): meta-flags reconhecidas (``--json``) são removidas de argv
+    ANTES do parse posicional — senão ``forge verify --json`` resolveria
+    ``--json`` como slug de feature. Espelha o tratamento de ``--no-auto-build``
+    em ``graph_cli``. ``--feature-slug X`` é consumido por
+    ``_extract_feature_slug_hint`` à parte; aqui só limpamos os tokens
+    booleanos que não carregam valor posicional.
     """
+    argv = [tok for tok in argv if tok != "--json"]
     if argv:
         first = argv[0]
         if first.upper().startswith("TASK-"):
             return "task", first.upper()
         if first == ".":
-            return "feature", _infer_active_feature(project_root, allow_prompt=True)
+            return "feature", _infer_active_feature(
+                project_root, allow_prompt=allow_prompt
+            )
         if len(argv) >= 2 and argv[0] == "task":
             return "task", argv[1].upper()
         if len(argv) >= 2 and argv[0] == "feature":
             return "feature", argv[1]
         return "feature", first
 
-    inferred = _infer_active_feature(project_root, allow_prompt=True)
+    inferred = _infer_active_feature(project_root, allow_prompt=allow_prompt)
     return "feature", inferred
 
 
 def _infer_active_feature(project_root: Path, *, allow_prompt: bool) -> str:
-    """Choose the single in-progress feature, asking when there is more than one."""
+    """Choose the single in-progress feature, asking when there is more than one.
+
+    When ``allow_prompt=False`` and the inference is ambiguous (≥2 candidates),
+    raises ``_AmbiguousScopeError`` (C-001) — the JSON-mode caller turns this
+    into a hard error instead of pausing or silently picking the first. No
+    active feature still returns ``""`` (a valid empty scope).
+    """
     active = list_active_features(project_root)
     candidates: list[str] = []
     for slug in active:
@@ -579,7 +701,9 @@ def _infer_active_feature(project_root: Path, *, allow_prompt: bool) -> str:
     if len(candidates) == 1:
         return candidates[0]
     if not allow_prompt:
-        return candidates[0]
+        raise _AmbiguousScopeError(
+            f"{len(candidates)} features ativas: {', '.join(sorted(candidates))}"
+        )
     options = {slug: f"feature {slug}" for slug in candidates}
     # DRIFT-1 W2.T3b — persist checkpoint with the deterministic intent-id
     # for this ask BEFORE invoking ``question.ask``. On exit-2 + re-invoke,
@@ -675,6 +799,13 @@ _DEFAULT_VALIDATORS: list[dict[str, str]] = [
         "severity": "fail",
     },
     {
+        # PLACEHOLDER-VERIFY (W-DEBT): cheap scan de {{...}} crus em artefatos
+        # de feature — bloqueia early (antes do CC gate, mais caro).
+        "name": "check_unfilled_placeholders",
+        "file": "check_unfilled_placeholders.py",
+        "severity": "fail",
+    },
+    {
         "name": "check_cyclomatic_complexity",
         "file": "check_cyclomatic_complexity.py",
         "severity": "fail",
@@ -731,6 +862,8 @@ def _run_cascade(
     fail_fast: bool,
     project_root: Path,
     interactive: bool = True,
+    scope_type: str | None = None,
+    scope_target: str | None = None,
 ) -> list[_ValidatorResult]:
     """Dispatch each validator and collect results.
 
@@ -738,6 +871,12 @@ def _run_cascade(
     the whole list, marking nothing as ``skipped``. When ``interactive`` is
     False the cinematic per-line output is suppressed (hook callers don't
     want it on stderr).
+
+    C-43 (PR22-R-001): ``scope_type``/``scope_target`` são threadados até
+    ``_invoke_validator`` — sem isso, validators scope-aware (ex.:
+    ``check_unfilled_placeholders``) recebiam kwargs vazios e ficavam inertes
+    (gate shipped-but-vacuous). Os defaults ``None`` preservam call-sites
+    legados (testes que invocam ``_run_cascade`` sem scope).
     """
     results: list[_ValidatorResult] = []
     halted = False
@@ -747,7 +886,9 @@ def _run_cascade(
             if interactive:
                 _render_line(results[-1])
             continue
-        result = _invoke_validator(spec, project_root)
+        result = _invoke_validator(
+            spec, project_root, scope_type=scope_type, scope_target=scope_target
+        )
         results.append(result)
         if interactive:
             _render_line(result)
@@ -756,13 +897,24 @@ def _run_cascade(
     return results
 
 
-def _invoke_validator(spec: _ValidatorSpec, project_root: Path) -> _ValidatorResult:
+def _invoke_validator(
+    spec: _ValidatorSpec,
+    project_root: Path,
+    *,
+    scope_type: str | None = None,
+    scope_target: str | None = None,
+) -> _ValidatorResult:
     """Run a single validator as a subprocess.
 
     Convention: validators print human output to stderr/stdout freely and
     emit one final JSON line with ``{"status": ..., "message": ..., ...}`` on
     stdout when they want structured output. Missing JSON → degrade to the
     exit-code contract (0 pass, 1 warn, 2 fail).
+
+    C-43: quando ``scope_type``/``scope_target`` chegam, são anexados como
+    ``--scope <kind> --id <target>`` ao argv do subprocess (contrato de
+    ``validators/_common.build_argparser``). Validators que ignoram scope
+    simplesmente não usam os kwargs — backward-compatible.
     """
     if not spec.script_path.is_file():
         return _ValidatorResult(
@@ -783,10 +935,16 @@ def _invoke_validator(spec: _ValidatorSpec, project_root: Path) -> _ValidatorRes
             message=f"project_root is not a directory: {project_root}",
         )
 
+    cmd = [sys.executable, str(spec.script_path), "--project-root", str(project_root)]
+    if scope_type:
+        cmd += ["--scope", scope_type]
+    if scope_target:
+        cmd += ["--id", scope_target]
+
     started = time.monotonic()
     try:
         proc = subprocess.run(
-            [sys.executable, str(spec.script_path), "--project-root", str(project_root)],
+            cmd,
             check=False,
             capture_output=True,
             text=True,

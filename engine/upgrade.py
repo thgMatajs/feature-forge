@@ -30,6 +30,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from engine.ui.exit_codes import ERR_UPGRADE_FAILED, fail_with_tag
+
 
 # ── helpers testáveis ─────────────────────────────────────────────────────────
 
@@ -156,7 +158,7 @@ def run_upgrade(
             f"forge upgrade: erro ao ler HEAD — certifique-se de que "
             f"{home} é um repositório git.\n  {exc}\n"
         )
-        return 1
+        return fail_with_tag(ERR_UPGRADE_FAILED)
 
     # 1. Fetch (traz tags novas)
     try:
@@ -165,7 +167,7 @@ def run_upgrade(
         sys.stderr.write(
             f"forge upgrade: git fetch falhou. Verifique conexão e credenciais.\n  {exc}\n"
         )
-        return 1
+        return fail_with_tag(ERR_UPGRADE_FAILED)
 
     # 2. Descobre a última release tag
     try:
@@ -204,7 +206,7 @@ def run_upgrade(
             f"  C) Contate suporte se o problema persistir.\n"
             f"  Detalhe: {exc}\n"
         )
-        return 1
+        return fail_with_tag(ERR_UPGRADE_FAILED)
 
     # 5. Venv refresh
     try:
@@ -227,7 +229,7 @@ def run_upgrade(
                 f"forge upgrade: rollback ou pip re-refresh falhou. Estado pode estar inconsistente.\n"
                 f"  Rode manualmente: cd {home} && git checkout --detach {prev_sha}\n"
             )
-        return 4
+        return fail_with_tag(ERR_UPGRADE_FAILED)
 
     # 6. Smoke
     smoke_ok = _smoke_version(home)
@@ -246,7 +248,7 @@ def run_upgrade(
                 f"forge upgrade: rollback ou pip re-refresh falhou.\n"
                 f"  Rode manualmente: cd {home} && git checkout --detach {prev_sha}\n"
             )
-        return 4
+        return fail_with_tag(ERR_UPGRADE_FAILED)
 
     sys.stdout.write(f"forge: atualizado para {latest_tag} com sucesso.\n")
     return 0

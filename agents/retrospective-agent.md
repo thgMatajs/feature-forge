@@ -121,7 +121,7 @@ Walk every L1 file. Build a working dataset:
 - From `rationale-trace.yaml`: list non-trivial decisions with their
   sources (user-elicitation / memory-L2 / codebase-graph / inference).
 - From `elicitation.yaml`: list every Q asked + answer + source.
-- From `status.json`: confirm `state` is at the terminal verified marker
+- From `status.json`: confirm `state` is the terminal state `done`
   (not `aborted`, not `deferred`).
 
 Output to scratch: `_phase1-mining.yaml` (in-memory or under

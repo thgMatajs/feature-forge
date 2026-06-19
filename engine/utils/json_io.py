@@ -1,8 +1,8 @@
 """Atomic JSON read/write helpers.
 
 Mirrors `engine.utils.yaml_io` for the JSON case used by the intent
-protocol (`.claude/state/forge-pending.json` and
-`.claude/state/forge-response.json`). Why a separate module:
+protocol (`.claude/forge/state/forge-pending.json` and
+`.claude/forge/state/forge-response.json`). Why a separate module:
 
 - JSON and YAML use distinct serializers; one wrapper over both would
   obscure error context and force callers to think about format flags.
@@ -25,7 +25,16 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
+import uuid
 from pathlib import Path
+
+# C-25 (PR20-R4): TTL pra varrer tempfiles órfãos. Um crash entre
+# ``tmp.open(...)`` e ``os.replace`` deixa um ``{name}.{pid}.{uuid}.tmp`` que o
+# ``finally`` do escritor original nunca alcança (o processo morreu). Antes de
+# escrever, varremos best-effort os irmãos ``.tmp`` mais velhos que este TTL —
+# nunca tocando um tmp recente (que pode ser de um escritor concorrente vivo).
+_ORPHAN_TMP_TTL_SECONDS = 3600  # 1h — folga ampla sobre qualquer write real
 from typing import Any
 
 
@@ -103,7 +112,16 @@ def write_json(
         _apply_mode(path, mode)
         return
 
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    # C4 CONC-1: tempfile por-processo. O nome fixo (path + ".tmp") fazia dois
+    # processos forge no mesmo root colidirem no mesmo arquivo intermediário —
+    # torn write OU FileNotFoundError no os.replace do escritor tardio. O sufixo
+    # {pid}.{uuid} garante que cada escritor tenha seu próprio tmp; o os.replace
+    # final continua sendo a fronteira atômica (last-writer-wins por syscall,
+    # nunca conteúdo corrompido).
+    # C-25: best-effort sweep de tempfiles órfãos de crashes anteriores.
+    _sweep_orphan_tmps(path)
+
+    tmp = path.with_suffix(f"{path.suffix}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     try:
         with tmp.open("w", encoding="utf-8") as fh:
             fh.write(serialized)
@@ -121,6 +139,34 @@ def write_json(
                 tmp.unlink()
             except OSError:
                 pass
+
+
+def _sweep_orphan_tmps(path: Path) -> None:
+    """Remove tempfiles órfãos (``{path.name}.*.tmp``) mais velhos que o TTL.
+
+    C-25 (PR20-R4): um crash entre a escrita do tempfile e o ``os.replace``
+    deixa um ``{pid}.{uuid}.tmp`` que o ``finally`` do escritor original nunca
+    limpa (o processo morreu). Esta varredura best-effort recolhe esses órfãos
+    no próximo ``write_json`` do mesmo target. NUNCA toca um tmp recente
+    (< TTL) — pode ser de um escritor CONCORRENTE vivo (CONC-1). Totalmente
+    silenciosa: qualquer OSError (glob/stat/unlink) é ignorado — a limpeza é
+    higiene oportunística, nunca um gate.
+    """
+    try:
+        parent = path.parent
+        if not parent.is_dir():
+            return
+        now = time.time()
+        pattern = f"{path.name}.*.tmp"
+        for orphan in parent.glob(pattern):
+            try:
+                age = now - orphan.stat().st_mtime
+                if age > _ORPHAN_TMP_TTL_SECONDS:
+                    orphan.unlink()
+            except OSError:
+                continue
+    except OSError:
+        pass
 
 
 def _apply_mode(path: Path, mode: int) -> None:

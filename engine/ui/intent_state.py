@@ -54,7 +54,7 @@ stable intent-id, but ``forge-response.json`` already holds the LATEST
 intent's response — ``read_response`` would raise ``IntentMismatchError``
 and exit 1.
 
-Fix: persistent consumed-log at ``.claude/state/forge-intent-log.jsonl``.
+Fix: persistent consumed-log at ``.claude/forge/state/forge-intent-log.jsonl``.
 ``read_response`` consults the log first; if the intent-id was consumed
 in a prior subprocess invocation, returns the cached response without
 touching ``forge-response.json``. The log lives for the lifetime of a
@@ -72,9 +72,12 @@ Refs:
 from __future__ import annotations
 
 import json
+import os
+import sys
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from engine.utils import json_io
 from engine.utils.paths import forge_state_dir
@@ -150,6 +153,82 @@ def _state_dir(
 
 def _pending_path(project_root: Path, *, state_dir: Path | None = None) -> Path:
     return _state_dir(project_root, state_dir) / "forge-pending.json"
+
+
+def _pending_lock_path(project_root: Path, *, state_dir: Path | None = None) -> Path:
+    """Path do lock file dedicado pra seção crítica detect_race+write_pending.
+
+    Separado do pending.json: o write_json substitui o inode do pending via
+    os.replace; segurar lock sobre um fd que vai ser substituído é frágil.
+    Um lock file dedicado é o padrão robusto (mesmo princípio do sentinel
+    O_EXCL em engine/memory/l1.py).
+    """
+    return _state_dir(project_root, state_dir) / "forge-pending.lock"
+
+
+@contextmanager
+def pending_lock(
+    project_root: Path, *, state_dir: Path | None = None
+) -> Iterator[None]:
+    """Lock advisory exclusivo sobre a seção crítica detect_race+write_pending.
+
+    C4 CONC-1 (B): fecha a janela TOCTOU em que dois processos forge ambos
+    passam por detect_race (pending ausente) antes de qualquer escrita. Sob
+    este lock, a sequência "checar corrida + escrever pending" é atômica
+    cross-process.
+
+    POSIX usa fcntl.flock(LOCK_EX); Windows usa msvcrt.locking. Plataformas
+    sem suporte caem em no-op (o tempfile por-processo de C4(A) + os.replace
+    atômico permanecem como última linha de defesa).
+    """
+    lock_path = _pending_lock_path(project_root, state_dir=state_dir)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(lock_path, "a", encoding="utf-8")
+    locked_posix = False
+    locked_win = False
+    try:
+        if sys.platform == "win32":
+            try:
+                import msvcrt  # type: ignore[import-not-found]
+
+                try:
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+                    locked_win = True
+                except OSError:
+                    pass
+            except ImportError:
+                pass
+        else:
+            try:
+                import fcntl  # type: ignore[import-not-found]
+
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+                locked_posix = True
+            except (ImportError, OSError):
+                # C-28 (PR20-B1): POSIX flock pode levantar OSError em
+                # filesystems sem suporte a locking (NFS/CIFS/alguns binds
+                # Docker). Capturar só ImportError travava o comando nesses
+                # ambientes. No-op + tempfile-por-processo + os.replace atômico
+                # seguem como última linha de defesa (mesma garantia do branch
+                # "plataforma sem suporte").
+                pass
+        yield
+    finally:
+        try:
+            if locked_posix:
+                import fcntl  # type: ignore[import-not-found]
+
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            elif locked_win:
+                import msvcrt  # type: ignore[import-not-found]
+
+                try:
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+                except OSError:
+                    pass
+        except (ImportError, OSError):
+            pass
+        fh.close()
 
 
 def _response_path(project_root: Path, *, state_dir: Path | None = None) -> Path:
@@ -392,11 +471,26 @@ def read_pending(
 
     ``state_dir`` (Task 0.5) overrides the default anchor; ``None``
     resolves to ``forge_state_dir(project_root)`` (v1.3 canonical).
+
+    SCHEMA-1 (W-DEBT): aplica ``_check_schema_version`` simetricamente a
+    ``read_response`` — um pending de outra wire-version vira uma mensagem
+    friendly em vez de consumir o shape errado downstream.
+
+    WR-02 (holistic review W-DEBT): o tratamento de campo-AUSENTE é agora idêntico
+    ao de ``detect_race`` — o guard ``if "schema-version" in payload:`` só dispara
+    o check quando o campo está PRESENTE e diverge. Ausência = pending
+    malformed/legado (pré-protocolo), não version-skew: ``SchemaVersionMismatch``
+    significa "versão errada", não "sem versão". Antes, ``read_pending`` levantava
+    em campo-ausente (``written=None != _SCHEMA_VERSION``) enquanto ``detect_race``
+    tolerava — a assimetria que o CHANGELOG vendia como "simétrico".
     """
     path = _pending_path(project_root, state_dir=state_dir)
     if not path.exists():
         return None
-    return json_io.read_json(path)
+    payload = json_io.read_json(path)
+    if "schema-version" in payload:
+        _check_schema_version(payload, path=path, kind="pending")
+    return payload
 
 
 # --- write_response (W3 companion) -----------------------------------------
@@ -491,6 +585,21 @@ def read_response(
         return None
 
     response = json_io.read_json(path)
+    # IN-03 (holistic review W-DEBT r2): este check é INCONDICIONAL de
+    # propósito — diferente do guard `if "schema-version" in ...` que o WR-02
+    # introduziu em `read_pending` + `detect_race`. A divergência é deliberada,
+    # ancorada no schema do intent-protocol (docs/schemas/intent-protocol.md):
+    #   · Pra a response (campo `schema-version` = "Sempre? sim"), o host/
+    #     tty_bridge SEMPRE escreve o campo por construção. Uma response sem ele
+    #     é genuinamente anômala — não um legado pré-protocolo tolerável — então
+    #     a postura estrita (ausência => mismatch => raise, arquivo preservado
+    #     pra forense) é correta por contrato. A §"Schema evolution policy" do
+    #     schema nomeia `read_response` explicitamente como leitor estrito.
+    #   · Pra o pending, o WR-02 escolheu tolerar campo-AUSENTE porque um pending
+    #     sem o campo é malformed/legado (cai no sweep de stale), e `SchemaVersion
+    #     MismatchError` significa "versão errada", não "sem versão".
+    # Logo: read_pending/detect_race = tolerantes a ausência; read_response =
+    # estrito. Não unificar — alinhar enfraqueceria uma asserção de contrato.
     _check_schema_version(response, path=path, kind="response")
     written_id = response.get("intent-id")
     if written_id != intent_id:
@@ -646,8 +755,13 @@ def detect_race(
       raises ``RaceDetectedError`` with a mentor-calmo message pointing
       at the PID and the file path.
 
-    Lock file via ``fcntl.flock`` is deferred — see the spec
-    §"Anti-goals + Considerações futuras".
+    A seção crítica ``detect_race`` + ``write_pending`` é serializada
+    cross-process pelo caller real (``IntentFileAdapter._ask_loop``), que a
+    envolve em ``pending_lock(project_root, state_dir=...)`` (C4 CONC-1 (B)).
+    Sob o lock, dois processos forge não passam mais ambos pelo ``detect_race``
+    antes de escrever. O tempfile por-processo de C4 (A) + ``os.replace``
+    atômico permanecem como última linha de defesa (sem torn write mesmo se o
+    lock for no-op numa plataforma sem suporte).
     """
     pending_path = _pending_path(project_root, state_dir=state_dir)
     if not pending_path.exists():
@@ -661,6 +775,16 @@ def detect_race(
         # programming errors the caller should see, not "race" noise.
         json_io.delete_if_exists(pending_path)
         return None
+
+    # SCHEMA-1 (W-DEBT): version skew num pending deve dar a mensagem friendly
+    # de schema ANTES de qualquer decisão de race/sweep. Sem isto, um pending de
+    # outra wire-version cairia no sweep ou viraria "race" confusa em vez de
+    # dizer claramente "atualize o forge". Só dispara quando `schema-version`
+    # está PRESENTE e diverge — um pending sem o campo é malformed/legado e cai
+    # no sweep normal abaixo (mesma família do guard de created-at ausente),
+    # não numa mensagem de skew enganosa.
+    if "schema-version" in existing:
+        _check_schema_version(existing, path=pending_path, kind="pending")
 
     existing_id = existing.get("intent-id")
     if existing_id == new_intent_id:
@@ -704,6 +828,54 @@ def detect_race(
         return None
 
     pid = existing.get("pid", "?")
+
+    # STALE-1 (W-DEBT): liveness probe. Um pending recente de processo morto
+    # (crash sem cleanup) travaria a raia até o stale threshold (~10 min). Antes
+    # de declarar race, confirma que o PID ainda vive via os.kill(pid, 0):
+    #   - ProcessLookupError → processo morreu → varre + segue (return None).
+    #   - TypeError → pid inutilizável como probe → varre + segue.
+    #   - PermissionError → processo VIVO de outro dono → race genuína (raise).
+    #   - sem erro → processo vivo → race genuína (raise).
+    #
+    # C-49 (PR22-B-01): no Windows, ``os.kill(pid, 0)`` levanta ``ValueError``
+    # (signal 0 não é suportado), NÃO ``ProcessLookupError``. O bloco antigo
+    # juntava ValueError com "processo morto" → no Windows apagava SEMPRE o
+    # pending → desativava a detecção de race inteira. Agora: pid inválido como
+    # *valor* (não-inteiro) é distinto de probe não-suportado pela *plataforma*.
+    # No Windows, com probe_pid>0, tratamos o probe como não-conclusivo →
+    # assumimos vivo (segue pro raise) em vez de varrer.
+    #
+    # C-51 (PR22-R-008): o probe ``os.kill(pid, 0)`` só é confiável quando o
+    # pending foi escrito pelo MESMO host (mesmo namespace de PID). Num cenário
+    # multi-host (PID reciclado em outra máquina/container compartilhando o dir),
+    # o probe pode dar falso-positivo de "vivo". O modelo CC-fronted é
+    # single-host por invocação, então o risco é teórico; hardening por
+    # boot-id/hostname fica como defer documentado.
+    try:
+        probe_pid = int(pid)
+    except (ValueError, TypeError):
+        # pid não é sequer um inteiro válido → impossível provar vivo → varre.
+        json_io.delete_if_exists(pending_path)
+        return None
+    if probe_pid <= 0:
+        # pid<=0 não identifica um processo específico (0 = grupo,
+        # negativos = grupos/todos) — não dá pra provar vivo → varre.
+        json_io.delete_if_exists(pending_path)
+        return None
+    if sys.platform == "win32":
+        # os.kill(pid, 0) não é um probe de liveness confiável no Windows —
+        # trata como não-conclusivo: assume vivo (race genuína) em vez de
+        # varrer cego. Mantém a detecção de race ativa na plataforma.
+        pass
+    else:
+        try:
+            os.kill(probe_pid, 0)
+        except (ProcessLookupError, TypeError):
+            json_io.delete_if_exists(pending_path)
+            return None
+        except PermissionError:
+            pass  # processo vivo de outro dono — segue pro raise abaixo.
+
     raise RaceDetectedError(
         "outra invocação do forge ainda está aguardando resposta "
         f"(PID {pid}, intent-id '{existing_id}').\n"

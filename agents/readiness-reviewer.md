@@ -258,14 +258,21 @@ Per 07-discipline.md and 06-command-surface.md:
   ```
   Each hit is a discipline violation. Block-severity if in a task contract
   or contract spec; warning-severity if in narrative artifacts.
-- **needs-elicitation não-promovido** (spec C5):
+- **needs_elicitation não-promovido** (spec C5):
+  Invoque o validator estrutural diretamente — ele é a fonte única de verdade
+  (parse YAML/JSON + walk recursivo, cobre ambas as formas `needs_elicitation`/
+  `needs-elicitation` em DATA, e os 5 contract globs `*-spec.yaml`,
+  `task-breakdown.yaml`, `tasks/*.yaml`, `test-strategy.yaml`, `bdd.json`):
   ```bash
-  grep -rEn 'needs-elicitation' docs/.../features/{slug}/*-spec.yaml \
-    docs/.../features/{slug}/tasks/
+  python3 .claude/scripts/validate_readiness.py --scope feature --id {slug}
   ```
-  Cada hit em contract spec ou task contract é **block-severity** (o campo
-  devia ter virado `blocking: true` open-question). Hits em narrativa
-  (PRD prosa, intake) são **warning-severity**.
+  Status `fail` no JSON tail = **block-severity** (o campo `needs_elicitation`
+  ativo devia ter virado `blocking: true` open-question). A convenção REAL da
+  DATA é underscore; um grep substring na forma hyphen ficava cego a
+  `bdd.json`/`test-strategy.yaml` (C-01). Se precisar inspecionar manualmente,
+  use o key-path reportado no campo `where` do validator. Hits em narrativa
+  (PRD prosa, intake) o validator NÃO bloqueia — são **warning-severity** do
+  seu próprio julgamento, não block.
 
 ### Phase 6 — Verdict + rationale
 

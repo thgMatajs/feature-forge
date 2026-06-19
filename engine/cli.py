@@ -35,11 +35,18 @@ Refs:
 from __future__ import annotations
 
 import importlib
+import json
 import sys
 from pathlib import Path
 from typing import Callable, Optional
 
-from engine.ui.exit_codes import EXIT_CANCELLED, EXIT_PAUSED
+from engine.ui import output_mode
+from engine.ui.exit_codes import (
+    EXIT_CANCELLED,
+    EXIT_PAUSED,
+    ERR_PROJECT_NOT_FOUND,
+    fail_with_tag,
+)
 from engine.ui.question import (
     PausedForInputError,
     UserCancelledError,
@@ -184,6 +191,11 @@ _BOOTSTRAP_SKIP_COMMANDS: frozenset[str] = frozenset({
     "status",     # read-only — inspeção de estado
     "memory",     # read-only — leitura/listagem de L1/L2/L3
     "raw",        # read-only — pipe genérica de leitura
+    "verify",     # C-38: observador (não muta código) — simétrico aos outros
+                  #   read-cmds. O bootstrap-check protege contra git-hooks
+                  #   ausentes pra MUTAÇÕES; verify só observa, então pular o
+                  #   check é consistente (e verify roda em hooks pre-commit
+                  #   ONDE o bootstrap-check seria circular).
     "upgrade",    # opera no FORGE_HOME, não no projeto consumidor — sem project root
 })
 
@@ -235,6 +247,7 @@ def _check_bootstrap_state(project_root: Path) -> Optional[str]:
 def _print_help() -> None:
     """Render the top-level help. No flags listed — by design."""
     from engine import __version__
+    from engine.utils.paths import forge_home
 
     lines: list[str] = []
     lines.append(f"forge {__version__} — feature-forge")
@@ -247,8 +260,79 @@ def _print_help() -> None:
     lines.append("")
     lines.append("Sem flags — todos os parâmetros são interativos (decisão 10).")
     lines.append("")
-    lines.append("Mais: ~/Documents/feature-forge/docs/design/06-command-surface.md")
+    # M9 HELP-DOC-PATH (W-DEBT): resolver via forge_home() — respeita XDG
+    # (~/.local/share/feature-forge) e qualquer FORGE_HOME custom, em vez do
+    # ~/Documents/... hardcoded que não resolvia em instalações XDG.
+    doc_path = forge_home() / "docs" / "design" / "06-command-surface.md"
+    lines.append(f"Mais: {doc_path}")
     sys.stdout.write("\n".join(lines) + "\n")
+
+
+# A2 NO-MANIFEST — static per-command metadata for the machine manifest.
+# Hand-maintained in lockstep with `_VISIBLE_ORDER`/`COMMANDS` (NOT auto-derived
+# from them) — `_print_help_json` iterates `_VISIBLE_ORDER` and looks each name
+# up here. The drift guard `test_command_meta_keys_match_visible_order` fails if
+# a command is added without a metadata entry (W-001). Read-commands advertise
+# --json (Decisão 10 revisitada — meta-flags carve-out). Voz mentor-calmo nos summaries.
+# C-37 (PR21-I4): dois eixos ORTOGONAIS, separados pra não mentir:
+#   - prompts_by_default: o comando entra num `question.ask` no caminho DEFAULT
+#     (interativo)? VERDADE — verify/doctor/graph/memory promptam (≥2 features /
+#     sem query / submenu). Só `status` é genuinamente non-prompting.
+#   - machine_readable: o comando aceita `--json` / honra FORGE_OUTPUT=json
+#     (saída estruturada, non-interactive)?
+# O campo legado `interactive` é mantido = `prompts_by_default` (alias) pra não
+# quebrar consumidores existentes do manifesto, mas agora reflete a VERDADE
+# (antes dizia False pros 4 read-cmds que de fato promptam).
+_COMMAND_META: dict[str, dict] = {
+    "init":        {"summary": "Inicializa forge no projeto (mapa cinemático).", "prompts_by_default": True,  "machine_readable": False, "flags": [],         "args": []},
+    "plan":        {"summary": "Planeja uma feature (conversacional).",          "prompts_by_default": True,  "machine_readable": False, "flags": [],         "args": ["feature-slug?"]},
+    "implement":   {"summary": "Implementa a feature planejada.",                "prompts_by_default": True,  "machine_readable": False, "flags": [],         "args": ["feature-slug?"]},
+    "verify":      {"summary": "Roda o cascade de validators (observador c/ side-effects L1).", "prompts_by_default": True,  "machine_readable": True,  "flags": ["--json"], "args": ["task TASK-NNNN | feature SLUG?"]},
+    "status":      {"summary": "Board read-only do projeto.",                    "prompts_by_default": False, "machine_readable": True,  "flags": ["--json"], "args": []},
+    "doctor":      {"summary": "Health check read-only.",                        "prompts_by_default": True,  "machine_readable": True,  "flags": ["--json"], "args": []},
+    "reconfigure": {"summary": "Atualiza config com diff incremental.",          "prompts_by_default": True,  "machine_readable": False, "flags": [],         "args": []},
+    "graph":       {"summary": "Consulta o codebase graph.",                     "prompts_by_default": True,  "machine_readable": True,  "flags": ["--json"], "args": ["query args"]},
+    "memory":      {"summary": "Inspeciona/gerencia memory layers.",             "prompts_by_default": True,  "machine_readable": True,  "flags": ["--json"], "args": []},
+    "evolve":      {"summary": "Review-and-apply de proposed evolutions.",       "prompts_by_default": True,  "machine_readable": False, "flags": [],         "args": []},
+    "undo":        {"summary": "Reverte mutações (2-step abort).",               "prompts_by_default": True,  "machine_readable": False, "flags": [],         "args": []},
+    "raw":         {"summary": "Passthrough cru.",                               "prompts_by_default": True,  "machine_readable": False, "flags": [],         "args": ["args"]},
+    "qa":          {"summary": "QA red-team (auditores hostis).",                "prompts_by_default": True,  "machine_readable": False, "flags": [],         "args": ["target?"]},
+    "upgrade":     {"summary": "Atualiza snapshot da forge.",                    "prompts_by_default": True,  "machine_readable": False, "flags": [],         "args": []},
+}
+
+
+def _print_help_json() -> None:
+    """Emit the machine-readable command manifest (A2 NO-MANIFEST).
+
+    Only visible commands (``_VISIBLE_ORDER``) are listed — the hidden
+    ``ingest`` entrypoint is intentionally omitted, mirroring the prose help.
+    stdout is pure JSON (graph model); a consumer parses this instead of
+    inferring the surface from prose (the failure mode that made the audit's
+    second LLM hallucinate ~75% of its findings).
+    """
+    from engine import __version__
+
+    commands = []
+    for name in _VISIBLE_ORDER:
+        meta = _COMMAND_META.get(name, {})
+        prompts = meta.get("prompts_by_default", True)
+        commands.append(
+            {
+                "name": name,
+                "summary": meta.get("summary", ""),
+                # C-37: `interactive` é alias legado de `prompts_by_default`
+                # (agora VERDADE). `prompts_by_default` + `machine_readable`
+                # são os campos canônicos — eixos ortogonais.
+                "interactive": prompts,
+                "prompts_by_default": prompts,
+                "machine_readable": meta.get("machine_readable", False),
+                "hidden": False,
+                "flags": list(meta.get("flags", [])),
+                "args": list(meta.get("args", [])),
+            }
+        )
+    manifest = {"forge_version": __version__, "commands": commands}
+    print(json.dumps(manifest, indent=2, default=str))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -261,8 +345,33 @@ def main(argv: list[str] | None = None) -> int:
 
     cmd, rest = argv[0], argv[1:]
 
+    # A1 TOKEN-BLIND — resolve the process output-mode ONCE at startup and
+    # publish it on the context var so renderer.write (the single chokepoint)
+    # and read-command handlers consult a single source of truth. ``command=cmd``
+    # GATES JSON resolution to the read-command allowlist (Decisão de design 2):
+    # an interactive command never resolves JSON even under FORGE_OUTPUT=json,
+    # so its cinematic UX + intent protocol are never silently degraded. The
+    # reset lives in the outermost ``finally`` below, mirroring the set/reset
+    # discipline of ``_cli_command_context``.
+    _output_mode_token = output_mode.set_output_mode(
+        output_mode.detect_output_mode(argv, command=cmd)
+    )
+    try:
+        return _main_dispatch(cmd, rest, argv)
+    finally:
+        output_mode.reset_output_mode(_output_mode_token)
+
+
+def _main_dispatch(cmd: str, rest: list[str], argv: list[str]) -> int:
+    """Resolve + dispatch a subcommand. Output-mode is already set by ``main``."""
     if cmd in ("-h", "--help", "help"):
-        _print_help()
+        # A2 NO-MANIFEST — ``forge --help --json`` emits the machine manifest.
+        # It does NOT depend on the resolved output-mode (``--help`` is not in
+        # the read-command allowlist), so we detect ``--json`` positionally.
+        if "--json" in rest or "--json" in argv:
+            _print_help_json()
+        else:
+            _print_help()
         return 0
     if cmd in ("-v", "--version"):
         from engine import __version__
@@ -290,8 +399,11 @@ def main(argv: list[str] | None = None) -> int:
             # roda e dá mensagem canônica pro caso esperado.
             err = None
         if err:
+            # C-23: emite a prosa friendly + a tag machine-readable (host
+            # ramifica por ela). A prosa já foi montada em `err`; fail_with_tag
+            # acrescenta só a tag.
             sys.stderr.write(err + "\n")
-            return 1
+            return fail_with_tag(ERR_PROJECT_NOT_FOUND)
 
     handler = _resolve(cmd)
     # Lazy imports — keeps cli.main decoupled from foundation modules
@@ -337,10 +449,15 @@ def main(argv: list[str] | None = None) -> int:
     paused_exc: PausedForInputError | None = None
     forensic_exit = False
     try:
+        # C3 EXIT-2-COLLISION — exit 2 é reservado ESTRITAMENTE pra pausa
+        # (PausedForInputError + UserPausedError). Todos os erros dos handlers
+        # colapsaram em exit 1 + tag [FORGE-ERR:<TAG>] (ver engine/ui/exit_codes.py
+        # fail_with_tag). Nenhuma exceção não-pausa pode retornar 2 a partir
+        # daqui.
         try:
             result = handler(rest)
         except PausedForInputError as exc:
-            # DRIFT-1 §8 — chokepoint emitted .claude/state/forge-pending.json.
+            # DRIFT-1 §8 — chokepoint emitted .claude/forge/state/forge-pending.json.
             # The caller (Claude Code host or the in-process TtyAdapter) is expected
             # to read that file, write a response, and re-invoke us with the
             # same argv. No traceback, no message on stdout — the host renders
@@ -376,11 +493,16 @@ def main(argv: list[str] | None = None) -> int:
         except (
             intent_state.RaceDetectedError,
             intent_state.IntentMismatchError,
+            intent_state.SchemaVersionMismatchError,
         ) as exc:
             # PR #11 review #1 — DRIFT-1 intent-protocol sentinels carregam
             # mensagem mentor-calmo em ``exc.args[0]``. Sem este catch a
             # mensagem nunca chega ao usuário; em vez disso vaza traceback
             # cru, contrariando SPEC §3/§8 ("emite mensagem clara e exita 1").
+            #
+            # SCHEMA-LEAK (W-DEBT): SchemaVersionMismatchError (RuntimeError)
+            # entra aqui pra version skew dar exit 1 mentor-calmo em vez de
+            # traceback cru. É caminho forense (forensic_exit = True).
             #
             # BL-001: caminho de erro do intent-protocol — preserva
             # pending/response pra forense (SPEC §3); o ``finally`` limpa só
@@ -390,7 +512,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         except json_io.JsonIOError as exc:
             # PR #11 review #1 — falha ao decodificar state files
-            # (.claude/state/forge-pending.json ou forge-response.json) é
+            # (.claude/forge/state/forge-pending.json ou forge-response.json) é
             # erro de I/O, não bug interno do engine. Reportar limpo e
             # sair 1 em vez de traceback.
             #

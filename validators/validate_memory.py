@@ -30,6 +30,7 @@ from _common import (
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from engine.memory.l1 import _VALID_STATES  # noqa: E402
 from engine.utils.paths import (  # noqa: E402
     memory_dir,
     memory_l2_path,
@@ -38,7 +39,12 @@ from engine.utils.paths import (  # noqa: E402
 from engine.utils.yaml_io import YamlIOError, read_yaml_or_default  # noqa: E402
 
 
-_VALID_L1_STATES = {"planning", "implementing", "verifying", "done", "aborted", "paused"}
+# C-44 (PR22-R-002): fonte única de verdade — o enum canônico vive em
+# engine.memory.l1._VALID_STATES (9 estados). O set paralelo anterior aceitava
+# `paused` (removido em T1/74e4da5) e rejeitava estados canônicos
+# (not-started/planned/deferred/blocked-on-external), tornando o gate
+# dessincronizado com o writer. Aliasamos o canônico — sem cópia paralela.
+_VALID_L1_STATES = _VALID_STATES
 _VALID_VERIFY_RESULTS = {"pass", "warn", "fail", "degraded"}
 
 # MEM-L2-003: kinds canônicos para L2 patterns/findings/decisions.

@@ -1,4 +1,13 @@
 {
+  "_template_description": "qa-report.json — sumário do QA run (Phase 4 synthesis). Emitido por engine/qa/synthesis.py e validado por validators/validate_qa_report.py. JSON puro não permite comentários inline; chaves '_*' são guias para o agent/host e devem ser removidas no output final (o validator as tolera, mas o artefato canônico não as carrega).",
+  "_template_rules": [
+    "run.id alinhado ao id dos qa-finding.json do mesmo run (ver engine/qa/run_id.py)",
+    "run.scope.type ∈ feature | screen | task | paranoid; target é o slug/id correspondente (alinhado a validators/validate_qa_report.py::_VALID_SCOPE_TYPES)",
+    "verdict ∈ BLOCK | FLAG | PASS (rubrica em docs/schemas/qa-report.md): BLOCK se critical>=1 ou high>=3; FLAG se high in {1,2} ou medium>=3; senão PASS (alinhado a validators/validate_qa_report.py::_VALID_VERDICTS)",
+    "summary.by_severity e summary.by_vector contam os findings; total_findings = soma de by_severity",
+    "finished_at/duration_s preenchidos no fim do run (vazios/0 só no template)",
+    "findings[] carrega os qa-finding.json inline ou suas referências, conforme o synthesizer"
+  ],
   "schema_version": 1,
   "run": {
     "id": "{{run_id}}",

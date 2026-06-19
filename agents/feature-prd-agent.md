@@ -34,8 +34,9 @@ Read-only on entry (from the context pack the conductor attached):
 - `feature-intake.md` — written by feature-intake-agent in the same Wave A
 - Ticket payload — summary, description, acceptance criteria, linked tickets,
   sprint (only if `ticketing.provider != none`)
-- `workflow-config.yaml` slice — `identity`, `backend`, `ticketing`,
-  `persona.primary-language`, active cards
+- `forge-config.yaml` slice (`.claude/forge/forge-config.yaml`, canônico v1.3+;
+  fallback legado `.claude/workflow-config.yaml`) — `identity`, `backend`,
+  `ticketing`, `persona.primary-language`, active cards
 - `.claude/memory/L2-project.yaml` slice — patterns, frozen-decisions, findings
 - `.claude/inventory/design-system.yaml` slice — component names (so entity
   references are inventory-true)

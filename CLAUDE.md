@@ -181,7 +181,7 @@ Mapa completo: `.claude/rules/project-anatomy.md`.
 pytest                              # ~1531 tests, default lane (consulte handoff pra count atual)
 pytest -m "not integration"         # rápido (rapid lane)
 forge verify                        # validators cascade (3 built-in + N contribuídos por cards ativos; 21 no diretório)
-forge doctor                        # health check 16 categorias
+forge doctor                        # health check 17 categorias
 ./bin/forge --version               # smoke
 ```
 

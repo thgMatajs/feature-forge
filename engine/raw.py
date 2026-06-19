@@ -27,7 +27,8 @@ from engine.utils.paths import (
     forge_home,
     try_find_project_root,
 )
-from engine.utils.yaml_io import backup_file, read_yaml
+from engine.utils.yaml_io import YamlIOError, backup_file, read_yaml
+from engine.ui.exit_codes import ERR_CARD_INVALID, ERR_USAGE, fail_with_tag
 
 
 def run(argv: list[str]) -> int:
@@ -43,7 +44,7 @@ def run(argv: list[str]) -> int:
             return _migrator(script, rest)
         print(f"forge raw: unknown script '{script}'", file=sys.stderr)
         _print_help()
-        return 2
+        return fail_with_tag(ERR_USAGE)
     return handler(rest)
 
 
@@ -62,23 +63,26 @@ def _print_help() -> None:
 def _verify_card(argv: list[str]) -> int:
     if not argv:
         print("usage: forge raw verify-card <card-dir>", file=sys.stderr)
-        return 2
+        return fail_with_tag(ERR_USAGE)
     card_dir = Path(argv[0]).resolve()
     if not card_dir.is_dir():
         print(f"forge raw verify-card: not a directory: {card_dir}", file=sys.stderr)
-        return 2
+        return fail_with_tag(ERR_USAGE)
     yaml_path = card_dir / "card.yaml"
     if not yaml_path.is_file():
         print(f"forge raw verify-card: card.yaml not found in {card_dir}", file=sys.stderr)
-        return 2
+        return fail_with_tag(ERR_USAGE)
     try:
         data = read_yaml(yaml_path)
-    except Exception as exc:
+    except YamlIOError as exc:
+        # B3 (PR20-B3): narrow de `except Exception` → YamlIOError. read_yaml
+        # encapsula parse + OS errors em YamlIOError; capturar Exception cru
+        # mascarava bugs não-relacionados (telemetria perdida).
         print(f"yaml parse error: {exc}", file=sys.stderr)
-        return 1
+        return fail_with_tag(ERR_CARD_INVALID)
     if not isinstance(data, dict):
         print("card.yaml: top-level must be a mapping", file=sys.stderr)
-        return 1
+        return fail_with_tag(ERR_CARD_INVALID)
     violations = validate_card_yaml(data, card_dir)
     if not violations:
         print(f"OK: {card_dir.name} valid")
@@ -86,7 +90,7 @@ def _verify_card(argv: list[str]) -> int:
     print(f"FAIL: {card_dir.name} ({len(violations)} violation(s))")
     for v in violations:
         print(f"  · {v}")
-    return 1
+    return fail_with_tag(ERR_CARD_INVALID)
 
 
 # ── edit-config ──────────────────────────────────────────────────────────────
@@ -97,11 +101,11 @@ def _edit_config(argv: list[str]) -> int:
     project_root = try_find_project_root()
     if project_root is None:
         print("forge raw edit-config: no project root", file=sys.stderr)
-        return 2
+        return fail_with_tag(ERR_USAGE)
     path = active_config_path(project_root)
     if not path.is_file():
         print(f"forge raw edit-config: not found {path}", file=sys.stderr)
-        return 2
+        return fail_with_tag(ERR_USAGE)
     editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"
     print(f"opening {path} in {editor}")
     try:
@@ -130,18 +134,18 @@ def _rebuild_templates(argv: list[str]) -> int:
     project_root = try_find_project_root()
     if project_root is None:
         print("forge raw rebuild-templates: no project root", file=sys.stderr)
-        return 2
+        return fail_with_tag(ERR_USAGE)
     cards_root = cards_dir(project_root)
     if not cards_root.is_dir():
         print("no cards snapshot directory — run `forge init` first", file=sys.stderr)
-        return 2
+        return fail_with_tag(ERR_USAGE)
 
     print(f"scanning {cards_root}")
     try:
         cards = load_all_cards(cards_root)
     except CardError as exc:
         print(f"  ! load_all_cards failed: {exc}", file=sys.stderr)
-        return 1
+        return fail_with_tag(ERR_CARD_INVALID)
     if not cards:
         print("  no active cards — nothing to rebuild")
         return 0
@@ -154,7 +158,7 @@ def _rebuild_templates(argv: list[str]) -> int:
     templates_root = forge_home() / "templates"
     if not templates_root.is_dir():
         print(f"  ! templates dir not found: {templates_root}", file=sys.stderr)
-        return 1
+        return fail_with_tag(ERR_USAGE)
 
     re_rendered = 0
     failures: list[str] = []
@@ -176,7 +180,7 @@ def _rebuild_templates(argv: list[str]) -> int:
     print(f"re-rendered: {re_rendered} template(s)")
     if failures:
         print(f"failures: {len(failures)}", file=sys.stderr)
-        return 1
+        return fail_with_tag(ERR_CARD_INVALID)
     return 0
 
 
@@ -220,7 +224,7 @@ def _migrator(name: str, argv: list[str]) -> int:
     """Stub for schema migrators. Real impls land in Phase 5."""
     del argv
     print(f"forge raw {name}: not implemented yet (stub — Phase 5)", file=sys.stderr)
-    return 3
+    return fail_with_tag(ERR_USAGE)
 
 
 # ── Dispatch table ──────────────────────────────────────────────────────────

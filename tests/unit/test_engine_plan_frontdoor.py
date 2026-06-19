@@ -85,10 +85,10 @@ def test_render_template_substitutes_lowercase_token(
         "# Feature {{feature_slug}}\nslug: {{feature_slug}}\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(plan, "_templates_dir", lambda: fake_templates)
+    monkeypatch.setattr(plan, "_templates_dir", lambda _root: fake_templates)
 
     target = tmp_path / "out.md"
-    created = plan._render_template("x.template.md", target, "lembrete-rega")
+    created = plan._render_template("x.template.md", target, "lembrete-rega", tmp_path)
     assert created is True
     rendered = target.read_text(encoding="utf-8")
     assert "{{feature_slug}}" not in rendered, "lowercase token não substituído"
@@ -117,13 +117,14 @@ def test_render_template_fills_source_tokens(
     (fake_templates / "intake.template.md").write_text(
         _INTAKE_TOKEN_BODY, encoding="utf-8"
     )
-    monkeypatch.setattr(plan, "_templates_dir", lambda: fake_templates)
+    monkeypatch.setattr(plan, "_templates_dir", lambda _root: fake_templates)
 
     target = tmp_path / "feature-intake.md"
     created = plan._render_template(
         "intake.template.md",
         target,
         "detalhe-do-bonsai",
+        tmp_path,
         extra_tokens={
             "{{source_type}}": "phrase",
             "{{source_ref_or_none}}": "adicionar detalhe do bonsai",
@@ -150,13 +151,14 @@ def test_render_template_extra_tokens_noop_on_other_templates(
     (fake_templates / "tech.template.md").write_text(
         "# Tech spec {{feature_slug}}\n", encoding="utf-8"
     )
-    monkeypatch.setattr(plan, "_templates_dir", lambda: fake_templates)
+    monkeypatch.setattr(plan, "_templates_dir", lambda _root: fake_templates)
 
     target = tmp_path / "tech-spec.md"
     created = plan._render_template(
         "tech.template.md",
         target,
         "x-feature",
+        tmp_path,
         extra_tokens={
             "{{source_type}}": "phrase",
             "{{source_ref_or_none}}": "irrelevante",
@@ -183,7 +185,7 @@ def test_run_static_wave_threads_source_tokens_to_intake(
     (fake_templates / "intake.template.md").write_text(
         _INTAKE_TOKEN_BODY, encoding="utf-8"
     )
-    monkeypatch.setattr(plan, "_templates_dir", lambda: fake_templates)
+    monkeypatch.setattr(plan, "_templates_dir", lambda _root: fake_templates)
     # Não bloquear no prompt continuar/pausar.
     monkeypatch.setattr(plan, "_continue_or_pause", lambda slug, label: "continuar")
 
@@ -339,6 +341,19 @@ def test_derive_slug_two_char_alnum_padded() -> None:
     assert plan._is_valid_slug(plan._derive_slug("ab"))
 
 
+@pytest.mark.parametrize(
+    "text",
+    ["a", "1", "é", "a-", "z9", "a.", "  a  ", "x_", "9z", "ção"],
+)
+def test_derive_slug_degenerate_never_ends_in_hyphen(text: str) -> None:
+    """C-14 (PR18-B2): hardening do invariante — pra inputs curtos/degenerados,
+    o slug derivado NUNCA termina em '-' e SEMPRE casa _SLUG_PATTERN.
+    """
+    out = plan._derive_slug(text)
+    assert not out.endswith("-"), f"{text!r} → {out!r} termina em hífen"
+    assert plan._SLUG_PATTERN.match(out), f"{text!r} → {out!r} não casa _SLUG_PATTERN"
+
+
 # ── H-002 — source-ref YAML-safe: frontmatter REAL parseia sem injeção ───────
 
 
@@ -354,14 +369,14 @@ def _render_real_intake(
     (fake_templates / "feature-intake.template.md").write_text(
         _REAL_INTAKE_TEMPLATE.read_text(encoding="utf-8"), encoding="utf-8"
     )
-    monkeypatch.setattr(plan, "_templates_dir", lambda: fake_templates)
+    monkeypatch.setattr(plan, "_templates_dir", lambda _root: fake_templates)
 
     tokens = plan._source_tokens_for(argv)
     target = tmp_path / "feature-intake.md"
     if target.exists():
         target.unlink()
     plan._render_template(
-        "feature-intake.template.md", target, "my-slug", extra_tokens=tokens
+        "feature-intake.template.md", target, "my-slug", tmp_path, extra_tokens=tokens
     )
     rendered = target.read_text(encoding="utf-8")
     # Frontmatter = bloco entre o primeiro par de `---`.
@@ -438,14 +453,56 @@ def test_intake_frontmatter_yaml_safe_benign_phrase(
 
 
 def test_slug_collision_handled_by_existing_run_machinery() -> None:
-    """Doc-test: a colisão de slug derivado é tratada pela maquinaria EXISTENTE
-    do `run()` (done-branch + phase-lock + confirm via `ask_text`), NÃO pelo
-    front-door. A T1 não introduz UI de sufixo/3-caminhos nova — só garante
-    que o slug derivado é válido (H-001) pra alimentar essa maquinaria.
-
-    Este teste apenas ancora os símbolos existentes pra que um refactor que
-    os remova quebre aqui (regression anchor), sem exercitar comportamento
-    novo de colisão.
+    """Doc-test: a colisão com feature DONE é tratada por
+    `_handle_done_feature_branch`; a colisão com feature ATIVA não-done por
+    `_handle_active_slug_collision` (C-03). Ambos vivem em `run()`.
     """
     assert callable(plan._handle_done_feature_branch)
+    assert callable(plan._handle_active_slug_collision)
     assert callable(plan.run)
+
+
+def test_active_slug_collision_offers_three_paths(monkeypatch, tmp_path) -> None:
+    """C-03 (PR18-R3): colisão com feature ativa não-done apresenta 3-caminhos.
+
+    'nova' → devolve o slug sufixado; 'retomar' → devolve o slug existente;
+    'abortar' → None.
+    """
+    from engine.memory.l1 import L1State
+
+    state = L1State(
+        feature_slug="lembrete-rega",
+        status="planning",
+        last_action_at="2026-06-18T00:00:00Z",
+        last_action_kind="plan-started",
+    )
+
+    # 'nova' → sufixo (lembrete-rega-2, livre pois nada está em L1 no tmp).
+    monkeypatch.setattr(plan.question, "ask", lambda *a, **k: "nova")
+    assert (
+        plan._handle_active_slug_collision("lembrete-rega", state, tmp_path)
+        == "lembrete-rega-2"
+    )
+
+    # 'retomar' → o próprio slug.
+    monkeypatch.setattr(plan.question, "ask", lambda *a, **k: "retomar")
+    assert (
+        plan._handle_active_slug_collision("lembrete-rega", state, tmp_path)
+        == "lembrete-rega"
+    )
+
+    # 'abortar' → None.
+    monkeypatch.setattr(plan.question, "ask", lambda *a, **k: "abortar")
+    assert (
+        plan._handle_active_slug_collision("lembrete-rega", state, tmp_path) is None
+    )
+
+
+def test_active_collision_states_cover_non_done_active() -> None:
+    """C-03: planning/planned/deferred/blocked-on-external disparam o handler."""
+    assert plan._ACTIVE_COLLISION_STATES == {
+        "planning",
+        "planned",
+        "deferred",
+        "blocked-on-external",
+    }

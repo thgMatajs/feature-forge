@@ -372,3 +372,21 @@ def test_apply_writes_intake_and_status(tmp_path: Path, monkeypatch):
     status = json.loads(status_path.read_text(encoding="utf-8"))
     assert status["subtype"] == "refactor"
     assert status["source-proposal-id"]
+
+
+def test_build_template_context_tolerates_non_dict_locations() -> None:
+    """C-13 (PR18-B1): location malformada (não-dict) no payload não estoura
+    AttributeError nas comprehensions de paths/languages — é ignorada."""
+    from engine.graph.reuse_apply import _build_template_context, DistillationProposal
+
+    proposal = DistillationProposal(
+        id="P1", kind="promote", title="Helper", description="d"
+    )
+    locations = [
+        {"path": "a/A.kt", "language": "kotlin"},
+        None,            # malformada
+        "garbage",       # malformada
+        {"path": "b/B.kt"},
+    ]
+    ctx = _build_template_context("slug", proposal, {}, locations)
+    assert ctx["feature_slug"] == "slug"  # não crashou

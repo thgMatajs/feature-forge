@@ -52,7 +52,7 @@ from _gate_infra import (
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from engine.utils.paths import cards_dir, forge_config_path  # noqa: E402
+from engine.utils.paths import active_config_path, cards_dir  # noqa: E402
 from engine.utils.yaml_io import read_yaml_or_default  # noqa: E402
 
 
@@ -492,11 +492,12 @@ def _load_active_cards(project_root: Path) -> list[dict[str, Any]]:
     Card file ausente → silenciosamente ignorado (não bloqueia o gate).
 
     Task 0.8 (v1.3 pilot-ready): callsite migrado pra ``forge_config_path``
-    + ``cards_dir`` helpers — config canônico vive em ``.claude/forge/``
-    (spec §2); canonical cards root continua em ``.claude/cards/``
-    (snapshot per project, não muda com sub-namespace).
+    + ``cards_dir`` helpers. C-04/C-10 (CL-A): trocado pra
+    ``active_config_path`` — primário ``.claude/forge/forge-config.yaml`` com
+    FALLBACK legado ``.claude/workflow-config.yaml`` (projetos v1.2). Canonical
+    cards root continua em ``.claude/cards/`` (não muda com sub-namespace).
     """
-    cfg_path = forge_config_path(project_root)
+    cfg_path = active_config_path(project_root)
     config = read_yaml_or_default(cfg_path, {}) or {}
     cards_root = cards_dir(project_root)
     out: list[dict[str, Any]] = []
@@ -517,9 +518,10 @@ def _load_active_cards(project_root: Path) -> list[dict[str, Any]]:
 def _load_workflow_config(project_root: Path) -> dict[str, Any]:
     """Read ``.claude/forge/forge-config.yaml`` ou retorna {} se ausente/inválido.
 
-    Task 0.8 (v1.3 pilot-ready): migrado pra ``forge_config_path`` helper.
+    Task 0.8 (v1.3 pilot-ready): migrado pra ``forge_config_path``. C-04/C-10
+    (CL-A): trocado pra ``active_config_path`` (primário + fallback legado).
     """
-    cfg_path = forge_config_path(project_root)
+    cfg_path = active_config_path(project_root)
     return read_yaml_or_default(cfg_path, {}) or {}
 
 

@@ -2,23 +2,24 @@
 
 Endereça finding #19 do master review do PR #11 (DRIFT-1): nenhum teste
 exercia ``detect_race`` + ``write_pending`` sob contenção real via
-``threading.Thread``. SPEC §9 documenta explicitamente que a janela
-TOCTOU entre detect_race e write_pending existe (lock via flock está
-DEFERRED pra v1.2.x). Estes testes não fecham essa janela — documentam
-que o estado final permanece **coerente** (single-writer-wins via
-``os.replace`` atômico do ``write_json``) mesmo quando múltiplas threads
-disputam ao mesmo tempo.
+``threading.Thread``.
 
-O que NÃO se assert:
-- Ordem do vencedor (não-determinístico — depende do scheduling).
-- Que apenas uma thread escreva (todas podem entrar na janela TOCTOU).
+C4 CONC-1 fechou o gap TOCTOU/torn-write que estes testes antes apenas
+documentavam:
+- **C4-A** (``engine/utils/json_io.write_json``) — tempfile por-processo
+  (``{pid}.{uuid}.tmp``) elimina o torn write / ``FileNotFoundError`` no
+  ``os.replace`` do escritor tardio (nome de tempfile compartilhado era a
+  fonte da corrupção de bytes).
+- **C4-B** (``engine/ui/intent_state.pending_lock``) — flock ``LOCK_EX``
+  aplicado na seção crítica real ``detect_race``+``write_pending`` de
+  ``IntentFileAdapter._ask_loop`` serializa a janela TOCTOU em produção.
 
-O que se assert:
-- O pending final é JSON válido (sem torn write).
-- O conteúdo do pending corresponde a UM dos payloads candidatos
-  (não mistura — atomicidade via ``os.replace``).
-- A thread cujo payload venceu o ``os.replace`` consegue ler de volta
-  seu próprio intent-id.
+O que se assert agora (gap FECHADO, não documentado):
+- O pending final é SEMPRE JSON válido (sem torn write).
+- O conteúdo do pending corresponde EXATAMENTE a UM dos payloads
+  candidatos (nunca bytes concatenados, nunca mistura de campos).
+- ``write_pending`` / ``write_json`` NUNCA levantam ``FileNotFoundError``
+  no ``os.replace`` (cada escritor tem seu próprio tmp).
 
 Refs:
 - ``docs/superpowers/specs/drift-1-intent-protocol.md`` §9 "Concurrent
@@ -31,12 +32,15 @@ Refs:
 from __future__ import annotations
 
 import json
+import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
+from engine.host.adapter import AskKind, PausedForInputError
+from engine.host.adapters.intent_file import IntentFileAdapter
 from engine.ui import intent_state
 from engine.utils import json_io
 
@@ -46,8 +50,17 @@ pytestmark = pytest.mark.integration
 # --- Helpers ---------------------------------------------------------------
 
 
-def _make_payload(intent_id: str, *, pid: int) -> dict:
-    """Minimally-valid pending payload distinguishable per-thread."""
+def _make_payload(intent_id: str, *, pid: int | None = None) -> dict:
+    """Minimally-valid pending payload distinguishable per-thread.
+
+    ``pid`` defaults ao PID do processo de teste (vivo). Desde STALE-1
+    (W-DEBT), ``detect_race`` faz ``os.kill(pid, 0)`` e varre pendings de PID
+    morto — payloads de race determinística PRECISAM de um PID vivo, e todas
+    estas threads rodam no mesmo processo, então ``os.getpid()`` é o correto.
+    A distinção por-thread vem do ``intent_id``, não do PID.
+    """
+    if pid is None:
+        pid = os.getpid()
     return {
         "schema-version": 1,
         "intent-id": intent_id,
@@ -154,27 +167,17 @@ def test_concurrent_writers_detect_race_or_serialize(tmp_path):
 
 
 def test_concurrent_writers_document_torn_write_window(tmp_path):
-    """N threads escrevendo payloads distintos: documenta a janela de
-    torn write conhecida do ``write_json`` atual.
+    """N threads escrevendo payloads distintos: SEM torn write (C4 CONC-1).
 
-    SPEC §9 reconhece que sem ``fcntl.flock`` (DEFERRED pra v1.2.x) o
-    protocolo é single-writer; este teste exercita o gap concreto:
-    múltiplas threads que compartilham o mesmo nome de tempfile
-    (``forge-pending.json.tmp``) podem produzir um dos três outcomes:
+    Antes de C4, este teste tolerava três outcomes (incluindo torn write e
+    ``FileNotFoundError``) por causa do nome de tempfile compartilhado
+    (``forge-pending.json.tmp``). Com o tempfile por-processo de C4-A
+    (``{pid}.{uuid}.tmp``), cada escritor tem seu próprio tmp e o
+    ``os.replace`` final é a única fronteira atômica: last-writer-wins por
+    syscall, NUNCA conteúdo corrompido.
 
-      (a) Final == UM dos payloads (single-writer-wins via os.replace).
-      (b) ``FileNotFoundError`` em writers tardios (o tmp já foi
-          renomeado por outro thread).
-      (c) JSON inválido no destino (duas threads truncando o mesmo
-          tempfile e concorrendo no flush → bytes concatenados).
-
-    O teste NÃO assert ausência de (c) — documenta que ele PODE ocorrer
-    no protocolo atual. O fix definitivo é per-thread tempfile name
-    (incorporando ``os.getpid()`` + ``threading.get_ident()`` no sufixo),
-    rastreado como follow-up. Aqui apenas garantimos que o estado é
-    determinístico segundo um dos três outcomes — nunca um quarto modo
-    de falha silencioso (ex.: conteúdo bem-formado mas semanticamente
-    inválido, vindo de mistura de campos).
+    Invariante forte: o pending final SEMPRE parseia como JSON válido e bate
+    EXATAMENTE com um dos payloads submetidos.
     """
     project_root = _project(tmp_path)
     n_threads = 8
@@ -188,13 +191,9 @@ def test_concurrent_writers_document_torn_write_window(tmp_path):
         payload["question"] = f"unique-marker-{idx}-{'x' * (idx * 7)}"
         payloads[idx] = payload
         barrier.wait()
-        # Skip detect_race here — this test is purely about write atomicity,
-        # not race signaling. Some writers lose the os.replace race when
-        # the shared tempfile name collides — non-fatal pra este invariante.
-        try:
-            intent_state.write_pending(payload, project_root)
-        except FileNotFoundError:
-            pass
+        # C4 CONC-1 fix: com tempfile por-processo, write_pending NUNCA levanta
+        # FileNotFoundError no os.replace — cada writer tem seu próprio tmp.
+        intent_state.write_pending(payload, project_root)
 
     threads = [threading.Thread(target=worker, args=(i,)) for i in range(n_threads)]
     for t in threads:
@@ -207,33 +206,20 @@ def test_concurrent_writers_document_torn_write_window(tmp_path):
     pending_path = (
         project_root / ".claude" / "forge" / "state" / "forge-pending.json"
     )
-    if not pending_path.is_file():
-        # All writers lost the os.replace race; nothing to inspect.
-        # Invariant ("no torn write") trivially holds.
-        return
+    assert pending_path.is_file(), (
+        "com tempfile por-processo, ao menos um writer vence o os.replace e "
+        "o pending final DEVE existir (nenhum perde o tmp compartilhado)"
+    )
     raw = pending_path.read_bytes()
 
-    # Outcome (c) — torn write — documenta o gap. Se ocorrer, o teste
-    # passa mas registra warning pra trazer atenção ao follow-up.
-    try:
-        parsed = json.loads(raw.decode("utf-8"))
-    except json.JSONDecodeError:
-        # Janela TOCTOU + shared tempfile name expôs torn write. SPEC §9
-        # gap conhecido. Não-fatal pra este teste: documenta a presença
-        # do gap em vez de fingir que ele não existe.
-        return
-
-    # Se o JSON parseou, o conteúdo DEVE bater com UM dos payloads
-    # submetidos — nunca uma mistura semântica de campos.
-    matched_any = False
-    for candidate in payloads.values():
-        if parsed == candidate:
-            matched_any = True
-            break
+    # C4 CONC-1 fix: tempfile por-processo elimina o torn write. O destino
+    # SEMPRE parseia como JSON válido e bate EXATAMENTE com um dos payloads
+    # submetidos — nunca bytes concatenados, nunca mistura de campos.
+    parsed = json.loads(raw.decode("utf-8"))  # não deve levantar
+    matched_any = any(parsed == candidate for candidate in payloads.values())
     assert matched_any, (
         "final pending content matches no submitted payload — "
-        "writes likely interleaved at field level (worse than torn "
-        f"write). parsed={parsed!r}"
+        f"atomicidade violada. parsed={parsed!r}"
     )
 
 
@@ -252,12 +238,7 @@ def test_concurrent_writers_via_json_io_directly(tmp_path):
 
     def worker(idx: int) -> None:
         barrier.wait()
-        try:
-            json_io.write_json(target, payloads[idx])
-        except FileNotFoundError:
-            # Shared tempfile name lost the os.replace race; final state
-            # still must be coherent — invariant validated below.
-            pass
+        json_io.write_json(target, payloads[idx])
 
     threads = [threading.Thread(target=worker, args=(i,)) for i in range(n_threads)]
     for t in threads:
@@ -265,16 +246,122 @@ def test_concurrent_writers_via_json_io_directly(tmp_path):
     for t in threads:
         t.join(timeout=10)
 
-    if not target.is_file():
-        # All writers lost the shared-tempfile race; invariant trivial.
-        return
-    try:
-        parsed = json.loads(target.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        # Torn write documented (see test_concurrent_writers_document_
-        # torn_write_window). Non-fatal for this targeted cross-check.
-        return
+    assert target.is_file(), "algum writer deve vencer; destino deve existir"
+    parsed = json.loads(target.read_text(encoding="utf-8"))  # não deve levantar
     assert parsed in payloads, (
-        "json_io.write_json under contention produced a payload no writer "
-        f"submitted; parsed={parsed!r}"
+        "json_io.write_json sob contenção produziu payload que nenhum writer "
+        f"submeteu; parsed={parsed!r}"
     )
+
+
+# --- C4 CONC-1 (B): pending_lock serializa a seção crítica ------------------
+
+
+def test_pending_lock_serializes_detect_race_and_write(tmp_path):
+    """C4 CONC-1 (B): sob pending_lock, detect_race+write_pending viram seção
+    crítica serializada — o primeiro escreve, os demais veem o pending do
+    primeiro e levantam RaceDetectedError DETERMINÍSTICO (não corrida de bytes).
+    """
+    project_root = _project(tmp_path)
+    n_threads = 6
+    barrier = threading.Barrier(n_threads)
+    outcomes: list[str] = []
+    outcomes_lock = threading.Lock()
+
+    def worker(idx: int) -> None:
+        intent_id = f"locked-{idx:08d}-0000-4000-8000-000000000000"
+        # PID vivo (default = processo de teste): STALE-1 varre PID morto, então
+        # a race determinística exige um PID vivo. Threads do mesmo processo.
+        payload = _make_payload(intent_id)
+        barrier.wait()
+        try:
+            with intent_state.pending_lock(project_root):
+                intent_state.detect_race(project_root, intent_id)
+                intent_state.write_pending(payload, project_root)
+            tag = "wrote"
+        except intent_state.RaceDetectedError:
+            tag = "race"
+        except Exception as exc:  # noqa: BLE001 — B-06 (PR22-B-06): reporta falha
+            # inesperada do worker em vez de deixar a thread morrer silenciosa
+            # (outcomes ficaria curto e o assert de contagem falharia opaco).
+            tag = f"error: {exc}"
+        with outcomes_lock:
+            outcomes.append(tag)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+        assert not t.is_alive(), "worker hung past timeout"
+
+    assert len(outcomes) == n_threads
+    # B-06: nenhum worker pode ter falhado de forma inesperada.
+    assert not [o for o in outcomes if o.startswith("error:")], (
+        f"worker(s) falharam inesperadamente: {outcomes}"
+    )
+    # Exatamente um writer vence; os demais veem o pending do vencedor e
+    # levantam RaceDetectedError de forma DETERMINÍSTICA (sem janela TOCTOU).
+    assert outcomes.count("wrote") == 1, f"esperava 1 vencedor, veio {outcomes}"
+    assert outcomes.count("race") == n_threads - 1, (
+        f"os demais devem detectar a corrida; veio {outcomes}"
+    )
+    # Pending final é válido e bate com o vencedor.
+    final = intent_state.read_pending(project_root)
+    assert final is not None and final["intent-id"].startswith("locked-")
+
+
+def test_adapter_ask_loop_serializes_via_applied_lock(tmp_path):
+    """C4 CONC-1 (B) — seção crítica REAL: dois IntentFileAdapter competindo
+    no mesmo root passam pelo pending_lock aplicado em _ask_loop. Sem cross-answer
+    e sem torn write: exatamente um emite o pending (PausedForInputError), os
+    demais detectam a corrida (RaceDetectedError). O pending final é válido e
+    bate com o vencedor.
+    """
+    project_root = _project(tmp_path)
+    n_threads = 6
+    barrier = threading.Barrier(n_threads)
+    outcomes: list[str] = []
+    outcomes_lock = threading.Lock()
+
+    def worker(idx: int) -> None:
+        # Cada thread tem seu próprio adapter, mas todos no MESMO project_root —
+        # disputam o mesmo forge-pending.json (a seção crítica real).
+        adapter = IntentFileAdapter(project_root=project_root)
+        barrier.wait()
+        try:
+            adapter.ask(
+                kind=AskKind.ASK,
+                question=f"probe-{idx}",
+                options={"a": "alpha", "b": "beta"},
+                default=None,
+                allow_pause=True,
+            )
+            tag = "returned"  # não esperado na primeira entrada (sem response)
+        except PausedForInputError:
+            tag = "paused"  # emitiu o pending — venceu a corrida
+        except intent_state.RaceDetectedError:
+            tag = "race"  # viu o pending do vencedor sob o lock
+        with outcomes_lock:
+            outcomes.append(tag)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+        assert not t.is_alive(), "worker hung past timeout"
+
+    assert len(outcomes) == n_threads
+    # Exatamente um emite o pending; os demais detectam a corrida de forma
+    # DETERMINÍSTICA (lock aplicado fecha o TOCTOU). Nenhuma resposta cruzada.
+    assert outcomes.count("paused") == 1, (
+        f"esperava 1 vencedor (PausedForInputError), veio {outcomes}"
+    )
+    assert outcomes.count("race") == n_threads - 1, (
+        f"os demais devem ver RaceDetectedError sob o lock; veio {outcomes}"
+    )
+    # Pending final no disco é JSON válido (sem torn write) e bate com o vencedor.
+    final = intent_state.read_pending(project_root)
+    assert final is not None
+    assert final["question"].startswith("probe-")

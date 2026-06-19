@@ -57,6 +57,7 @@ from engine.inventory import (
 from engine.ui import progress as ui_progress
 from engine.ui import question, renderer
 from engine.utils.paths import (
+    ProjectRootNotFoundError,
     active_config_path,
     cards_canonical_dir,
     cards_dir,
@@ -67,7 +68,18 @@ from engine.utils.paths import (
 )
 from engine.utils.sha256 import file_sha256
 from engine.utils.paths import ensure_dir as _ensure_dir
-from engine.utils.yaml_io import backup_file, read_yaml, read_yaml_or_default, write_yaml
+from engine.utils.yaml_io import (
+    YamlIOError,
+    backup_file,
+    read_yaml,
+    read_yaml_or_default,
+    write_yaml,
+)
+from engine.ui.exit_codes import (
+    ERR_CONFIG_INVALID,
+    ERR_PROJECT_NOT_FOUND,
+    fail_with_tag,
+)
 from engine.utils.checkpoint_io import (
     clear_checkpoint as _clear_checkpoint_io,
     load_yaml_checkpoint as _load_yaml_checkpoint_io,
@@ -182,9 +194,11 @@ def run(argv: list[str]) -> int:
 
     try:
         project_root = find_project_root()
-    except Exception as exc:
+    except ProjectRootNotFoundError as exc:
+        # C-23: narrow + tag machine-readable (era `except Exception` + return 1
+        # bare). Outras exceptions propagam — telemetria preservada.
         sys.stderr.write(f"forge reconfigure: {exc}\n")
-        return 1
+        return fail_with_tag(ERR_PROJECT_NOT_FOUND)
 
     # Resolve a config ativa (forge-config primário → legado). Ler e gravar
     # caem no MESMO arquivo, então reconfigure nunca splita a config entre os
@@ -196,13 +210,15 @@ def run(argv: list[str]) -> int:
             "forge reconfigure: nenhuma forge-config.yaml encontrada — "
             "rode `forge init` primeiro.\n"
         )
-        return 1
+        return fail_with_tag(ERR_PROJECT_NOT_FOUND)
 
     try:
         current = read_yaml(config_path) or {}
-    except Exception as exc:
+    except YamlIOError as exc:
+        # C-23 + B3: narrow de `except Exception` → YamlIOError (read_yaml
+        # encapsula parse + OS errors). Tag machine-readable.
         renderer.write(renderer.colored(f"config inválido: {exc}", "red"))
-        return 1
+        return fail_with_tag(ERR_CONFIG_INVALID)
 
     draft_path = claude_dir(project_root) / _DRAFT_NAME
     draft = _load_draft(draft_path)
@@ -373,10 +389,25 @@ def run(argv: list[str]) -> int:
         _clear_reconfigure_checkpoint(project_root)
         return 0
 
+    # A4 REPLAY: extrai as remoções pendentes ANTES do write_yaml pra que o
+    # campo interno _pending_card_removals NUNCA polua a config persistida.
+    # M-201: já é popado aqui, então nem a config nem qualquer draft subsequente
+    # carrega a lista.
+    working.pop("_pending_card_removals", [])
+
     before_sha = file_sha256(config_path)
     backup_file(config_path)
     write_yaml(config_path, working, atomic=True)
     after_sha = file_sha256(config_path)
+
+    # C-22 (PR20-R1 + B2): aplica as remoções de card SÓ agora — pós apply-confirm.
+    # Em vez de confiar na lista transiente `_pending_card_removals` (que NÃO
+    # sobrevive a um resume — o draft não a persiste, A4), derivamos as remoções
+    # da FONTE DE VERDADE: snapshot dirs em disco que não estão mais no
+    # `cards.active` final da config. Isso fecha o drift do resume (remove →
+    # pause → resume → muda não-cards → apply deixava o snap órfão em cards/
+    # enquanto a config já o excluía).
+    _apply_card_removals(project_root, working)
 
     _append_history(
         project_root,
@@ -525,6 +556,43 @@ def _cards_add(project_root: Path, working: dict[str, Any]) -> None:
     working.setdefault("cards", {})["active"] = entries
 
 
+def _apply_card_removals(project_root: Path, working: dict[str, Any]) -> None:
+    """Move pra `.bak` todo snapshot de card que sumiu do `cards.active` final.
+
+    C-22 (PR20-R1 + B2): derivação por DIFF disk-vs-config (fonte de verdade),
+    não pela lista transiente `_pending_card_removals` — esta não sobrevive a um
+    resume (o draft não a persiste, A4). Comparar os snapshot dirs em disco
+    (canônicos, não-.bak, exceto `local/`) com os nomes ativos na config final
+    pega exatamente os órfãos, resume ou não.
+
+    Idempotente (fecha B2 nesting): se o destino `.bak` já existe (remoção
+    anterior do mesmo nome / replay), removemos o `.bak` velho ANTES do
+    `shutil.move` — senão `shutil.move` aninharia `name/` dentro de `name.bak/`.
+    """
+    project_cards_root = cards_dir(project_root)
+    if not project_cards_root.is_dir():
+        return
+    active_names = {
+        str(c.get("name"))
+        for c in _active_cards(working)
+        if isinstance(c, dict) and c.get("name")
+    }
+    for snap_dir in sorted(project_cards_root.iterdir()):
+        if not snap_dir.is_dir():
+            continue
+        name = snap_dir.name
+        if name.startswith(".") or name == "local" or name.endswith(".bak"):
+            continue
+        if name in active_names:
+            continue
+        # Órfão: snapshot presente em disco mas ausente da config → remover.
+        bak_dir = snap_dir.with_name(name + ".bak")
+        if bak_dir.exists():
+            # B2: limpa o `.bak` velho antes do move (idempotência sem nesting).
+            shutil.rmtree(bak_dir, ignore_errors=True)
+        shutil.move(str(snap_dir), str(bak_dir))
+
+
 def _cards_remove(project_root: Path, working: dict[str, Any]) -> None:
     active = _active_cards(working)
     if not active:
@@ -548,10 +616,14 @@ def _cards_remove(project_root: Path, working: dict[str, Any]) -> None:
         return
 
     for name in picked:
-        snap_dir = project_cards_root / name
-        if snap_dir.exists():
-            shutil.move(str(snap_dir), str(snap_dir.with_name(name + ".bak")))
-        renderer.write(renderer.colored(f"  - {name} (snapshot → .bak)", "yellow"))
+        # A4 REPLAY: NÃO move o snapshot agora. Registra a intenção; o move
+        # físico (snap → .bak) é aplicado SÓ após o apply-confirm passar (em
+        # run(), pós-write_yaml). Cancelar o confirm deixa o snapshot intacto —
+        # sem drift entre cards/ e a config.
+        working.setdefault("_pending_card_removals", []).append(name)
+        renderer.write(renderer.colored(
+            f"  - {name} (remoção pendente — aplica no confirm)", "yellow"
+        ))
     working.setdefault("cards", {})["active"] = [
         c for c in (working.get("cards") or {}).get("active") or []
         if c.get("name") not in picked
@@ -2137,9 +2209,16 @@ def _save_draft(draft_path: Path, working: dict[str, Any]) -> None:
     silently-swallowed — agora surface via renderer pra user ver, mas
     ainda não re-raise (rascunho é best-effort; perda do draft não
     bloqueia o reconfigure rodando).
+
+    A4 REPLAY / M-201: o campo interno ``_pending_card_removals`` NUNCA é
+    persistido no draft. Se ficasse no draft, um resume recarregaria a lista
+    e re-dispararia o ``shutil.move`` (snap → .bak) — o exato replay que A4
+    fecha. A lista é estado transiente da sessão atual, aplicada só no
+    apply-confirm; um resume re-coleta a intenção pelo menu, não pelo disco.
     """
+    serializable = {k: v for k, v in working.items() if k != "_pending_card_removals"}
     try:
-        write_yaml(draft_path, working, atomic=True)
+        write_yaml(draft_path, serializable, atomic=True)
     except OSError as exc:
         renderer.write(
             renderer.colored(

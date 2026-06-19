@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from engine.memory.l1 import (
+    _VALID_STATES,
     L1State,
     append_history,
     current_subtype,
@@ -37,6 +38,7 @@ from engine.memory.l1 import (
 )
 from engine.memory.l2 import remove_entry as l2_remove_entry
 from engine.ui import question, renderer
+from engine.ui.exit_codes import ERR_PROJECT_NOT_FOUND, fail_with_tag
 from engine.ui.question import PromptAbortedError
 from engine.utils.paths import (
     ProjectRootNotFoundError,
@@ -434,6 +436,23 @@ def _abort_feature(project_root: Path, feature_slug: str, reason: str) -> bool:
             phase_lock=None,
         )
     else:
+        # C-50 (PR22-B-03): guard de tipo — `state.raw` pode não ser dict
+        # (status.json corrompido / shape inesperado) antes da mutação por chave.
+        if not isinstance(state.raw, dict):
+            state.raw = {}
+        # ABORTED-DEADEND (W-DEBT): preserva o status pré-abort no raw ANTES do
+        # overwrite, pra que `_undo_abort` possa restaurar de forma determinística
+        # (sem reconstruir do history.jsonl). No branch `state is None` não há
+        # status prévio — `_undo_abort` defaulta `deferred`.
+        #
+        # C-48 (PR22-R-006): só grava `pre-abort-status` se o estado atual NÃO é
+        # já 'aborted'. Um double-abort (abortar uma feature já aborted)
+        # sobrescrevia pre-abort-status com 'aborted' — envenenava o guard WR-01
+        # de `_undo_abort` (o un-abort restauraria pra 'aborted', dead-end). Ao
+        # pular a gravação no double-abort, o pre-abort-status original (o estado
+        # real pré-1º-abort) é preservado.
+        if state.status != "aborted":
+            state.raw["pre-abort-status"] = state.status
         state.status = "aborted"
         state.last_action_kind = "aborted"
         state.last_action_at = _utc_now_iso()
@@ -451,6 +470,67 @@ def _abort_feature(project_root: Path, feature_slug: str, reason: str) -> bool:
     )
     renderer.write(renderer.colored(
         f"  ✓ feature {feature_slug} marcada como aborted.", "green"
+    ))
+    return True
+
+
+def _undo_abort(project_root: Path, feature_slug: str) -> bool:
+    """ABORTED-DEADEND recovery — restaura uma feature de 'aborted'.
+
+    Restaura `status` a partir de `raw["pre-abort-status"]` (default `deferred`
+    quando ausente — feature abortada por engine antigo). Limpa os markers
+    `pre-abort-status`/`aborted-reason` e loga no undo-log. NÃO-destrutivo
+    (só re-escreve o status), então confirm simples — não o 2-step do git revert.
+
+    WR-01 (holistic review W-DEBT, T1×T3): valida `pre-abort-status` contra
+    `_VALID_STATES` ANTES de restaurar. Um valor ausente OU não-membro do enum
+    (abort legado, OR um estado removido por uma wave futura — exatamente o que
+    T1 acabou de fazer com `verified`/`paused`) cai pro default seguro `deferred`
+    com aviso mentor-calmo, em vez de propagar o `MemoryError` cru de
+    `write_l1_status` como traceback no dispatch.
+    """
+    state = read_l1_status(feature_slug, project_root)
+    if state is None or state.status != "aborted":
+        renderer.write(renderer.colored(
+            f"  Feature {feature_slug} não está em 'aborted' — nada a reverter.",
+            "yellow",
+        ))
+        return False
+    # C-50 (PR22-B-03): guard de tipo antes de `.get`/`.pop` — `state.raw`
+    # corrompido (não-dict) estouraria AttributeError no recovery.
+    if not isinstance(state.raw, dict):
+        state.raw = {}
+    raw_prior = state.raw.get("pre-abort-status") or "deferred"
+    if raw_prior in _VALID_STATES:
+        prior = raw_prior
+    else:
+        renderer.write(renderer.colored(
+            f"  pre-abort-status '{raw_prior}' não é um estado válido "
+            f"(provável abort legado ou estado removido) — restaurando para "
+            f"'deferred', o estado seguro auto-resumável.",
+            "yellow",
+        ))
+        prior = "deferred"
+    if not question.confirm(
+        f"Restaurar {feature_slug} de 'aborted' para '{prior}'?", default=False
+    ):
+        return False
+    state.status = prior
+    state.last_action_kind = "un-aborted"
+    state.last_action_at = _utc_now_iso()
+    state.raw.pop("pre-abort-status", None)
+    state.raw.pop("aborted-reason", None)
+    write_l1_status(state, project_root)
+    _append_undo_log(
+        project_root,
+        kind="undo",
+        target=f"un-abort:{feature_slug}",
+        reverted_at=_utc_now_iso(),
+        slug=feature_slug,
+        extras={"restored-to": prior},
+    )
+    renderer.write(renderer.colored(
+        f"  ✓ feature {feature_slug} restaurada para '{prior}'.", "green"
     ))
     return True
 
@@ -592,8 +672,11 @@ def run(argv: list[str]) -> int:
     try:
         project_root = find_project_root()
     except ProjectRootNotFoundError as exc:
-        sys.stderr.write(f"forge undo: {exc}\n")
-        return 2
+        # C3 EXIT-2-COLLISION (BL-01 do review W2): este site retornava `2`
+        # puro — colidia com EXIT_PAUSED e o host lia como paused-for-input,
+        # procurando um pending que nunca foi escrito (hang). Colapsa em
+        # exit 1 + tag machine-readable, como os demais handlers.
+        return fail_with_tag(ERR_PROJECT_NOT_FOUND, f"forge undo: {exc}")
 
     renderer.write(renderer.bold("forge undo — escolha:"))
     options = {
@@ -604,6 +687,7 @@ def run(argv: list[str]) -> int:
         "5": "abort feature — marcar feature como aborted (terminal)",
         "6": "delete feature artifacts — apagar pasta (irreversível)",
         "7": "init — apagar .claude/ inteira (raríssimo)",
+        "8": "un-abort feature — reverter abort, restaura o status anterior",
         "c": "cancelar",
     }
 
@@ -729,6 +813,15 @@ def run(argv: list[str]) -> int:
 
         if choice == "7":
             rc = 0 if _undo_init(project_root) else 1
+            _clear_undo_checkpoint(project_root)
+            return rc
+
+        if choice == "8":
+            slug = _pick_feature(project_root, "Qual feature reverter o abort?")
+            if slug is None:
+                _clear_undo_checkpoint(project_root)
+                return 0
+            rc = 0 if _undo_abort(project_root, slug) else 1
             _clear_undo_checkpoint(project_root)
             return rc
 

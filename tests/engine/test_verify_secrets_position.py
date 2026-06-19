@@ -42,7 +42,7 @@ def test_secrets_fail_fast_respected(monkeypatch, tmp_path: Path) -> None:
     """Se um validador anterior falha hard, check_secrets nem roda."""
     captured: list[str] = []
 
-    def fake_invoke(spec, root):
+    def fake_invoke(spec, root, *, scope_type=None, scope_target=None):
         captured.append(spec.name)
         if spec.name == "check_cyclomatic_complexity":
             return verify._ValidatorResult(

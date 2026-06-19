@@ -180,6 +180,63 @@ def test_json_flag_with_query_taking_arg(
     assert isinstance(parsed, list)
 
 
+# ── C-35 (PR21-I3): env-global JSON mode (sem --json posicional) ──────────────
+
+
+def test_global_json_mode_with_positional_query(
+    tmp_forge_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``FORGE_OUTPUT=json forge graph q3`` (sem --json) emite JSON, não erro.
+
+    C-35: antes, o env global SEM --json posicional caía no erro 'exige query
+    explícita' embora a query (q3) estivesse em argv. Agora a query é parseada
+    de argv independente do caminho que ativou o JSON.
+    """
+    _seed_graph_db(tmp_forge_project)
+    monkeypatch.chdir(tmp_forge_project)
+    monkeypatch.setattr(graph_cli.output_mode, "is_json_mode", lambda: True)
+
+    rc = graph_cli.run(["q3"])
+
+    assert rc == 0, capsys.readouterr().err
+    parsed = json.loads(capsys.readouterr().out.strip())
+    assert isinstance(parsed, list)
+
+
+def test_global_json_mode_with_query_arg(
+    tmp_forge_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``FORGE_OUTPUT=json forge graph q5 <slug>`` passa o arg corretamente."""
+    _seed_graph_db(tmp_forge_project)
+    monkeypatch.chdir(tmp_forge_project)
+    monkeypatch.setattr(graph_cli.output_mode, "is_json_mode", lambda: True)
+
+    rc = graph_cli.run(["q5", "lembrete-rega"])
+
+    assert rc == 0, capsys.readouterr().err
+    parsed = json.loads(capsys.readouterr().out.strip())
+    assert isinstance(parsed, list)
+
+
+def test_global_json_mode_without_query_exits_1(
+    tmp_forge_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``FORGE_OUTPUT=json forge graph`` (sem query nenhuma) → usage + exit 1."""
+    _seed_graph_db(tmp_forge_project)
+    monkeypatch.chdir(tmp_forge_project)
+    monkeypatch.setattr(graph_cli.output_mode, "is_json_mode", lambda: True)
+
+    rc = graph_cli.run([])
+
+    assert rc == 1
+
+
 # ── Error paths ─────────────────────────────────────────────────────────────
 
 

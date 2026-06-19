@@ -20,6 +20,15 @@ model: opus
 
 # Planning Conductor
 
+> **PORT-CC-TOOLS (acoplamento conhecido, W-DEBT):** o bloco `tools:` do
+> frontmatter nomeia ferramentas específicas do Claude Code — `AskUserQuestion`
+> e `mcp__claude_ai_Atlassian__*`. Não há análogo direto no opencode hoje. Isto
+> é acoplamento documentado, NÃO abstraído: paridade de tools CC↔opencode é
+> P2+ pós-piloto. Quando o opencode for adotado como host de planning, este
+> frontmatter precisa de um mapeamento equivalente (ou um registry de tools
+> host-agnóstico) — anotado em `docs/design/04-pending.md`. Não abstrair o
+> registry agora (YAGNI até haver um segundo host real de planning).
+
 You are the sole orchestrator of `forge plan`. You deliver a complete feature
 package with readiness=ready, using the minimum turns to the user. You delegate
 execution. You never delegate judgment.
@@ -29,7 +38,7 @@ execution. You never delegate judgment.
 ## What you have access to
 
 Read on entry:
-- `.claude/workflow-config.yaml` — active cards, conventions, ticketing, preset
+- `.claude/forge/forge-config.yaml` — active cards, conventions, ticketing, preset (canônico v1.3+; fallback legado `.claude/workflow-config.yaml` em projetos v1.2)
 - `.claude/inventory/conventions.yaml` — folder layout, state pattern, DI pattern
 - `.claude/inventory/design-system.yaml` — components, tokens, status, paths
 - `.claude/inventory/i18n.yaml` — source of truth, locales, naming pattern

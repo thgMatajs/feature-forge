@@ -9,6 +9,38 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Added
 
+- **PLACEHOLDER-VERIFY** (W-DEBT, 2026-06-18): novo validator
+  `validators/check_unfilled_placeholders.py` no cascade default de `forge verify`
+  (entre `check_no_invented_behavior` e `check_cyclomatic_complexity` — cheap,
+  bloqueia early). Escaneia os artefatos staged DENTRO do dir da feature
+  (.md/.yaml/.yml/.json) procurando `{{token}}` crus não-substituídos — um
+  template não-preenchido passando como "verificado" é detection-failure.
+  Compõe `_common` + `_diff` + `feature_path` (subtype-aware); sem helper novo.
+- **ABORTED-DEADEND** (W-DEBT, 2026-06-18): novo op de recovery `un-abort feature`
+  no menu de `forge undo` (opção 8). `_abort_feature` passa a preservar o status
+  pré-abort em `raw["pre-abort-status"]` ANTES do overwrite; `_undo_abort`
+  restaura esse status (default `deferred` p/ features abortadas por engine
+  antigo, sem o marker), limpa os markers `pre-abort-status`/`aborted-reason` e
+  loga no undo-log. Fecha o dead-end onde abortar uma feature só deixava o
+  caminho de deletar a L1 + recomeçar. Op não-destrutivo (confirm simples).
+- **CARDS-DISCONNECT** (W-DEBT, 2026-06-18): `forge init` agora materializa os
+  templates mergeados per-projeto em `.claude/forge/templates/`
+  (`_materialize_merged_templates` reusa `render_merged_template` — o mesmo
+  render que `forge raw rebuild-templates` usa, mas escrevendo no destino
+  per-projeto em vez de mutar o FORGE_HOME global). O campo `target` do card é o
+  nome de OUTPUT (`tech-spec.md`); `_source_template_name` mapeia pro
+  template-fonte (`tech-spec.template.md`, inserindo `.template` antes da
+  extensão — a convenção `(template_name, output_name)` das tuplas
+  `WAVE_*_TEMPLATES`), e o materializado é escrito sob o nome do FONTE porque é
+  por ele que `plan._render_template` resolve. `plan._resolve_template(project_root,
+  template_name)` prefere o dir per-projeto **per-FILE** (só quando ESSE template
+  existe lá), com fallback per-FILE pro global — materialização parcial não quebra
+  templates não-contribuídos. O fluxo default `init`→`plan` deixa de ignorar as
+  seções de template que os cards ativos contribuem (validators de card já
+  chegavam via snapshot). NOTA: `forge raw rebuild-templates` ainda carrega o
+  mesmo mismatch target→base latente (resolve `templates_root / target` direto);
+  fix dedicado anotado em `docs/design/04-pending.md` (afeta caminho pré-existente
+  do merger global).
 - Camada de interação AI-first (Wave 1): driver `skills/feature-forge/SKILL.md`
   (Claude Code) + `templates/AGENTS.md.template` (opencode) instalados
   brownfield-safe por `forge init`. Ensinam o host a dirigir o intent loop
@@ -40,9 +72,191 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   `.claude/graph.db` existe, o hook emite 2-3 linhas em stderr lembrando que
   o grafo está disponível + como consultá-lo. Host-aware (emoji em TTY, `[graph]`
   ASCII fora) e guardado pela presença do grafo.
+- **FORGE_HOME-carries-skills** (W-DEBT, 2026-06-18): nova categoria de
+  `forge doctor` (`_check_forge_home_driver`, 17ª no full scope) que assere a
+  presença de `FORGE_HOME/skills/feature-forge/SKILL.md` — o driver do host
+  (DRIVER-001). Espelha a categoria de Hooks (presença de arquivo esperado no
+  FORGE_HOME); FAIL com hint mentor-calmo quando ausente, pegando clone
+  parcial/sparse que deixaria o driver dormente sem aviso.
+- Token economy / machine-legibility (W3, A1 TOKEN-BLIND + A2): output-mode
+  global host-aware (`engine/ui/output_mode.py` — enum TTY/PLAIN/JSON + context
+  var + allowlist `_JSON_CAPABLE_COMMANDS`), consultado pelo chokepoint único
+  `renderer.write`. `FORGE_OUTPUT=json` env ativa o modo JSON pros read-commands.
+- `forge status --json` / `doctor --json` / `verify --json` / `memory --json`
+  (snapshot read-only dos 3 layers) — output machine-readable pros read-commands
+  (stdout JSON puro, erros→stderr, exit 0/1; modelo idêntico ao `graph --json`).
+- `forge status --json` inclui `suggested_next_command` — workflow router que
+  mapeia o estado da feature mais recente pro próximo verbo (A2 NO-WORKFLOW-ROUTER).
+- `forge --help --json` — manifesto machine-readable de comandos/args/flags
+  a partir de `_VISIBLE_ORDER` + `_COMMAND_META` (metadata hand-maintained em
+  lockstep com `COMMANDS`, com drift-guard de teste; A2 NO-MANIFEST);
+  read-commands anunciam `--json`.
+
+### Removed
+
+- **PHANTOM-STATES** (W-DEBT, 2026-06-18) — estados `verified` e `paused`
+  removidos de `engine.memory.l1._VALID_STATES`. Nenhum dos dois era escrito
+  por handler: `verify` restaura o status anterior no sucesso (nunca grava
+  `verified`); `implement` vai `implementing → done` direto; pausa é `deferred`
+  auto-resumable (Decisão 27 — `07-discipline.md:670` já afirmava "Não há
+  `state: paused` separado de `deferred`"). O router de `forge status`
+  (`_suggested_next_command`) simplificou de 11 → 9 estados; o resume-set de
+  `forge plan` perdeu o literal morto `paused`. Docs de state-machine
+  reconciliados (`ROADMAP.md`, `07-discipline.md`, `06-command-surface.md`).
+  Não toca `01-decisions.md` — alinhamento doc↔código, sem cerimônia "Revisita
+  decisão N". Clean-break pré-produção.
+
+### Changed (load-bearing)
+
+- Revisita Decisão 10: conversacional human-first + meta-flags opt-in (--json,
+  --help --json, FORGE_OUTPUT=json) pros read-commands — intent protocol
+  inalterado pros interativos. Destrava token economy / machine-legibility
+  (auditoria §3.2 A1/A2).
 
 ### Fixed
 
+- **Remediação cross-AI (PRs #18–#22, 2026-06-18)** — 52 correções consolidadas
+  do review cross-AI (codex + claude-opus + bots). Destaques:
+  - **HIGH detection-failures:** `forge verify` cascade agora threada
+    `--scope`/`--id` até os validators (C-43 — o PLACEHOLDER-VERIFY gate estava
+    shipped-but-inert) + scan de filesystem em vez de git-staged;
+    `validators/validate_memory._VALID_L1_STATES` sincronizado com
+    `engine.memory.l1._VALID_STATES` (C-44 — aceitava `paused` removido, rejeitava
+    estados canônicos); readiness `_is_active_marker` detecta string descritiva
+    (C-05); `engine/status._suggested_next_command` tie-break dead-code corrigido
+    (`feature_slug`→`slug`, C-33); `forge graph --json` honra `FORGE_OUTPUT=json`
+    sem `--json` posicional (C-35); `verify --json task` guarda ambiguidade antes
+    de mutar L1 (C-34); `read_pending` probe Windows não desativa race detection
+    (C-49); manifesto de comando verídico (`prompts_by_default` + `machine_readable`
+    separados, C-37); qa-report template alinhado aos enums do validator (C-42q);
+    error-paths roteados via `fail_with_tag` (C-23); reconfigure card-removal
+    derivado de disk-vs-config + move idempotente (C-22); config-path com fallback
+    legado uniforme via `active_config_path` (C-04/C-10).
+  - **MED/LOW:** plan.py handlers de pausa capturam as exceções REAIS
+    (UserPaused/Cancelled, C-06), screenshot multi-path (C-08), colisão de slug
+    ativo com 3-caminhos (C-03); init.py brownfield-safe (UnicodeDecodeError +
+    settings shape, C-07/C-07b), git-hook delegator relativo (C-09), template
+    materialization falha init em card ativo (C-47); undo double-abort + raw guard
+    (C-48/C-50); memory --json guard (C-36/C-40); output_mode isatty guard (C-41);
+    json_io orphan-tmp sweep (C-25); guards defensivos em reuse_apply/slug/
+    flock/intent-state (C-13/C-14/C-28); path-drift `.claude/state/`→
+    `.claude/forge/state/` em schemas load-bearing (C-02/C-12); enum L1 em
+    `docs/schemas/memory.md` + `agents/retrospective-agent.md` (C-46).
+  - **Path canônico:** `docs/schemas/intent-protocol.md` e `docs/schemas/memory.md`
+    (load-bearing) atualizados; `docs/design/06-command-surface.md` reflete verify
+    como observador com side-effects de L1.
+- **un-abort enum guard** (W-DEBT holistic review CR/WR-01, 2026-06-18) —
+  `_undo_abort` (`engine/undo.py`) valida `pre-abort-status` contra
+  `_VALID_STATES` ANTES de restaurar. Um valor ausente OU não-membro do enum
+  (abort legado, OR um estado removido por wave futura — exatamente o que T1 fez
+  com `verified`/`paused`) cai pro default seguro `deferred` com aviso
+  mentor-calmo, em vez de propagar o `MemoryError` cru de `write_l1_status` como
+  traceback no dispatch do `forge undo`. Fecha a assimetria T1×T3 (recovery não
+  defendia contra estados que deixaram de ser válidos).
+- **SCHEMA-1 / SCHEMA-LEAK** (W-DEBT, 2026-06-18; tratamento de campo-ausente
+  alinhado em WR-02) — `_check_schema_version` (`engine/ui/intent_state.py`) agora
+  roda em `read_pending` e `detect_race`, não só em `read_response`: version skew
+  num pending vira a mensagem friendly "atualize o forge" em vez de cair no sweep
+  ou virar "race" confusa. **Contrato simétrico de campo-ausente (WR-02):** os
+  DOIS caminhos só disparam o check quando `schema-version` está PRESENTE e
+  diverge (guard `if "schema-version" in payload:`). Ausência = pending
+  malformed/legado (pré-protocolo), tratada idêntica em ambos — não version-skew
+  (`SchemaVersionMismatch` significa "versão errada", não "sem versão"). Antes,
+  `read_pending` levantava em campo-ausente enquanto `detect_race` tolerava — a
+  assimetria que esta entrada vendia como "simétrico". `SchemaVersionMismatchError`
+  entrou na tupla de except do `engine/cli.py` (junto de `RaceDetectedError`/
+  `IntentMismatchError`) → exit 1 mentor-calmo em vez de traceback cru.
+- **STALE-1** (W-DEBT, 2026-06-18) — `detect_race` faz liveness probe
+  (`os.kill(pid, 0)`) antes de levantar `RaceDetectedError`: pending recente de
+  processo morto (crash sem cleanup) é varrido em vez de travar a raia até o
+  stale threshold (~10 min). `ProcessLookupError`/pid inválido (≤0) → varre;
+  `PermissionError` (processo vivo de outro dono) → race genuína. Testes de race
+  pré-existentes migrados pra `pid=os.getpid()` (PID vivo) — a race determinística
+  agora exige processo vivo.
+- **validate_readiness non-product blind** (W-DEBT, 2026-06-18) —
+  `validators/validate_readiness.py` resolve o dir da feature via
+  `feature_path(project_root, slug, subtype=current_subtype(...))` em vez do
+  `feature_dir` hardcoded em `features/`. Features non-product (refactor/spike/
+  chore/bugfix) param de varrer o dir product vazio e reportar "review ausente"
+  falso. Conserta o needs_elicitation scan E o lookup do review de uma vez
+  (mesmo pattern de `undo._delete_feature_artifacts`).
+- **DETECT-1 / M6 dead-code** (W-DEBT, 2026-06-18) — `detect_any_agentic`
+  (`engine/host/env.py`) e `_detect_brownfield` (`engine/init.py`) removidos:
+  ambos eram dead-code (zero caller de produção, só testes). `detect_codex`/
+  `detect_cursor` MANTIDOS (paralelo a `detect_opencode` future-proofing +
+  superfície de verificação do scrub ENV-1) com docstrings honestas
+  ("não-wirada em `detect_host`"). O init é brownfield-safe por construção (merge
+  append-only + delegator encadeado + sub-namespace), sem switch de modo — o
+  docstring de `_detect_brownfield` que anunciava "em-uso" era drift.
+- **L-1 docstrings legados** (W-DEBT, 2026-06-18) — docstrings/comentários
+  citando o anchor legado `.claude/state/` corrigidos pra `.claude/forge/state/`
+  (anchor canônico v1.3) em `question.py`/`json_io.py`/`cli.py`/`intent_file.py`/
+  `evolve.py`/`init.py`; `iso.py` corrigido pra `.claude/*.yaml` (checkpoints
+  vivem em `claude_dir`, não em `state/`).
+- **M9 HELP-DOC-PATH** (W-DEBT, 2026-06-18) — `cli._print_help` resolve o
+  caminho do doc de command-surface via `forge_home()` (XDG-aware) em vez do
+  `~/Documents/feature-forge/docs/...` hardcoded que não resolvia em instalações
+  XDG.
+- **M8 template rules** (W-DEBT, 2026-06-18) — `templates/qa-finding.template.json`
+  e `templates/qa-report.template.json` ganharam `_template_description` +
+  `_template_rules` (guide-keys `_*` toleradas pelos validators). Spec YAML
+  `data-contract-spec.template.yaml` trocou o free-text enum
+  `{{server_only_local_only_both_none}}` por placeholder + comment-enum
+  (`# one of: server-only | local-only | both | none`).
+- **IMPLEMENT-HANDOFF docstring** (W-DEBT, 2026-06-18) — docstring de
+  `engine/implement.py` clarificado: `forge implement` ORQUESTRA o lifecycle e
+  faz handoff de autoria-de-código pro host (Decisão 22), NÃO gera código nem é
+  stub quebrado a completar. É o exec model canônico.
+- **C-001 JSON carve-out vazava intent protocol** (W3 holistic review, 2026-06-18) —
+  `forge verify` e `forge graph` (read-commands no allowlist `_JSON_CAPABLE_COMMANDS`)
+  tinham caminho de prompt NÃO gateado em `output_mode.is_json_mode()`. Sob
+  `FORGE_OUTPUT=json` (ou `--json`) o modo global resolvia JSON, `renderer.write`
+  virava no-op, mas o handler ainda alcançava `question.ask` → disparava
+  `PausedForInputError` (exit-2, reservado ESTRITO pro intent protocol DRIFT-1)
+  com a prosa do prompt engolida e um `<FORGE_INTENT/>` marker órfão corrompendo
+  o stdout-puro-JSON. Agora `verify.run()` resolve scope sem prompt em JSON mode
+  e emite erro determinístico (stderr + exit 1) quando ambíguo; `graph_cli.run()`
+  exige query explícita sob JSON mode global e sai com erro em vez de cair no
+  menu interativo. Testes de regressão em `tests/unit/test_json_mode_no_intent_leak.py`.
+- **H-001 erro amigável sumia em `verify --json`** (W3) — `ProjectRootNotFound`
+  em JSON mode escrevia via `renderer.write` (no-op), perdendo a mensagem
+  descritiva. Agora espelha `status`/`doctor`/`memory`: emite `forge verify: <exc>`
+  em stderr + exit 1, stdout puro.
+- **H-002 workflow router cobria só 6 de 11 estados** (W3) —
+  `engine.status._suggested_next_command` deixava `not-started`/`aborted`/`done`/etc.
+  caírem no default `doctor`, mis-guiando o agente. Agora mapeia todos os estados
+  de `_VALID_STATES` (`not-started→plan`, `aborted→plan`, `done→status`, etc.).
+  Teste parametrizado cobre o enum inteiro. (O fork PHANTOM-STATES do `verified`
+  foi resolvido em W-DEBT — `verified`/`paused` removidos do enum, router de
+  11 → 9 estados; ver `### Removed`.)
+- **W-003 router não-determinístico com timestamps None** (W3) —
+  `max(key=last_action_at or "")` colapsava features sem timestamp em `""` e
+  retornava a primeira por ordem de iteração. Agora o tie-break é estável
+  (timestamp, depois slug), tornando o verbo sugerido independente da ordem.
+- **C2 DEAD-VERIFY** (W2 — protocol robustness, 2026-06-17) — `hooks/git-pre-commit`
+  agora checa o validador em `.claude/forge/hooks/` (sub-namespace canônico de
+  consumidores) além do path legado `.claude/hooks/` (repo maintainer). O gate
+  pre-commit deixou de ser no-op silencioso em projetos inicializados via
+  `forge init`. Teste de integração exercita a cadeia REAL do delegator
+  (`tests/integration/test_git_pre_commit_delegator.py`).
+- **C4 CONC-1** (W2) — `engine/utils/json_io.write_json` usa tempfile por-processo
+  (`{pid}.{uuid}.tmp`) eliminando torn write / `FileNotFoundError` quando dois
+  forge escrevem o mesmo state file (C4-A). `engine/ui/intent_state.pending_lock`
+  (novo CM `fcntl`/`msvcrt`) é APLICADO na seção crítica real
+  `detect_race`+`write_pending` de `engine/host/adapters/intent_file.py::_ask_loop`,
+  fechando a janela TOCTOU em produção (C4-B). Os testes de concorrência
+  (`test_intent_state_concurrency.py`) tiveram as asserções flipadas de
+  "documenta o gap" para "sem torn write" e ganharam um teste do caminho real do
+  adapter sob contenção.
+- **A3 ENV-1** (W2) — `engine/host/env.scrubbed_subprocess_env` remove sinais de
+  host agêntico (CLAUDECODE / OPENCODE_* / CODEX* / CURSOR_* / FORGE_FORCE_*_MODE)
+  do env de subprocessos spawnados por `engine/ingest.py`. Um forge aninhado não
+  escolhe mais o adapter errado nem pende esperando driver inexistente.
+- **A4 REPLAY (card-removal)** (W2) — `forge reconfigure` defere o `shutil.move`
+  (snap → `.bak`) da remoção de card pra DEPOIS do apply-confirm. Cancelar não
+  deixa mais o snapshot removido sem a config correspondente. O campo interno
+  `_pending_card_removals` nunca é persistido (nem na config, nem no draft) —
+  um resume não re-dispara o move.
 - W-GRAPH I-1: header do `_GRAPH_SKILL_MD` (artefato `forge init`) não afirma
   mais "17 graph queries canônicas" quando a tabela lista um subconjunto das
   mais frequentes — agora descreve a tabela como "principais" e aponta o
@@ -81,6 +295,28 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   é só hint de baixa confiança que o conductor pode sobrepor.
 - `_render_template` passou a fazer substituição single-pass (sem reinjection
   de token entre passos).
+- **C3 EXIT-2-COLLISION (load-bearing UX/contract)** (W2 — protocol robustness,
+  2026-06-17) — recontrato estrito de exit codes: `2` é reservado SÓ pra pausa
+  (`PausedForInputError` + `UserPausedError`); a escada legada (3/4/5/6/7/8 +
+  not-a-project=2) colapsou em `exit 1` + tag machine-readable `[FORGE-ERR:<TAG>]`
+  em stderr. `127` (editor-not-found) preservado como exceção POSIX. Tags
+  canônicas centralizadas em `engine/ui/exit_codes.py` (`fail_with_tag`). Contrato
+  + tabela de tags em `docs/design/06-command-surface.md §Exit codes`. Clean-break
+  pré-produção (sem migrator; único caller é o driver host). Decisão 27 honrada
+  (pausa), não revisitada.
+- **BL-01: C3 EXIT-2-COLLISION — fecha o último escape** (W2 review holístico,
+  2026-06-18) — `engine/undo.py` ainda retornava `2` puro em
+  `ProjectRootNotFoundError` (fora de projeto forge) — colidia com `EXIT_PAUSED`
+  e o host lia como paused-for-input, procurando um pending nunca escrito (hang).
+  Migrado pra `fail_with_tag(ERR_PROJECT_NOT_FOUND)` (exit 1 + tag). O teste de
+  contrato (`tests/unit/test_exit_code_contract.py`) deixou de varrer uma lista
+  hardcoded de 8 handlers (que escondia `undo`) e agora AUTO-DESCOBRE todos os
+  handlers despachados a partir de `engine.cli.COMMANDS` — qualquer handler novo
+  entra no contrato sem editar o teste. `undo` adicionado à linha `PROJECT-NOT-FOUND`
+  da tabela de tags; descrição de exit codes do `forge upgrade` corrigida (era
+  "exit 4", agora "exit 1 + `[FORGE-ERR:UPGRADE-FAILED]`"). 7 testes legados que
+  trocaram `==N` por `==1` ganharam assert da tag (`[FORGE-ERR:<TAG>]`), travando
+  a categoria do erro além do código.
 
 ## [1.4.0] - 2026-06-17
 

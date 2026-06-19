@@ -125,7 +125,7 @@ Mostra um board com:
 forge doctor
 ```
 
-Varre 16 categorias de saúde da instalação: config, cards, inventory, memória
+Varre 17 categorias de saúde da instalação: config, cards, inventory, memória
 L1/L2, graph, reuse findings, hooks, MCPs, i18n, `.bak` overdue, versão do
 forge, ferramentas de secrets, coerência de QA, ferramentas de cc-gate e
 catálogos Gradle. Mostra o que está verde e o que precisa atenção.

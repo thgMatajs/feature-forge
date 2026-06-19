@@ -1,7 +1,7 @@
 import os
 import pytest
 from engine.host.env import (
-    detect_claude_code, detect_opencode, detect_codex, detect_cursor, detect_any_agentic,
+    detect_claude_code, detect_opencode, detect_codex, detect_cursor,
 )
 
 
@@ -46,12 +46,14 @@ def test_detect_codex(monkeypatch):
     assert detect_codex() is True
 
 
-def test_detect_any_agentic_truthy(monkeypatch):
-    monkeypatch.setenv("CLAUDECODE", "1")
-    assert detect_any_agentic() is True
+def test_detect_codex_requires_underscore(monkeypatch):
+    """C-49b (PR22-B-02): o detector usa prefixo preciso CODEX_ — uma var
+    CODEX-cru não-relacionada (CODEXBASE, CODEX) NÃO dispara falso-positivo."""
+    monkeypatch.delenv("CODEX_CLI", raising=False)
+    monkeypatch.setenv("CODEXBASE", "1")
+    assert detect_codex() is False
 
 
-def test_detect_any_agentic_falsy(monkeypatch):
-    for v in ("CLAUDECODE", "OPENCODE_VERSION", "CODEX_CLI", "CURSOR_AGENT"):
-        monkeypatch.delenv(v, raising=False)
-    assert detect_any_agentic() is False
+def test_detect_cursor(monkeypatch):
+    monkeypatch.setenv("CURSOR_AGENT", "1")
+    assert detect_cursor() is True

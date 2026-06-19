@@ -5,6 +5,7 @@ from functools import lru_cache
 import yaml
 from engine.host.adapter import HostName
 from engine.host import env
+from engine.utils.paths import active_config_path
 
 _cache: dict[Path, HostName] = {}
 
@@ -14,11 +15,15 @@ def _clear_cache() -> None:
 
 
 def _read_config_host(project_root: Path) -> HostName | None:
-    cfg = project_root / ".claude" / "forge" / "forge-config.yaml"
+    # C-10 (CL-A): usa active_config_path (Mandamento 3) — primário
+    # .claude/forge/forge-config.yaml com fallback legado
+    # .claude/workflow-config.yaml. Antes hardcodava só o primário → projetos
+    # v1.2 com host: no legado eram ignorados.
+    cfg = active_config_path(project_root)
     if not cfg.exists():
         return None
     try:
-        data = yaml.safe_load(cfg.read_text()) or {}
+        data = yaml.safe_load(cfg.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError:
         return None
     h = data.get("host")

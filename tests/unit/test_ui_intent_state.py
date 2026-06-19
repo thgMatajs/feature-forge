@@ -15,6 +15,7 @@ Refs:
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -27,8 +28,15 @@ from engine.ui import intent_state
 
 
 def _pending_payload(*, intent_id: str = "11111111-1111-4111-8111-111111111111",
-                     created_at: str | None = None) -> dict:
-    """A minimally-valid pending dict matching the canonical schema."""
+                     created_at: str | None = None,
+                     pid: int = 84210) -> dict:
+    """A minimally-valid pending dict matching the canonical schema.
+
+    ``pid`` defaults to a synthetic value (84210). Tests que esperam que
+    ``detect_race`` levante ``RaceDetectedError`` em pending recente devem
+    passar ``pid=os.getpid()`` — desde STALE-1 (W-DEBT), ``detect_race`` faz
+    ``os.kill(pid, 0)`` e varre pendings de PID morto em vez de declarar race.
+    """
     return {
         "schema-version": 1,
         "intent-id": intent_id,
@@ -40,7 +48,7 @@ def _pending_payload(*, intent_id: str = "11111111-1111-4111-8111-111111111111",
         "default": "kmp-mobile",
         "allow-pause": True,
         "created-at": created_at or "2026-06-10T18:42:11Z",
-        "pid": 84210,
+        "pid": pid,
         "checkpoint-path": ".claude/.init-checkpoint.yaml",
     }
 
@@ -299,8 +307,9 @@ def test_detect_race_raises_on_recent_concurrent_intent(tmp_project_root):
         "%Y-%m-%dT%H:%M:%SZ"
     )
     existing_id = "77777777-7777-4777-8777-777777777777"
+    live_pid = os.getpid()
     intent_state.write_pending(
-        _pending_payload(intent_id=existing_id, created_at=recent_iso),
+        _pending_payload(intent_id=existing_id, created_at=recent_iso, pid=live_pid),
         tmp_project_root,
     )
 
@@ -308,7 +317,8 @@ def test_detect_race_raises_on_recent_concurrent_intent(tmp_project_root):
         intent_state.detect_race(tmp_project_root, new_intent_id="other-id")
     message = str(exc.value)
     # Mensagem mentor-calmo precisa apontar o PID e o path forense.
-    assert "84210" in message  # pid from _pending_payload
+    # PID vivo (o próprio processo do teste) — STALE-1 só declara race se vivo.
+    assert str(live_pid) in message
     assert "forge-pending.json" in message
     # Pending preservado (não sobrescreve).
     assert (tmp_project_root / ".claude" / "forge" / "state" / "forge-pending.json").exists()
@@ -424,7 +434,9 @@ def test_parse_created_at_tolerates_small_future_skew(tmp_project_root):
     )
     existing_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
     intent_state.write_pending(
-        _pending_payload(intent_id=existing_id, created_at=future_iso),
+        _pending_payload(
+            intent_id=existing_id, created_at=future_iso, pid=os.getpid()
+        ),
         tmp_project_root,
     )
 
@@ -471,6 +483,7 @@ def test_race_detected_error_message_includes_three_paths(tmp_project_root):
         _pending_payload(
             intent_id="cccccccc-cccc-4ccc-8ccc-cccccccccccc",
             created_at=recent_iso,
+            pid=os.getpid(),
         ),
         tmp_project_root,
     )

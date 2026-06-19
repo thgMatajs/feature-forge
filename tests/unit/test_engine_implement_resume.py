@@ -91,6 +91,7 @@ def _seed_workflow_config(project_root: Path) -> None:
 def test_resume_from_checkpoint(
     tmp_forge_project: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     """Cenario canonico de resume — checkpoint do slug-ask + response.json correspondente.
 
@@ -169,10 +170,17 @@ def test_resume_from_checkpoint(
 
     # Stage 3 — invoca implement.run([]). question.ask_text deve consumir
     # o response, voltar "ghost-feature", run descobre que feature nao
-    # existe e retorna 4 (feature missing).
+    # existe e retorna exit 1 + tag FEATURE-MISSING (C3 EXIT-2-COLLISION:
+    # a escada legada return 4 colapsou em 1 + [FORGE-ERR:<TAG>]).
     rc = implement.run([])
 
-    assert rc == 4, f"unexpected exit code from implement.run: {rc}"
+    assert rc == 1, f"unexpected exit code from implement.run: {rc}"
+    # WR-01: trava a CATEGORIA do erro via tag — ==1 sozinho passaria pra
+    # qualquer falha; a tag prova que é o caminho feature-missing.
+    captured = capsys.readouterr()
+    assert "[FORGE-ERR:FEATURE-MISSING]" in captured.err, (
+        f"esperado tag FEATURE-MISSING no stderr, obtido: {captured.err!r}"
+    )
 
     # Task 0.7b — CR-002 invariant: state files MUST remain on disk
     # after happy-path consume. cli.py finally block performs the

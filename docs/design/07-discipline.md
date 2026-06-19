@@ -672,7 +672,7 @@ Não há `state: paused` separado de `deferred`. Não há `state: aborting`
 em transição. Os estados de feature são:
 
 ```
-not-started → planning → planned → implementing → verified → done
+not-started → planning → planned → implementing → done
                 ↓             ↓           ↓
              deferred ←─ deferred ←─ deferred       (pausa)
                                 ↓

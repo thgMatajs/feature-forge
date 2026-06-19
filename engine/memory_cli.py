@@ -13,6 +13,7 @@ into a context-pack file).
 
 from __future__ import annotations
 
+import json
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -41,7 +42,7 @@ from engine.memory.l2 import (
     remove_entry as l2_remove_entry,
 )
 from engine.memory.l3 import read_l3_entry, read_l3_index
-from engine.ui import question, renderer
+from engine.ui import output_mode, question, renderer
 from engine.ui.question import PromptAbortedError
 from engine.ui.tree import render_tree
 from engine.utils.paths import (
@@ -52,7 +53,8 @@ from engine.utils.paths import (
     find_project_root,
     memory_l2_path,
 )
-from engine.utils.yaml_io import read_yaml_or_default, write_yaml
+from engine.memory import MemoryError as MemoryStoreError  # C-36/C-40: domain error (subclass de Exception, não o builtin)
+from engine.utils.yaml_io import YamlIOError, read_yaml_or_default, write_yaml
 from engine.utils.checkpoint_io import (
     clear_checkpoint as _clear_checkpoint_io,
     load_yaml_checkpoint as _load_yaml_checkpoint_io,
@@ -418,6 +420,96 @@ def _export_l2(project_root: Path) -> None:
 # ── Entry point ─────────────────────────────────────────────────────────────
 
 
+_SNAPSHOT_READ_ERRORS = (MemoryStoreError, YamlIOError, OSError, ValueError, KeyError)
+
+
+def _memory_snapshot(project_root: Path) -> dict:
+    """Read-only machine snapshot of the 3 memory layers (A1, narrow).
+
+    Mutating submenus (forget/distill) and interactive ones (search, inspect
+    with selection prompt) are intentionally excluded — they have no
+    unambiguous machine contract under the meta-flags-only carve-out of
+    Decisão 10 revisitada. Export keeps its own stdout-pipe path.
+
+    C-40 (PR21-I9): cada data-access (read_l2 / l2_size_bytes /
+    list_active_features / read_l3_index) é guardado granularmente — uma camada
+    corrompida degrada pra um snapshot PARCIAL coerente (campo `degraded` lista
+    o que falhou) em vez de derrubar o snapshot inteiro. C-36 (o outer guard no
+    branch JSON) ainda pega qualquer erro residual.
+    """
+    degraded: list[str] = []
+
+    try:
+        l2_entries = list(read_l2(project_root))
+    except _SNAPSHOT_READ_ERRORS:
+        l2_entries = []
+        degraded.append("l2-entries")
+    try:
+        l2_size = (
+            l2_size_bytes(project_root)
+            if memory_l2_path(project_root).exists()
+            else 0
+        )
+    except _SNAPSHOT_READ_ERRORS:
+        l2_size = 0
+        degraded.append("l2-size")
+    try:
+        active = list(list_active_features(project_root))
+    except _SNAPSHOT_READ_ERRORS:
+        active = []
+        degraded.append("l1-active")
+    try:
+        archived = list(list_archived_features(project_root))
+    except _SNAPSHOT_READ_ERRORS:
+        archived = []
+        degraded.append("l1-archived")
+
+    active_payload = []
+    for slug in active:
+        try:
+            st = read_l1_status(slug, project_root)
+        except _SNAPSHOT_READ_ERRORS:
+            st = None
+            degraded.append(f"l1-status:{slug}")
+        active_payload.append(
+            {
+                "slug": slug,
+                "status": (st.status if st is not None else None),
+                "last_action_kind": (st.last_action_kind if st is not None else None),
+            }
+        )
+
+    try:
+        l3 = [
+            {"title": entry["title"], "hook": entry["hook"]}
+            for entry in read_l3_index()
+        ]
+    except _SNAPSHOT_READ_ERRORS:
+        l3 = []
+        degraded.append("l3")
+
+    snapshot = {
+        "l2": {
+            "size_bytes": l2_size,
+            "entries": [
+                {
+                    "id": e.id,
+                    "kind": e.kind,
+                    "confidence": e.confidence,
+                    "title": e.title,
+                    "provenance": list(e.provenance) if e.provenance else [],
+                }
+                for e in l2_entries
+            ],
+        },
+        "l1": {"active": active_payload, "archived": list(archived)},
+        "l3": l3,
+    }
+    if degraded:
+        snapshot["degraded"] = degraded
+    return snapshot
+
+
 def run(argv: list[str]) -> int:
     """Interactive memory menu."""
     _ = argv
@@ -427,6 +519,24 @@ def run(argv: list[str]) -> int:
     except ProjectRootNotFoundError as exc:
         sys.stderr.write(f"forge memory: {exc}\n")
         return 1
+
+    # A1 (narrow) — JSON mode emits a read-only snapshot of the 3 memory
+    # layers and returns BEFORE any renderer.write / question.ask, so the
+    # interactive menu is never entered. Mutating/interactive submenus
+    # (forget/distill/search) have no machine contract under the meta-flags-only
+    # carve-out of Decisão 10 revisitada (documented in 04-pending.md).
+    if output_mode.is_json_mode():
+        # C-36 (PR21-I6): o path interativo é guardado, mas o JSON cuspia
+        # traceback cru em L2/L3 corrompido. Outer guard: erro residual (após os
+        # guards granulares de C-40) → mensagem clean em stderr + exit 1, stdout
+        # puro (nada de JSON parcial nem traceback).
+        try:
+            payload = _memory_snapshot(project_root)
+        except _SNAPSHOT_READ_ERRORS as exc:
+            sys.stderr.write(f"forge memory: snapshot falhou — {exc}\n")
+            return 1
+        print(json.dumps(payload, indent=2, default=str))
+        return 0
 
     # Hint when L2 file just doesn't exist yet.
     if not memory_l2_path(project_root).exists():

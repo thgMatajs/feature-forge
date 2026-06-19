@@ -2,7 +2,7 @@
 
 A standalone CLI skill that orchestrates end-to-end planning + implementation of mobile features across Android, iOS, KMP, and Web. Backend-agnostic (Firebase, REST, GraphQL, local-only).
 
-> **State:** 1.4.0 pilot-ready + AI-first Wave 1 (unreleased/branch) · 2026-06-17 · rapid 1693 / integration 175 / e2e 30 passed (camada de interação AI-first: driver `SKILL.md`/`AGENTS.md` + front-door ticket/frase + grounded-challenge Phase 2.5 + readiness enforce + CASING-BUG fix; remediação cross-AI review PR #17; install.sh curl one-liner + forge upgrade + bash 3.2 portável; Wave 3 bug-fix sprint; Wave 2 host-aware execution; graph-ia-evolution ✅ shipped; PR #16 master review fix-pack Wave A+B+C aplicado integralmente) · 25 validators · 14 comandos · 29 cards · 4 bundles · 6 parsers (kotlin/swift/typescript + java/xml/objc) · driver `skills/feature-forge/SKILL.md` + `templates/AGENTS.md.template` · ~400 arquivos · ~52.5K LOC
+> **State:** 1.4.0 pilot-ready + série de waves AI-first (unreleased/branch) · 2026-06-18 · rapid 1797 / integration 190 / e2e 30 passed (W-DEBT dívida residual: PHANTOM-STATES removido + CARDS-DISCONNECT + ABORTED-DEADEND + PLACEHOLDER-VERIFY + SCHEMA/STALE guards + readiness non-product + FORGE_HOME driver doctor + cleanup; W3 token economy: output-mode + read-commands `--json` + `--help --json` manifesto + workflow router, Revisita Decisão 10; W2 protocol robustness; camada de interação AI-first Wave 1: driver `SKILL.md`/`AGENTS.md` + front-door ticket/frase + grounded-challenge Phase 2.5 + readiness enforce + CASING-BUG fix; remediação cross-AI review PR #17; install.sh curl one-liner + forge upgrade + bash 3.2 portável; Wave 3 bug-fix sprint; Wave 2 host-aware execution; graph-ia-evolution ✅ shipped; PR #16 master review fix-pack Wave A+B+C aplicado integralmente) · 22 validators · 14 comandos · 29 cards · 4 bundles · 6 parsers (kotlin/swift/typescript + java/xml/objc) · driver `skills/feature-forge/SKILL.md` + `templates/AGENTS.md.template` · ~400 arquivos · ~52.5K LOC
 
 ## What it is
 
@@ -12,7 +12,7 @@ Skill CLI-first com 14 comandos canônicos (zero flags — toda parametrização
 2. **`forge plan {feature-slug}`** — 5 waves (intake/PRD → screen+contracts → tech-spec → tasks → readiness) com 16 templates. Subtypes: product / refactor / bugfix / spike / chore (cada um com waves específicas). No bugfix o pipeline detecta o ticket (ex: IN-37234), pula o PRD e exige um regression test que falha primeiro antes da correção; refactor entra com contrato no-behavior-change.
 3. **`forge implement {feature-slug}`** — execução task-by-task com gates de scope + atomic commits
 4. **`forge verify`** — cascade de 20 validators com 3-caminhos discipline (inclui `check_no_behavior_change` para refactor, `check_cyclomatic_complexity` multi-language, `check_secrets` multi-tool security gate, e `validate_extension_feature` cross-cutting pra Gap 9 extensions). Cascade fail-fast: para no primeiro erro duro; os gates fortes (complexity, secrets) aceitam override-justify auditável no commit body e bypass de emergência logado em `.claude/state/`.
-5. **`forge doctor`** — health check em 14 categorias (inclui reuse-intelligence findings agregados + `cc-gate-tools` + `secrets-tools`)
+5. **`forge doctor`** — health check em 17 categorias (inclui reuse-intelligence findings agregados + `cc-gate-tools` + `secrets-tools` + `FORGE_HOME driver`)
 6. **`forge reconfigure`** — single entrypoint pra TODA mutação post-init (cards, paths, conventions, graph rebuild que re-queue reuse proposals)
 7. **`forge qa`** — gate adversarial multi-agente (red-team). 4 attack vectors × 4 scope targets em sandbox isolado. Verdict informativo (BLOCK/FLAG/PASS), findings → `forge evolve`.
 8. Outros: `status`, `evolve` (review proposals — 16 kinds), `undo`, `graph` (Q1-Q17), `memory`, `raw`
@@ -122,7 +122,7 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 | Validators Python | 25 + 3 helpers (`_gate_infra`, `_diff`, `_common`) — inclui `check_cyclomatic_complexity` (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon), `check_secrets` (gitleaks + trufflehog), `check_no_behavior_change` (refactor), `validate_extension_feature` (extends-feature cross-cutting), `validate_presets` (Phase B DET-6 — bundle YAML schema) |
 | Hooks | 9 + 1 reuse incremental (`post-edit-detect-duplications.sh`) |
 | Graph parsers | 6 (Kotlin / Swift / TypeScript + Java / XML / Objective-C — Java/XML/ObjC novos em v1.3.0 graph-ia-evolution). Body extraction (`symbols.body`) cobre brace-delimited bodies (5 linguagens; XML é NULL). |
-| Tests | rapid **1611 passed** / integration **168 passed** / e2e **30 passed** em 1.4.0 pilot-ready, pós remediação cross-AI review PR #17 (0 falhas). Histórico: 1619 collected pós PR #16 fix-pack; W0–W5 acrescem 57+14+host-e2e+7+upgrade+pilot-smoke. Baseline histórico em CHANGELOG.md. |
+| Tests | rapid **1797 passed** / integration **190 passed** / e2e **30 passed** na série de waves AI-first (unreleased/branch `feat/w-debt`: Wave 1 + W2 + W3 + W-DEBT empilhados; 0 falhas). Histórico: 1794/183/30 pós-fix-verify W-DEBT r1; 1779/180/30 pós-W3; 1611/168/30 em 1.4.0 pilot-ready; 1619 collected pós PR #16 fix-pack. Baseline histórico em CHANGELOG.md. |
 | LOC total | ~52.500 |
 | Engine LOC | ~33.500 (Python; engine/ apenas — validators/ adicional ~7.300) |
 | Files total | ~400 |
@@ -191,9 +191,9 @@ explicitamente.
   templates/                            18 canonical templates (16 + bugfix + refactor)
   cards/                                29 canonical cards (+ overlay em consumidor)
   presets/kmp-mobile/                   canonical preset v1
-  validators/                           25 validators + 3 helpers (inclui check_cyclomatic_complexity + check_secrets + validate_extension_feature)
+  validators/                           22 validators + 3 helpers (inclui check_cyclomatic_complexity + check_secrets + check_unfilled_placeholders + validate_extension_feature)
   hooks/                                9 hooks + reuse incremental script
-  tests/                                rapid 1611 / integration 168 / e2e 30 (unit + integration + e2e)
+  tests/                                rapid 1797 / integration 190 / e2e 30 (unit + integration + e2e)
 
 [per project install via `forge init`]
 {project}/.claude/forge/                sub-namespace forge (v1.3+)
@@ -218,13 +218,13 @@ forge plan           plan feature (waves A-E, subtype-aware)
                      · subtypes: product / refactor / bugfix / spike / chore
                      · `forge plan refactor-{slug}` lê L1 status e pula Wave A
 forge implement      execute task-by-task
-forge verify         validator cascade (20 validators)
+forge verify         validator cascade (22 validators no diretório; 3 built-in + N contribuídos por cards ativos)
                      · check_no_behavior_change gate quando subtype=refactor
                      · check_cyclomatic_complexity gate multi-language
                      · check_secrets gate multi-tool (gitleaks per-task / trufflehog cascade)
                      · validate_extension_feature cross-cutting quando feature tem extends-feature setado (Gap 9)
 forge status         read-only board
-forge doctor         health check (14 categorias)
+forge doctor         health check (17 categorias)
                      · inclui reuse-intelligence findings agregados
                      · inclui cc-gate-tools (detekt/swiftlint/eslint/radon)
 forge reconfigure    single mutation entrypoint

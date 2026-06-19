@@ -36,7 +36,14 @@ def test_init_run_rejects_unknown_arg(tmp_project_root, monkeypatch, capsys):
 
     monkeypatch.chdir(tmp_project_root)
     rc = init_mod.run(["bogus"])
-    assert rc == 2
+    # C3 EXIT-2-COLLISION: usage error colapsou em exit 1 + tag [FORGE-ERR:USAGE].
+    assert rc == 1
+    # WR-01: trava a CATEGORIA via tag — ==1 sozinho passaria pra qualquer
+    # erro; a tag prova que é o caminho de usage error.
+    captured = capsys.readouterr()
+    assert "[FORGE-ERR:USAGE]" in captured.err, (
+        f"esperado tag USAGE no stderr, obtido: {captured.err!r}"
+    )
 
 
 @pytest.mark.integration

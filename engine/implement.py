@@ -1,16 +1,24 @@
 """`forge implement` — execution conductor (Plan Mode → Apply → next task).
 
-Single Task Contract per invocation. Walks the user through:
+IMPLEMENT-HANDOFF (BY-DESIGN, Decisão 22): `forge implement` ORQUESTRA o
+lifecycle de implementação — NÃO gera código. A autoria do código é handoff
+explícito pro host (Claude Code / opencode), que escreve contra o Task Contract
+que o forge surfa. Isso é o exec model canônico (engine emite intent + gates;
+o host implementa), não um stub quebrado a completar. O engine nunca importa
+nem invoca outra skill pra gerar código (Decisão 22 — zero runtime dep).
+
+Single Task Contract per invocation. Walks the user/host through:
 
     1. Resolve feature slug + state guard (readiness must be 'ready').
     2. Pick next task via task-breakdown DAG topo-sort + status filter.
     3. Plan Mode: surface contract + bdd_scenarios_covered + allowed_files
        + gates + validations. Block on user 'sim'.
-    4. Apply Mode (v1 stub): instruct user/Claude to implement against the
-       contract. Out-of-scope edits surface as findings/FND-*.yaml via the
+    4. Apply Mode: handoff de autoria pro host — o forge surfa o contrato e
+       o host escreve o código contra ele (não é stub a preencher; é o
+       exec model). Edits fora de escopo viram findings/FND-*.yaml via o
        three-paths block.
-    5. Verify + Commit are user-driven in v1 — emit hand-off copy that
-       points at `forge verify` + a conventional commit message.
+    5. Verify + Commit são user/host-driven — emite hand-off copy que aponta
+       pra `forge verify` + uma mensagem de commit convencional.
 
 Exit codes:
     0    task acknowledged / parked between tasks
@@ -41,6 +49,15 @@ from engine.memory.l1 import (
 )
 from engine.persona import mentor_calmo
 from engine.ui import question, renderer
+from engine.ui.exit_codes import (
+    ERR_BLOCKED_EXTERNAL,
+    ERR_FEATURE_MISSING,
+    ERR_LOCKED,
+    ERR_NOT_READY,
+    ERR_PROJECT_NOT_FOUND,
+    ERR_WAVE_INCOMPLETE,
+    fail_with_tag,
+)
 from engine.ui.question import PromptAbortedError
 from engine.utils.paths import (
     ProjectRootNotFoundError,
@@ -1135,7 +1152,7 @@ def run(argv: list[str]) -> int:
         project_root = find_project_root()
     except ProjectRootNotFoundError as exc:
         sys.stderr.write(f"forge implement: {exc}\n")
-        return 2
+        return fail_with_tag(ERR_PROJECT_NOT_FOUND)
 
     argv_slug = argv[0] if argv else None
     try:
@@ -1165,7 +1182,7 @@ def run(argv: list[str]) -> int:
             f"{feature_path}. Rode `forge plan {slug}` primeiro.\n"
         )
         _clear_implement_checkpoint(project_root)
-        return 4
+        return fail_with_tag(ERR_FEATURE_MISSING)
 
     is_ready, observed = _check_readiness(feature_path)
     if not is_ready:
@@ -1174,7 +1191,7 @@ def run(argv: list[str]) -> int:
             f"Rode `forge plan {slug}` e finalize Wave E.\n"
         )
         _clear_implement_checkpoint(project_root)
-        return 5
+        return fail_with_tag(ERR_NOT_READY)
 
     tasks = _collect_tasks(feature_path)
     if not tasks:
@@ -1183,7 +1200,7 @@ def run(argv: list[str]) -> int:
             "Wave D do plano não foi concluída.\n"
         )
         _clear_implement_checkpoint(project_root)
-        return 6
+        return fail_with_tag(ERR_WAVE_INCOMPLETE)
 
     # Discipline §9 — recompute feature blocked state at startup.
     # When state was blocked-on-external from a previous session and the user
@@ -1312,7 +1329,7 @@ def run(argv: list[str]) -> int:
         # undo` is the canonical recovery path.
         # DRIFT-1 W2.T3b — clear intent-resume checkpoint on hard-gate return.
         _clear_implement_checkpoint(project_root)
-        return 7  # distinct exit code — caller scripts can switch behavior
+        return fail_with_tag(ERR_BLOCKED_EXTERNAL)
 
     # Acquire task-scoped phase lock via context manager (MD-03 refactor).
     # The CM owns acquire + release bookkeeping — every exit path (normal
@@ -1330,7 +1347,7 @@ def run(argv: list[str]) -> int:
             )
             # DRIFT-1 W2.T3b — clear intent-resume checkpoint on lock-deny.
             _clear_implement_checkpoint(project_root)
-            return 3
+            return fail_with_tag(ERR_LOCKED)
 
         try:
             # Cinematic header + auto-resume detection.

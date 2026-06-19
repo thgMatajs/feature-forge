@@ -53,7 +53,27 @@ from engine.memory.l1 import (
 )
 from engine.persona import mentor_calmo
 from engine.ui import question, renderer
-from engine.ui.question import PromptAbortedError
+from engine.ui.exit_codes import (
+    ERR_ABORTED,
+    ERR_LOCKED,
+    ERR_PROJECT_NOT_FOUND,
+    fail_with_tag,
+)
+from engine.ui.question import (
+    PausedForInputError,
+    UserCancelledError,
+    UserPausedError,
+)
+
+# C-06 (PR18-R4): os prompts de elicitation (`question.ask*`) levantam
+# PausedForInputError / UserPausedError / UserCancelledError — NENHUM é
+# subclasse de PromptAbortedError (que é RuntimeError e nunca chega a ser
+# levantado em engine/). Os handlers `except PromptAbortedError` eram dead-code:
+# uma pausa real escapava sem rodar `_persist_deferred` → L1 órfã em 'planning'.
+# Este alias agrupa as exceções de pausa/cancelamento REAIS pra os handlers
+# persistirem o deferred ANTES de re-levantar (cli.main mapeia pro exit canônico:
+# 2=pausa, 130=cancel).
+_PAUSE_OR_CANCEL = (PausedForInputError, UserPausedError, UserCancelledError)
 from engine.utils.paths import (
     ProjectRootNotFoundError,
     claude_dir,
@@ -61,7 +81,7 @@ from engine.utils.paths import (
     feature_dir,
     feature_path as _feature_path,
     find_project_root,
-    workflow_config_path,
+    forge_dir,
 )
 from engine.utils.yaml_io import read_yaml_or_default, write_yaml
 from engine.utils.checkpoint_io import (
@@ -558,34 +578,50 @@ def _record_screenshot_manifest(feature_path: Path, result: dict) -> None:
         )
 
 
+_SS_SPLIT_RE = re.compile(r"[,\s]+")
+
+
 def _elicit_screenshot(
     feature_path: Path,
     subtype: str,
     starting_wave: str,
-) -> Optional[dict]:
+) -> list[dict]:
     """Source-inquiry: pergunta por material visual e ingere se houver.
 
     spec §4 C3a + §5 — só pergunta quando a feature é UI-capable e o render
     é fresco: ``subtype == "product"`` E ``starting_wave == "A"``. Refactor/
     bugfix não têm Wave B (sem mockup), e em resume (wave != A) não
-    re-pergunta — devolve ``None`` em silêncio nesses casos. A resposta
-    ``"none"`` (ou vazia, via default) também devolve ``None``. Reusa a infra
+    re-pergunta — devolve ``[]`` em silêncio nesses casos. A resposta
+    ``"none"`` (ou vazia, via default) também devolve ``[]``. Reusa a infra
     de prompt (``question.ask_text``, como ``_ask_task_count``) — participa do
     intent loop/resume via o ``stable_intent_id`` que o adapter computa. A
     análise multimodal dos pixels é do conductor (Wave B), não daqui.
+
+    C-08 (PR18-R8): aceita MÚLTIPLOS paths numa única resposta, separados por
+    vírgula e/ou whitespace. Cada path é ingerido independente; inválidos
+    degradam gracioso (``_ingest_screenshot`` devolve None + avisa no stderr) e
+    NÃO derrubam os válidos. Retorna a lista dos resultados bem-sucedidos —
+    vazia quando nada válido. O run() preenche count + CSV a partir dela.
     """
     if subtype != "product" or starting_wave != "A":
-        return None
+        return []
     resp = question.ask_text(
         "Tem material visual pra essa tela? "
-        "(path do screenshot/mockup, ou 'none')",
+        "(paths de screenshot/mockup separados por vírgula/espaço, ou 'none')",
         default="none",
     )
     # `ask_text(default="none")` nunca devolve falsy (vazio resolve pro default),
     # então só o sentinel "none" precisa de check — o ramo `not resp` era morto.
     if resp.strip().lower() == "none":
-        return None
-    return _ingest_screenshot(resp.strip(), feature_path)
+        return []
+    results: list[dict] = []
+    for token in _SS_SPLIT_RE.split(resp.strip()):
+        if not token or token.lower() == "none":
+            continue
+        ingested = _ingest_screenshot(token, feature_path)
+        if ingested is not None:
+            results.append(ingested)
+    return results
 
 
 def _forge_home() -> Path:
@@ -594,14 +630,48 @@ def _forge_home() -> Path:
     return _fh()
 
 
-def _templates_dir() -> Path:
+def _templates_dir(project_root: Path) -> Path:
+    """Resolve o dir de templates, preferindo o materializado per-projeto.
+
+    CARDS-DISCONNECT (W-DEBT): `forge init` materializa os templates mergeados
+    (base canônico + seções contribuídas pelos cards ativos) em
+    `.claude/forge/templates/`. Quando esse dir existe, o plan o prefere pra
+    enxergar as contribuições dos cards. Fallback pro global
+    (`FORGE_HOME/templates/`) mantém backward-compat pra projetos sem cards de
+    template ou pré-materialização.
+
+    NOTA: a preferência é per-DIR aqui (qual dir tentar PRIMEIRO). A resolução
+    real é per-FILE em ``_resolve_template`` — materialização PARCIAL (só alguns
+    targets contribuídos) não quebra templates não-contribuídos, que caem pro
+    global.
+    """
+    per_project = forge_dir(project_root) / _TEMPLATES_SUBDIR
+    if per_project.is_dir():
+        return per_project
     return _forge_home() / _TEMPLATES_SUBDIR
+
+
+def _resolve_template(project_root: Path, template_name: str) -> Path:
+    """Resolve UM template per-FILE: per-projeto se ESSE arquivo existe lá, senão global.
+
+    CARDS-DISCONNECT (W-DEBT): o dir per-projeto materializado contém APENAS os
+    templates que os cards ativos contribuíram (materialização parcial é o caso
+    comum — poucos cards contribuem seção). Resolver per-DIR (preferir o dir
+    inteiro) quebraria o primeiro template SEM contribuição com FileNotFoundError.
+    Per-FILE: tenta `_templates_dir(project_root) / template_name`; se esse arquivo
+    não existe, cai pro global `FORGE_HOME/templates/template_name`.
+    """
+    preferred = _templates_dir(project_root) / template_name
+    if preferred.is_file():
+        return preferred
+    return _forge_home() / _TEMPLATES_SUBDIR / template_name
 
 
 def _render_template(
     template_name: str,
     target: Path,
     slug: str,
+    project_root: Path,
     *,
     extra_tokens: Optional[dict[str, str]] = None,
 ) -> bool:
@@ -617,7 +687,7 @@ def _render_template(
     templates (inofensivo). O guard `target.exists()` mantém o once-only no
     resume (não re-renderiza/re-preenche).
     """
-    src = _templates_dir() / template_name
+    src = _resolve_template(project_root, template_name)
     if not src.is_file():
         raise FileNotFoundError(
             f"template '{template_name}' not found at {src}. "
@@ -677,7 +747,7 @@ def _initialize_status(slug: str, project_root: Path) -> L1State:
         )
         write_l1_status(state, project_root)
         return state
-    if state.status not in {"planning", "deferred", "paused", "planned"}:
+    if state.status not in {"planning", "deferred", "planned"}:
         # Status set by another command — refuse to clobber.
         raise SystemExit(
             f"forge plan: feature '{slug}' is in status '{state.status}'. "
@@ -756,7 +826,7 @@ def _run_static_wave(
     for template_name, output_name in templates:
         target = feature_path / output_name
         was_new = _render_template(
-            template_name, target, slug, extra_tokens=extra_tokens
+            template_name, target, slug, project_root, extra_tokens=extra_tokens
         )
         marker = "NEW " if was_new else "EXIST"
         renderer.write(f"  ├ {marker}  {target.relative_to(project_root)}")
@@ -814,7 +884,7 @@ def _run_wave_d(
 
     head_template, head_output = WAVE_D_HEAD_TEMPLATE
     breakdown_target = feature_path / head_output
-    was_new = _render_template(head_template, breakdown_target, slug)
+    was_new = _render_template(head_template, breakdown_target, slug, project_root)
     marker = "NEW " if was_new else "EXIST"
     renderer.write(f"  ├ {marker}  {breakdown_target.relative_to(project_root)}")
 
@@ -828,7 +898,7 @@ def _run_wave_d(
             renderer.write(f"  ├ EXIST {target.relative_to(project_root)}")
             created.append(target)
             continue
-        src = _templates_dir() / WAVE_D_TASK_TEMPLATE
+        src = _resolve_template(project_root, WAVE_D_TASK_TEMPLATE)
         if not src.is_file():
             raise FileNotFoundError(
                 f"template '{WAVE_D_TASK_TEMPLATE}' not found at {src}."
@@ -896,7 +966,7 @@ def _run_wave_e(
     created: list[Path] = []
     for template_name, output_name in WAVE_E_TEMPLATES:
         target = feature_path / output_name
-        was_new = _render_template(template_name, target, slug)
+        was_new = _render_template(template_name, target, slug, project_root)
         marker = "NEW " if was_new else "EXIST"
         renderer.write(f"  ├ {marker}  {target.relative_to(project_root)}")
         created.append(target)
@@ -1151,6 +1221,59 @@ def _create_extension_l1(
     return child_state
 
 
+_ACTIVE_COLLISION_STATES = {"planning", "planned", "deferred", "blocked-on-external"}
+
+
+def _suffix_slug(slug: str, project_root: Path) -> str:
+    """Deriva um slug livre adicionando `-2`, `-3`, ... até não colidir em L1."""
+    n = 2
+    while True:
+        candidate = f"{slug}-{n}"
+        if _is_valid_slug(candidate) and read_l1_status(candidate, project_root) is None:
+            return candidate
+        n += 1
+
+
+def _handle_active_slug_collision(
+    slug: str, state: L1State, project_root: Path
+) -> Optional[str]:
+    """3-caminhos quando o slug colide com uma feature ATIVA não-done.
+
+    C-03 (PR18-R3): um slug derivado de ticket/frase pode bater num slug de
+    feature já em voo (planning/planned/deferred/blocked-on-external). Sem isto,
+    o `run()` silenciosamente RESUMIA a feature alheia (ou sobrescrevia o
+    phase-lock). Apresenta exatamente 3 caminhos (disciplina §1):
+
+      1) Retomar a feature existente (auto-resume — Decisão 27).
+      2) Criar nova com sufixo (`{slug}-2`, primeiro livre).
+      3) Abortar (escolher outro slug manualmente).
+
+    Retorna o slug a usar, ou ``None`` quando o user aborta. Não-interativo
+    (host sem prompt): default determinístico = retomar (preserva o contrato
+    auto-resume; nunca cria sufixo silencioso).
+    """
+    status = state.status
+    suggestion = _suffix_slug(slug, project_root)
+    choice = question.ask(
+        f"Já existe uma feature ativa '{slug}' (status={status}). O que fazer?",
+        {
+            "retomar": f"Retomar '{slug}' de onde parou (auto-resume)",
+            "nova": f"Criar nova com sufixo — '{suggestion}'",
+            "abortar": "Abortar (escolher outro slug manualmente)",
+        },
+        default="retomar",
+        project_root=project_root,
+    )
+    if choice == "nova":
+        return suggestion
+    if choice == "abortar":
+        renderer.write("")
+        renderer.write(renderer.dim("Abortado. Reinvoque com outro slug."))
+        return None
+    # "retomar" (ou default não-interativo) — segue com o slug existente.
+    return slug
+
+
 def _handle_done_feature_branch(
     parent_slug: str, project_root: Path
 ) -> Optional[str]:
@@ -1167,7 +1290,10 @@ def _handle_done_feature_branch(
       - caminho 4 (Abortar): returns None — caller exits cleanly.
 
     Returns the slug to continue with, or None when the caller should exit.
-    Raises ``PromptAbortedError`` when user types ``para``.
+    Propaga as exceções de pausa/cancelamento de ``question.ask*``
+    (``UserPausedError`` / ``UserCancelledError`` / ``PausedForInputError``)
+    quando o user pausa (``para``) ou cancela — o caller as captura pra
+    persistir o deferred (C-06).
     """
     parent_status = read_l1_status(parent_slug, project_root)
     if parent_status is None or parent_status.status != "done":
@@ -1234,7 +1360,7 @@ def _handle_done_feature_branch(
         )
 
         # Loop until we get a slug that's valid, != parent, and not already
-        # in L1 (or user picks "abortar" via PromptAbortedError).
+        # in L1 (ou o user pausa/cancela via UserPausedError/UserCancelledError).
         while True:
             candidate = question.ask_text(
                 "Slug derivado:",
@@ -1562,7 +1688,7 @@ def _handle_stub_subtype(subtype: str, slug: str, project_root: Path) -> int:
     release_phase_lock(slug, project_root)
     renderer.write("")
     renderer.write(renderer.dim("Abortado. Nada mais escrito."))
-    return 3
+    return fail_with_tag(ERR_ABORTED)
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────
@@ -1672,14 +1798,16 @@ def run(argv: list[str]) -> int:
         project_root = find_project_root()
     except ProjectRootNotFoundError as exc:
         sys.stderr.write(f"forge plan: {exc}\n")
-        return 2
+        return fail_with_tag(ERR_PROJECT_NOT_FOUND)
 
     argv_slug = argv[0] if argv else None
     try:
         slug = _elicit_slug(argv_slug, project_root)
-    except PromptAbortedError:
+    except _PAUSE_OR_CANCEL:
+        # Antes do slug não há L1 pra persistir — re-levanta pra cli.main mapear
+        # o exit canônico (2=pausa, 130=cancel). C-06.
         sys.stderr.write("\n— interrompido antes do slug, nada salvo.\n")
-        return 130
+        raise
 
     # DRIFT-1 W2.T3b — agora que temos slug, atualiza checkpoint com
     # feature_slug; demais prompts deste handler herdam intent-resume via
@@ -1703,14 +1831,33 @@ def run(argv: list[str]) -> int:
     if existing_status is not None and existing_status.status == "done":
         try:
             resolved_slug = _handle_done_feature_branch(slug, project_root)
-        except PromptAbortedError:
+        except _PAUSE_OR_CANCEL:
+            # Caminho extension não muta L1 antes da escolha — re-levanta. C-06.
             sys.stderr.write(
                 "\n— interrompido no caminho extension, nada salvo.\n"
             )
-            return 130
+            raise
         if resolved_slug is None:
             # User chose "nova" or "abortar" — exit cleanly without touching
             # the parent's status (it remains in `done`).
+            return 0
+        slug = resolved_slug
+    elif (
+        existing_status is not None
+        and existing_status.status in _ACTIVE_COLLISION_STATES
+    ):
+        # C-03: colisão com feature ATIVA não-done → 3-caminhos (retomar /
+        # sufixo / abortar) em vez de resumir/sobrescrever a feature alheia.
+        try:
+            resolved_slug = _handle_active_slug_collision(
+                slug, existing_status, project_root
+            )
+        except _PAUSE_OR_CANCEL:
+            sys.stderr.write(
+                "\n— interrompido na resolução de colisão, nada salvo.\n"
+            )
+            raise
+        if resolved_slug is None:
             return 0
         slug = resolved_slug
 
@@ -1724,15 +1871,17 @@ def run(argv: list[str]) -> int:
             f"forge plan: '{slug}' phase-locked by '{held}'. "
             "Run `forge undo` to release, or wait for the other command to finish.\n"
         )
-        return 3
+        return fail_with_tag(ERR_LOCKED)
 
     # Cena 2.5 — subtype inference + confirmation. Persisted before any
     # wave renders so resume sees the same subtype.
     try:
         subtype = _resolve_subtype_for_run(slug, project_root)
-    except PromptAbortedError:
+    except _PAUSE_OR_CANCEL:
+        # C-06: persiste o deferred ANTES de re-levantar (senão a L1 fica órfã em
+        # 'planning'). cli.main mapeia a exceção pro exit canônico.
         _persist_deferred(slug, project_root, "subtype-prompt")
-        return 130
+        raise
     if subtype != state.subtype:
         set_subtype(slug, project_root, subtype)
         append_history(
@@ -1777,9 +1926,10 @@ def run(argv: list[str]) -> int:
         if wave_b_required is None:
             try:
                 wave_b_required = _elicit_bugfix_wave_b_required()
-            except PromptAbortedError:
+            except _PAUSE_OR_CANCEL:
+                # C-06: persiste deferred antes de re-levantar.
                 _persist_deferred(slug, project_root, "bugfix-wave-b-prompt")
-                return 130
+                raise
             _persist_hypothesis_wave_b_required(slug, project_root, wave_b_required)
             append_history(
                 slug,
@@ -1814,13 +1964,19 @@ def run(argv: list[str]) -> int:
     # por variante e nenhum token cru vaza em qualquer subtype. Fluem pelo MESMO
     # threading dos tokens de source (intake_tokens → _run_waves_for_subtype →
     # Wave A render). O engine só sanitiza/fingerprint; a análise é do conductor.
-    screenshot_result = _elicit_screenshot(feature_path, subtype, starting_wave)
-    if screenshot_result is not None:
+    # C-08: _elicit_screenshot agora devolve uma LISTA de results (0+ paths).
+    screenshot_results = _elicit_screenshot(feature_path, subtype, starting_wave)
+    for _result in screenshot_results:
         # WR-02: persiste fingerprint + platform_hint (senão descartados) pro
-        # conductor herdar a provenance sem recomputar os pixels.
-        _record_screenshot_manifest(feature_path, screenshot_result)
-    _ss_count = "1" if screenshot_result else "0"
-    _ss_paths = screenshot_result["path"] if screenshot_result else "none"
+        # conductor herdar a provenance sem recomputar os pixels. O manifest é
+        # idempotente por filename — múltiplos paths acumulam.
+        _record_screenshot_manifest(feature_path, _result)
+    _ss_count = str(len(screenshot_results))
+    _ss_paths = (
+        ",".join(r["path"] for r in screenshot_results)
+        if screenshot_results
+        else "none"
+    )
     intake_tokens.update(
         {
             "{{screenshots_count}}": _ss_count,
@@ -1842,9 +1998,11 @@ def run(argv: list[str]) -> int:
         )
         if rc != 0:
             return rc
-    except PromptAbortedError:
+    except _PAUSE_OR_CANCEL:
+        # C-06: catch-all de pausa nos waves — persiste deferred antes de
+        # re-levantar (cli.main → exit 2 pausa / 130 cancel).
         _persist_deferred(slug, project_root, "user-pause")
-        return 130
+        raise
 
     # All waves consumed. Mark planned and close out.
     final_state = read_l1_status(slug, project_root) or state

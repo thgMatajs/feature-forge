@@ -12,6 +12,26 @@ def test_module_imports() -> None:
     assert callable(verify.run)
 
 
+def test_resolve_scope_strips_json_meta_flag(tmp_project_root) -> None:
+    """C-39 (PR21-I8): `--json` posicional não é consumido como slug de feature.
+
+    Antes do fix, `forge verify --json` resolveria `--json` como feature slug.
+    Agora a meta-flag é removida antes do parse posicional → cai na inferência
+    de feature ativa (vazia neste tmp → "").
+    """
+    kind, target = verify._resolve_scope(
+        ["--json"], tmp_project_root, allow_prompt=False
+    )
+    assert kind == "feature"
+    assert target == "", f"--json não deveria virar slug; got {target!r}"
+    # E não atrapalha um TASK- legítimo que venha depois da flag.
+    kind2, target2 = verify._resolve_scope(
+        ["--json", "TASK-0007"], tmp_project_root, allow_prompt=False
+    )
+    assert kind2 == "task"
+    assert target2 == "TASK-0007"
+
+
 def test_run_empty_args_returns_nonzero_on_non_forge_project(
     monkeypatch: pytest.MonkeyPatch, tmp_project_root, capsys
 ) -> None:

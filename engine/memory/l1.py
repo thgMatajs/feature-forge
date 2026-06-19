@@ -43,11 +43,9 @@ _VALID_STATES = {
     "planned",
     "implementing",
     "verifying",
-    "verified",
     "done",
     "deferred",
     "aborted",
-    "paused",
     # Discipline §9 — engine-driven block when ≥1 task carries an unresolved
     # blocking external dep. Sibling of `deferred` (human-driven pause). Set
     # by `engine.implement` on first refusal; cleared by `engine.reconfigure`

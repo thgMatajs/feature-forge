@@ -56,3 +56,27 @@ def test_read_settings_tolerant_plain_json_still_works():
     content = '{"theme": "light"}'
     result = read_settings_tolerant(content)
     assert result["theme"] == "light"
+
+
+def test_merge_tolerates_non_dict_hooks():
+    """C-07b (PR18-R6): `hooks` num shape inesperado (string) não derruba o merge.
+
+    Antes, `result.setdefault('hooks', {})` devolvia a string e `.setdefault`
+    estourava AttributeError. Agora o valor não-dict é preservado sob backup e o
+    merge segue."""
+    existing = {"hooks": "garbage-string", "theme": "dark"}
+    additions = {"hooks": {"PreToolUse": [{"command": "forge ingest"}]}}
+    result = merge_settings_json(existing, additions)
+    assert isinstance(result["hooks"], dict)
+    assert result["hooks"]["__forge_backup__"] == "garbage-string"
+    assert result["hooks"]["PreToolUse"] == [{"command": "forge ingest"}]
+    assert result["theme"] == "dark"
+
+
+def test_merge_tolerates_non_list_hook_stage():
+    """C-07b: `hooks.<stage>` não-lista é preservado sob backup, stage vira lista."""
+    existing = {"hooks": {"PreToolUse": "not-a-list"}}
+    additions = {"hooks": {"PreToolUse": [{"command": "forge ingest"}]}}
+    result = merge_settings_json(existing, additions)
+    assert result["hooks"]["PreToolUse__forge_backup__"] == "not-a-list"
+    assert result["hooks"]["PreToolUse"] == [{"command": "forge ingest"}]

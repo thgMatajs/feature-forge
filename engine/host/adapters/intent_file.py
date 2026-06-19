@@ -32,9 +32,10 @@ unblocks Task 0.7b (question.py delegate refactor) by guaranteeing
 intent-id stability and pending-shape parity bit-a-bit with the native
 path.
 
-Legacy callsites (``engine/ui/question.py`` and friends) continue to
-call ``intent_state`` without ``state_dir`` and keep writing to the
-legacy ``.claude/state/`` anchor — Task 0.7b unifies them later.
+Callsites (``engine/ui/question.py`` and friends) chamam ``intent_state``
+sem ``state_dir``; o default resolve pra ``.claude/forge/state/`` (anchor
+canônico v1.3 via ``forge_state_dir``). O anchor legado ``.claude/state/``
+foi aposentado — não há mais divergência de raia entre os callsites.
 """
 from __future__ import annotations
 
@@ -288,16 +289,24 @@ class IntentFileAdapter(HostAdapter):
             validator_hint=validator_hint,
             paths_detail=paths_detail,
         )
-        intent_state.detect_race(
-            self.project_root,
-            new_intent_id=intent_id,
-            state_dir=self._state_dir,
-        )
-        intent_state.write_pending(
-            intent,
-            self.project_root,
-            state_dir=self._state_dir,
-        )
+        # C4 CONC-1 (B): a seção crítica detect_race+write_pending roda sob
+        # lock exclusivo por-root. Fecha a janela TOCTOU em que dois processos
+        # forge ambos passam pelo detect_race (pending ausente) antes de
+        # qualquer escrita. O lock file é dedicado (forge-pending.lock), não o
+        # próprio pending.json — ver intent_state.pending_lock.
+        with intent_state.pending_lock(
+            self.project_root, state_dir=self._state_dir
+        ):
+            intent_state.detect_race(
+                self.project_root,
+                new_intent_id=intent_id,
+                state_dir=self._state_dir,
+            )
+            intent_state.write_pending(
+                intent,
+                self.project_root,
+                state_dir=self._state_dir,
+            )
         raise PausedForInputError(
             f"forge paused awaiting host response (intent-id={intent_id})"
         )

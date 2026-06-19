@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     # eager (validators é layer-superior na arquitetura — engine consome
     # type-only).
     from validators._common import CapabilityCatalog  # noqa: F401
+    from engine.cards.merger import MergedContributions  # noqa: F401
 
 from engine import __version__ as FORGE_VERSION
 from engine.cards.grant import (
@@ -49,7 +50,8 @@ from engine.cards.grant import (
     evaluate_sensitive_grants,
 )
 from engine.cards.loader import load_all_cards, CardManifest
-from engine.cards.merger import merge_contributions
+from engine.cards import CardError
+from engine.cards.merger import merge_contributions, render_merged_template
 from engine.cards.resolver import resolve
 from engine.cards.snapshotter import snapshot_card
 from engine.detection import _eval as _detection_eval
@@ -71,6 +73,12 @@ from engine.ui import progress as ui_progress
 from engine.ui import question as ui_question
 from engine.ui import question  # alias para mock-friendly access (engine.init.question.ask)
 from engine.ui import renderer
+from engine.ui.exit_codes import (
+    ERR_ABORTED,
+    ERR_INIT_FAILED,
+    ERR_USAGE,
+    fail_with_tag,
+)
 from engine.utils.paths import (
     cards_canonical_dir,
     cards_dir,
@@ -114,7 +122,7 @@ class _InitCheckpoint:
     """State serialized on Ctrl+C, so a follow-up `forge init` can offer resume.
 
     DRIFT-1 W2.T3b — extend: campo ``intent_id`` adicionado pra correlacao
-    com ``.claude/state/forge-response.json`` no protocolo intent. Default
+    com ``.claude/forge/state/forge-response.json`` no protocolo intent. Default
     ``None`` preserva o contract dos call sites legacy (Ctrl+C pause sem
     prompt ativo). Quando o pause vem do chokepoint (PausedForInputError),
     o handler grava intent_id ANTES do ask — re-invocacao usa esse campo
@@ -200,30 +208,12 @@ def _is_git_repo(root: Path) -> bool:
     return (root / ".git").exists()
 
 
-def _detect_brownfield(project_root: Path) -> bool:
-    """True if the project's `.claude/` directory already carries user-owned
-    content that forge must not touch.
-
-    Signals:
-    - `.claude/skills/` exists and is non-empty
-    - `.claude/agents/` exists and is non-empty
-    - `.claude/settings.json` exists with non-zero size
-
-    Used by init to switch into brownfield-safe mode (Wave 1) — append-only
-    settings merge, hook delegator chained, sub-namespace `.claude/forge/`
-    isolation. Spec §3 / §4.
-    """
-    claude_dir = project_root / ".claude"
-    if not claude_dir.exists():
-        return False
-    for sub in ("skills", "agents"):
-        d = claude_dir / sub
-        if d.exists() and any(d.iterdir()):
-            return True
-    settings = claude_dir / "settings.json"
-    if settings.exists() and settings.stat().st_size > 0:
-        return True
-    return False
+# M6 (W-DEBT): `_detect_brownfield` removido — era dead-code (zero caller em
+# engine/, só testes) e seu docstring anunciava um switch de modo que não
+# existe. O init JÁ é brownfield-safe por outros meios, sempre-ativos e
+# independentes de detecção: merge_settings_json append-only, hook delegator
+# encadeado, e isolamento via sub-namespace .claude/forge/. Não há "modo
+# brownfield" condicional pra ligar.
 
 
 @dataclass
@@ -735,6 +725,12 @@ def _install_git_hooks(project_root: Path) -> None:
                 except OSError:
                     continue
 
+        # C-09 (PR18-R7): resolve o forge hook RELATIVO ao wrapper (como o user
+        # hook já faz com `$(dirname "$0")`). Antes embutia o path ABSOLUTO de
+        # forge_hook → o wrapper quebrava se o repo fosse movido/clonado pra
+        # outro caminho. `os.path.relpath` calcula `.git/hooks` → forge hooks
+        # dir (tipicamente `../../.claude/forge/hooks/<name>`) — move/clone-safe.
+        forge_hook_rel = os.path.relpath(forge_hook, target.parent)
         # Escreve o wrapper encadeado
         wrapper = (
             "#!/usr/bin/env bash\n"
@@ -744,8 +740,8 @@ def _install_git_hooks(project_root: Path) -> None:
             f'if [ -x "$(dirname "$0")/{git_name}.user" ]; then\n'
             f'    "$(dirname "$0")/{git_name}.user" "$@"\n'
             "fi\n"
-            "# Then run forge hook\n"
-            f'exec "{forge_hook}" "$@"\n'
+            "# Then run forge hook (resolved relative to this wrapper — C-09)\n"
+            f'exec "$(dirname "$0")/{forge_hook_rel}" "$@"\n'
         )
         try:
             target.write_text(wrapper)
@@ -884,6 +880,103 @@ def _merge_forge_hooks_into_settings(project_root: Path) -> None:
 _FORGE_DRIVER_MARKER = "<!-- FORGE_AI_DRIVER -->"
 
 
+def _source_template_name(target: str) -> str:
+    """Mapeia o `target` de um card (nome de OUTPUT) pro template-fonte.
+
+    Convenção canônica (``docs/schemas/card.md`` + ``cards/*/card.yaml``): o campo
+    ``target`` carrega o nome do documento de saída do pacote de feature
+    (ex.: ``tech-spec.md``, ``task-contract.yaml``, ``data-contract-spec.yaml``).
+    O template-fonte em ``FORGE_HOME/templates/`` carrega o sufixo ``.template``
+    antes da extensão (ex.: ``tech-spec.template.md``) — a MESMA convenção que as
+    tuplas ``WAVE_*_TEMPLATES`` em ``plan.py`` (``(template_name, output_name)``)
+    encodam, e que ``plan._render_template`` procura por ``template_name``.
+
+    Insere ``.template`` antes da última extensão. Se o nome já carrega
+    ``.template.`` (target declarado no formato de template, defensivo), retorna
+    inalterado pra não duplicar o sufixo.
+    """
+    if ".template." in target:
+        return target
+    stem, dot, ext = target.rpartition(".")
+    if not dot:
+        # Sem extensão — nada a inserir; devolve o nome cru (será pulado se
+        # o base não existir, com aviso).
+        return target
+    return f"{stem}.template.{ext}"
+
+
+def _materialize_merged_templates(
+    project_root: Path, merged: "MergedContributions"
+) -> list[Path]:
+    """CARDS-DISCONNECT — materializa os templates mergeados per-projeto.
+
+    Pra cada `target` em `merged.templates` (nome de OUTPUT do card, ex.
+    ``tech-spec.md``), resolve o template-fonte correspondente
+    (``tech-spec.template.md``) via ``_source_template_name`` — a MESMA convenção
+    ``(template_name, output_name)`` que as tuplas ``WAVE_*_TEMPLATES`` de
+    ``plan.py`` usam. Renderiza o base canônico do FORGE_HOME com as contribuições
+    aplicadas (reusando ``render_merged_template`` — o MESMO render que
+    ``forge raw rebuild-templates`` usa) e escreve em
+    ``.claude/forge/templates/{template_name}``. O materializado carrega o nome do
+    template-fonte (não o de output) porque ``plan._render_template`` resolve por
+    ``template_name`` — assim o fluxo default `init`→`plan` enxerga as seções que
+    os cards ativos contribuíram.
+
+    Idempotente: re-init re-renderiza por cima. Targets cujo template-fonte não
+    existe em FORGE_HOME/templates são pulados com aviso (mesma postura tolerante
+    do `rebuild-templates`). Retorna a lista de paths materializados.
+    """
+    if not merged.templates:
+        return []
+    templates_root = forge_home() / "templates"
+    if not templates_root.is_dir():
+        renderer.write(
+            renderer.colored(
+                f"  ! templates dir não encontrado em {templates_root} — "
+                "materialização de cards pulada.",
+                "yellow",
+            )
+        )
+        return []
+    dest_root = forge_dir(project_root) / "templates"
+    written: list[Path] = []
+    # C-47 (PR22-R-005): falha de render de um card ATIVO (fragmento faltante,
+    # conflito YAML) é FALHA DE INIT, não warning. Antes era rebaixada a aviso
+    # amarelo + continue → template set parcial silencioso (o `forge plan`
+    # downstream renderizava sem a seção contribuída, sem ninguém saber).
+    # Coletamos as falhas e levantamos InitError APÓS o loop (mensagem agregada).
+    render_failures: list[str] = []
+    for target, contributions in sorted(merged.templates.items()):
+        template_name = _source_template_name(target)
+        base = templates_root / template_name
+        if not base.is_file():
+            # Base ausente em FORGE_HOME (clone parcial) = tolerância DOCUMENTADA
+            # — pula com aviso (mantido do comportamento anterior, NÃO é falha de
+            # card ativo). C-47 só promove a falha de RENDER.
+            renderer.write(
+                renderer.colored(
+                    f"  ! template-fonte ausente em FORGE_HOME: {template_name} "
+                    f"(target {target}) — pulado.",
+                    "yellow",
+                )
+            )
+            continue
+        out = dest_root / template_name
+        ensure_dir(out.parent)
+        try:
+            render_merged_template(base, contributions, out)
+            written.append(out)
+        except CardError as exc:
+            render_failures.append(f"{target}: {exc}")
+    if render_failures:
+        raise InitError(
+            "materialização de templates falhou — card(s) ativo(s) com "
+            "fragmento/conflito (init NÃO pode shippar template set parcial):\n  · "
+            + "\n  · ".join(render_failures)
+        )
+    return written
+
+
 def _install_ai_driver(project_root: Path) -> None:
     """Instala a SKILL.md (Claude Code) + AGENTS.md (opencode) no consumidor.
 
@@ -915,10 +1008,19 @@ def _install_ai_driver(project_root: Path) -> None:
         if not skill_dst.exists():
             ensure_dir(skill_dst.parent)
             skill_dst.write_text(canonical, encoding="utf-8")
-        elif _FORGE_DRIVER_MARKER in skill_dst.read_text(encoding="utf-8"):
-            # É a nossa skill (carrega o marker) → canonical wins (idempotente).
-            skill_dst.write_text(canonical, encoding="utf-8")
-        # else: existe mas é do usuário (sem marker) → preserva, não clobber.
+        else:
+            # C-07 (PR18-R6): o SKILL.md do usuário pode não decodar em UTF-8
+            # (binário/encoding exótico). Ler pra checar o marker estouraria
+            # UnicodeDecodeError → derrubava o init. Tratamos não-decodável como
+            # "é do usuário" (sem marker confiável) → PRESERVA, não clobber.
+            try:
+                existing_skill = skill_dst.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                existing_skill = ""  # não-decodável → preserva (não é a nossa)
+            if _FORGE_DRIVER_MARKER in existing_skill:
+                # É a nossa skill (carrega o marker) → canonical wins (idempotente).
+                skill_dst.write_text(canonical, encoding="utf-8")
+            # else: existe mas é do usuário (sem marker) → preserva, não clobber.
 
     # AGENTS.md (append-only via marker)
     agents_tpl = home / "templates" / "AGENTS.md.template"
@@ -928,7 +1030,20 @@ def _install_ai_driver(project_root: Path) -> None:
         if not agents_dst.exists():
             agents_dst.write_text(block + "\n", encoding="utf-8")
         else:
-            current = agents_dst.read_text(encoding="utf-8")
+            # C-07: AGENTS.md não-decodável → warn + skip (não corrompe o
+            # arquivo do usuário com um append cego sobre bytes não-UTF8).
+            try:
+                current = agents_dst.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                renderer.write(
+                    renderer.colored(
+                        "AGENTS.md existente não decodável em UTF-8 — "
+                        "driver opencode não anexado (preservando o arquivo). "
+                        "Reinstale após normalizar o encoding.",
+                        "yellow",
+                    )
+                )
+                return
             if _FORGE_DRIVER_MARKER not in current:
                 agents_dst.write_text(
                     current.rstrip("\n") + "\n\n" + block + "\n", encoding="utf-8"
@@ -1110,7 +1225,7 @@ def run(argv: list[str]) -> int:
                 "yellow",
             )
         )
-        return 2
+        return fail_with_tag(ERR_USAGE)
 
     project_root = Path.cwd().resolve()
     try:
@@ -1125,7 +1240,7 @@ def run(argv: list[str]) -> int:
     except InitError as exc:
         renderer.write("")
         renderer.write(renderer.colored(f"forge init falhou: {exc}", "red"))
-        return 2
+        return fail_with_tag(ERR_INIT_FAILED)
 
 
 def _run_pipeline(project_root: Path) -> int:
@@ -1191,7 +1306,7 @@ def _run_pipeline(project_root: Path) -> int:
                 ],
             )
         )
-        return 2
+        return fail_with_tag(ERR_ABORTED)
 
     existing_checkpoint = _load_checkpoint(project_root)
     if existing_checkpoint:
@@ -1252,7 +1367,7 @@ def _run_pipeline(project_root: Path) -> int:
             renderer.write(
                 "Ok, abortado. O checkpoint segue intacto pra inspeção manual."
             )
-            return 2
+            return fail_with_tag(ERR_ABORTED)
         # resume → segue sem apagar o checkpoint; o pipeline regrava no
         # final via _clear_checkpoint quando completar com sucesso.
 
@@ -1473,7 +1588,7 @@ def _run_pipeline(project_root: Path) -> int:
                 ],
             )
         )
-        return 2
+        return fail_with_tag(ERR_ABORTED)
 
     if res.warnings:
         for w in res.warnings:
@@ -1625,6 +1740,19 @@ def _run_pipeline(project_root: Path) -> int:
     if merged.warnings:
         for w in merged.warnings[:5]:
             renderer.write(renderer.colored(f"merger warn: {w}", "yellow"))
+    # CARDS-DISCONNECT (W-DEBT): materializa os templates mergeados per-projeto
+    # em .claude/forge/templates/ — o fluxo default init→plan passa a enxergar
+    # as seções contribuídas pelos cards ativos (antes só rebuild-templates
+    # global fazia a ponte).
+    materialized = _materialize_merged_templates(project_root, merged)
+    if materialized:
+        renderer.write(
+            renderer.colored(
+                f"  ✓ {len(materialized)} template(s) de card materializado(s) "
+                "em .claude/forge/templates/",
+                "green",
+            )
+        )
 
     # ── Step 9 — Inventory snapshots ────────────────────────────────────────
     ensure_dir(inventory_dir(project_root))
@@ -1844,12 +1972,16 @@ def _run_pipeline(project_root: Path) -> int:
         _install_ai_driver(project_root)
         if n_hooks:
             renderer.write(f"  └─ {n_hooks} hooks instalados em .claude/forge/hooks/")
-    except (OSError, shutil.Error) as exc:  # pragma: no cover - hooks must not block init
-        # MD-03 (final review 2026-06-15): narrow scope is intentional —
-        # `_install_hooks` + `_install_git_hooks` only use shutil.copy*/chmod/
-        # symlink today, so (OSError, shutil.Error) is exhaustive. If hooks
-        # ever adopt tar/zip extraction, expand to include `tarfile.TarError`
-        # / `zipfile.BadZipFile`, or re-broaden with `BLE001` noqa + comment.
+    except (OSError, shutil.Error, AttributeError, TypeError, ValueError) as exc:  # pragma: no cover - hooks must not block init
+        # MD-03 (final review 2026-06-15): scope inicial era (OSError,
+        # shutil.Error). C-07 (PR18-R6): ampliado pra
+        # (AttributeError, TypeError, ValueError) porque este bloco agora cobre
+        # tambem `_merge_forge_hooks_into_settings` (settings.json de shape
+        # inesperado → AttributeError/TypeError) e `_install_ai_driver`
+        # (UnicodeDecodeError ⊂ ValueError ao ler SKILL/AGENTS do usuario). O
+        # contrato "hooks/driver não bloqueiam init" é preservado — qualquer
+        # falha vira warn amarelo, nunca derruba o init. UnicodeDecodeError já é
+        # tratado dentro de `_install_ai_driver`; este catch é defense-in-depth.
         renderer.write(
             renderer.colored(f"hooks install warn: {exc}", "yellow")
         )

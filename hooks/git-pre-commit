@@ -10,9 +10,18 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-HOOK="$PROJECT_ROOT/.claude/hooks/pre-commit-feature-forge.sh"
 
-if [[ -x "$HOOK" ]]; then
-    exec "$HOOK" "$@"
+# C2 DEAD-VERIFY fix: o validador pode viver em dois lugares dependendo de
+# como o forge foi instalado. Checa o sub-namespace canônico (.claude/forge/
+# hooks/, onde `forge init` instala em consumidores) ANTES do path legado
+# (.claude/hooks/, onde o hook deste repo maintainer vive). A precedência
+# espelha engine/utils/paths.py::active_config_path (primário → legado).
+HOOK_PRIMARY="$PROJECT_ROOT/.claude/forge/hooks/pre-commit-feature-forge.sh"
+HOOK_LEGACY="$PROJECT_ROOT/.claude/hooks/pre-commit-feature-forge.sh"
+
+if [[ -x "$HOOK_PRIMARY" ]]; then
+    exec "$HOOK_PRIMARY" "$@"
+elif [[ -x "$HOOK_LEGACY" ]]; then
+    exec "$HOOK_LEGACY" "$@"
 fi
 exit 0
