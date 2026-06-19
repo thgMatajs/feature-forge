@@ -327,3 +327,45 @@ No init brownfield do MeoBonsai (firebase+rest híbrido), o eixo `data` em CONFL
 
 ### [P-15] 🐛 Crítico — Loop AI-first do `forge plan` quebrado (guard de re-entrada intercepta) — fix do R1 foi estreito
 `forge plan <slug>` cria a feature (status=planning) na 1ª invocação; toda re-invocação do loop do host bate no guard "feature já existe" (id próprio) ANTES de re-alcançar o prompt em-voo → a response pendente não casa → IntentMismatchError → exit 1. Mesma classe do P-01 (init), mas o fix do R1 gateou só o resume do init (per-comando). Atinge o comando CENTRAL — o modelo AI-first não fecha end-to-end mesmo pós-R1. Guards afetados: plan `_handle_active_slug_collision` (plan.py:1257), plan `_handle_done_feature_branch` (plan.py:1313), reconfigure draft-confirm (reconfigure.py:246). CORRIGIDO no round 4 via helper compartilhado `host_is_replaying` (generaliza o gate do P-01).
+
+---
+
+## Findings round 5 + validação de lifecycle (2026-06-19)
+
+Após R4 (fix generalizado de re-entry guards), o piloto continuou pelo lifecycle no engine corrigido, com um subagente-conductor preenchendo os artefatos do feature de teste `meo-divider`.
+
+### Validações positivas (o que passou a funcionar)
+
+- ✅ **`forge plan` dirige end-to-end via loop canônico** (P-15 corrigido). Waves A→E avançam sem IntentMismatchError, sem workaround. Retomada/resume limpa ("Detectei plano em andamento — retomando na Wave X").
+- ✅ **Readiness (Wave E) enforça antes do dispatch.** Plano vazio (placeholders) é pego pela readiness (`readiness-not-ready`, ask_three_paths, pausa exit-2 corretamente). Plano preenchido → `readiness_verdict.status: ready` → "Próximo: forge implement". O caminho "re-revisar" RE-REVISA de forma NÃO-destrutiva (não sobrescreve os artefatos preenchidos — verificado via diff vs backup).
+- ✅ **D5 RESOLVIDO — `forge implement` é REAL, não stub.** Mostra **Plan Mode** por task (contrato: allowed_files, BDD coberto, gates ativos: readiness-must-be-ready / no-files-outside-allowed-files / validations-must-pass / completion-evidence-required / no-invented-behavior) → confirm → Apply Mode. O modelo AI-first task-driven está vivo.
+- ✅ **D4/D5 — README "Limites conhecidos" está STALE.** A seção ainda afirma "`forge implement` é stub manual — Apply Mode é Phase 6" e "plan.py/implement.py narram fluxo... integração Anthropic API é Phase 6". Na prática (modelo CC-fronted), plan e implement são fluxos reais dirigidos pelo host AI. Recomendado reescrever a seção "Limites conhecidos".
+
+### [P-16] 🧱 Média — Gates de avanço de wave (A→D) não validam preenchimento de artefato
+
+Os gates "Status da Wave X? continuar/pausar" avançam mesmo com os artefatos 100% `{{placeholder}}`. O validator `check_unfilled_placeholders` NÃO está plugado no gate de avanço. **Mitigado:** a readiness (Wave E) pega antes do dispatch. Mas o feedback é tardio — o host descobre só no fim que nada foi preenchido. Recomendado: validar (ou ao menos avisar) o preenchimento por-wave, não só no gate final. Pointer: handler do `plan` (gates de wave) + `validators/check_unfilled_placeholders.py`.
+
+### [P-17] 🐛 Alta — `forge implement` bloqueado por phase-lock stale ("by 'None'")
+
+`forge implement meo-divider` (logo após plan completar com readiness=ready) falha:
+```
+forge implement: 'meo-divider' phase-locked by 'None'. Run `forge undo` to release, or wait.
+[FORGE-ERR:LOCKED]
+```
+Causa-raiz (duas facetas):
+1. **Lock não liberado no plan-complete.** O arquivo `.claude/memory/L1/meo-divider/.phase-lock` persiste com conteúdo `"planning"` após o plan completar. Já o `status.json` diz `"phase-lock": null` — **as duas fontes de verdade divergem** (arquivo `.phase-lock` vs `status.json:phase-lock`). O plan adquire o phase-lock da fase "planning" e não o libera ao finalizar.
+2. **Mensagem de erro errada.** Diz "phase-locked by **'None'**" quando o conteúdo do lock é `"planning"` — o código formata o holder como None em vez do valor real. Diagnóstico enganoso.
+
+**Workaround usado no piloto:** `rm .claude/memory/L1/<slug>/.phase-lock` → implement destrava e roda. **Fix recomendado:** (a) plan-complete deve liberar o phase-lock; (b) reconciliar `.phase-lock` (arquivo) ↔ `status.json:phase-lock` (fonte única); (c) corrigir a mensagem pra mostrar o holder real. Pointers: lógica de phase-lock em `engine/` (memory L1) + handler de plan-complete + o check no `engine/implement.py`.
+
+### Estado do AI-first end-to-end (pós-R1+R4)
+
+| Etapa | Status |
+|---|---|
+| init | ✅ completa (R1) |
+| plan | ✅ end-to-end com conductor (R4) |
+| graph/status/inventory | ✅ funcionam (reuse-intelligence achou P-0001) |
+| implement | ✅ REAL (Plan Mode); destrava após workaround do P-17 |
+| QA (verify/doctor/qa) | ⏳ não exercitado nesta campanha |
+
+Bloqueadores remanescentes pra um lifecycle 100% limpo: **P-17** (phase-lock stale — Alta). Demais (P-16/P-14/P-13) são qualidade, não bloqueiam.
