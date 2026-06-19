@@ -51,6 +51,61 @@ def test_undo_abort_restores_prior_status(
     assert "aborted-reason" not in st.raw
 
 
+def test_double_abort_preserves_original_pre_abort_status(
+    tmp_project_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C-48 (PR22-R-006): abortar uma feature JÁ aborted não envenena o
+    pre-abort-status com 'aborted'. O status real pré-1º-abort é preservado, e
+    o un-abort restaura pra ele (não fica em dead-end 'aborted')."""
+    monkeypatch.setattr("engine.undo.question.confirm", lambda *a, **k: True)
+    _seed(tmp_project_root, "demo", "implementing")
+    _abort_feature(tmp_project_root, "demo", reason="1º abort")
+    # 2º abort (double) — NÃO deve sobrescrever pre-abort-status com 'aborted'.
+    _abort_feature(tmp_project_root, "demo", reason="2º abort")
+    st = read_l1_status("demo", tmp_project_root)
+    assert st is not None
+    assert st.raw.get("pre-abort-status") == "implementing", (
+        "double-abort não pode envenenar pre-abort-status com 'aborted'"
+    )
+    # un-abort restaura pro estado real, não pra 'aborted'.
+    assert _undo_abort(tmp_project_root, "demo") is True
+    st2 = read_l1_status("demo", tmp_project_root)
+    assert st2 is not None
+    assert st2.status == "implementing"
+
+
+def test_abort_tolerates_non_dict_raw(tmp_project_root: Path) -> None:
+    """C-50 (PR22-B-03): status.json com `raw` não-dict não derruba _abort_feature."""
+    # Escreve um status.json com raw corrompido (top-level não-dict no campo).
+    write_l1_status(
+        L1State(
+            feature_slug="corrupt",
+            status="planning",
+            last_action_at="2026-06-18T00:00:00Z",
+            last_action_kind="seed",
+        ),
+        tmp_project_root,
+    )
+    state = read_l1_status("corrupt", tmp_project_root)
+    assert state is not None
+    state.raw = "not-a-dict"  # type: ignore[assignment]
+    # _abort_feature deve coagir raw pra dict sem estourar AttributeError.
+    import engine.undo as undo_mod
+    monkeypatch_state = state
+
+    def _fake_read(slug, root):
+        return monkeypatch_state if slug == "corrupt" else None
+
+    orig = undo_mod.read_l1_status
+    undo_mod.read_l1_status = _fake_read  # type: ignore[assignment]
+    try:
+        assert undo_mod._abort_feature(tmp_project_root, "corrupt", "x") is True
+    finally:
+        undo_mod.read_l1_status = orig  # type: ignore[assignment]
+    assert isinstance(monkeypatch_state.raw, dict)
+    assert monkeypatch_state.raw.get("pre-abort-status") == "planning"
+
+
 def test_undo_abort_defaults_deferred_when_no_marker(
     tmp_project_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

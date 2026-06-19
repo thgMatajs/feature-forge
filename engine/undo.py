@@ -436,11 +436,23 @@ def _abort_feature(project_root: Path, feature_slug: str, reason: str) -> bool:
             phase_lock=None,
         )
     else:
+        # C-50 (PR22-B-03): guard de tipo — `state.raw` pode não ser dict
+        # (status.json corrompido / shape inesperado) antes da mutação por chave.
+        if not isinstance(state.raw, dict):
+            state.raw = {}
         # ABORTED-DEADEND (W-DEBT): preserva o status pré-abort no raw ANTES do
         # overwrite, pra que `_undo_abort` possa restaurar de forma determinística
         # (sem reconstruir do history.jsonl). No branch `state is None` não há
         # status prévio — `_undo_abort` defaulta `deferred`.
-        state.raw["pre-abort-status"] = state.status
+        #
+        # C-48 (PR22-R-006): só grava `pre-abort-status` se o estado atual NÃO é
+        # já 'aborted'. Um double-abort (abortar uma feature já aborted)
+        # sobrescrevia pre-abort-status com 'aborted' — envenenava o guard WR-01
+        # de `_undo_abort` (o un-abort restauraria pra 'aborted', dead-end). Ao
+        # pular a gravação no double-abort, o pre-abort-status original (o estado
+        # real pré-1º-abort) é preservado.
+        if state.status != "aborted":
+            state.raw["pre-abort-status"] = state.status
         state.status = "aborted"
         state.last_action_kind = "aborted"
         state.last_action_at = _utc_now_iso()
@@ -484,6 +496,10 @@ def _undo_abort(project_root: Path, feature_slug: str) -> bool:
             "yellow",
         ))
         return False
+    # C-50 (PR22-B-03): guard de tipo antes de `.get`/`.pop` — `state.raw`
+    # corrompido (não-dict) estouraria AttributeError no recovery.
+    if not isinstance(state.raw, dict):
+        state.raw = {}
     raw_prior = state.raw.get("pre-abort-status") or "deferred"
     if raw_prior in _VALID_STATES:
         prior = raw_prior
