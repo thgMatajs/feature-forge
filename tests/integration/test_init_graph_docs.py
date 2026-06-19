@@ -9,14 +9,19 @@ Refs: docs/reports/auditoria-consolidada-2026-06-17.md §5/§6 (NO-ONBOARDING P1
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 
 from engine import init as forge_init
+from engine.graph_cli import _HANDLERS
 
 
 pytestmark = pytest.mark.integration
+
+# Hook canônico desta worktree (Camada 2) — usado pra costurar path init ↔ hook.
+_HOOK = Path(__file__).resolve().parents[2] / "hooks" / "session-start-drift-check.sh"
 
 
 def test_write_graph_docs_creates_both_files(tmp_forge_project: Path) -> None:
@@ -77,10 +82,44 @@ def test_skill_file_path_matches_hook_reference(tmp_forge_project: Path) -> None
 
     O hook (Camada 2) imprime 'referência completa: .claude/forge/graph-skill.md'.
     Este teste garante que esse path é exatamente onde o init grava o arquivo —
-    sem essa amarração, o hook apontaria pra um arquivo inexistente.
+    sem essa amarração, o hook apontaria pra um arquivo inexistente. Lê os DOIS
+    lados da costura: o path que o init produz E o corpo do hook, assertando que
+    a string literal aparece no hook (I-6). Renomear o arquivo num lado sem o
+    outro quebra este teste.
     """
     _, graph_skill = forge_init._write_graph_docs(tmp_forge_project)
     rel = graph_skill.relative_to(tmp_forge_project)
     assert rel.as_posix() == ".claude/forge/graph-skill.md"
     # O conteúdo escrito é o constant canônico (não um stub divergente).
     assert graph_skill.read_text(encoding="utf-8") == forge_init._GRAPH_SKILL_MD
+    # Lado do hook: o path que o init grava aparece LITERALMENTE no corpo do hook.
+    hook_body = _HOOK.read_text(encoding="utf-8")
+    assert rel.as_posix() in hook_body
+
+
+def test_doc_query_labels_match_handlers(tmp_forge_project: Path) -> None:
+    """Os labels canônicos citados na tabela do `_GRAPH_SKILL_MD` batem `_HANDLERS`.
+
+    A tabela tarefa→query→exemplo hardcoda pares `qN` (label) — ex.: `q3`
+    (orphan-files). Sem amarração, renomear um label em `engine.graph_cli._HANDLERS`
+    deixaria o doc gerado mentindo sem nenhum teste quebrar (drift docs-vivo↔código).
+    Este teste extrai cada par `qN` (label) da tabela e assere igualdade canônica
+    com `_HANDLERS[str(N)][0]`. Cobre o lado do `_GRAPH_SKILL_MD`, que usa labels
+    canônicos; o hook usa descritores abreviados (ex.: `q3 orphans`) e é coberto
+    por test_session_start_graph_reminder.py.
+    """
+    _, graph_skill = forge_init._write_graph_docs(tmp_forge_project)
+    body = graph_skill.read_text(encoding="utf-8")
+
+    # Captura pares `qN` (label-canônico) ou `r` (label) da tabela markdown.
+    pairs = re.findall(r"`(q\d+|r)`\s*\(([a-z0-9-]+)\)", body)
+    assert pairs, "nenhum par `qN` (label) encontrado na tabela do graph-skill"
+
+    for token, label in pairs:
+        key = "r" if token == "r" else token[1:]  # `q3` → "3"; `r` → "r"
+        assert key in _HANDLERS, f"{token} não é um handler conhecido"
+        canonical = _HANDLERS[key][0]
+        assert label == canonical, (
+            f"label de {token} no graph-skill ({label!r}) diverge do canônico "
+            f"em _HANDLERS ({canonical!r})"
+        )

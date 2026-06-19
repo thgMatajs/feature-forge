@@ -51,6 +51,14 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   absoluta um grafo populado — texto condicional ("quando este projeto tem
   fontes suportadas indexadas") cobre o caso greenfield, onde o grafo pode
   estar vazio até a primeira indexação e as queries retornam listas vazias.
+- W-GRAPH I-5: novo teste `test_doc_query_labels_match_handlers` amarra os
+  labels canônicos da tabela do `_GRAPH_SKILL_MD` (ex.: `q3` (orphan-files)) a
+  `engine.graph_cli._HANDLERS` — renomear um label no código sem atualizar o
+  doc gerado passa a quebrar o teste (fecha drift docs-vivo↔código latente).
+- W-GRAPH I-6: `test_skill_file_path_matches_hook_reference` agora lê o corpo
+  do `session-start-drift-check.sh` e assere que o path `.claude/forge/graph-skill.md`
+  aparece literalmente nele — antes só provava o lado do init; renomear o path
+  num lado sem o outro não quebrava teste.
 - W-GRAPH I-2: `session-start-drift-check.sh` agora detecta TTY no fd 2
   (stderr) e não no fd 1 (stdout). O lembrete graph-first é emitido em stderr
   (`} >&2`), então a heurística de host-awareness precisa casar o stream usado
