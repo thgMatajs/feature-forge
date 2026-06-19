@@ -572,3 +572,42 @@ def test_closed_set_resolves_without_dep_missing(tmp_path: Path) -> None:
     assert not any("DEP-MISSING" in e for e in res.errors), (
         f"resolver ainda reporta DEP-MISSING: {res.errors}"
     )
+
+
+# ── WS-B-3: gate RESOLVER-ERRORS pausa (exit 2) em vez de abortar (P-10) ────
+
+
+@pytest.mark.integration
+def test_resolver_error_gate_pauses_not_aborts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Quando o resolver retorna errors, o gate deve PAUSAR (exit 2, emite
+    intent ask_three_paths) em vez de abortar (exit 1) — P-10. Sem response
+    pendente, a primeira entrada emite o intent e levanta PausedForInputError."""
+    from engine.init import _resolver_error_gate
+
+    monkeypatch.setenv("FORGE_FORCE_INTENT_MODE", "1")
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(PausedForInputError):
+        _resolver_error_gate(
+            ["DEP-MISSING: card 'x' requires 'y' but no active card provides it."],
+            selected_names=["x"],
+            project_root=tmp_path,
+        )
+
+
+def test_drop_unresolvable_parses_card_names() -> None:
+    """_drop_unresolvable_cards remove os cards citados em DEP-MISSING/CONFLICT."""
+    from engine.init import _drop_unresolvable_cards
+
+    class _Stub:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    cards = [_Stub("alpha"), _Stub("beta"), _Stub("gamma")]
+    errors = [
+        "DEP-MISSING: card 'beta' requires 'z' but no active card provides it.",
+    ]
+    kept = _drop_unresolvable_cards(cards, errors)
+    kept_names = {c.name for c in kept}
+    assert kept_names == {"alpha", "gamma"}, kept_names

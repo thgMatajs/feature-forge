@@ -689,6 +689,74 @@ def _close_provider_deps(
     return closed
 
 
+def _resolver_error_gate(
+    errors: list[str],
+    *,
+    selected_names: list[str],
+    project_root: Path,
+) -> str:
+    """Gate de resolver-errors — PAUSA pra escolha (exit 2), não aborta (P-10).
+
+    Retorna a escolha 'a'|'b'|'c'. Na primeira entrada, ask_three_paths emite
+    o intent + levanta PausedForInputError (cli.main → exit 2); na re-entrada
+    consome a response. Mantém exatamente 3 caminhos (disciplina §1).
+    """
+    paths = [
+        {
+            "label": "voltar e re-selecionar o backend",
+            "motive": (
+                "alguns cards ficaram sem dependência satisfeita — re-rodar o "
+                "backend selection pode incluir o provider faltante"
+            ),
+        },
+        {
+            "label": "abortar e investigar os cards canônicos",
+            "motive": (
+                "pode ser um card.yaml com requires sem provider no catálogo "
+                "(bug de card)"
+            ),
+        },
+        {
+            "label": "seguir só com os cards resolvíveis",
+            "motive": (
+                "descarta os cards problemáticos e instala o subconjunto que "
+                "resolve (best-effort)"
+            ),
+        },
+    ]
+    gate_name = (
+        "RESOLVER-ERRORS\n\nErros do resolver:\n"
+        + "\n".join(f"  · {e}" for e in errors[:5])
+    )
+    return ui_question.ask_three_paths(gate_name, paths)
+
+
+def _drop_unresolvable_cards(
+    selected_cards: list[CardManifest],
+    errors: list[str],
+) -> list[CardManifest]:
+    """Remove do conjunto os cards citados nos erros do resolver (best-effort).
+
+    Parse por prefixo estável das mensagens do resolver
+    (``DEP-MISSING``/``CONFLICT-*``: ``card '<name>' …``). Determinístico,
+    preserva a ordem original. NÃO é resolução completa — só uma poda do
+    subconjunto problemático pra um re-resolve no caminho "c" do gate.
+    """
+    import re
+
+    flagged: set[str] = set()
+    for err in errors:
+        for match in re.finditer(r"card '([^']+)'", err):
+            flagged.add(match.group(1))
+        # CONFLICT-SINGULAR lista os providers numa list literal `[...]`.
+        for match in re.finditer(r"\[([^\]]*)\]", err):
+            for token in match.group(1).split(","):
+                name = token.strip().strip("'\"")
+                if name:
+                    flagged.add(name)
+    return [c for c in selected_cards if c.name not in flagged]
+
+
 # ── Hooks install (Step 13) ──────────────────────────────────────────────────
 
 
@@ -1693,29 +1761,36 @@ def _run_pipeline(project_root: Path) -> int:
     renderer.write("Resolvendo cards (deps + conflicts + topo-sort)…")
     res = resolve(selected_cards, user_provided_capabilities=LATENT_CAPS)
     if res.errors:
-        renderer.write(
-            mentor_calmo.three_paths_block(
-                "RESOLVER-ERRORS",
-                what_failed=f"resolver encontrou {len(res.errors)} erro(s) ao casar cards",
-                where=", ".join(c.name for c in selected_cards),
-                why=res.errors[:5],
-                paths=[
-                    {
-                        "label": "voltar e ajustar a configuração de backend (composer/bundle)",
-                        "motive": "alguns cards conflitam com a stack proposta — bundle/composer não cobriram resolução",
-                    },
-                    {
-                        "label": "personalizar (modo manual)",
-                        "motive": "remover cards problemáticos um a um",
-                    },
-                    {
-                        "label": "abortar e investigar os cards canônicos",
-                        "motive": "pode ser um bug do card.yaml",
-                    },
-                ],
-            )
+        # P-10: o gate de resolver-errors PAUSA (exit 2) pra o usuário escolher
+        # recuperação, em vez de abortar (exit 1). Antes era three_paths_block
+        # cosmético + fail_with_tag — o 3-caminhos não aceitava escolha.
+        choice = _resolver_error_gate(
+            res.errors,
+            selected_names=[c.name for c in selected_cards],
+            project_root=project_root,
         )
-        return fail_with_tag(ERR_ABORTED)
+        if choice == "a":
+            # Voltar ao backend selection — escopo R1: instrui o re-run limpo
+            # (o loop estruturado fica pra rodada futura, se necessário).
+            renderer.write(
+                "Re-rode `forge init` após ajustar — o backend será "
+                "re-perguntado."
+            )
+            return fail_with_tag(ERR_ABORTED)
+        if choice == "b":
+            return fail_with_tag(ERR_ABORTED)
+        # choice == "c": filtra os cards citados em DEP-MISSING/CONFLICT e
+        # re-resolve o subconjunto. Se o subconjunto resolve, segue; senão aborta.
+        resolvable = _drop_unresolvable_cards(selected_cards, res.errors)
+        res = resolve(resolvable, user_provided_capabilities=LATENT_CAPS)
+        if res.errors:
+            renderer.write(
+                renderer.colored(
+                    "Subconjunto ainda não resolve — abortado.", "yellow"
+                )
+            )
+            return fail_with_tag(ERR_ABORTED)
+        selected_cards = resolvable
 
     if res.warnings:
         for w in res.warnings:
