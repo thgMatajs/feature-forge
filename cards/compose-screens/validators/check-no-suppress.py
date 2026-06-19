@@ -40,6 +40,7 @@ import argparse
 import re
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 # Escopo Compose por segmentos de path. Scripts de card são subprocess
 # isolados (sem módulo compartilhado), então a constante é local — espelha
@@ -56,7 +57,6 @@ TEST_SOURCE_SETS = (
 )
 
 SUPPRESS_RE = re.compile(r"@(?:file:)?Suppress\b")
-_STRING_LITERAL_RE = re.compile(r'"(?:[^"\\]|\\.)*"')
 
 
 def in_compose_scope(path: Path) -> bool:
@@ -67,42 +67,95 @@ def in_compose_scope(path: Path) -> bool:
     return any(seg in p for seg in COMPOSE_PATH_SEGMENTS)
 
 
-def _strip_noise(line: str, *, in_kdoc: bool) -> tuple[str, bool]:
-    """Remove conteúdo de comentário/KDoc/string da linha antes de aplicar a regex.
+class _ScanState(NamedTuple):
+    """Estado multi-linha do scanner de `_strip_noise`.
 
-    Rastreia estado multi-linha de blocos KDoc (`/** ... */`). Retorna a linha
-    limpa (só código "vivo") e o novo estado `in_kdoc`.
+    - `block_depth`: profundidade de aninhamento de block comments `/* ... */`.
+      Kotlin permite aninhamento (`/* /* */ */`), então contamos abre/fecha em
+      vez de fechar no primeiro `*/` (WR-03).
+    - `in_raw_string`: dentro de uma raw-string triple-quote `\"\"\"...\"\"\"`,
+      que pode atravessar várias linhas (WR-02). Conteúdo é tratado como noise.
     """
-    if in_kdoc:
-        end = line.find("*/")
-        if end == -1:
-            return "", True  # linha inteira ainda dentro do bloco KDoc
-        line = line[end + 2 :]
-        in_kdoc = False
 
-    # Consumir blocos `/* ... */` (e `/** ... */`) abertos nesta linha e
-    # cortar comentário de linha `//`. Acumula só o código "vivo" em `out`.
+    block_depth: int = 0
+    in_raw_string: bool = False
+
+
+def _strip_noise(line: str, *, state: _ScanState) -> tuple[str, _ScanState]:
+    """Remove conteúdo de comentário/KDoc/string da linha antes da regex.
+
+    Faz uma varredura char-a-char numa única passada, rastreando: block
+    comments aninhados (`/* ... */`, com profundidade), raw-strings
+    triple-quote (`\"\"\"`), strings de aspas simples (`"..."`) e comentário
+    de linha (`//`). Crucialmente, `//` e `/*` DENTRO de uma string não
+    iniciam comentário (WR-01) — a string é neutralizada inline.
+
+    Retorna a linha "viva" (só código fora de comentário/string) e o novo
+    estado multi-linha.
+    """
+    block_depth = state.block_depth
+    in_raw_string = state.in_raw_string
+
     out: list[str] = []
     i = 0
     n = len(line)
     while i < n:
+        # Dentro de raw-string multi-linha: tudo é noise até o `"""` de fecho.
+        if in_raw_string:
+            if line[i : i + 3] == '"""':
+                in_raw_string = False
+                i += 3
+                continue
+            i += 1
+            continue
+
+        # Dentro de block comment: tudo é noise; rastreia aninhamento.
+        if block_depth > 0:
+            two = line[i : i + 2]
+            if two == "/*":
+                block_depth += 1
+                i += 2
+                continue
+            if two == "*/":
+                block_depth -= 1
+                i += 2
+                continue
+            i += 1
+            continue
+
+        # Código vivo: detecta início de comentários, raw-strings e strings.
+        if line[i : i + 3] == '"""':
+            in_raw_string = True
+            i += 3
+            continue
+
         two = line[i : i + 2]
         if two == "//":
-            break  # resto da linha é comentário; descarta
+            break  # resto da linha é comentário de linha; descarta
         if two == "/*":
-            end = line.find("*/", i + 2)
-            if end == -1:
-                in_kdoc = True
-                break
-            i = end + 2
+            block_depth += 1
+            i += 2
             continue
+        if line[i] == '"':
+            # String de aspas simples: consome até o fecho (respeita escapes),
+            # neutralizando o conteúdo. `//` aqui dentro NÃO trunca (WR-01).
+            j = i + 1
+            while j < n:
+                if line[j] == "\\":
+                    j += 2
+                    continue
+                if line[j] == '"':
+                    j += 1
+                    break
+                j += 1
+            out.append('""')  # placeholder neutro (não casa SUPPRESS_RE)
+            i = j
+            continue
+
         out.append(line[i])
         i += 1
-    line = "".join(out)
 
-    # Neutralizar string literais simples.
-    line = _STRING_LITERAL_RE.sub('""', line)
-    return line, in_kdoc
+    return "".join(out), _ScanState(block_depth=block_depth, in_raw_string=in_raw_string)
 
 
 def scan_file(path: Path) -> list[str]:
@@ -113,9 +166,9 @@ def scan_file(path: Path) -> list[str]:
         return []
 
     failures: list[str] = []
-    in_kdoc = False
+    state = _ScanState()
     for lineno, raw in enumerate(text.splitlines(), start=1):
-        cleaned, in_kdoc = _strip_noise(raw, in_kdoc=in_kdoc)
+        cleaned, state = _strip_noise(raw, state=state)
         if SUPPRESS_RE.search(cleaned):
             failures.append(f"{path}:{lineno}: {raw.strip()}")
     return failures

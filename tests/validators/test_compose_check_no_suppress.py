@@ -108,6 +108,48 @@ def test_suppress_in_string_literal_ignored(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_suppress_after_string_with_slashes(tmp_path: Path) -> None:
+    """WR-01: `//` dentro de string literal não pode truncar a linha — um
+    `@Suppress` REAL que venha depois na mesma linha deve ser detectado.
+    """
+    _write(
+        tmp_path / "androidApp/feature/home/ui/HomeScreen.kt",
+        "@Composable\nfun HomeScreen() {\n"
+        "    val u = \"a//b\"; @Suppress(\"x\") val y = bad()\n}\n",
+    )
+    result = _run(tmp_path)
+    assert result.returncode == 1, result.stderr
+    assert "@Suppress" in result.stderr
+
+
+def test_suppress_in_raw_string_ignored(tmp_path: Path) -> None:
+    """WR-02: `@Suppress` mencionado dentro de raw-string `\"\"\"...\"\"\"`
+    multi-linha é documentação, não silenciamento — deve passar.
+    """
+    _write(
+        tmp_path / "androidApp/feature/home/ui/HomeScreen.kt",
+        "@Composable\nfun HomeScreen() {\n"
+        "    val doc = \"\"\"\n"
+        "        Use @Suppress to silence the linter (doc em raw string)\n"
+        "    \"\"\"\n}\n",
+    )
+    result = _run(tmp_path)
+    assert result.returncode == 0, result.stderr
+
+
+def test_suppress_in_nested_block_comment(tmp_path: Path) -> None:
+    """WR-03: block comments aninhados (`/* /* */ */`) não podem fechar cedo —
+    um `@Suppress` dentro do bloco externo deve ser ignorado.
+    """
+    _write(
+        tmp_path / "androidApp/feature/home/ui/HomeScreen.kt",
+        "@Composable\nfun HomeScreen() {\n"
+        "    /* outer /* inner */ @Suppress */\n}\n",
+    )
+    result = _run(tmp_path)
+    assert result.returncode == 0, result.stderr
+
+
 # ── scope filtering ──────────────────────────────────────────────────────────
 
 
