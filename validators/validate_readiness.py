@@ -76,8 +76,14 @@ def _extract_verdict(text: str) -> dict[str, Any] | None:
 # (Wave D, uppercase `.yaml`), `test-strategy.yaml` (lista top-level de deferral)
 # e `bdd.json` (JSON — needs_elicitation por scenario + lista top-level).
 # NÃO globamos narrativa `.md` (PRD/intake/tech-spec) — narrativa é warning do
-# prompt readiness-reviewer, não block do validator (spec C5). Converge com o
-# `grep .../tasks/` do prompt — os dois enforcement-points alinhados.
+# prompt readiness-reviewer, não block do validator (spec C5).
+#
+# C-01b (PR18-R1): o comentário anterior afirmava "os dois enforcement-points
+# alinhados", mas o prompt usava grep substring na forma HYPHEN enquanto a DATA
+# real usa underscore — divergiam. O prompt readiness-reviewer agora INVOCA
+# este validator diretamente (`validate_readiness.py --scope feature`), então há
+# uma fonte única de verdade (este parser estrutural) e não há mais drift de
+# convenção a "alinhar".
 #
 # WR-01 (holistic review): a convenção REAL da DATA é underscore
 # (`needs_elicitation`); a forma hyphen só vive em PROSE/comentário. `bdd.json`
@@ -98,13 +104,21 @@ _CONTRACT_GLOBS = (
 _MARKER_KEYS = {"needs_elicitation", "needs-elicitation"}
 
 
-def _is_active_marker(value: Any) -> bool:
-    """`needs_elicitation` ATIVO = truthy escalar OU lista não-vazia.
+_INACTIVE_STRINGS = {"false", "no", "0", "none", "null", ""}
 
-    Inativo (NÃO bloqueia): `False`/`"false"`/`"no"`/`0`/`None`, lista vazia,
-    dict vazio, string vazia, ou chave ausente. Ativo: `True`/`"true"`/`"yes"`/
-    `1`/`"1"` (a forma-chave boolean per-state), ou qualquer lista/coleção com
-    ≥1 item (a forma top-level de deferral em test-strategy/bdd/task-contract).
+
+def _is_active_marker(value: Any) -> bool:
+    """`needs_elicitation` ATIVO = truthy escalar OU lista/coleção não-vazia.
+
+    Inativo (NÃO bloqueia): `False`/`0`/`None`, lista vazia, dict vazio, chave
+    ausente, OU string que seja um negativo explícito (`"false"`/`"no"`/`"0"`/
+    `"none"`/`"null"`/vazia).
+
+    C-05 (PR18-B5): qualquer OUTRA string não-vazia é ATIVA. O ramo string
+    antigo só ativava em `true/yes/1` — ficava cego a strings descritivas
+    (`"pending"`, `"aguardando user"`, `"TODO"`) que são exatamente o sinal de
+    elicitation não-resolvida. Inverter pra default-deny fecha o buraco:
+    bloqueia salvo negação explícita.
     """
     if isinstance(value, bool):
         return value
@@ -113,7 +127,7 @@ def _is_active_marker(value: Any) -> bool:
     if isinstance(value, (int, float)):
         return value != 0
     if isinstance(value, str):
-        return value.strip().lower() in {"true", "yes", "1"}
+        return value.strip().lower() not in _INACTIVE_STRINGS
     return False
 
 

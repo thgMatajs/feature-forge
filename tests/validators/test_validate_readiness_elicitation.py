@@ -200,6 +200,35 @@ def test_scan_key_false_does_not_flag(tmp_path: Path) -> None:
     assert validate_readiness._scan_needs_elicitation(f_root) == []
 
 
+def test_is_active_marker_descriptive_string_is_active() -> None:
+    """C-05 (PR18-B5): string descritiva ('pending') é ATIVA (bloqueia).
+
+    Antes do fix o ramo string só ativava em true/yes/1 — cego a qualquer
+    string descritiva que o conductor deixasse ('pending', 'aguardando user',
+    'TODO'), que são exatamente os sinais de elicitation não-resolvida.
+    """
+    assert validate_readiness._is_active_marker("pending") is True
+    assert validate_readiness._is_active_marker("aguardando user") is True
+    assert validate_readiness._is_active_marker("TODO") is True
+
+
+def test_is_active_marker_explicit_negatives_are_inactive() -> None:
+    """C-05: negativos explícitos + string vazia NÃO bloqueiam."""
+    for neg in ("false", "False", "no", "NO", "0", "none", "null", "", "  "):
+        assert validate_readiness._is_active_marker(neg) is False, neg
+
+
+def test_scan_flags_descriptive_string_marker(tmp_path: Path) -> None:
+    """C-05 end-to-end: `needs_elicitation: pending` flagueia."""
+    f_root = tmp_path
+    (f_root / "analytics-spec.yaml").write_text(
+        "events:\n  - name: open\n    needs_elicitation: pending\n",
+        encoding="utf-8",
+    )
+    hits = validate_readiness._scan_needs_elicitation(f_root)
+    assert hits, "string descritiva deveria flaguear"
+
+
 def test_scan_empty_list_does_not_flag(tmp_path: Path) -> None:
     """`needs_elicitation: []` (default vazio = inativo) NÃO flagueia."""
     f_root = tmp_path
