@@ -161,8 +161,22 @@ def _build_template_context(
     receiver = payload.get("receiver_type") or "(top-level)"
     symbol_name = payload.get("symbol_name") or proposal.title
     feature_name = f"{receiver}.{symbol_name}"
-    paths = sorted({str(loc.get("path", "")) for loc in locations if loc.get("path")})
-    languages = sorted({str(loc.get("language", "")) for loc in locations if loc.get("language")})
+    # C-13 (PR18-B1): guard isinstance(loc, dict) antes do .get — uma location
+    # malformada (não-dict) num payload de graph estouraria AttributeError.
+    paths = sorted(
+        {
+            str(loc.get("path", ""))
+            for loc in locations
+            if isinstance(loc, dict) and loc.get("path")
+        }
+    )
+    languages = sorted(
+        {
+            str(loc.get("language", ""))
+            for loc in locations
+            if isinstance(loc, dict) and loc.get("language")
+        }
+    )
     platforms = ", ".join(_platforms_from_languages(languages)) or "android, ios, web"
 
     return {

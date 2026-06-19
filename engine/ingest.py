@@ -27,9 +27,9 @@ from pathlib import Path
 from typing import Optional
 
 from engine.cards.snapshotter import compute_directory_sha256
-from engine.host.env import scrubbed_subprocess_env
 from engine.graph.incremental import remove_file as graph_remove_file
 from engine.graph.incremental import update_file as graph_update_file
+from engine.host.env import scrubbed_subprocess_env  # C-26: ordem alfabética (graph < host < utils)
 from engine.utils.paths import (
     active_config_path,
     cards_dir,

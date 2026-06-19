@@ -98,7 +98,16 @@ def detect_output_mode(
             return OutputMode.JSON
     # Interactive commands (or no command): JSON is never resolved — the
     # cinematic UX and intent protocol stay intact regardless of env/argv.
-    if bool(getattr(stream, "isatty", lambda: False)()):
+    #
+    # C-41 (PR21-I10): o `isatty()` de um stream custom pode LEVANTAR (stream
+    # fechado / wrapper exótico), não só estar ausente. O getattr-com-default
+    # cobria só o caso ausente; um isatty que raise propagaria. try/except →
+    # fallback seguro PLAIN (nunca crasha a resolução de modo).
+    try:
+        is_tty = bool(getattr(stream, "isatty", lambda: False)())
+    except Exception:  # noqa: BLE001 — stream custom imprevisível; PLAIN é o fallback seguro
+        is_tty = False
+    if is_tty:
         return OutputMode.TTY
     return OutputMode.PLAIN
 

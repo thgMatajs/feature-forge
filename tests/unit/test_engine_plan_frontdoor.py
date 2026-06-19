@@ -341,6 +341,19 @@ def test_derive_slug_two_char_alnum_padded() -> None:
     assert plan._is_valid_slug(plan._derive_slug("ab"))
 
 
+@pytest.mark.parametrize(
+    "text",
+    ["a", "1", "é", "a-", "z9", "a.", "  a  ", "x_", "9z", "ção"],
+)
+def test_derive_slug_degenerate_never_ends_in_hyphen(text: str) -> None:
+    """C-14 (PR18-B2): hardening do invariante — pra inputs curtos/degenerados,
+    o slug derivado NUNCA termina em '-' e SEMPRE casa _SLUG_PATTERN.
+    """
+    out = plan._derive_slug(text)
+    assert not out.endswith("-"), f"{text!r} → {out!r} termina em hífen"
+    assert plan._SLUG_PATTERN.match(out), f"{text!r} → {out!r} não casa _SLUG_PATTERN"
+
+
 # ── H-002 — source-ref YAML-safe: frontmatter REAL parseia sem injeção ───────
 
 

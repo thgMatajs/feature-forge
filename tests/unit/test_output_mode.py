@@ -86,6 +86,20 @@ def test_no_command_falls_back_to_stream_mode(monkeypatch):
     assert om.detect_output_mode([], command=None, stream=io.StringIO()) is om.OutputMode.PLAIN
 
 
+def test_isatty_that_raises_falls_back_to_plain(monkeypatch):
+    """C-41 (PR21-I10): um stream cujo isatty() LEVANTA não derruba a resolução —
+    cai pra PLAIN (fallback seguro)."""
+    class _BadStream(io.StringIO):
+        def isatty(self):
+            raise OSError("stream fechado")
+
+    monkeypatch.delenv("FORGE_OUTPUT", raising=False)
+    assert (
+        om.detect_output_mode([], command=None, stream=_BadStream())
+        is om.OutputMode.PLAIN
+    )
+
+
 def test_set_get_reset_roundtrip():
     token = om.set_output_mode(om.OutputMode.JSON)
     try:
