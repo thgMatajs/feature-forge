@@ -1465,18 +1465,36 @@ def _run_pipeline(project_root: Path) -> int:
 
     existing_checkpoint = _load_checkpoint(project_root)
     if existing_checkpoint:
-        # Gate do resume (pilot R1, P-01): durante o loop mecânico do host
-        # existe uma ``forge-response.json`` pendente que pertence a uma
-        # pergunta DOWNSTREAM (preset, backend, ...). Emitir o prompt de
-        # resume aqui injetaria um intent cujo id NÃO casa com essa response
-        # → IntentMismatchError (deadlock do piloto MeoBonsai). Só emitimos o
-        # resume em re-entrada HUMANA genuína: quando NÃO há response pendente
-        # no disco. O pipeline fresh consome a response via o consumed-log
-        # (idempotência §4 do schema intent-protocol). Aditivo a Decisão 27.
+        # Gate do resume (pilot R1, P-01; generalizado em R4, P-15): durante o
+        # loop mecânico do host existe uma ``forge-response.json`` pendente que
+        # pertence a uma pergunta DOWNSTREAM (preset, backend, ...). Emitir o
+        # prompt de resume aqui injetaria um intent cujo id NÃO casa com essa
+        # response → IntentMismatchError (deadlock do piloto MeoBonsai). Só
+        # emitimos o resume em re-entrada HUMANA genuína. O pipeline fresh
+        # consome a response via o consumed-log (idempotência §4 do schema
+        # intent-protocol). Aditivo a Decisão 27.
+        #
+        # R4: o gate agora usa o helper compartilhado ``host_is_replaying``
+        # (§4.1 do schema) em vez de ``_response_path().exists()`` cru. Ganho
+        # de precisão: quando a ÚNICA response no disco é pra o próprio intent
+        # de resume (o usuário acabou de responder o resume), o gate NÃO
+        # suprime — o pipeline consome essa resposta em vez de pular cego.
         from engine.ui import intent_state  # noqa: PLC0415
 
-        _response_file = intent_state._response_path(project_root)
-        _host_loop_in_progress = _response_file.exists()
+        _resume_options = _resume_option_labels()
+        _resume_intent_id = ui_question.stable_intent_id(
+            "ask",
+            "Resume de init pendente?",
+            _resume_options,
+            extra={
+                "default": "discard",
+                "min-selected": None,
+                "validator-hint": None,
+            },
+        )
+        _host_loop_in_progress = intent_state.host_is_replaying(
+            project_root, _resume_intent_id
+        )
 
         if _host_loop_in_progress:
             renderer.write(
@@ -1504,7 +1522,8 @@ def _run_pipeline(project_root: Path) -> int:
             # checkpoint anterior intacto (preset, selected_card_names,
             # backend_cells) — só atualizamos o campo intent_id. Re-invocacao
             # apos exit 2 consome o response correspondente sem re-perguntar.
-            _resume_options = _resume_option_labels()
+            # R4: reusa ``_resume_options`` / ``_resume_intent_id`` derivados
+            # acima pro gate (DRY — não re-deriva o stable id).
             _saved_cells = existing_checkpoint.get("backend-cells")
             _save_checkpoint(
                 _InitCheckpoint(
@@ -1518,16 +1537,7 @@ def _run_pipeline(project_root: Path) -> int:
                     backend_cells=(
                         _saved_cells if isinstance(_saved_cells, dict) else None
                     ),
-                    intent_id=ui_question.stable_intent_id(
-                        "ask",
-                        "Resume de init pendente?",
-                        _resume_options,
-                        extra={
-                            "default": "discard",
-                            "min-selected": None,
-                            "validator-hint": None,
-                        },
-                    ),
+                    intent_id=_resume_intent_id,
                 )
             )
             resume_choice = ui_question.ask(

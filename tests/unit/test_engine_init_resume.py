@@ -298,6 +298,28 @@ def test_resume_prompt_shown_on_genuine_human_reentry(
     )
 
 
+def test_resume_not_suppressed_when_response_is_for_resume_itself(
+    tmp_project_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refinamento P-15 sobre P-01: quando a ÚNICA response no disco é pra o
+    próprio intent de resume (o usuário acabou de responder o resume), o gate
+    NÃO deve suprimir cego — o pipeline precisa consumir essa resposta. O P-01
+    cru (_response_path().exists()) suprimia em qualquer response presente; o
+    helper host_is_replaying distingue (id == guard → não-replay)."""
+    monkeypatch.chdir(tmp_project_root)
+    _pin_intent_file_host(monkeypatch)
+    _seed_init_checkpoint(tmp_project_root, step="step-5-backend-selection")
+    resume_id = _resume_intent_id(tmp_project_root)
+    # Response no disco é pra o resume (id == resume_id), não downstream.
+    _seed_pending_response(tmp_project_root, intent_id=resume_id, value="resume")
+    # O gate NÃO suprime → o resume é consumido; a próxima pausa é downstream
+    # (backend), nunca um IntentMismatch.
+    pending = _capture_first_pending(tmp_project_root)
+    assert pending is None or pending.get("intent-id") != _MISMATCH_SENTINEL.get(
+        "intent-id"
+    ), "gate não deve produzir mismatch quando a response é pro próprio resume"
+
+
 # ── WS-A-2: resume real (P-11) ──────────────────────────────────────────────
 
 
