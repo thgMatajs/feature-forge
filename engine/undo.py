@@ -34,6 +34,7 @@ from engine.memory.l1 import (
     list_active_features,
     read_history,
     read_l1_status,
+    release_phase_lock,
     write_l1_status,
 )
 from engine.memory.l2 import remove_entry as l2_remove_entry
@@ -460,6 +461,12 @@ def _abort_feature(project_root: Path, feature_slug: str, reason: str) -> bool:
         state.raw["aborted-reason"] = reason
 
     write_l1_status(state, project_root)
+    # WR-04 (pilot R6): setar `phase_lock=None` no status.json não basta — pós
+    # fix sentinel-first do P-17, `current_phase_lock` lê o arquivo `.phase-lock`
+    # primeiro, então o sentinel sobreviveria a um abort e reportaria o holder
+    # stale. Libera o sentinel (idempotente; no-op se ausente). Cobre ambos os
+    # paths que escrevem `phase_lock=None` acima (state-None e state-existente).
+    release_phase_lock(feature_slug, project_root)
     _append_undo_log(
         project_root,
         kind="undo",
