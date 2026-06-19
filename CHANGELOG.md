@@ -19,6 +19,8 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 - P-07: abertura do init determinística (`greeting_stable`).
 - P-08: remove opção morta `outro` do prompt de preset.
 - P-12: rótulo de passo + nota de duração em vez de relógio interno.
+- WR-02 (review R1): gate `RESOLVER-ERRORS` deixa de embutir o detalhe multi-linha dos erros no campo `question` do intent — imprime os erros como contexto via renderer e mantém o `question` curto, consistente com o padrão que P-04 estabeleceu no mesmo módulo.
+- WR-03 (review R1): paths brownfield "b" (ajustar células) / "c" (começar do zero), ainda não disponíveis nesta versão, deixam de produzir um conjunto degradado silencioso (`selected` vazio) — redirecionam pra "confirmar como-is" com a mesma seleção do composer + aviso explícito ao usuário, em vez de mentir sobre o que fazem.
 
 ### Added (pilot R1)
 - `identity.platforms` documentado em `docs/schemas/card.md` (campo aditivo opcional).

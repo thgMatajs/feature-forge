@@ -724,11 +724,17 @@ def _resolver_error_gate(
             ),
         },
     ]
-    gate_name = (
-        "RESOLVER-ERRORS\n\nErros do resolver:\n"
-        + "\n".join(f"  · {e}" for e in errors[:5])
-    )
-    return ui_question.ask_three_paths(gate_name, paths)
+    # WR-02: o detalhe multi-linha dos erros NÃO vai embutido no gate_name —
+    # senão vira um blob como "pergunta" no AskUserQuestion, o MESMO
+    # anti-padrão que P-04 removeu do handler brownfield acima. Imprime os
+    # erros via renderer como CONTEXTO antes do prompt; o gate_name fica curto
+    # e estável ("RESOLVER-ERRORS").
+    renderer.write("")
+    renderer.write("Erros do resolver:")
+    for e in errors[:5]:
+        renderer.write(f"  · {e}")
+    renderer.write("")
+    return ui_question.ask_three_paths("RESOLVER-ERRORS", paths)
 
 
 def _drop_unresolvable_cards(

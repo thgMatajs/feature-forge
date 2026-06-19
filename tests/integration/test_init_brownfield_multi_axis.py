@@ -607,6 +607,65 @@ def test_resolver_error_gate_pauses_not_aborts(
         )
 
 
+@pytest.mark.integration
+def test_resolver_error_gate_question_short_errors_to_stdout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WR-02: o gate RESOLVER-ERRORS NÃO embute o detalhe multi-linha dos
+    erros no campo `question` do intent (mesmo anti-padrão que P-04 removeu
+    do handler brownfield). O `question` fica curto (só o gate_name estável)
+    e o detalhe dos erros chega ao stdout como CONTEXTO antes do prompt."""
+    from engine.init import _resolver_error_gate
+
+    monkeypatch.setenv("FORGE_FORCE_INTENT_MODE", "1")
+    monkeypatch.chdir(tmp_path)
+
+    errors = [
+        "DEP-MISSING: card 'alpha' requires 'persistence' but no active "
+        "card provides it.",
+        "CONFLICT-SINGULAR: ['beta', 'gamma'] both provide 'http-client'.",
+    ]
+
+    import contextlib
+    import io
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        with pytest.raises(PausedForInputError):
+            _resolver_error_gate(
+                errors,
+                selected_names=["alpha", "beta", "gamma"],
+                project_root=tmp_path,
+            )
+    rendered = buf.getvalue()
+
+    pending = intent_state.read_pending(tmp_path)
+    assert pending is not None
+    question = pending.get("question", "")
+
+    # Gate-name curto e estável: só "RESOLVER-ERRORS", sem o detalhe dos erros.
+    assert "RESOLVER-ERRORS" in question, (
+        f"gate_name esperado não aparece no question: {question!r}"
+    )
+    assert "DEP-MISSING" not in question, (
+        f"detalhe do erro ainda embutido no question (anti-padrão P-04): {question!r}"
+    )
+    assert "CONFLICT-SINGULAR" not in question, (
+        f"detalhe do erro ainda embutido no question: {question!r}"
+    )
+    assert "\n" not in question, (
+        f"question multi-linha — detalhe do erro vazou pro campo question: {question!r}"
+    )
+
+    # O detalhe dos erros chega ao usuário via stdout (CONTEXTO), como P-04 faz.
+    assert "DEP-MISSING" in rendered, (
+        f"detalhe do erro não foi impresso como contexto no stdout: {rendered[:400]}"
+    )
+    assert "alpha" in rendered, (
+        f"card problemático não aparece no contexto impresso: {rendered[:400]}"
+    )
+
+
 def test_drop_unresolvable_parses_card_names() -> None:
     """_drop_unresolvable_cards remove os cards citados em DEP-MISSING/CONFLICT."""
     from engine.init import _drop_unresolvable_cards
