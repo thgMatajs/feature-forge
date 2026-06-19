@@ -104,6 +104,36 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Remediação cross-AI (PRs #18–#22, 2026-06-18)** — 52 correções consolidadas
+  do review cross-AI (codex + claude-opus + bots). Destaques:
+  - **HIGH detection-failures:** `forge verify` cascade agora threada
+    `--scope`/`--id` até os validators (C-43 — o PLACEHOLDER-VERIFY gate estava
+    shipped-but-inert) + scan de filesystem em vez de git-staged;
+    `validators/validate_memory._VALID_L1_STATES` sincronizado com
+    `engine.memory.l1._VALID_STATES` (C-44 — aceitava `paused` removido, rejeitava
+    estados canônicos); readiness `_is_active_marker` detecta string descritiva
+    (C-05); `engine/status._suggested_next_command` tie-break dead-code corrigido
+    (`feature_slug`→`slug`, C-33); `forge graph --json` honra `FORGE_OUTPUT=json`
+    sem `--json` posicional (C-35); `verify --json task` guarda ambiguidade antes
+    de mutar L1 (C-34); `read_pending` probe Windows não desativa race detection
+    (C-49); manifesto de comando verídico (`prompts_by_default` + `machine_readable`
+    separados, C-37); qa-report template alinhado aos enums do validator (C-42q);
+    error-paths roteados via `fail_with_tag` (C-23); reconfigure card-removal
+    derivado de disk-vs-config + move idempotente (C-22); config-path com fallback
+    legado uniforme via `active_config_path` (C-04/C-10).
+  - **MED/LOW:** plan.py handlers de pausa capturam as exceções REAIS
+    (UserPaused/Cancelled, C-06), screenshot multi-path (C-08), colisão de slug
+    ativo com 3-caminhos (C-03); init.py brownfield-safe (UnicodeDecodeError +
+    settings shape, C-07/C-07b), git-hook delegator relativo (C-09), template
+    materialization falha init em card ativo (C-47); undo double-abort + raw guard
+    (C-48/C-50); memory --json guard (C-36/C-40); output_mode isatty guard (C-41);
+    json_io orphan-tmp sweep (C-25); guards defensivos em reuse_apply/slug/
+    flock/intent-state (C-13/C-14/C-28); path-drift `.claude/state/`→
+    `.claude/forge/state/` em schemas load-bearing (C-02/C-12); enum L1 em
+    `docs/schemas/memory.md` + `agents/retrospective-agent.md` (C-46).
+  - **Path canônico:** `docs/schemas/intent-protocol.md` e `docs/schemas/memory.md`
+    (load-bearing) atualizados; `docs/design/06-command-surface.md` reflete verify
+    como observador com side-effects de L1.
 - **un-abort enum guard** (W-DEBT holistic review CR/WR-01, 2026-06-18) —
   `_undo_abort` (`engine/undo.py`) valida `pre-abort-status` contra
   `_VALID_STATES` ANTES de restaurar. Um valor ausente OU não-membro do enum
