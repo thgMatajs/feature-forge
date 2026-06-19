@@ -391,26 +391,23 @@ def run(argv: list[str]) -> int:
 
     # A4 REPLAY: extrai as remoções pendentes ANTES do write_yaml pra que o
     # campo interno _pending_card_removals NUNCA polua a config persistida.
-    # Segura numa var local; aplica os shutil.move SÓ após a escrita da config
-    # (apply-confirm passou). M-201: já é popado aqui, então nem a config nem
-    # qualquer draft subsequente carrega a lista.
-    pending_removals = working.pop("_pending_card_removals", [])
+    # M-201: já é popado aqui, então nem a config nem qualquer draft subsequente
+    # carrega a lista.
+    working.pop("_pending_card_removals", [])
 
     before_sha = file_sha256(config_path)
     backup_file(config_path)
     write_yaml(config_path, working, atomic=True)
     after_sha = file_sha256(config_path)
 
-    # A4 REPLAY: aplica as remoções de card SÓ agora — pós apply-confirm
-    # bem-sucedido. shutil já está importado no topo do módulo.
-    if pending_removals:
-        project_cards_root = cards_dir(project_root)
-        for name in pending_removals:
-            snap_dir = project_cards_root / name
-            if snap_dir.exists():
-                shutil.move(
-                    str(snap_dir), str(snap_dir.with_name(name + ".bak"))
-                )
+    # C-22 (PR20-R1 + B2): aplica as remoções de card SÓ agora — pós apply-confirm.
+    # Em vez de confiar na lista transiente `_pending_card_removals` (que NÃO
+    # sobrevive a um resume — o draft não a persiste, A4), derivamos as remoções
+    # da FONTE DE VERDADE: snapshot dirs em disco que não estão mais no
+    # `cards.active` final da config. Isso fecha o drift do resume (remove →
+    # pause → resume → muda não-cards → apply deixava o snap órfão em cards/
+    # enquanto a config já o excluía).
+    _apply_card_removals(project_root, working)
 
     _append_history(
         project_root,
@@ -557,6 +554,43 @@ def _cards_add(project_root: Path, working: dict[str, Any]) -> None:
         entries.append({"name": card.name, "sha256": sha, "pinned": False})
         renderer.write(renderer.colored(f"  + {card.name} ({sha[:12]}…)", "green"))
     working.setdefault("cards", {})["active"] = entries
+
+
+def _apply_card_removals(project_root: Path, working: dict[str, Any]) -> None:
+    """Move pra `.bak` todo snapshot de card que sumiu do `cards.active` final.
+
+    C-22 (PR20-R1 + B2): derivação por DIFF disk-vs-config (fonte de verdade),
+    não pela lista transiente `_pending_card_removals` — esta não sobrevive a um
+    resume (o draft não a persiste, A4). Comparar os snapshot dirs em disco
+    (canônicos, não-.bak, exceto `local/`) com os nomes ativos na config final
+    pega exatamente os órfãos, resume ou não.
+
+    Idempotente (fecha B2 nesting): se o destino `.bak` já existe (remoção
+    anterior do mesmo nome / replay), removemos o `.bak` velho ANTES do
+    `shutil.move` — senão `shutil.move` aninharia `name/` dentro de `name.bak/`.
+    """
+    project_cards_root = cards_dir(project_root)
+    if not project_cards_root.is_dir():
+        return
+    active_names = {
+        str(c.get("name"))
+        for c in _active_cards(working)
+        if isinstance(c, dict) and c.get("name")
+    }
+    for snap_dir in sorted(project_cards_root.iterdir()):
+        if not snap_dir.is_dir():
+            continue
+        name = snap_dir.name
+        if name.startswith(".") or name == "local" or name.endswith(".bak"):
+            continue
+        if name in active_names:
+            continue
+        # Órfão: snapshot presente em disco mas ausente da config → remover.
+        bak_dir = snap_dir.with_name(name + ".bak")
+        if bak_dir.exists():
+            # B2: limpa o `.bak` velho antes do move (idempotência sem nesting).
+            shutil.rmtree(bak_dir, ignore_errors=True)
+        shutil.move(str(snap_dir), str(bak_dir))
 
 
 def _cards_remove(project_root: Path, working: dict[str, Any]) -> None:
