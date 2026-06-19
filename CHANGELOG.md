@@ -43,6 +43,29 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Fixed
 
+- W-GRAPH I-1: header do `_GRAPH_SKILL_MD` (artefato `forge init`) não afirma
+  mais "17 graph queries canônicas" quando a tabela lista um subconjunto das
+  mais frequentes — agora descreve a tabela como "principais" e aponta o
+  catálogo completo (`q1`..`q17` + `r`) via `forge graph --json`.
+- W-GRAPH I-4: abertura do `_GRAPH_FIRST_MD` deixou de prometer de forma
+  absoluta um grafo populado — texto condicional ("quando este projeto tem
+  fontes suportadas indexadas") cobre o caso greenfield, onde o grafo pode
+  estar vazio até a primeira indexação e as queries retornam listas vazias.
+- W-GRAPH I-5: novo teste `test_doc_query_labels_match_handlers` amarra os
+  labels canônicos da tabela do `_GRAPH_SKILL_MD` (ex.: `q3` (orphan-files)) a
+  `engine.graph_cli._HANDLERS` — renomear um label no código sem atualizar o
+  doc gerado passa a quebrar o teste (fecha drift docs-vivo↔código latente).
+- W-GRAPH I-6: `test_skill_file_path_matches_hook_reference` agora lê o corpo
+  do `session-start-drift-check.sh` e assere que o path `.claude/forge/graph-skill.md`
+  aparece literalmente nele — antes só provava o lado do init; renomear o path
+  num lado sem o outro não quebrava teste.
+- W-GRAPH I-2: `session-start-drift-check.sh` agora detecta TTY no fd 2
+  (stderr) e não no fd 1 (stdout). O lembrete graph-first é emitido em stderr
+  (`} >&2`), então a heurística de host-awareness precisa casar o stream usado
+  — antes (`-t 1`) ela mentia em redirecionamento assimétrico (stdout pra
+  arquivo + stderr no terminal renderizava ASCII; vice-versa escrevia emoji
+  num log). Test helper de integração ligado a stdout+stderr no mesmo pty pra
+  acompanhar.
 - CASING-BUG: `_render_template` agora preenche `{{feature_slug}}` lowercase
   (a forma que os templates usam) + os tokens de origem — antes só substituía
   `{{FEATURE_SLUG}}` uppercase e o token lowercase sobrava cru nos artefatos

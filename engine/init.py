@@ -958,11 +958,14 @@ _GRAPH_FIRST_MD = """\
 
 > Instalado por `forge init`. Voz: mentor calmo.
 
-Este projeto tem um codebase graph em `.claude/graph.db` (SQLite, WAL mode)
-com símbolos, imports, body-text e dependências. **Antes de ler arquivos
-fonte pra entender o projeto, consulte o grafo** — ele responde em uma
-chamada o que custaria várias leituras de arquivo, e protege seu contexto.
-Essa é a regra graph first: o grafo vem antes do source.
+Quando este projeto tem fontes suportadas indexadas, o codebase graph em
+`.claude/graph.db` (SQLite, WAL mode) guarda símbolos, imports, body-text e
+dependências. **Antes de ler arquivos fonte pra entender o projeto, consulte
+o grafo** — ele responde em uma chamada o que custaria várias leituras de
+arquivo, e protege seu contexto. Num projeto recém-iniciado (greenfield) o
+grafo pode estar vazio até a primeira indexação; nesse caso as queries
+retornam listas vazias e você lê o source normalmente.
+Essa é a regra graph first: quando o grafo tem a resposta, ele vem antes do source.
 
 ## A regra
 
@@ -1013,8 +1016,10 @@ Fora desses três casos: **grafo primeiro.**
 _GRAPH_SKILL_MD = """\
 # Graph skill — tarefa → query → exemplo
 
-> Instalado por `forge init`. Voz: mentor calmo. Referência das 17 graph
-> queries canônicas + o alias combinado `r`.
+> Instalado por `forge init`. Voz: mentor calmo. Referência das principais
+> graph queries — a tabela abaixo cobre as de uso mais frequente; o catálogo
+> completo (`q1`..`q17` + o alias combinado `r`) responde via
+> `forge graph --json <query>`.
 
 O grafo (`.claude/graph.db`) responde perguntas estruturais sobre o código
 sem você abrir os arquivos. Toda query roda em modo non-interactive:

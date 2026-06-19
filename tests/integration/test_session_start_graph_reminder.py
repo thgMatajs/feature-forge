@@ -71,13 +71,15 @@ def test_hook_silent_when_graph_db_absent(tmp_path: Path) -> None:
     assert "[graph]" not in result.stderr
 
 
-def _run_hook_with_tty_stdout(project_root: Path) -> tuple[int, str]:
-    """Roda o hook com stdout ligado a um pty real e CLAUDECODE ausente.
+def _run_hook_with_tty(project_root: Path) -> tuple[int, str]:
+    """Roda o hook com stdout E stderr ligados ao mesmo pty real, CLAUDECODE ausente.
 
-    A condição `[[ -t 1 && -z "${CLAUDECODE:-}" ]]` só é verdadeira quando
-    stdout É um terminal E CLAUDECODE não está setado — exatamente o branch
-    emoji. Capturamos stderr (onde o lembrete é emitido) por um pipe separado,
-    deixando stdout no pty pra `-t 1` valer. Retorna (returncode, stderr).
+    O lembrete é emitido em stderr (`} >&2`) e a detecção de host casa o stream
+    usado: `[[ -t 2 && -z "${CLAUDECODE:-}" ]]`. Pra simular um terminal real,
+    ligamos AMBOS os fds (stdout=1, stderr=2) ao slave do pty — assim `-t 1` e
+    `-t 2` são verdadeiros, como num shell interativo onde os dois streams
+    compartilham o mesmo TTY. Lemos do master (onde o lembrete chega).
+    Retorna (returncode, saída-combinada-do-pty).
     """
     stub = project_root / "forge-stub.sh"
     stub.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
@@ -88,40 +90,41 @@ def _run_hook_with_tty_stdout(project_root: Path) -> tuple[int, str]:
         # CLAUDECODE deliberadamente ausente → habilita o branch TTY/emoji.
     }
 
-    master, slave = pty.openpty()  # stdout vai pro pty (faz `-t 1` ser verdade)
-    err_r, err_w = os.pipe()  # stderr separado pra capturar o lembrete
+    master, slave = pty.openpty()  # stdout E stderr vão pro pty (faz `-t 1` e `-t 2` valerem)
     try:
         proc = subprocess.Popen(
             ["bash", str(_HOOK)],
             stdin=slave,
             stdout=slave,
-            stderr=err_w,
+            stderr=slave,
             cwd=project_root,
             env=env,
             close_fds=True,
         )
         os.close(slave)
-        os.close(err_w)
 
         chunks: list[bytes] = []
         while True:
-            ready, _, _ = select.select([err_r], [], [], 5.0)
+            ready, _, _ = select.select([master], [], [], 5.0)
             if not ready:
                 break
-            data = os.read(err_r, 4096)
+            try:
+                data = os.read(master, 4096)
+            except OSError:
+                # EIO no master quando o slave fecha (filho terminou) — fim do stream.
+                break
             if not data:
                 break
             chunks.append(data)
         returncode = proc.wait(timeout=5)
     finally:
         os.close(master)
-        os.close(err_r)
 
     return returncode, b"".join(chunks).decode("utf-8", errors="replace")
 
 
 def test_hook_emits_emoji_prefix_on_tty_without_claudecode(tmp_path: Path) -> None:
-    """Branch TTY/emoji: stdout num pty real + CLAUDECODE ausente → prefixo `🔎 graph`.
+    """Branch TTY/emoji: stdout+stderr num pty real + CLAUDECODE ausente → prefixo `🔎 graph`.
 
     Pareia com test_hook_emits_reminder_when_graph_db_present (branch ASCII via
     CLAUDECODE=1). Juntos exercitam AMBOS os ramos da condição composta —
@@ -130,8 +133,78 @@ def test_hook_emits_emoji_prefix_on_tty_without_claudecode(tmp_path: Path) -> No
     (tmp_path / ".git").mkdir()
     (tmp_path / ".claude").mkdir()
     (tmp_path / ".claude" / "graph.db").write_text("", encoding="utf-8")
-    returncode, stderr = _run_hook_with_tty_stdout(tmp_path)
+    returncode, output = _run_hook_with_tty(tmp_path)
     assert returncode == 0
-    assert "🔎 graph" in stderr  # branch emoji exercitado
-    assert "[graph]" not in stderr  # NÃO caiu no branch ASCII
+    assert "🔎 graph" in output  # branch emoji exercitado
+    assert "[graph]" not in output  # NÃO caiu no branch ASCII
+    assert "forge graph --json" in output
+
+
+def _run_hook_stderr_pty_stdout_pipe(project_root: Path) -> tuple[int, str]:
+    """Regression I-2: stderr num pty real, stdout num pipe (NÃO-tty), CLAUDECODE ausente.
+
+    O lembrete vai pra stderr. Como stderr É um terminal aqui, a detecção
+    correta (`-t 2`) deve render emoji — mesmo com stdout redirecionado pra
+    pipe. Com o bug antigo (`-t 1`), a detecção olhava o stream errado (stdout,
+    não-tty) e caía no fallback ASCII. Este teste falha com `-t 1` e passa com
+    `-t 2`. Retorna (returncode, stderr-do-pty).
+    """
+    stub = project_root / "forge-stub.sh"
+    stub.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    stub.chmod(0o755)
+    env = {
+        "PATH": "/usr/bin:/bin",
+        "FORGE_BIN": str(stub),
+        # CLAUDECODE ausente → habilita o branch TTY/emoji.
+    }
+
+    master, slave = pty.openpty()  # stderr vai pro pty (faz `-t 2` valer)
+    out_r, out_w = os.pipe()  # stdout num pipe → `-t 1` é FALSO
+    try:
+        proc = subprocess.Popen(
+            ["bash", str(_HOOK)],
+            stdin=slave,
+            stdout=out_w,
+            stderr=slave,
+            cwd=project_root,
+            env=env,
+            close_fds=True,
+        )
+        os.close(slave)
+        os.close(out_w)
+
+        chunks: list[bytes] = []
+        while True:
+            ready, _, _ = select.select([master], [], [], 5.0)
+            if not ready:
+                break
+            try:
+                data = os.read(master, 4096)
+            except OSError:
+                break
+            if not data:
+                break
+            chunks.append(data)
+        returncode = proc.wait(timeout=5)
+    finally:
+        os.close(master)
+        os.close(out_r)
+
+    return returncode, b"".join(chunks).decode("utf-8", errors="replace")
+
+
+def test_hook_detects_tty_on_stderr_not_stdout(tmp_path: Path) -> None:
+    """O lembrete vai pra stderr — a detecção de TTY precisa olhar o fd 2, não o fd 1.
+
+    Cenário: stderr É um terminal (pty), stdout está redirecionado pra um arquivo
+    (pipe não-tty). O usuário VÊ o lembrete num terminal real, então deve render
+    emoji. O bug (`-t 1`) testava o stream errado e degradava pra ASCII.
+    """
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "graph.db").write_text("", encoding="utf-8")
+    returncode, stderr = _run_hook_stderr_pty_stdout_pipe(tmp_path)
+    assert returncode == 0
+    assert "🔎 graph" in stderr  # detecção correta no fd 2
+    assert "[graph]" not in stderr  # NÃO degradou pra ASCII por olhar o fd errado
     assert "forge graph --json" in stderr
