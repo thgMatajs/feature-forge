@@ -2571,11 +2571,12 @@ def _handle_backend_multi_axis_brownfield(
       5. Processa resposta:
          - "a" (confirm) → aplica composer_result direto, retorna result
            com ``choice="confirm"`` + ``selected_card_names``.
-         - "b" (adjust) → DEFERRED a W7.2 (multi-select per cell). Por
-           enquanto retorna ``choice="adjust"`` + selected vazio pra
-           caller decidir o fallback.
-         - "c" (scratch) → DEFERRED a W7.2 (greenfield-style picker).
-           Retorna ``choice="scratch"`` + selected vazio.
+         - "b" (adjust) / "c" (scratch) → DEFERRED a W7.2 (multi-select per
+           cell / picker greenfield). WR-03 (Path A): em vez de retornar um
+           set vazio (conjunto degradado silencioso), redireciona pra
+           "confirmar como-is" — retorna ``choice="confirm"`` com a MESMA
+           seleção do composer que "a" produziria + avisa o usuário (via
+           renderer) que o ajuste/scratch ainda não está disponível.
 
     Args:
         project_root: raiz do projeto sob análise (composer + signals).
@@ -2583,9 +2584,9 @@ def _handle_backend_multi_axis_brownfield(
 
     Returns:
         Dict com keys:
-          - ``choice``: "confirm" | "adjust" | "scratch"
-          - ``selected_card_names``: list[str] (vazia em adjust/scratch
-            até W7.2 implementar os paths)
+          - ``choice``: "confirm" (sempre, em R1 — b/c redirecionam pra
+            confirmar como-is até W7.2 implementar adjust/scratch; WR-03)
+          - ``selected_card_names``: list[str] (seleção do composer)
           - ``composer_result``: dict aninhado retornado pelo composer
             (passa adiante pro caller fazer downstream do label).
 
@@ -2649,19 +2650,26 @@ def _handle_backend_multi_axis_brownfield(
             "selected_card_names": _collect_confirm_selection(composer_result),
             "composer_result": composer_result,
         }
-    if choice_key == "b":
-        # W7.2 implementa o multi-select per cell. W7.1 retorna o sinal
-        # pro caller decidir fallback até lá — não silencia, mas também
-        # não trava o init (deviation tracked no commit body).
-        return {
-            "choice": "adjust",
-            "selected_card_names": [],
-            "composer_result": composer_result,
-        }
-    # choice_key == "c"
+
+    # WR-03 (Path A): os caminhos "b" (ajustar células) e "c" (começar do
+    # zero) ainda não estão disponíveis nesta versão (deferred a W7.2). Antes
+    # eles retornavam `selected_card_names: []`, o que produzia um conjunto
+    # degradado SILENCIOSAMENTE no caller (dropava a detecção sem avisar) —
+    # uma opção que mente sobre o que faz. Agora redireciona pra "confirmar
+    # como-is": retorna a MESMA seleção que "a" produziria + avisa o usuário.
+    # O motive já orienta isso ("por ora, confirme como-is"); aqui o
+    # comportamento real passa a casar com o que o label promete.
+    label = "Ajustar células" if choice_key == "b" else "Começar do zero"
+    renderer.write(
+        renderer.colored(
+            f"'{label}' ainda não está disponível nesta versão — segui com a "
+            "detecção como-is. Ajuste depois com `forge reconfigure`.",
+            "yellow",
+        )
+    )
     return {
-        "choice": "scratch",
-        "selected_card_names": [],
+        "choice": "confirm",
+        "selected_card_names": _collect_confirm_selection(composer_result),
         "composer_result": composer_result,
     }
 

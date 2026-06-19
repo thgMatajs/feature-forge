@@ -787,3 +787,57 @@ def test_brownfield_confirm_path_produces_valid_set(
         project_root=tmp_path, active_cards=active_cards
     )
     assert result["choice"] == "confirm"
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("response_value", ["b", "c"])
+def test_brownfield_paths_bc_no_silent_degraded_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, response_value: str
+) -> None:
+    """WR-03: selecionar b ('Ajustar células') ou c ('Começar do zero') —
+    paths phantom ainda não disponíveis nesta versão — NÃO pode produzir um
+    conjunto degradado silenciosamente (selected vazio). O fix (Path A)
+    redireciona pra 'confirmar como-is': retorna a MESMA seleção do composer
+    que 'a' produziria, e avisa o usuário (via stdout) que o ajuste per-cell
+    ainda não está disponível — o motive não mente mais."""
+    from engine.init import _handle_backend_multi_axis_brownfield
+
+    _scaffold_project(tmp_path)
+    _build_uniform_firebase_project(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    firebase_auth = _load_real_card("firebase-auth")
+    active_cards = [firebase_auth]
+
+    with pytest.raises(PausedForInputError):
+        _handle_backend_multi_axis_brownfield(
+            project_root=tmp_path, active_cards=active_cards
+        )
+    pending = intent_state.read_pending(tmp_path)
+    assert pending is not None
+    _write_response(tmp_path, pending["intent-id"], response_value)
+
+    import contextlib
+    import io
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        result = _handle_backend_multi_axis_brownfield(
+            project_root=tmp_path, active_cards=active_cards
+        )
+    rendered = buf.getvalue()
+
+    # O conjunto NÃO degrada silenciosamente: a seleção é a MESMA que "a"
+    # (confirmar como-is) produziria — firebase-auth detectado pelo composer.
+    selected = result.get("selected_card_names") or []
+    assert "firebase-auth" in selected, (
+        f"path {response_value!r} produziu conjunto degradado silencioso "
+        f"(selected vazio/incompleto); selected={selected!r}"
+    )
+
+    # E o usuário foi avisado de que o ajuste/scratch ainda não está disponível
+    # — o redirect é explícito, não silencioso.
+    assert "disponível" in rendered.lower(), (
+        f"path {response_value!r} não avisou que o ajuste não está disponível "
+        f"— degradação silenciosa; stdout: {rendered[:400]}"
+    )
