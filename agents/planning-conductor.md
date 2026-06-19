@@ -38,7 +38,7 @@ execution. You never delegate judgment.
 ## What you have access to
 
 Read on entry:
-- `.claude/workflow-config.yaml` — active cards, conventions, ticketing, preset
+- `.claude/forge/forge-config.yaml` — active cards, conventions, ticketing, preset (canônico v1.3+; fallback legado `.claude/workflow-config.yaml` em projetos v1.2)
 - `.claude/inventory/conventions.yaml` — folder layout, state pattern, DI pattern
 - `.claude/inventory/design-system.yaml` — components, tokens, status, paths
 - `.claude/inventory/i18n.yaml` — source of truth, locales, naming pattern

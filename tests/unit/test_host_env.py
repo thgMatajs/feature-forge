@@ -46,6 +46,14 @@ def test_detect_codex(monkeypatch):
     assert detect_codex() is True
 
 
+def test_detect_codex_requires_underscore(monkeypatch):
+    """C-49b (PR22-B-02): o detector usa prefixo preciso CODEX_ — uma var
+    CODEX-cru não-relacionada (CODEXBASE, CODEX) NÃO dispara falso-positivo."""
+    monkeypatch.delenv("CODEX_CLI", raising=False)
+    monkeypatch.setenv("CODEXBASE", "1")
+    assert detect_codex() is False
+
+
 def test_detect_cursor(monkeypatch):
     monkeypatch.setenv("CURSOR_AGENT", "1")
     assert detect_cursor() is True

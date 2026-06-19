@@ -60,7 +60,7 @@ _ENGINE_ROOT = Path(__file__).parent.parent
 if str(_ENGINE_ROOT) not in _sys.path:
     _sys.path.insert(0, str(_ENGINE_ROOT))
 
-from engine.utils.paths import forge_config_path  # noqa: E402
+from engine.utils.paths import active_config_path  # noqa: E402
 from engine.utils.yaml_io import read_yaml_or_default  # noqa: E402
 
 
@@ -609,11 +609,13 @@ def _load_workflow_config(project_root: Path) -> dict[str, Any]:
     cada validator tem o próprio import e função one-liner não justifica
     extração ainda (princípio Phase 0: 2-3 consumers documentados antes).
 
-    Task 0.8 (v1.3 pilot-ready): callsite migrado pra ``forge_config_path``
-    helper — config canônico agora vive sob o sub-namespace
-    ``.claude/forge/`` (spec §2).
+    Task 0.8 (v1.3 pilot-ready): callsite migrado pra ``forge_config_path``.
+    C-04/C-10 (CL-A): trocado pra ``active_config_path`` — config canônico vive
+    sob ``.claude/forge/forge-config.yaml`` (primário), mas com FALLBACK pro
+    legado ``.claude/workflow-config.yaml`` (projetos v1.2). Sem fallback, o
+    gate lia ``{}`` num projeto legado e silenciava sua própria config.
     """
-    cfg_path = forge_config_path(project_root)
+    cfg_path = active_config_path(project_root)
     return read_yaml_or_default(cfg_path, {}) or {}
 
 
