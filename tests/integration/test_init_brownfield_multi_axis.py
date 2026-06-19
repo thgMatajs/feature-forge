@@ -664,3 +664,67 @@ def test_detection_table_not_embedded_in_question(
     assert "init-brownfield-detection" in question, (
         f"gate_name esperado não aparece no question: {question!r}"
     )
+
+
+# ── WS-C-1: paths b/c sem texto dev "[W7.2 …]" (P-02 / Mandamento 5) ─────────
+
+
+@pytest.mark.integration
+def test_brownfield_paths_no_dev_text_leak(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """As 3 labels/motives do gate brownfield NÃO podem conter 'W7.2' nem
+    colchetes de roadmap interno (Mandamento 5 / P-02)."""
+    from engine.init import _handle_backend_multi_axis_brownfield
+
+    _scaffold_project(tmp_path)
+    _build_uniform_firebase_project(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    firebase_auth = _load_real_card("firebase-auth")
+
+    with pytest.raises(PausedForInputError):
+        _handle_backend_multi_axis_brownfield(
+            project_root=tmp_path,
+            active_cards=[firebase_auth],
+        )
+
+    pending = intent_state.read_pending(tmp_path)
+    assert pending is not None
+    paths_detail = pending.get("paths-detail") or []
+    blob = " ".join(
+        p.get("label", "") + " " + p.get("motive", "") for p in paths_detail
+    )
+    assert "W7.2" not in blob, f"leak de roadmap interno nas labels (P-02): {blob!r}"
+    assert "[" not in blob and "]" not in blob, (
+        f"texto dev entre colchetes nas labels: {blob!r}"
+    )
+
+
+@pytest.mark.integration
+def test_brownfield_confirm_path_produces_valid_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Path 'a' (confirmar como-is) retorna choice=confirm com seleção do
+    composer (path funcional após WS-B)."""
+    from engine.init import _handle_backend_multi_axis_brownfield
+
+    _scaffold_project(tmp_path)
+    _build_uniform_firebase_project(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    firebase_auth = _load_real_card("firebase-auth")
+    active_cards = [firebase_auth]
+
+    with pytest.raises(PausedForInputError):
+        _handle_backend_multi_axis_brownfield(
+            project_root=tmp_path, active_cards=active_cards
+        )
+    pending = intent_state.read_pending(tmp_path)
+    assert pending is not None
+    _write_response(tmp_path, pending["intent-id"], "a")
+
+    result = _handle_backend_multi_axis_brownfield(
+        project_root=tmp_path, active_cards=active_cards
+    )
+    assert result["choice"] == "confirm"

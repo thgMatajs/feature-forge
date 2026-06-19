@@ -3582,6 +3582,17 @@ está no caminho final; quando Java/XML forem migrados, os três devem
 compartilhar helper canônico em `_body_text.py` ou módulo similar pra
 evitar três cópias da mesma busca binária.
 
+## W7.2 — multi-select per-cell + greenfield picker (deferido, pilot R1)
+
+O handler brownfield (`engine.init._handle_backend_multi_axis_brownfield`)
+oferece 3 caminhos, mas "Ajustar células divergentes" (b) e "Começar do zero
+custom" (c) não estão implementados — caem em fallback pra "confirmar como-is".
+O pilot R1 (P-02) removeu o texto dev "[W7.2 …]" das labels e deu motive
+honesto; a implementação real dos paths b/c (multi-select per-cell, picker
+greenfield) fica deferida. Quando implementar: `_run_per_axis_prompts` +
+`_apply_axis_overrides` (já existem no módulo, usados pelo greenfield) são a
+base reusável.
+
 ---
 
 **For a fresh session retomando o projeto, use o handoff:**

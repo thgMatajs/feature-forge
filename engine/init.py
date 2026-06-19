@@ -2595,27 +2595,32 @@ def _handle_backend_multi_axis_brownfield(
 
     # Three-paths block — labels carregam motive textual pro host renderizar
     # o bloco canônico de discipline §1.
+    # P-02 / Mandamento 5: os motives de b/c não vazam roadmap interno
+    # ("[W7.2 …]"). Esses caminhos ainda não estão disponíveis nesta versão;
+    # o motive honesto orienta o usuário a confirmar como-is por ora. A
+    # implementação real (multi-select per-cell / picker greenfield) está
+    # anotada como gap deferido em docs/design/04-pending.md.
     paths = [
         {
             "label": "Confirmar detection como-is",
             "motive": (
                 "Aceita a tabela detectada acima e segue com esses cards "
-                "pro Step 6 (resolve)."
+                "pro resolve. Caminho recomendado."
             ),
         },
         {
             "label": "Ajustar células divergentes",
             "motive": (
-                "Você escolhe per-cell o card vencedor (útil quando há "
-                "Conflito ou quando a uniformidade não bate com a stack "
-                "real do projeto). [W7.2 implementa o multi-select.]"
+                "Escolher card por célula ainda não está disponível nesta "
+                "versão — por ora, confirme como-is e ajuste depois com "
+                "`forge reconfigure`."
             ),
         },
         {
-            "label": "Começar do zero (custom-from-scratch)",
+            "label": "Começar do zero (custom)",
             "motive": (
-                "Ignora a detection e cai no greenfield-style picker. "
-                "[W7.2 implementa o fluxo greenfield.]"
+                "O fluxo greenfield-style ainda não está disponível nesta "
+                "versão — por ora, confirme como-is."
             ),
         },
     ]
