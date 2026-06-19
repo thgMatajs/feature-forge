@@ -760,6 +760,26 @@ def _initialize_status(slug: str, project_root: Path) -> L1State:
     return state
 
 
+def _finalize_planned(slug: str, project_root: Path, state: L1State) -> None:
+    """Close out a completed plan: release the phase-lock, then mark planned.
+
+    P-17: ``release_phase_lock`` removes the authoritative ``.phase-lock``
+    sentinel AND reconciles the status.json mirror — without it the sentinel
+    survived as a stale ``"planning"`` lock and blocked ``forge implement``.
+
+    Order matters: ``release_phase_lock`` overwrites ``last_action_kind`` to
+    ``"phase-lock-released"``, so we release FIRST, re-read, then persist the
+    ``planned`` / ``plan-completed`` state on top. The final write is the one
+    that wins.
+    """
+    release_phase_lock(slug, project_root)
+    final_state = read_l1_status(slug, project_root) or state
+    final_state.status = "planned"
+    final_state.last_action_kind = "plan-completed"
+    final_state.phase_lock = None  # idempotent — already None after release
+    write_l1_status(final_state, project_root)
+
+
 def _continue_or_pause(slug: str, wave_label: str) -> str:
     """Block on user input — accepts only `continuar` or `pausar`."""
     return question.ask(
@@ -2045,12 +2065,8 @@ def run(argv: list[str]) -> int:
         _persist_deferred(slug, project_root, "user-pause")
         raise
 
-    # All waves consumed. Mark planned and close out.
-    final_state = read_l1_status(slug, project_root) or state
-    final_state.status = "planned"
-    final_state.last_action_kind = "plan-completed"
-    final_state.phase_lock = None
-    write_l1_status(final_state, project_root)
+    # All waves consumed. Release the phase-lock sentinel, then mark planned.
+    _finalize_planned(slug, project_root, state)
     append_history(slug, project_root, {"event": "plan-completed"})
 
     if subtype == "product":
