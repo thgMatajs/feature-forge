@@ -1396,7 +1396,9 @@ def _run_pipeline(project_root: Path) -> int:
         )
     )
     renderer.write("")
-    renderer.write(mentor_calmo.greeting())
+    # P-07: o init é pipeline determinístico — abertura estável (não a
+    # variação aleatória de greeting(), reservada a contextos conversacionais).
+    renderer.write(mentor_calmo.greeting_stable())
     renderer.write(
         "Vou conhecer este projeto antes de te perguntar qualquer coisa."
     )
