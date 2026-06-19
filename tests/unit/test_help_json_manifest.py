@@ -29,6 +29,43 @@ def test_help_json_read_commands_advertise_json_flag(capsys, monkeypatch):
     assert by_name["plan"]["flags"] == []  # interactive → no meta-flags
 
 
+def test_manifest_prompts_by_default_is_truthful(capsys, monkeypatch):
+    """C-37 (PR21-I4): `prompts_by_default` reflete o comportamento REAL.
+
+    O campo `interactive` antigo mentia — dizia False pra verify/doctor/graph/
+    memory, que de fato promptam no caminho default (≥2 features / sem query /
+    submenu). Só `status` é genuinamente non-prompting. `machine_readable` é o
+    eixo ORTOGONAL (aceita --json).
+    """
+    monkeypatch.delenv("FORGE_OUTPUT", raising=False)
+    cli.main(["--help", "--json"])
+    manifest = json.loads(capsys.readouterr().out)
+    by_name = {c["name"]: c for c in manifest["commands"]}
+
+    # Campos canônicos presentes.
+    for cmd in manifest["commands"]:
+        assert "prompts_by_default" in cmd
+        assert "machine_readable" in cmd
+
+    # Os 4 read-cmds que promptam no default: prompts_by_default=True E --json.
+    for name in ("verify", "doctor", "graph", "memory"):
+        assert by_name[name]["prompts_by_default"] is True, name
+        assert by_name[name]["machine_readable"] is True, name
+
+    # status: único genuinamente non-prompting, mas machine_readable.
+    assert by_name["status"]["prompts_by_default"] is False
+    assert by_name["status"]["machine_readable"] is True
+
+    # `interactive` é alias de prompts_by_default (não mais mentira).
+    for cmd in manifest["commands"]:
+        assert cmd["interactive"] == cmd["prompts_by_default"]
+
+
+def test_verify_in_bootstrap_skip(capsys, monkeypatch):
+    """C-38 (PR21-I7): verify entra no skip-set (simétrico aos read-cmds)."""
+    assert "verify" in cli._BOOTSTRAP_SKIP_COMMANDS
+
+
 def test_plain_help_still_prose(capsys, monkeypatch):
     monkeypatch.delenv("FORGE_OUTPUT", raising=False)
     cli.main(["--help"])  # no --json

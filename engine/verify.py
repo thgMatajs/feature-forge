@@ -650,7 +650,15 @@ def _resolve_scope(
     caller can emit a deterministic error rather than silently picking one
     feature; an empty target still means "no active feature" (valid: cascade
     runs with 0 validators).
+
+    C-39 (PR21-I8): meta-flags reconhecidas (``--json``) são removidas de argv
+    ANTES do parse posicional — senão ``forge verify --json`` resolveria
+    ``--json`` como slug de feature. Espelha o tratamento de ``--no-auto-build``
+    em ``graph_cli``. ``--feature-slug X`` é consumido por
+    ``_extract_feature_slug_hint`` à parte; aqui só limpamos os tokens
+    booleanos que não carregam valor posicional.
     """
+    argv = [tok for tok in argv if tok != "--json"]
     if argv:
         first = argv[0]
         if first.upper().startswith("TASK-"):

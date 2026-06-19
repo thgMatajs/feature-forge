@@ -186,6 +186,11 @@ _BOOTSTRAP_SKIP_COMMANDS: frozenset[str] = frozenset({
     "status",     # read-only — inspeção de estado
     "memory",     # read-only — leitura/listagem de L1/L2/L3
     "raw",        # read-only — pipe genérica de leitura
+    "verify",     # C-38: observador (não muta código) — simétrico aos outros
+                  #   read-cmds. O bootstrap-check protege contra git-hooks
+                  #   ausentes pra MUTAÇÕES; verify só observa, então pular o
+                  #   check é consistente (e verify roda em hooks pre-commit
+                  #   ONDE o bootstrap-check seria circular).
     "upgrade",    # opera no FORGE_HOME, não no projeto consumidor — sem project root
 })
 
@@ -264,21 +269,30 @@ def _print_help() -> None:
 # up here. The drift guard `test_command_meta_keys_match_visible_order` fails if
 # a command is added without a metadata entry (W-001). Read-commands advertise
 # --json (Decisão 10 revisitada — meta-flags carve-out). Voz mentor-calmo nos summaries.
+# C-37 (PR21-I4): dois eixos ORTOGONAIS, separados pra não mentir:
+#   - prompts_by_default: o comando entra num `question.ask` no caminho DEFAULT
+#     (interativo)? VERDADE — verify/doctor/graph/memory promptam (≥2 features /
+#     sem query / submenu). Só `status` é genuinamente non-prompting.
+#   - machine_readable: o comando aceita `--json` / honra FORGE_OUTPUT=json
+#     (saída estruturada, non-interactive)?
+# O campo legado `interactive` é mantido = `prompts_by_default` (alias) pra não
+# quebrar consumidores existentes do manifesto, mas agora reflete a VERDADE
+# (antes dizia False pros 4 read-cmds que de fato promptam).
 _COMMAND_META: dict[str, dict] = {
-    "init":        {"summary": "Inicializa forge no projeto (mapa cinemático).", "interactive": True,  "flags": [],         "args": []},
-    "plan":        {"summary": "Planeja uma feature (conversacional).",          "interactive": True,  "flags": [],         "args": ["feature-slug?"]},
-    "implement":   {"summary": "Implementa a feature planejada.",                "interactive": True,  "flags": [],         "args": ["feature-slug?"]},
-    "verify":      {"summary": "Roda o cascade de validators (read-only).",      "interactive": False, "flags": ["--json"], "args": ["task TASK-NNNN | feature SLUG?"]},
-    "status":      {"summary": "Board read-only do projeto.",                    "interactive": False, "flags": ["--json"], "args": []},
-    "doctor":      {"summary": "Health check read-only.",                        "interactive": False, "flags": ["--json"], "args": []},
-    "reconfigure": {"summary": "Atualiza config com diff incremental.",          "interactive": True,  "flags": [],         "args": []},
-    "graph":       {"summary": "Consulta o codebase graph.",                     "interactive": False, "flags": ["--json"], "args": ["query args"]},
-    "memory":      {"summary": "Inspeciona/gerencia memory layers.",             "interactive": False, "flags": ["--json"], "args": []},
-    "evolve":      {"summary": "Review-and-apply de proposed evolutions.",       "interactive": True,  "flags": [],         "args": []},
-    "undo":        {"summary": "Reverte mutações (2-step abort).",               "interactive": True,  "flags": [],         "args": []},
-    "raw":         {"summary": "Passthrough cru.",                               "interactive": True,  "flags": [],         "args": ["args"]},
-    "qa":          {"summary": "QA red-team (auditores hostis).",                "interactive": True,  "flags": [],         "args": ["target?"]},
-    "upgrade":     {"summary": "Atualiza snapshot da forge.",                    "interactive": True,  "flags": [],         "args": []},
+    "init":        {"summary": "Inicializa forge no projeto (mapa cinemático).", "prompts_by_default": True,  "machine_readable": False, "flags": [],         "args": []},
+    "plan":        {"summary": "Planeja uma feature (conversacional).",          "prompts_by_default": True,  "machine_readable": False, "flags": [],         "args": ["feature-slug?"]},
+    "implement":   {"summary": "Implementa a feature planejada.",                "prompts_by_default": True,  "machine_readable": False, "flags": [],         "args": ["feature-slug?"]},
+    "verify":      {"summary": "Roda o cascade de validators (observador c/ side-effects L1).", "prompts_by_default": True,  "machine_readable": True,  "flags": ["--json"], "args": ["task TASK-NNNN | feature SLUG?"]},
+    "status":      {"summary": "Board read-only do projeto.",                    "prompts_by_default": False, "machine_readable": True,  "flags": ["--json"], "args": []},
+    "doctor":      {"summary": "Health check read-only.",                        "prompts_by_default": True,  "machine_readable": True,  "flags": ["--json"], "args": []},
+    "reconfigure": {"summary": "Atualiza config com diff incremental.",          "prompts_by_default": True,  "machine_readable": False, "flags": [],         "args": []},
+    "graph":       {"summary": "Consulta o codebase graph.",                     "prompts_by_default": True,  "machine_readable": True,  "flags": ["--json"], "args": ["query args"]},
+    "memory":      {"summary": "Inspeciona/gerencia memory layers.",             "prompts_by_default": True,  "machine_readable": True,  "flags": ["--json"], "args": []},
+    "evolve":      {"summary": "Review-and-apply de proposed evolutions.",       "prompts_by_default": True,  "machine_readable": False, "flags": [],         "args": []},
+    "undo":        {"summary": "Reverte mutações (2-step abort).",               "prompts_by_default": True,  "machine_readable": False, "flags": [],         "args": []},
+    "raw":         {"summary": "Passthrough cru.",                               "prompts_by_default": True,  "machine_readable": False, "flags": [],         "args": ["args"]},
+    "qa":          {"summary": "QA red-team (auditores hostis).",                "prompts_by_default": True,  "machine_readable": False, "flags": [],         "args": ["target?"]},
+    "upgrade":     {"summary": "Atualiza snapshot da forge.",                    "prompts_by_default": True,  "machine_readable": False, "flags": [],         "args": []},
 }
 
 
@@ -296,11 +310,17 @@ def _print_help_json() -> None:
     commands = []
     for name in _VISIBLE_ORDER:
         meta = _COMMAND_META.get(name, {})
+        prompts = meta.get("prompts_by_default", True)
         commands.append(
             {
                 "name": name,
                 "summary": meta.get("summary", ""),
-                "interactive": meta.get("interactive", True),
+                # C-37: `interactive` é alias legado de `prompts_by_default`
+                # (agora VERDADE). `prompts_by_default` + `machine_readable`
+                # são os campos canônicos — eixos ortogonais.
+                "interactive": prompts,
+                "prompts_by_default": prompts,
+                "machine_readable": meta.get("machine_readable", False),
                 "hidden": False,
                 "flags": list(meta.get("flags", [])),
                 "args": list(meta.get("args", [])),
