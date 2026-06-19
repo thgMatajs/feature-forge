@@ -38,7 +38,7 @@ dedicated PR. Silent expansion is forbidden.
 | 1 | `forge init` | Greenfield / brownfield install: scan project, propose cards, write `.claude/workflow-config.yaml`, seed memory L2/L3, build initial graph. |
 | 2 | `forge plan` | Conduct planning-conductor pipeline (Waves A–E) to produce a full feature package with `readiness=ready`. Aceita `<ticket\|frase\|slug>` como argv **posicional** (Decisão 10 preservada — argv, não flag): slug válido entra direto; ticket-id (ex.: `IN-37234`) ou frase livre são derivados pra slug kebab-case determinístico, confirmados conversacionalmente, e o texto cru é semeado no `feature-intake.md`. Screenshot/mockup entra conversacionalmente na source-inquiry (sem flag). Subtype-aware (product / refactor / bugfix / spike / chore): no bugfix detecta o ticket (ex: IN-37234) e exige regression-test-first; no refactor entra com contrato no-behavior-change. |
 | 3 | `forge implement` | Conduct execution-conductor pipeline (Plan Mode → Apply Mode → review → commit) for one task at a time. |
-| 4 | `forge verify` | Read-only verification gate (task-scope, feature-scope, or inferred-scope). Runs hard-gate validators numa cascade fail-fast (para no primeiro erro duro). Inclui os gates fortes: `check_cyclomatic_complexity` (multi-lang), `check_secrets` (gitleaks/trufflehog), `check_no_behavior_change` (refactor) — cada gate forte com override-justify auditável no commit body + bypass de emergência logado em `.claude/state/`. |
+| 4 | `forge verify` | Verification gate (task-scope, feature-scope, or inferred-scope). Não muta código nem artefatos, mas é um **observador com side-effects de L1** (C-34d): transita o status pra `verifying` enquanto roda + dá append no `verify-log.jsonl`. Runs hard-gate validators numa cascade fail-fast (para no primeiro erro duro). Inclui os gates fortes: `check_cyclomatic_complexity` (multi-lang), `check_secrets` (gitleaks/trufflehog), `check_no_behavior_change` (refactor) — cada gate forte com override-justify auditável no commit body + bypass de emergência logado em `.claude/state/`. |
 | 5 | `forge status` | Read-only board: in-flight features, current task, last verify, pending evolutions, doctor freshness. |
 | 6 | `forge doctor` | Read-only health check across config, cards, inventory, memory, graph, hooks, MCPs, i18n, connectivity. Interactive choice of scope (full / quick). |
 | 7 | `forge reconfigure` | **Single entrypoint for any post-init mutation**: cards, paths, conventions, backend, ticketing, workflow, persona, memory policy, external-docs, hooks, inventory re-extract, graph rebuild. Diff → confirm → apply → auto-doctor. |
@@ -263,8 +263,16 @@ sobrevive ao modo independentemente.
 
 **Modelo de saída JSON** (idêntico ao `forge graph --json`): stdout SÓ JSON
 (`json.dumps(payload, indent=2, default=str)`), erros → stderr, exit 0 sucesso /
-1 falha. Read-only — `status`/`verify`/`memory` não mutam; `doctor` mantém o stamp
-`doctor.last-run` idêntico ao caminho interativo.
+1 falha. `status`/`memory` são read-only puros. `doctor` mantém o stamp
+`doctor.last-run` idêntico ao caminho interativo. `verify` é um **observador com
+side-effects de L1** (C-34d): mesmo em JSON mode ele transita o status da feature
+pra `verifying` enquanto roda (restaurando ao status anterior no pass; anotando
+`verify-failed` no `raw.notes` no fail) e dá append num registro por invocação em
+`.claude/memory/L1/{slug}/verify-log.jsonl`. NÃO muta código nem artefatos — daí
+"observador" — mas a observabilidade de L1 é idêntica entre os modos
+interativo e JSON. Em scope `task` ambíguo (≥2 features ativas, sem
+`--feature-slug`) o JSON mode emite erro determinístico + exit 1 ANTES de
+qualquer escrita de L1 (C-34) — nunca muta a feature errada por fallback.
 
 **JSON mode NUNCA pausa (C-001).** Os read-commands com caminho de prompt
 (`verify` quando ≥2 features ativas e nenhum scope explícito; `graph` quando

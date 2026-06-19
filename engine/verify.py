@@ -202,19 +202,34 @@ def run(argv: list[str]) -> int:
             scope_kind, scope_target = _resolve_scope(
                 argv, project_root, allow_prompt=False
             )
+            feature_hint = _extract_feature_slug_hint(argv)
+            # C-34: pre-resolve o feature slug AQUI com raise_on_ambiguous=True
+            # pra o path `task` também. Sem isso, `verify --json task TASK-N`
+            # com ≥2 features ativas caía no fallback sorted(active)[0] DENTRO
+            # de run_scope → mutava a L1 da feature errada (status=verifying +
+            # verify-log). Resolvido eagerly: ou um slug determinístico (vira
+            # hint pra run_scope não re-resolver), ou _AmbiguousScopeError →
+            # exit 1 ZERO escrita.
+            resolved_slug = _scope_to_feature_slug(
+                scope_kind,
+                scope_target,
+                project_root,
+                interactive=False,
+                argv_hint=feature_hint,
+                raise_on_ambiguous=True,
+            )
         except _AmbiguousScopeError as exc:
             sys.stderr.write(
                 f"forge verify: scope ambíguo em JSON mode ({exc}) — passe "
-                "`feature <slug>` ou `task TASK-NNNN`.\n"
+                "`feature <slug>` ou `task TASK-NNNN --feature-slug <slug>`.\n"
             )
             return 1
-        feature_hint = _extract_feature_slug_hint(argv)
         return run_scope(
             scope_kind,
             scope_target,
             project_root,
             interactive=False,
-            feature_slug_hint=feature_hint,
+            feature_slug_hint=resolved_slug or feature_hint,
         )
 
     try:
@@ -430,6 +445,7 @@ def _scope_to_feature_slug(
     *,
     interactive: bool = True,
     argv_hint: str | None = None,
+    raise_on_ambiguous: bool = False,
 ) -> str:
     """Resolve the feature slug owning a verify scope.
 
@@ -444,6 +460,13 @@ def _scope_to_feature_slug(
        - múltiplas + ``interactive=False`` → emite warn e retorna a 1ª em
          ordem alfabética (determinístico, não-bloqueante).
        - 0 ativas → string vazia.
+
+    C-34 (PR21-I2): quando ``raise_on_ambiguous`` é True (JSON mode), o ramo
+    "múltiplas ativas sem desambiguação" levanta ``_AmbiguousScopeError`` em vez
+    de cair no ``sorted(active)[0]`` — esse fallback silencioso mutava a L1 da
+    feature ERRADA (status=verifying transiente + verify-log) num consumidor
+    machine que não pode responder o prompt. O guard C-001 cobria só o path de
+    inferência de scope; ``verify --json task TASK-N`` escapava por aqui.
     """
     if scope_type == "feature":
         return scope_target or ""
@@ -470,6 +493,14 @@ def _scope_to_feature_slug(
     ]
     if len(implementing) == 1:
         return implementing[0]
+
+    # C-34: ≥2 ativas, sem hint, sem mapping único → ambíguo. Em JSON mode
+    # (raise_on_ambiguous), erro determinístico ANTES de qualquer escrita de L1
+    # — nunca mutar a feature errada por fallback silencioso.
+    if raise_on_ambiguous:
+        raise _AmbiguousScopeError(
+            f"{len(active)} features ativas: {', '.join(sorted(active))}"
+        )
 
     if interactive:
         try:
