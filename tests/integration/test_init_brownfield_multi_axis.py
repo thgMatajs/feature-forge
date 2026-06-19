@@ -448,3 +448,90 @@ fun newClient() = HttpClient()
 # documentation of the W5 surface the handler consumes — touching that
 # surface in a future refactor will land in this file's diff.
 _ = (Cell, Conflict)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Pilot R1 (P-03, P-09, P-10, P-04, P-02)
+# ════════════════════════════════════════════════════════════════════════════
+
+from engine.cards.loader import load_all_cards  # noqa: E402
+from engine.detection.composer import compose_backend_axes  # noqa: E402
+from engine.init import _normalize_cards_for_composer  # noqa: E402
+from engine.utils.paths import cards_canonical_dir  # noqa: E402
+
+
+def _cell_card_ids(cell) -> set[str]:
+    """Extrai os card_ids de um Cell ou de um Conflict.candidates."""
+    if isinstance(cell, Cell):
+        return {cell.card_id}
+    if isinstance(cell, Conflict):
+        return {c.card_id for c in cell.candidates}
+    return set()
+
+
+# ── WS-B-1: cards por-plataforma não conflitam (P-03) ───────────────────────
+
+
+def _force_all_cards_match(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Força score acima do threshold pra TODO card, isolando a partição
+    por-plataforma do acaso dos signals.
+
+    Cada card canônico declara seu próprio ``detection.threshold`` (ex.:
+    0.6) que vence o kwarg ``threshold`` do composer — então um tmp_path
+    vazio jamais "casaria". Patcheamos ``_eval_detection_signals`` (usado
+    pelo composer) pra devolver score=1.0 → todos os cards entram como
+    candidatos nas suas plataformas declaradas; o que sobra a testar é
+    PURAMENTE a partição (axis, platform).
+    """
+    import engine.detection.composer as _composer
+
+    monkeypatch.setattr(
+        _composer, "_eval_detection_signals", lambda root, det: (1.0, ["forced"])
+    )
+
+
+@pytest.mark.integration
+def test_kmp_per_platform_ui_cards_do_not_conflict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """compose-screens (Android) + swiftui-screens (iOS) são complementares
+    por-plataforma, NÃO conflito. Após declararem identity.platforms, o
+    composer não os coloca no mesmo (ui, platform) → zero Conflict no eixo
+    ui (idem navigation com nav3 × swiftui-navigation)."""
+    _force_all_cards_match(monkeypatch)
+    cards = load_all_cards(cards_canonical_dir())
+    by_name = {c.name: c for c in cards}
+    subset = [
+        by_name["compose-screens"],
+        by_name["swiftui-screens"],
+        by_name["nav3"],
+        by_name["swiftui-navigation"],
+    ]
+    normalized = _normalize_cards_for_composer(subset)
+    result = compose_backend_axes(tmp_path, normalized, threshold=0.0)
+    for axis in ("ui", "navigation"):
+        for platform, cell in result.get(axis, {}).items():
+            assert not isinstance(cell, Conflict), (
+                f"({axis}, {platform}) é Conflict — partição por-plataforma "
+                f"quebrada (P-03)"
+            )
+
+
+@pytest.mark.integration
+def test_per_platform_cards_partition_to_own_platform(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """compose-screens só aparece em (ui, android); swiftui-screens só em
+    (ui, ios). O mesmo set não pode repetir nas 3 linhas."""
+    _force_all_cards_match(monkeypatch)
+    cards = load_all_cards(cards_canonical_dir())
+    by_name = {c.name: c for c in cards}
+    normalized = _normalize_cards_for_composer(
+        [by_name["compose-screens"], by_name["swiftui-screens"]]
+    )
+    result = compose_backend_axes(tmp_path, normalized, threshold=0.0)
+    ui = result.get("ui", {})
+    # compose-screens (android) NÃO deve estar em (ui, ios).
+    assert "compose-screens" not in _cell_card_ids(ui.get("ios"))
+    # swiftui-screens (ios) NÃO deve estar em (ui, android).
+    assert "swiftui-screens" not in _cell_card_ids(ui.get("android"))

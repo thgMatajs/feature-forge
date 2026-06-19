@@ -18,6 +18,7 @@ identity:
   category:     navigation
   maturity:     stable
   maintainer:   feature-forge-core
+  platforms:    [ios]
   created-at:   2026-05-29
   last-updated: 2026-05-29
   license:      MIT
