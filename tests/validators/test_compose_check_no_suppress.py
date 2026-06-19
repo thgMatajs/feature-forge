@@ -154,8 +154,14 @@ def test_suppress_in_nested_block_comment(tmp_path: Path) -> None:
 
 
 def test_non_compose_source_set_ignored(tmp_path: Path) -> None:
+    """IN-03: exercita o ramo TEST_SOURCE_SETS real — o path está DENTRO do
+    escopo Compose (`composeApp/src/`), mas é um test source set (`commonTest`),
+    então `@Suppress` ali é tolerado. A fixture antiga (`shared/src/commonTest`)
+    já estava fora do escopo Compose por COMPOSE_PATH_SEGMENTS, então passava
+    por acaso sem provar a exclusão de test source set.
+    """
     _write(
-        tmp_path / "shared/src/commonTest/kotlin/feature/home/Foo.kt",
+        tmp_path / "composeApp/src/commonTest/kotlin/feature/home/Foo.kt",
         "@Suppress(\"LongMethod\")\nfun foo() {}\n",
     )
     result = _run(tmp_path)

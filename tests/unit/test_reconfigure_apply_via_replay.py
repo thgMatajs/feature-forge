@@ -87,13 +87,14 @@ def _seed_apply_pending_draft(project_root: Path) -> None:
 
 
 def _apply_confirm_intent_id() -> str:
-    """intent-id do apply-confirm — espelha o callsite em reconfigure.run L384."""
-    return question.stable_intent_id(
-        "confirm",
-        "Aplicar essas mudanças?",
-        {"s": "sim", "n": "não"},
-        extra={"default": "n", "min-selected": None, "validator-hint": None},
-    )
+    """intent-id do apply-confirm — single source of truth (IN-04).
+
+    Delega pro próprio engine (`reconfigure._apply_confirm_intent_id`) em vez de
+    re-derivar a assinatura do prompt. Re-derivar acoplaria o teste à grafia
+    literal do prompt: se o texto mudasse, o id derivado mudaria e o pareamento
+    response↔prompt quebraria silenciosamente sem o teste pegar.
+    """
+    return reconfigure._apply_confirm_intent_id()
 
 
 def _draft_confirm_intent_id() -> str:
