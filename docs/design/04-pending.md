@@ -22,6 +22,24 @@ histórico honesto, sem strike-through de item inexistente.
   token sobrava cru nos artefatos gerados. Fechado na Task 1: o renderer
   preenche o token lowercase + os tokens de origem, single-pass.
 
+## Fechados nesta wave (W-GRAPH — graph-first pro consumidor, 2026-06-17)
+
+O ponto veio da `docs/reports/auditoria-consolidada-2026-06-17.md` §5/§6 P1
+(item 6 "SessionStart pointer") — não era um gap tracked aqui com ID próprio,
+então fica registrado como closure nova, sem strike-through de item inexistente.
+
+- **NO-ONBOARDING (grafo órfão pra consumidores)** — o `forge init` construía
+  o `.claude/graph.db` (Step 11) mas nunca ensinava o consumidor a usá-lo: o
+  grafo nascia órfão, descobrível só por quem já sabia que ele existia. Fechado
+  em três camadas aditivas: (Camada 1) `GRAPH-FIRST.md` escrito pelo novo Step
+  11.7 no `engine/init.py` (Task 1) — a regra "consulte o grafo antes de ler o
+  source" + quick-start das queries de orientação; (Camada 3) `graph-skill.md`
+  escrito no mesmo step (Task 1) — a referência tarefa→query→exemplo do catálogo
+  `q1`..`q17`+`r`, aliases e "quando NÃO usar"; (Camada 2) lembrete host-aware no
+  `hooks/session-start-drift-check.sh` (Task 2) — quando o grafo existe, aponta
+  o `forge graph --json` + a skill de referência em stderr. Nenhuma decisão
+  locked tocada (Decisão 22 preservada — os `.md` são instrução pro host).
+
 ## Fechado em [1.3.0] — graph-ia-evolution (2026-06-15)
 
 - **Expansão de cobertura de linguagem** — Java / XML / ObjC ganharam

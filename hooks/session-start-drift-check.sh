@@ -21,4 +21,24 @@ fi
 FORGE_BIN="${FORGE_BIN:-forge}"
 "$FORGE_BIN" ingest --event session-start \
     --project-root "$PROJECT_ROOT" >/dev/null 2>&1 || true
+
+# ── Graph-first reminder (W-GRAPH Camada 2) ──────────────────────────────────
+# Lembra o host que o graph.db está disponível e como consultá-lo. Self-contained
+# no shell (aditivo, não colide com o renderer host-aware). Saída em stderr; a
+# sessão sempre começa. Silencioso quando o grafo ainda não foi construído.
+if [[ -f "$PROJECT_ROOT/.claude/graph.db" ]]; then
+    # Host-aware: emoji só quando o fd 2 (stderr, pra onde o lembrete vai) é um
+    # TTY interativo fora do Claude Code; senão ASCII. Testamos fd 2 e não fd 1
+    # porque o bloco abaixo é redirecionado pra stderr (`} >&2`).
+    if [[ -t 2 && -z "${CLAUDECODE:-}" ]]; then
+        _g_prefix="🔎 graph"
+    else
+        _g_prefix="[graph]"
+    fi
+    {
+        echo "$_g_prefix codebase graph disponível em .claude/graph.db — consulte antes de ler o source."
+        echo "$_g_prefix queries: forge graph --json <q1 similar | q2 blast-radius | q3 orphans | q4 symbols | q8 di-deps>"
+        echo "$_g_prefix referência completa: .claude/forge/graph-skill.md"
+    } >&2
+fi
 exit 0

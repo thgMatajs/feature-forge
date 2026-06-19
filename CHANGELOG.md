@@ -61,6 +61,17 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   Phase 5 agora escaneiam `needs-elicitation` não-promovido — block-severity
   em contract spec (match estruturado), warning em narrativa. Fecha o
   ponto-cego "thin-but-structurally-complete".
+- Graph-first pro consumidor (W-GRAPH): `forge init` agora escreve
+  `.claude/forge/GRAPH-FIRST.md` (regra "consulte o grafo antes de ler o
+  source" + quick-start das queries q1/q2/q3/q4/q8) e
+  `.claude/forge/graph-skill.md` (tabela tarefa→query→exemplo cobrindo o
+  catálogo `q1`..`q17`+`r`, aliases aceitos, e a seção "quando NÃO usar o
+  grafo"). Fecha o NO-ONBOARDING do grafo — antes o `forge init` construía o
+  `graph.db` mas nunca ensinava o consumidor a usá-lo (grafo órfão).
+- Lembrete graph-first no `hooks/session-start-drift-check.sh`: quando
+  `.claude/graph.db` existe, o hook emite 2-3 linhas em stderr lembrando que
+  o grafo está disponível + como consultá-lo. Host-aware (emoji em TTY, `[graph]`
+  ASCII fora) e guardado pela presença do grafo.
 - **FORGE_HOME-carries-skills** (W-DEBT, 2026-06-18): nova categoria de
   `forge doctor` (`_check_forge_home_driver`, 17ª no full scope) que assere a
   presença de `FORGE_HOME/skills/feature-forge/SKILL.md` — o driver do host
@@ -246,6 +257,29 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   deixa mais o snapshot removido sem a config correspondente. O campo interno
   `_pending_card_removals` nunca é persistido (nem na config, nem no draft) —
   um resume não re-dispara o move.
+- W-GRAPH I-1: header do `_GRAPH_SKILL_MD` (artefato `forge init`) não afirma
+  mais "17 graph queries canônicas" quando a tabela lista um subconjunto das
+  mais frequentes — agora descreve a tabela como "principais" e aponta o
+  catálogo completo (`q1`..`q17` + `r`) via `forge graph --json`.
+- W-GRAPH I-4: abertura do `_GRAPH_FIRST_MD` deixou de prometer de forma
+  absoluta um grafo populado — texto condicional ("quando este projeto tem
+  fontes suportadas indexadas") cobre o caso greenfield, onde o grafo pode
+  estar vazio até a primeira indexação e as queries retornam listas vazias.
+- W-GRAPH I-5: novo teste `test_doc_query_labels_match_handlers` amarra os
+  labels canônicos da tabela do `_GRAPH_SKILL_MD` (ex.: `q3` (orphan-files)) a
+  `engine.graph_cli._HANDLERS` — renomear um label no código sem atualizar o
+  doc gerado passa a quebrar o teste (fecha drift docs-vivo↔código latente).
+- W-GRAPH I-6: `test_skill_file_path_matches_hook_reference` agora lê o corpo
+  do `session-start-drift-check.sh` e assere que o path `.claude/forge/graph-skill.md`
+  aparece literalmente nele — antes só provava o lado do init; renomear o path
+  num lado sem o outro não quebrava teste.
+- W-GRAPH I-2: `session-start-drift-check.sh` agora detecta TTY no fd 2
+  (stderr) e não no fd 1 (stdout). O lembrete graph-first é emitido em stderr
+  (`} >&2`), então a heurística de host-awareness precisa casar o stream usado
+  — antes (`-t 1`) ela mentia em redirecionamento assimétrico (stdout pra
+  arquivo + stderr no terminal renderizava ASCII; vice-versa escrevia emoji
+  num log). Test helper de integração ligado a stdout+stderr no mesmo pty pra
+  acompanhar.
 - CASING-BUG: `_render_template` agora preenche `{{feature_slug}}` lowercase
   (a forma que os templates usam) + os tokens de origem — antes só substituía
   `{{FEATURE_SLUG}}` uppercase e o token lowercase sobrava cru nos artefatos
