@@ -369,3 +369,45 @@ Causa-raiz (duas facetas):
 | QA (verify/doctor/qa) | ⏳ não exercitado nesta campanha |
 
 Bloqueadores remanescentes pra um lifecycle 100% limpo: **P-17** (phase-lock stale — Alta). Demais (P-16/P-14/P-13) são qualidade, não bloqueiam.
+
+---
+
+## Findings — stage reconfigure + QA (2026-06-19)
+
+Continuação do lifecycle: `forge reconfigure` (pra habilitar qa) + `forge qa meo-divider` (red-team via qa-conductor).
+
+### Validações positivas
+- ✅ `forge reconfigure` dirige o menu multi-axis canônico (category → submenu → confirm) sem mismatch — o gate G4/R4 (`host_is_replaying`) segura a NAVEGAÇÃO.
+- ✅ `forge qa` funciona end-to-end: scaffold (sandbox boot + **env-scrub** de vars sensitive não-declaradas + run tree) → dispatch do `agents/qa-conductor.md` → verdict canônico (BLOCK/FLAG/PASS) com findings (que iriam pra `forge evolve`).
+- ✅ **Env-scrub é defesa de segurança real funcionando:** detectou 2 vars sensitive no env do pai não-declaradas por card ativo e as dropou no sandbox isolado (nomes mascarados pra não vazar em log de CI). 3-caminhos informativo (ignorar / declarar no card / grant no projeto).
+
+### [P-18] 🐛 Alta — `forge reconfigure` não aplica mutações via loop canônico AI-first
+Sequência observada: menu "O que mudar?" → `qa` → `enable` → confirm "ativar?" (ok) → "Aplicar essas mudanças?" (apply-confirm) → re-invoke → o engine emite o guard **"Detectei um draft de reconfigure não aplicado. Retomar?"** (id ≠ apply-confirm) → IntentMismatchError → exit 1, **mudança NÃO aplicada**. Responder o guard "Retomar? sim" volta pro menu INICIAL (não retoma o apply — P-11-like). Deadlock circular. O R4 (`host_is_replaying`) gateou guards de NAVEGAÇÃO do reconfigure mas NÃO cobriu o caminho **apply-confirm × draft-resume**. Net: o "single mutation entrypoint" do forge não aplica mutações via AI-first. **Workaround no piloto:** editar `.claude/forge/forge-config.yaml` direto. Pointer: `engine/reconfigure.py` (apply-confirm + draft-resume guard; estender cobertura de `host_is_replaying` pro apply path).
+
+### [P-19] 🐛 Alta — `forge qa` Phase 0 não popula `snapshot/`
+A run tree tem `snapshot/` vazio (só dirs aninhados vazios). O `qa-conductor.md` + contratos dos auditores mandam ler read-only de `snapshot/` pra reprodutibilidade (§5.0). Vazio, os auditores são forçados a ler o working tree VIVO — quebra a garantia de reprodutibilidade do red-team. (Maior bug de `forge qa` no piloto.) Pointer: `engine/qa` Phase 0 (ingest/snapshot).
+
+### [P-20] 🐛 Média — `conductor-handoff.json` sem campos do contrato
+O `qa-conductor.md` promete que o handoff contém `snapshot/ paths`, `config_snapshot`, e a lista de auditores ativos (4 core + N extension). O arquivo real tem só `scope`, `run_id`, `root`, `config`. Um auditor seguindo o contrato literal procura campos ausentes. Pointer: writer do handoff em `engine/qa` vs `agents/qa-conductor.md`.
+
+### [P-21 / P-22 / P-23] 🧱 Média/Baixa — ambiguidades no contrato do qa-conductor
+- **P-21:** o auditor validator-claim manda "escolher fixture-extension pela linguagem do validator" — mapeia mal quando os gates reais são scripts Python de card (não `.kt`/`.swift` que o contrato antecipa).
+- **P-22:** `must_pass` usa nomes de validator sem path (`validate_task_contract.py`); o resolver implícito (cwd/PATH) não é documentado no handoff, e há split `.claude/scripts/` vs `.agents/skills/.../scripts/`.
+- **P-23:** degraded-mode (Phase 3 sandbox não roda) não é especificado no contrato — sem isso o synthesizer emitiria `qa-sandbox-results-missing` (high) espúrio.
+
+### [P-24] 🐛 Alta — card canônico `compose-screens` com validators stub declarados como hard gate
+`compose-screens/check-no-suppress.py` e `check-screen-layout.py` são declarados `severity: error` (gates duros) no `card.yaml` + citados nos task gates, mas os corpos são stubs "TODO Phase 5" que `return 0` sempre. Um `@Suppress` ou layout Screen/Content quebrado **passa silenciosamente** — "validator mente sobre cobertura". Pointer: `cards/compose-screens/` (check-*.py + severity no card.yaml).
+
+### Verdict do red-team no meo-divider: BLOCK (informativo)
+2 critical (P-24 + drift de schema do task-contract: `validate_task_contract.py` exige ~20 campos que os `TASK-000N.yaml` do meo-divider não têm, mas a readiness alegou "4 contratos válidos" — uma das duas fontes está em drift) + 1 high + 4 medium + 4 low. A MAIORIA é infra de validação (stubs Phase-5 cabeados como gates) e drift de schema, não defeito do divider — que ficou coerente e minimal-honesto (seções N/A justificadas). Confirma que o red-team produz findings reais e acionáveis.
+
+### Estado do lifecycle AI-first (final desta campanha)
+| Etapa | Status |
+|---|---|
+| init | ✅ completa (R1) |
+| plan | ✅ end-to-end (R4 + conductor) |
+| implement | ✅ REAL (Plan Mode; P-17 workaround) |
+| reconfigure | ⚠️ navega ok, mas **não aplica** (P-18) |
+| qa | ✅ end-to-end (scaffold + conductor + verdict); bugs P-19..P-23 |
+
+Bloqueadores AI-first abertos: **P-17** (implement phase-lock stale), **P-18** (reconfigure apply), **P-19** (qa snapshot). **P-24** (validators stub como gate) é finding de card canônico.
