@@ -314,3 +314,16 @@ vs "29" (L5/120); tests "1797/190" (L125) vs "1863/204" (L5/196).
 - intent-id determinístico: `engine/ui/question.py` `stable_intent_id` ~L183-243.
 - read_response / mismatch: `engine/ui/intent_state.py` (consumed-log §4).
 - Prompt de resume + resolver brownfield: handler do `init` (localizar a emissão de "Resume de init pendente?" e o resolver DEP-MISSING — provável `engine/init.py` + camada de cards).
+
+---
+
+## Findings round 3
+
+### [P-13] 🐛 Média — Resolução de conflito do eixo `data` elege card de security-rules como vencedor
+No init brownfield do MeoBonsai (firebase+rest híbrido), o eixo `data` em CONFLITO resolveu pra `firestore-security-rules` (um card de *security rules*) como vencedor, em vez de um card primário de acesso a dados (ex.: firestore-persistence). Init completa e config é válido, mas semanticamente questionável — a heurística de "vencedor" do eixo data deveria preferir o card de acesso a dados, não a security-rule. Pointer: resolver de cards / heurística de winner em eixo conflitado.
+
+### [P-14] 🧱 Baixa — Vocabulário do `forge plan` assume "tela" mesmo pra componentes
+`forge plan meo-badge` (um componente de DS, não uma tela) abriu com "Tem material visual pra essa **tela**?". O fluxo de plan assume feature=tela; pra features tipo componente/serviço o vocabulário soa errado. Pointer: prompts do plan flow (source-inquiry).
+
+### [P-15] 🐛 Crítico — Loop AI-first do `forge plan` quebrado (guard de re-entrada intercepta) — fix do R1 foi estreito
+`forge plan <slug>` cria a feature (status=planning) na 1ª invocação; toda re-invocação do loop do host bate no guard "feature já existe" (id próprio) ANTES de re-alcançar o prompt em-voo → a response pendente não casa → IntentMismatchError → exit 1. Mesma classe do P-01 (init), mas o fix do R1 gateou só o resume do init (per-comando). Atinge o comando CENTRAL — o modelo AI-first não fecha end-to-end mesmo pós-R1. Guards afetados: plan `_handle_active_slug_collision` (plan.py:1257), plan `_handle_done_feature_branch` (plan.py:1313), reconfigure draft-confirm (reconfigure.py:246). CORRIGIDO no round 4 via helper compartilhado `host_is_replaying` (generaliza o gate do P-01).

@@ -29,6 +29,16 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 ### Changed (pilot R1)
 - README: reconciliação de stats (22 validators + 3 helpers, 29 cards, tests 1863/204/30).
 
+### Added (pilot R4 — generaliza re-entry guard gating)
+- `host_is_replaying(project_root, guard_intent_id)` em `engine/ui/intent_state.py`: gate compartilhado que suprime guards de re-entrada durante o loop mecânico do host (P-15). Compõe `_response_path` + `_read_intent_log` — `True` quando há `forge-response.json` in-flight pra um prompt downstream (id ≠ guard E não-consumido). Documentado em `docs/schemas/intent-protocol.md` §4.1.
+
+### Fixed (pilot R4)
+- P-15: `forge plan` / `forge reconfigure` / `forge init` não deadlockam mais (`IntentMismatchError`, exit 1) quando um guard de re-entrada colide com a response de um prompt downstream durante o loop AI-first. Generaliza o fix de P-01 (que gateava só o resume do `init`) num mecanismo compartilhado cobrindo a classe inteira: colisão de slug (`_handle_active_slug_collision`) — o bug PRIMÁRIO do comando central —, menu de feature-done (`_handle_done_feature_branch`) e draft-confirm do `reconfigure`.
+
+### Changed (pilot R4)
+- Gate de resume do `init` agora usa `host_is_replaying` em vez de `_response_path().exists()` cru (DRY com P-01; precisão melhorada — não suprime quando a única response no disco é pra o próprio prompt de resume).
+- README: tests 1885/215/31 (pilot R4 — +12 unit/refinement + 1 e2e do loop canônico; integration medido em 215, reconciliando o drift do baseline 204).
+
 ## [1.5.0] - 2026-06-19
 
 ### Added

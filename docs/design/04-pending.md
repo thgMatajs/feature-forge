@@ -3,6 +3,31 @@
 What still needs to be drafted, in dependency order. Use this as the
 checklist for next sessions.
 
+## Defer documentado (pilot R4 — generaliza re-entry guard gating, 2026-06-19)
+
+- **DEFER-INIT-STATUS (adiar `_initialize_status` no `forge plan`)** — o
+  `forge plan` cria a L1 da feature (status=planning, via `_initialize_status`
+  em `engine/plan.py`) já na PRIMEIRA invocação, antes da intake mínima
+  terminar. Isso é o que faz o guard de colisão de slug (G2,
+  `_handle_active_slug_collision`) disparar numa re-entrada mecânica — a
+  feature já existe quando o loop re-invoca. O fix PRIMÁRIO de P-15 foi o
+  helper compartilhado `host_is_replaying` (suprime o guard no replay,
+  resolve a CLASSE inteira: init/plan/reconfigure). Uma ALTERNATIVA
+  complementar — não substituto — seria adiar `_initialize_status` até a
+  intake mínima completar, de modo que o guard nunca dispare numa
+  re-entrada mecânica (a L1 ainda não existiria). NÃO foi feito agora
+  porque: (1) o helper já resolve a classe inteira com um único mecanismo;
+  (2) adiar a criação da L1 mexe no contrato de phase-lock e auto-resume (a
+  L1 é o que `find_resumable`/`acquire_phase_lock` observam) — risco
+  cross-cutting maior que o gating aditivo; (3) o guard tem valor legítimo
+  em re-entrada HUMANA (proteger feature alheia), então não deve sumir —
+  só ser suprimido no loop mecânico, que é o que o helper faz. Revisitar
+  SE um round futuro mostrar que a criação precoce da L1 causa outros
+  sintomas (ex.: L1 órfã em `planning` após abort precoce). Ref: P-15
+  (`docs/reports/pilot-meobonsai-2026-06-19/report.md`), plano
+  `docs/superpowers/plans/2026-06-19-pilot-r4-generalize-reentry.md`
+  §Trade-off.
+
 ## Fechado nesta wave (AI-first Wave 1, 2026-06-17)
 
 Dois pontos vieram do spec `2026-06-17-ai-first-interaction-layer-design.md`
