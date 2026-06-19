@@ -29,6 +29,17 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   Phase 5 agora escaneiam `needs-elicitation` não-promovido — block-severity
   em contract spec (match estruturado), warning em narrativa. Fecha o
   ponto-cego "thin-but-structurally-complete".
+- Graph-first pro consumidor (W-GRAPH): `forge init` agora escreve
+  `.claude/forge/GRAPH-FIRST.md` (regra "consulte o grafo antes de ler o
+  source" + quick-start das queries q1/q2/q3/q4/q8) e
+  `.claude/forge/graph-skill.md` (tabela tarefa→query→exemplo cobrindo o
+  catálogo `q1`..`q17`+`r`, aliases aceitos, e a seção "quando NÃO usar o
+  grafo"). Fecha o NO-ONBOARDING do grafo — antes o `forge init` construía o
+  `graph.db` mas nunca ensinava o consumidor a usá-lo (grafo órfão).
+- Lembrete graph-first no `hooks/session-start-drift-check.sh`: quando
+  `.claude/graph.db` existe, o hook emite 2-3 linhas em stderr lembrando que
+  o grafo está disponível + como consultá-lo. Host-aware (emoji em TTY, `[graph]`
+  ASCII fora) e guardado pela presença do grafo.
 
 ### Fixed
 
