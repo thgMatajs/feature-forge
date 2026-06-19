@@ -43,6 +43,45 @@ observes a partial file.
 
 ---
 
+## Canal stdout — marker `<FORGE_INTENT>` (host claude_code)
+
+O host **primário** (Claude Code, `CLAUDECODE=1`) NÃO lê `forge-pending.json`.
+O `ClaudeCodeAdapter` (`engine/host/adapters/claude_code.py`) anuncia o pending
+por um marker auto-fechado de uma linha em **stdout**, e deliberadamente **não
+escreve `forge-pending.json`** (seria peso morto — o host já viu o marker):
+
+    <FORGE_INTENT kind="ask" intent-id="…" question="…" options="…" default="…" allow-pause="true" />
+
+| Atributo | Sempre? | Significado |
+|---|---|---|
+| `kind` | sim | `ask` \| `ask_text` \| `ask_multi` \| `confirm` \| `ask_three_paths` |
+| `intent-id` | sim | mesmo `stable_intent_id` do canal file-based (determinístico) |
+| `question` | sim | texto da pergunta |
+| `options` | sim | JSON-encoded `{key: label}` (vazio `{}` em `ask_text`) |
+| `default` | sim | valor default, ou a string literal `"null"` quando ausente |
+| `allow-pause` | sim | `"true"` \| `"false"` |
+| `validator-hint` | não | presente só quando setado (ex.: `email`) |
+| `min-selected` | não | presente só em `ask_multi` com mínimo |
+| `paths-detail` | não | JSON-encoded list[dict] — só em `ask_three_paths` |
+
+Valores são XML-attribute-quoted (`xml.sax.saxutils.quoteattr`); `options` e
+`paths-detail` são JSON dentro do atributo. O marker é parseável com
+`ElementTree.fromstring` (externo) + `json.loads` (payloads aninhados).
+
+### Diferença entre canais
+
+| Canal | Pending | Response | Re-entrada |
+|---|---|---|---|
+| **claude_code** (`CLAUDECODE=1`) | marker stdout `<FORGE_INTENT>` — sem `forge-pending.json` | `forge-response.json` (host escreve) | idêntica ao file-based |
+| **intent-file** (`FORGE_FORCE_INTENT_MODE=1`) | `forge-pending.json` em disco | `forge-response.json` | idêntica |
+
+A **response side é idêntica** nos dois canais: o host escreve
+`forge-response.json` com o mesmo `intent-id`, o engine re-invocado consome via
+`read_response` (consumed-log §4 garante idempotência). O marker stdout É a
+notificação de pending — substitui o arquivo, não o complementa.
+
+---
+
 ## Pending file — `forge-pending.json`
 
 Emitted by the engine when `question.ask*` is called and no matching
