@@ -11,10 +11,13 @@ PHANTOM-STATES (W-DEBT): ``verified`` and ``paused`` were removed from
 implement goes ``implementing`` → ``done`` directly; pause is ``deferred`` per
 Decisão 27). The router now covers exactly 9 states.
 
-W-003: when multiple features have ``last_action_at = None`` the ``max(... or
-"")`` tie-break collapsed every candidate to ``""`` and returned the first by
-iteration order (filesystem/alphabetical), making the suggested verb a function
-of ordering rather than recency. Tie-break must be deterministic and explicit.
+W-003 + C-33: when multiple features have ``last_action_at = None`` the tie-break
+must be deterministic. C-33 (PR21-I1) caught that the tie-break key was DEAD —
+it read ``feature_slug`` but the ``_status_payload`` payload uses the key
+``slug``, so the tie-break always collapsed to ``""`` and the verb depended on
+iteration order. These fixtures now mirror the REAL payload shape (key ``slug``)
+so the tie-break is actually exercised — testar a ficção ``feature_slug``
+mascarava o bug.
 """
 
 from __future__ import annotations
@@ -44,7 +47,7 @@ _EXPECTED = {
 @pytest.mark.parametrize("state", sorted(_VALID_STATES))
 def test_router_maps_every_valid_state(state):
     """Each of the 9 _VALID_STATES resolves to a concrete verb (never default)."""
-    feature = {"feature_slug": "demo", "status": state, "last_action_at": "2026-06-18T00:00:00Z"}
+    feature = {"slug": "demo", "status": state, "last_action_at": "2026-06-18T00:00:00Z"}
     verb = _suggested_next_command([feature])
     assert verb == _EXPECTED[state], f"state {state!r} → {verb!r}, expected {_EXPECTED[state]!r}"
 
@@ -60,7 +63,7 @@ def test_router_no_features_suggests_plan():
 
 def test_router_unknown_state_falls_back_to_doctor():
     """An out-of-enum state (corrupt status.json) still degrades to doctor."""
-    feature = {"feature_slug": "demo", "status": "garbage", "last_action_at": None}
+    feature = {"slug": "demo", "status": "garbage", "last_action_at": None}
     assert _suggested_next_command([feature]) == "doctor"
 
 
@@ -70,16 +73,20 @@ def test_router_deterministic_when_all_timestamps_none():
     The tie-break must be explicit (feature slug) so the same input always
     yields the same verb regardless of iteration order of the input list.
     """
-    a = {"feature_slug": "alpha", "status": "planning", "last_action_at": None}
-    b = {"feature_slug": "beta", "status": "implementing", "last_action_at": None}
+    a = {"slug": "alpha", "status": "planning", "last_action_at": None}
+    b = {"slug": "beta", "status": "implementing", "last_action_at": None}
     forward = _suggested_next_command([a, b])
     reversed_ = _suggested_next_command([b, a])
     assert forward == reversed_, "router must be order-independent when timestamps tie"
+    # Tie-break por slug: "beta" > "alpha" → beta (implementing) → verify.
+    assert forward == "verify", (
+        "tie-break deve preferir o maior slug deterministicamente (C-33)"
+    )
 
 
 def test_router_prefers_most_recent_timestamp():
     """A real timestamp wins over None regardless of position."""
-    old = {"feature_slug": "old", "status": "planning", "last_action_at": None}
-    new = {"feature_slug": "new", "status": "verifying", "last_action_at": "2026-06-18T10:00:00Z"}
+    old = {"slug": "old", "status": "planning", "last_action_at": None}
+    new = {"slug": "new", "status": "verifying", "last_action_at": "2026-06-18T10:00:00Z"}
     assert _suggested_next_command([old, new]) == "verify"
     assert _suggested_next_command([new, old]) == "verify"

@@ -393,7 +393,10 @@ def _suggested_next_command(features: list[dict]) -> str:
         features,
         key=lambda f: (
             f.get("last_action_at") or "",
-            f.get("feature_slug") or "",
+            # C-33 (PR21-I1): o payload de _status_payload usa a chave "slug"
+            # (não "feature_slug"), então o tie-break antigo era dead-code —
+            # sempre "" → tie resolvido por ordem de iteração, não determinístico.
+            f.get("slug") or "",
         ),
     )
     state = recent.get("status")
