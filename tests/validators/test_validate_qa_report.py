@@ -2,9 +2,50 @@
 
 from __future__ import annotations
 
+import json
+import re
+from pathlib import Path
+
 import pytest
 
 from validators.validate_qa_report import QAReportValidationError, validate_qa_report
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_TEMPLATE = _REPO_ROOT / "templates" / "qa-report.template.json"
+
+
+def test_template_rules_align_with_validator_enums():
+    """C-42q (PR22-R-003): as regras do template citam os MESMOS enums que o
+    validator aceita — antes diziam verdict ∈ PASS|FAIL e scope.type ∈
+    feature|task|full, que o validator rejeita.
+    """
+    raw = _TEMPLATE.read_text(encoding="utf-8")
+    data = json.loads(raw)
+    rules = " ".join(data["_template_rules"])
+    # verdict canônico
+    assert "BLOCK" in rules and "FLAG" in rules and "PASS" in rules
+    assert "FAIL" not in rules, "verdict FAIL não existe no validator"
+    # scope.type canônico
+    assert "screen" in rules and "paranoid" in rules
+    assert "full" not in rules, "scope.type 'full' não existe no validator"
+
+
+def test_template_filled_passes_validator():
+    """Smoke: preencher os {{...}} com valores válidos + strip _* → validate OK."""
+    raw = _TEMPLATE.read_text(encoding="utf-8")
+    filled = (
+        raw.replace("{{run_id}}", "2026-06-18T10-00-00Z-abcd")
+        .replace("{{scope_type}}", "feature")
+        .replace("{{scope_target}}", "lembrete-rega")
+        .replace("{{started_at}}", "2026-06-18T10:00:00Z")
+    )
+    data = json.loads(filled)
+    # finished_at/duration vazios no template — preencher pra um run real.
+    data["run"]["finished_at"] = "2026-06-18T10:03:00Z"
+    data["run"]["duration_s"] = 180
+    # Strip chaves-guia _* (o artefato canônico não as carrega).
+    data = {k: v for k, v in data.items() if not k.startswith("_")}
+    validate_qa_report(data)  # no raise
 
 
 def _minimal_valid_report() -> dict:
