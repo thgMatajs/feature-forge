@@ -1645,11 +1645,13 @@ def _run_pipeline(project_root: Path) -> int:
         )
     else:
         renderer.write("")
+        # P-08: removida a opção morta 'outro' — só existe o preset kmp-mobile,
+        # então 'outro' sempre levantava InitError e vazava '(não disponível no
+        # v1)' no menu (regressão F3 do v1.2). Menu fica sim/abortar.
         choice = ui_question.ask(
             "Confirmar preset kmp-mobile?",
             {
                 "sim": f"confirmar {PRESET_NAME} (recomendado se signals casaram)",
-                "outro": "escolher outro preset (não disponível no v1 — só kmp-mobile)",
                 "abortar": "sair do init agora",
             },
             default="sim",
@@ -1657,10 +1659,6 @@ def _run_pipeline(project_root: Path) -> int:
         if choice == "abortar":
             renderer.write("ok, parado.")
             return 0
-        if choice == "outro":
-            raise InitError(
-                "no v1 só existe o preset kmp-mobile. Os outros chegam no Phase 6."
-            )
 
     checkpoint.preset = PRESET_NAME
     checkpoint.step = "step-5-backend-selection"

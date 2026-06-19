@@ -346,3 +346,38 @@ def test_resume_labels_do_not_claim_false_continuation() -> None:
     labels = init._resume_option_labels()
     assert "continuar" in labels["resume"].lower()
     assert "audit" not in labels["resume"].lower()
+
+
+# ── WS-D-3: prompt de preset sem opção morta 'outro' (P-08) ─────────────────
+
+
+def test_preset_prompt_has_no_dead_outro_option(
+    tmp_project_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O prompt de preset não deve oferecer 'outro' (opção morta) nem vazar
+    '(não disponível no v1)' — P-08."""
+    monkeypatch.chdir(tmp_project_root)
+    _pin_intent_file_host(monkeypatch)
+
+    captured: dict[str, dict] = {}
+    _orig_ask = init.ui_question.ask
+
+    def _spy_ask(question_text, options, default=None, **kw):
+        if "preset" in str(question_text).lower():
+            captured["options"] = dict(options)
+            raise SystemExit(0)  # interrompe após capturar o prompt de preset
+        # outras perguntas (não-preset) seguem o fluxo normal.
+        return _orig_ask(question_text, options, default=default, **kw)
+
+    monkeypatch.setattr(init.ui_question, "ask", _spy_ask)
+
+    with pytest.raises(SystemExit):
+        init.run([])
+
+    opts = captured.get("options", {})
+    assert opts, "prompt de preset não foi alcançado"
+    assert "outro" not in opts, "opção morta 'outro' ainda presente (P-08)"
+    blob = " ".join(opts.values())
+    assert "não disponível" not in blob and "v1" not in blob, (
+        f"texto dev vazou no menu de preset: {blob!r}"
+    )
