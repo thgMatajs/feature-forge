@@ -43,6 +43,14 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Fixed
 
+- W-GRAPH I-1: header do `_GRAPH_SKILL_MD` (artefato `forge init`) não afirma
+  mais "17 graph queries canônicas" quando a tabela lista um subconjunto das
+  mais frequentes — agora descreve a tabela como "principais" e aponta o
+  catálogo completo (`q1`..`q17` + `r`) via `forge graph --json`.
+- W-GRAPH I-4: abertura do `_GRAPH_FIRST_MD` deixou de prometer de forma
+  absoluta um grafo populado — texto condicional ("quando este projeto tem
+  fontes suportadas indexadas") cobre o caso greenfield, onde o grafo pode
+  estar vazio até a primeira indexação e as queries retornam listas vazias.
 - W-GRAPH I-2: `session-start-drift-check.sh` agora detecta TTY no fd 2
   (stderr) e não no fd 1 (stdout). O lembrete graph-first é emitido em stderr
   (`} >&2`), então a heurística de host-awareness precisa casar o stream usado
