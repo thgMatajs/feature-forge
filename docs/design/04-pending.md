@@ -3,6 +3,88 @@
 What still needs to be drafted, in dependency order. Use this as the
 checklist for next sessions.
 
+## Pilot R6 — blockers AI-first (2026-06-19)
+
+### Fechados nesta wave (pilot R6)
+
+Os 4 bloqueadores remanescentes do piloto AI-first no MeoBonsai, com
+root-cause diagnosticado em `docs/reports/pilot-meobonsai-2026-06-19/`.
+Plano: `docs/superpowers/plans/2026-06-19-pilot-r6-aifirst-blockers.md`.
+
+- ✅ **P-17 (phase-lock stale no plan-complete)** — plan-complete libera o
+  sentinel `.phase-lock` via `release_phase_lock` (helper `_finalize_planned`
+  em `engine/plan.py`); `forge implement` não bate mais o `ERR_LOCKED` stale
+  `by 'None'`. Mensagens de erro de lock em `implement`/`plan` mostram o holder
+  real via `current_phase_lock` (sentinel-first). Resolvido 2026-06-19.
+- ✅ **P-18 (reconfigure não aplica via loop canônico AI-first)** —
+  `host_is_replaying` estendido ao apply path via `_skip_to_apply`
+  (`engine/reconfigure.py`); sob replay com response de apply-confirm pendente
+  o pipeline alcança e consome o apply-confirm (aplica a mutação) sem o
+  category-menu intervir; re-entrada humana genuína mantém o draft-resume guard.
+  Resolvido 2026-06-19.
+- ✅ **P-19 (qa Phase 0 snapshot vazio)** — `snapshot_artefacts`
+  (`engine/qa/ingest.py`) recursa em diretórios de scope preservando layout
+  relativo (cascata hardlink→copy2 em `_copy_one`). Resolvido 2026-06-19.
+- ✅ **P-20 (conductor-handoff incompleto)** — `conductor-handoff.json` carrega
+  `snapshot`/`config_snapshot`/`auditors` (4 core) conforme contrato do
+  `agents/qa-conductor.md`. Resolvido 2026-06-19.
+- ✅ **P-24 (validators do compose-screens mentiam sobre cobertura)** — os 2
+  validators (`check-no-suppress`, `check-screen-layout`), antes stubs
+  `return 0` declarados `severity: error`, viraram REAIS. `check-no-suppress`
+  é string-aware (comentário/KDoc/string/raw-string `"""` multi-linha/nested
+  block comments); `check-screen-layout` exige o par
+  `{Screen}Screen.kt`+`{Screen}Content.kt`. Resolvido 2026-06-19. Robustez do
+  parser fechada no mesmo ciclo via review holístico (WR-01/02/03).
+- ✅ **WR-04 (forge undo deixa sentinel `.phase-lock` stale)** — mesma classe
+  latente do P-17, exposta pelo `current_phase_lock` sentinel-first.
+  `_abort_feature` (`engine/undo.py`) passa a chamar `release_phase_lock`.
+  Resolvido 2026-06-19 (review holístico R6).
+
+### Deferidos (decisão consciente do mantenedor — pilot R6)
+
+Anotados aqui em vez de implementados no R6 — não são bloqueadores do piloto
+e a maioria é trabalho de CONTRATO ou cross-cutting que pede brainstorm
+separado.
+
+- **P-21 (validator-claim fixture-extension mapeia mal scripts Python de card)**
+  — gap de CONTRATO do `agents/qa-conductor.md`: o mapeamento de extensão de
+  fixture pro auditor validator-claim não cobre validators-script de card
+  (Python). Endereçar em doc-sync de contrato futuro.
+- **P-22 (`must_pass` sem path / resolver implícito não documentado)** — gap de
+  CONTRATO do `qa-conductor.md`: o resolver implícito de `must_pass` não está
+  especificado. Documentar o resolver ou tornar o path explícito.
+- **P-23 (degraded-mode da Phase 3 sandbox não especificado no contrato)** — gap
+  de CONTRATO do `qa-conductor.md`: o comportamento de degradação da sandbox da
+  Phase 3 (recursos indisponíveis) não está descrito. Especificar.
+- **WR-05 (reconfigure apply via AI-first não suporta sensitive-grant prompt no
+  mesmo replay)** — sob `_skip_to_apply`, o pipeline ainda atravessa o grant
+  flow (`evaluate_sensitive_grants` → `_prompt_sensitive_grant`) que usa
+  `input()` em vez do `question.*` canônico. No loop AI-first sem TTY, um draft
+  com sensitive env-need pendente quebra antes do apply-confirm consumir sua
+  response — reintroduz o P-18 uma camada adiante. O P-18 do piloto era qa
+  enable SEM grants, então não exercitou esse caminho. Fix = rotear o grant flow
+  pelo `question.*`/intent loop (toca `engine/cards/grant.py`, fora do escopo
+  R6) — trabalho separado com brainstorm. Ref: `.planning/pilot-r6/REVIEW.md`
+  WR-05.
+- **WR-06 (handoff `auditors` lista só os 4 core, não soma as N extensions)** —
+  o contrato (`qa-conductor.md`) promete `auditors` = "4 core + N extension",
+  mas a impl só emite os 4 core filtrando `extensions_disabled` — nunca ADICIONA
+  os extension auditors. Não há registry plugável de extensions no handoff hoje.
+  Alinhar o contrato à realidade (documentar "só core por ora") OU expandir pra
+  somar extensions ativas é trabalho não-diagnosticado no report. Relacionado a
+  P-21. Ref: `.planning/pilot-r6/REVIEW.md` WR-06.
+- **IN-01 (snapshot: `os.link` em symlink + `is_file()` segue link)** — edge
+  benigno (snapshot best-effort, sem path traversal — tudo relativo a
+  `project_root_resolved`). Se quiser determinismo cross-plataforma, usar
+  `f.resolve()` antes do `os.link` ou pular symlinks. Baixo. Ref:
+  `.planning/pilot-r6/REVIEW.md` IN-01.
+- **IN-02 (`config_snapshot` é passthrough cru da section `qa:`)** — a section
+  `qa:` inteira é serializada no `conductor-handoff.json` (gitignored). Sem
+  segredos no caso comum (`sensitive-env-grants` são NOMES de var, não valores),
+  mas é passthrough cru; opcionalmente serializar só um subset conhecido
+  (budgets/extensions/scope-defaults). Baixo. Ref: `.planning/pilot-r6/REVIEW.md`
+  IN-02.
+
 ## Defer documentado (pilot R4 — generaliza re-entry guard gating, 2026-06-19)
 
 - **DEFER-INIT-STATUS (adiar `_initialize_status` no `forge plan`)** — o

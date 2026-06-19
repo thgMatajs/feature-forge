@@ -2,7 +2,7 @@
 
 A standalone CLI skill that orchestrates end-to-end planning + implementation of mobile features across Android, iOS, KMP, and Web. Backend-agnostic (Firebase, REST, GraphQL, local-only).
 
-> **State:** 1.5.0 cortado · campanha pré-piloto completa em main · 2026-06-19 · rapid 1885 / integration 215 / e2e 31 passed (W-DEBT dívida residual: PHANTOM-STATES removido + CARDS-DISCONNECT + ABORTED-DEADEND + PLACEHOLDER-VERIFY + SCHEMA/STALE guards + readiness non-product + FORGE_HOME driver doctor + cleanup; W3 token economy: output-mode + read-commands `--json` + `--help --json` manifesto + workflow router, Revisita Decisão 10; W2 protocol robustness; camada de interação AI-first Wave 1: driver `SKILL.md`/`AGENTS.md` + front-door ticket/frase + grounded-challenge Phase 2.5 + readiness enforce + CASING-BUG fix; remediação cross-AI review PR #17; install.sh curl one-liner + forge upgrade + bash 3.2 portável; Wave 3 bug-fix sprint; Wave 2 host-aware execution; graph-ia-evolution ✅ shipped; PR #16 master review fix-pack Wave A+B+C aplicado integralmente) · 22 validators · 14 comandos · 29 cards · 4 bundles · 6 parsers (kotlin/swift/typescript + java/xml/objc) · driver `skills/feature-forge/SKILL.md` + `templates/AGENTS.md.template` · ~400 arquivos · ~52.5K LOC
+> **State:** 1.5.0 cortado · campanha pré-piloto completa em main · 2026-06-19 · rapid 1915 / integration 216 / e2e 31 passed (W-DEBT dívida residual: PHANTOM-STATES removido + CARDS-DISCONNECT + ABORTED-DEADEND + PLACEHOLDER-VERIFY + SCHEMA/STALE guards + readiness non-product + FORGE_HOME driver doctor + cleanup; W3 token economy: output-mode + read-commands `--json` + `--help --json` manifesto + workflow router, Revisita Decisão 10; W2 protocol robustness; camada de interação AI-first Wave 1: driver `SKILL.md`/`AGENTS.md` + front-door ticket/frase + grounded-challenge Phase 2.5 + readiness enforce + CASING-BUG fix; remediação cross-AI review PR #17; install.sh curl one-liner + forge upgrade + bash 3.2 portável; Wave 3 bug-fix sprint; Wave 2 host-aware execution; graph-ia-evolution ✅ shipped; PR #16 master review fix-pack Wave A+B+C aplicado integralmente) · 22 validators · 14 comandos · 29 cards · 4 bundles · 6 parsers (kotlin/swift/typescript + java/xml/objc) · driver `skills/feature-forge/SKILL.md` + `templates/AGENTS.md.template` · ~400 arquivos · ~52.5K LOC
 
 ## What it is
 
@@ -119,10 +119,10 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 | Templates canônicos | 18 (16 produto + feature-intake-bugfix + feature-intake-refactor) |
 | Cards canônicos | 29 (8 stack + 5 Firebase + firebase-crashlytics + 4 REST + retrofit-client + room-database + sqldelight + datastore-prefs + shared-preferences-prefs com `legacy-marker` + firebase-analytics + posthog-analytics + fcm + onesignal + firebase-remote-config + posthog-flags); overlay local em `.claude/cards/local/<name>/` desde Gap 5 (2026-06-02). Phase B DET-6 acresceu 6 cards de analytics/notifications/flags + sqldelight (axis persistence/kmp) + rename `crashlytics → firebase-crashlytics`. |
 | Preset | kmp-mobile (8 stack cards + 4 bundles: firebase-full + rest-with-firebase-telemetry + local-only + custom-from-scratch sentinela) — substitui o bloco `backend-candidates` monolítico desde Phase B DET-6 |
-| Validators Python | 25 + 3 helpers (`_gate_infra`, `_diff`, `_common`) — inclui `check_cyclomatic_complexity` (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon), `check_secrets` (gitleaks + trufflehog), `check_no_behavior_change` (refactor), `validate_extension_feature` (extends-feature cross-cutting), `validate_presets` (Phase B DET-6 — bundle YAML schema) |
+| Validators Python | 22 + 3 helpers (`_gate_infra`, `_diff`, `_common`) — inclui `check_cyclomatic_complexity` (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon), `check_secrets` (gitleaks + trufflehog), `check_no_behavior_change` (refactor), `validate_extension_feature` (extends-feature cross-cutting), `validate_presets` (Phase B DET-6 — bundle YAML schema) |
 | Hooks | 9 + 1 reuse incremental (`post-edit-detect-duplications.sh`) |
 | Graph parsers | 6 (Kotlin / Swift / TypeScript + Java / XML / Objective-C — Java/XML/ObjC novos em v1.3.0 graph-ia-evolution). Body extraction (`symbols.body`) cobre brace-delimited bodies (5 linguagens; XML é NULL). |
-| Tests | rapid **1885 passed** / integration **215 passed** / e2e **31 passed** (pilot R4 — generaliza re-entry guard gating; + tests dos pilots R1+R4; integration medido em 215, reconciliando drift do baseline 204 anotado em 1.5.0). Histórico: 1863/204/30 em 1.5.0; 1797/190/30 na série AI-first; 1611/168/30 em 1.4.0 pilot-ready. Baseline histórico em CHANGELOG.md. |
+| Tests | rapid **1915 passed** / integration **216 passed** / e2e **31 passed** (pilot R6 — blockers AI-first P-17/18/19/20/24 + review holístico WR-01..04; suíte full 2162 passed / 18 skipped). Histórico: 1885/215/31 em pilot R4; 1863/204/30 em 1.5.0; 1797/190/30 na série AI-first; 1611/168/30 em 1.4.0 pilot-ready. Baseline histórico em CHANGELOG.md. |
 | LOC total | ~52.500 |
 | Engine LOC | ~33.500 (Python; engine/ apenas — validators/ adicional ~7.300) |
 | Files total | ~400 |
@@ -193,7 +193,7 @@ explicitamente.
   presets/kmp-mobile/                   canonical preset v1
   validators/                           22 validators + 3 helpers (inclui check_cyclomatic_complexity + check_secrets + check_unfilled_placeholders + validate_extension_feature)
   hooks/                                9 hooks + reuse incremental script
-  tests/                                rapid 1885 / integration 215 / e2e 31 (unit + integration + e2e)
+  tests/                                rapid 1915 / integration 216 / e2e 31 (unit + integration + e2e)
 
 [per project install via `forge init`]
 {project}/.claude/forge/                sub-namespace forge (v1.3+)
@@ -295,10 +295,10 @@ Start here:
 Documentados em `docs/design/08-session-handoff.md § Conhecidos limites v1` + `CHANGELOG.md § Conhecidos limites v1.1`:
 
 **v1.0 herdados:**
-- **`forge implement` é stub manual** — Apply Mode automatizado é Phase 6
+- **`forge plan` e `forge implement` são fluxos AI-first dirigidos pelo host** (modelo Claude-Code-fronted, confirmado no piloto MeoBonsai D4/D5): o engine emite intents (exit 2 + marker `<FORGE_INTENT>`) e o host fecha o loop — via `AskUserQuestion` no Claude Code, ou pelo intent-file fallback (opencode/CI). `forge implement` executa task-by-task com gates de scope + atomic commits sob esse loop; não é stub manual nem narração de template. A camada de interação (`skills/feature-forge/SKILL.md` + `templates/AGENTS.md.template`) ensina o host a dirigir o intent loop.
 - **`forge init` Cena 7 (Jira/ticketing)** não prompted — use `forge reconfigure` pós-init
 - **3 kinds de `apply_proposal_to_l2`** ainda em fall-through (retrospective kinds — reduzido de 9 para 3 com os 6 reuse-intelligence kinds implementados)
-- **LLM/sub-agent hookup real** — `plan.py`/`implement.py` narram fluxo + renderizam templates; integração Anthropic API é Phase 6
+- **Sub-agent hookup via host, não via SDK** — `plan.py`/`implement.py` emitem intents e dispatcham conductors pelo host agêntico (Claude Code / opencode); não há integração direta com a Anthropic API por design (Decisão 22 — zero runtime deps em outras skills; o comportamento é do host, o engine só emite texto/intent).
 - **Tree-sitter / AST real** — regex parsers v1 por design
 
 **v1.1 novos:**
