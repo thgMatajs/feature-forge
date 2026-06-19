@@ -49,7 +49,7 @@ def test_cc_gate_skipped_when_no_invented_behavior_fails_failfast(
     """Se check_no_invented_behavior falha hard, CC nem roda (fail-fast)."""
     captured: list[str] = []
 
-    def fake_invoke(spec, root):
+    def fake_invoke(spec, root, *, scope_type=None, scope_target=None):
         captured.append(spec.name)
         if spec.name == "check_no_invented_behavior":
             return verify._ValidatorResult(

@@ -3,13 +3,22 @@
 podem carregar `{{...}}` crus.
 
 Um template não-preenchido passando como 'verificado' (PLACEHOLDER-VERIFY) é
-detection-failure. Escaneia os artefatos staged DENTRO do dir da feature
+detection-failure. Escaneia os artefatos DENTRO do dir da feature
 (.md/.yaml/.yml/.json) procurando tokens `{{token}}` não-substituídos. Tokens
 em arquivos-fonte de `templates/` (não-preenchidos por design) NÃO contam — só
 artefatos da feature, que `_render_template` deveria ter preenchido.
 
-Compõe a infra existente (`_common` + `_diff` + `engine.utils.paths.feature_path`)
-— sem helper de scan novo (reuse-first, Mandamento #3).
+C-43-B (PR22-R-001): o scan varre o FILESYSTEM do dir da feature
+(`f_root.rglob`), não `git_staged_files`. Os sibling validators do cascade
+rodam pré-staging (hook pre-commit roda ANTES do `git add` em vários fluxos),
+então depender de staged-files deixava o gate inerte. O escopo `--scope`/`--id`
+é threadado pelo `engine.verify._invoke_validator` (parte A do C-43).
+
+C-52: tokens escapados deliberadamente são ignorados — `{{{token}}}` (triple-
+brace literal) ou linha marcada com `<!-- placeholder-ok -->` logo acima.
+
+Compõe a infra existente (`_common` + `engine.utils.paths.feature_path`) — sem
+helper de scan novo (reuse-first, Mandamento #3).
 """
 
 from __future__ import annotations
@@ -20,7 +29,6 @@ from pathlib import Path
 from typing import Any
 
 from _common import make_paths, result_fail, result_pass, run_cli
-from _diff import git_staged_files
 
 # A-014 pattern: o path patch precisa rodar ANTES de qualquer `from engine....`.
 sys.path.insert(0, str(Path(__file__).parent.parent))  # noqa: E402
@@ -28,8 +36,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent))  # noqa: E402
 from engine.memory.l1 import current_subtype  # noqa: E402
 from engine.utils.paths import feature_path  # noqa: E402
 
-_PLACEHOLDER_RE = re.compile(r"\{\{\s*[\w.\-]+\s*\}\}")
+# Token de 2 chaves. O lookahead/lookbehind `(?<!\{)`/`(?!\})` exclui a forma
+# escapada de 3 chaves `{{{token}}}` (C-52 — literal intencional).
+_PLACEHOLDER_RE = re.compile(r"(?<!\{)\{\{\s*[\w.\-]+\s*\}\}(?!\})")
+# C-45: slug-id de task é estritamente `TASK-<dígitos>`. Uma feature slugada
+# `task-foo` (kebab) NÃO casa — então não é mis-classificada como task id.
+_TASK_ID_RE = re.compile(r"^TASK-\d+$", re.IGNORECASE)
 _ARTIFACT_SUFFIXES = {".md", ".yaml", ".yml", ".json"}
+_ESCAPE_MARKER = "placeholder-ok"
 
 
 def _resolve_slug(kwargs: dict[str, Any]) -> str | None:
@@ -37,8 +51,29 @@ def _resolve_slug(kwargs: dict[str, Any]) -> str | None:
     given = kwargs.get("id")
     if scope == "feature" and given:
         return given
-    if given and not given.upper().startswith("TASK-"):
+    # C-45: só descarta quando o id é estritamente um TASK-<n>. Uma feature
+    # cujo slug começa com `task-` (kebab) segue sendo tratada como slug.
+    if given and not _TASK_ID_RE.match(given.strip()):
         return given
+    return None
+
+
+def _has_unescaped_placeholder(text: str) -> str | None:
+    """Retorna o primeiro token cru não-escapado, ou ``None``.
+
+    Linhas precedidas por `<!-- placeholder-ok -->` (na mesma linha ou na linha
+    imediatamente anterior) são puladas — escape deliberado (C-52).
+    """
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        m = _PLACEHOLDER_RE.search(line)
+        if not m:
+            continue
+        if _ESCAPE_MARKER in line.lower():
+            continue
+        if i > 0 and _ESCAPE_MARKER in lines[i - 1].lower():
+            continue
+        return m.group(0)
     return None
 
 
@@ -48,21 +83,19 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
         return result_pass("nenhum slug de feature — placeholder scan pulado")
     subtype = current_subtype(slug, project_root)
     f_root = feature_path(project_root, slug, subtype=subtype)
-    staged = git_staged_files(project_root, extensions=_ARTIFACT_SUFFIXES)
     hits: dict[str, str] = {}
-    for f in staged:
-        try:
-            f.relative_to(f_root)
-        except ValueError:
-            continue  # fora do dir da feature — ignora
-        try:
-            text = f.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        m = _PLACEHOLDER_RE.search(text)
-        if m:
-            rel = str(f.relative_to(project_root))
-            hits.setdefault(rel, m.group(0))
+    if f_root.is_dir():
+        for f in sorted(f_root.rglob("*")):
+            if not f.is_file() or f.suffix not in _ARTIFACT_SUFFIXES:
+                continue
+            try:
+                text = f.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            tok = _has_unescaped_placeholder(text)
+            if tok:
+                rel = str(f.relative_to(project_root))
+                hits.setdefault(rel, tok)
     if not hits:
         return result_pass(f"sem placeholders crus em {slug}")
     where = "; ".join(f"{p} → {tok}" for p, tok in list(hits.items())[:5])

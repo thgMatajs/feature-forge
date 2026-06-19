@@ -363,6 +363,8 @@ def run_scope(
         fail_fast=fail_fast,
         project_root=project_root,
         interactive=interactive,
+        scope_type=scope_type,
+        scope_target=scope_target,
     )
     if interactive:
         _render_summary(results)
@@ -821,6 +823,8 @@ def _run_cascade(
     fail_fast: bool,
     project_root: Path,
     interactive: bool = True,
+    scope_type: str | None = None,
+    scope_target: str | None = None,
 ) -> list[_ValidatorResult]:
     """Dispatch each validator and collect results.
 
@@ -828,6 +832,12 @@ def _run_cascade(
     the whole list, marking nothing as ``skipped``. When ``interactive`` is
     False the cinematic per-line output is suppressed (hook callers don't
     want it on stderr).
+
+    C-43 (PR22-R-001): ``scope_type``/``scope_target`` são threadados até
+    ``_invoke_validator`` — sem isso, validators scope-aware (ex.:
+    ``check_unfilled_placeholders``) recebiam kwargs vazios e ficavam inertes
+    (gate shipped-but-vacuous). Os defaults ``None`` preservam call-sites
+    legados (testes que invocam ``_run_cascade`` sem scope).
     """
     results: list[_ValidatorResult] = []
     halted = False
@@ -837,7 +847,9 @@ def _run_cascade(
             if interactive:
                 _render_line(results[-1])
             continue
-        result = _invoke_validator(spec, project_root)
+        result = _invoke_validator(
+            spec, project_root, scope_type=scope_type, scope_target=scope_target
+        )
         results.append(result)
         if interactive:
             _render_line(result)
@@ -846,13 +858,24 @@ def _run_cascade(
     return results
 
 
-def _invoke_validator(spec: _ValidatorSpec, project_root: Path) -> _ValidatorResult:
+def _invoke_validator(
+    spec: _ValidatorSpec,
+    project_root: Path,
+    *,
+    scope_type: str | None = None,
+    scope_target: str | None = None,
+) -> _ValidatorResult:
     """Run a single validator as a subprocess.
 
     Convention: validators print human output to stderr/stdout freely and
     emit one final JSON line with ``{"status": ..., "message": ..., ...}`` on
     stdout when they want structured output. Missing JSON → degrade to the
     exit-code contract (0 pass, 1 warn, 2 fail).
+
+    C-43: quando ``scope_type``/``scope_target`` chegam, são anexados como
+    ``--scope <kind> --id <target>`` ao argv do subprocess (contrato de
+    ``validators/_common.build_argparser``). Validators que ignoram scope
+    simplesmente não usam os kwargs — backward-compatible.
     """
     if not spec.script_path.is_file():
         return _ValidatorResult(
@@ -873,10 +896,16 @@ def _invoke_validator(spec: _ValidatorSpec, project_root: Path) -> _ValidatorRes
             message=f"project_root is not a directory: {project_root}",
         )
 
+    cmd = [sys.executable, str(spec.script_path), "--project-root", str(project_root)]
+    if scope_type:
+        cmd += ["--scope", scope_type]
+    if scope_target:
+        cmd += ["--id", scope_target]
+
     started = time.monotonic()
     try:
         proc = subprocess.run(
-            [sys.executable, str(spec.script_path), "--project-root", str(project_root)],
+            cmd,
             check=False,
             capture_output=True,
             text=True,
