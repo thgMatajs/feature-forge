@@ -128,3 +128,71 @@ def test_detect_race_sweeps_when_pid_missing_or_invalid(tmp_project_root):
     # pid=0 é inválido pra os.kill(pid, 0) como probe de PID específico → varre.
     assert intent_state.detect_race(tmp_project_root, new_intent_id="brand-new") is None
     assert not path.exists()
+
+
+def test_detect_race_sweeps_when_pid_non_integer(tmp_project_root):
+    """C-49: pid não-inteiro (corrupção) → impossível provar vivo → varre."""
+    payload = _pending_payload(
+        intent_id="cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd",
+        created_at=_recent_iso(),
+        pid=0,
+    )
+    payload["pid"] = "not-a-pid"
+    path = _write_pending(tmp_project_root, payload)
+    assert intent_state.detect_race(tmp_project_root, new_intent_id="brand-new") is None
+    assert not path.exists()
+
+
+def test_pending_lock_no_ops_on_flock_oserror(tmp_project_root, monkeypatch):
+    """C-28 (PR20-B1): flock que levanta OSError (NFS/CIFS/Docker) → no-op.
+
+    Capturar só ImportError travava o comando nesses filesystems. O lock degrada
+    pra no-op (tempfile + os.replace seguem como defesa) e a seção crítica roda.
+    """
+    import sys as _sys
+
+    if _sys.platform == "win32":  # pragma: no cover - POSIX-only branch
+        pytest.skip("branch POSIX flock")
+
+    import fcntl
+
+    def _flock_raises(fileno, op):
+        raise OSError("lock não suportado neste filesystem")
+
+    monkeypatch.setattr(fcntl, "flock", _flock_raises)
+
+    ran = False
+    with intent_state.pending_lock(tmp_project_root):
+        ran = True
+    assert ran, "a seção crítica deve rodar mesmo com flock indisponível"
+
+
+def test_detect_race_on_windows_treats_live_pid_as_race(
+    tmp_project_root, monkeypatch
+):
+    """C-49 (PR22-B-01): no Windows o probe os.kill(pid,0) não é confiável.
+
+    Antes do fix, `os.kill(pid, 0)` levantava ValueError no Windows e o bloco
+    juntava ValueError com 'processo morto' → apagava o pending SEMPRE →
+    desativava a detecção de race na plataforma. Agora, com platform=win32 e
+    pid>0, o probe é tratado como não-conclusivo (assume vivo) e a race é
+    levantada — o pending é preservado.
+    """
+    path = _write_pending(
+        tmp_project_root,
+        _pending_payload(
+            intent_id="11111111-1111-4111-8111-111111111111",
+            created_at=_recent_iso(),
+            pid=84210,
+        ),
+    )
+    monkeypatch.setattr(intent_state.sys, "platform", "win32")
+
+    def _kill_raises_valueerror(pid, sig):
+        raise ValueError("Windows não suporta signal 0")
+
+    monkeypatch.setattr(intent_state.os, "kill", _kill_raises_valueerror)
+
+    with pytest.raises(intent_state.RaceDetectedError):
+        intent_state.detect_race(tmp_project_root, new_intent_id="other-id")
+    assert path.exists(), "no Windows, pending de PID vivo NÃO deve ser varrido"

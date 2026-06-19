@@ -54,7 +54,7 @@ stable intent-id, but ``forge-response.json`` already holds the LATEST
 intent's response — ``read_response`` would raise ``IntentMismatchError``
 and exit 1.
 
-Fix: persistent consumed-log at ``.claude/state/forge-intent-log.jsonl``.
+Fix: persistent consumed-log at ``.claude/forge/state/forge-intent-log.jsonl``.
 ``read_response`` consults the log first; if the intent-id was consumed
 in a prior subprocess invocation, returns the cached response without
 touching ``forge-response.json``. The log lives for the lifetime of a
@@ -204,7 +204,13 @@ def pending_lock(
 
                 fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
                 locked_posix = True
-            except ImportError:
+            except (ImportError, OSError):
+                # C-28 (PR20-B1): POSIX flock pode levantar OSError em
+                # filesystems sem suporte a locking (NFS/CIFS/alguns binds
+                # Docker). Capturar só ImportError travava o comando nesses
+                # ambientes. No-op + tempfile-por-processo + os.replace atômico
+                # seguem como última linha de defesa (mesma garantia do branch
+                # "plataforma sem suporte").
                 pass
         yield
     finally:
@@ -827,21 +833,48 @@ def detect_race(
     # (crash sem cleanup) travaria a raia até o stale threshold (~10 min). Antes
     # de declarar race, confirma que o PID ainda vive via os.kill(pid, 0):
     #   - ProcessLookupError → processo morreu → varre + segue (return None).
-    #   - ValueError/TypeError → pid inutilizável como probe → varre + segue.
+    #   - TypeError → pid inutilizável como probe → varre + segue.
     #   - PermissionError → processo VIVO de outro dono → race genuína (raise).
     #   - sem erro → processo vivo → race genuína (raise).
+    #
+    # C-49 (PR22-B-01): no Windows, ``os.kill(pid, 0)`` levanta ``ValueError``
+    # (signal 0 não é suportado), NÃO ``ProcessLookupError``. O bloco antigo
+    # juntava ValueError com "processo morto" → no Windows apagava SEMPRE o
+    # pending → desativava a detecção de race inteira. Agora: pid inválido como
+    # *valor* (não-inteiro) é distinto de probe não-suportado pela *plataforma*.
+    # No Windows, com probe_pid>0, tratamos o probe como não-conclusivo →
+    # assumimos vivo (segue pro raise) em vez de varrer.
+    #
+    # C-51 (PR22-R-008): o probe ``os.kill(pid, 0)`` só é confiável quando o
+    # pending foi escrito pelo MESMO host (mesmo namespace de PID). Num cenário
+    # multi-host (PID reciclado em outra máquina/container compartilhando o dir),
+    # o probe pode dar falso-positivo de "vivo". O modelo CC-fronted é
+    # single-host por invocação, então o risco é teórico; hardening por
+    # boot-id/hostname fica como defer documentado.
     try:
         probe_pid = int(pid)
-        if probe_pid <= 0:
-            # pid<=0 não identifica um processo específico (0 = grupo,
-            # negativos = grupos/todos) — não dá pra provar vivo → varre.
-            raise ValueError
-        os.kill(probe_pid, 0)
-    except (ProcessLookupError, ValueError, TypeError):
+    except (ValueError, TypeError):
+        # pid não é sequer um inteiro válido → impossível provar vivo → varre.
         json_io.delete_if_exists(pending_path)
         return None
-    except PermissionError:
-        pass  # processo vivo de outro dono — segue pro raise abaixo.
+    if probe_pid <= 0:
+        # pid<=0 não identifica um processo específico (0 = grupo,
+        # negativos = grupos/todos) — não dá pra provar vivo → varre.
+        json_io.delete_if_exists(pending_path)
+        return None
+    if sys.platform == "win32":
+        # os.kill(pid, 0) não é um probe de liveness confiável no Windows —
+        # trata como não-conclusivo: assume vivo (race genuína) em vez de
+        # varrer cego. Mantém a detecção de race ativa na plataforma.
+        pass
+    else:
+        try:
+            os.kill(probe_pid, 0)
+        except (ProcessLookupError, TypeError):
+            json_io.delete_if_exists(pending_path)
+            return None
+        except PermissionError:
+            pass  # processo vivo de outro dono — segue pro raise abaixo.
 
     raise RaceDetectedError(
         "outra invocação do forge ainda está aguardando resposta "
