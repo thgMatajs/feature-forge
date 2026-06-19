@@ -188,10 +188,9 @@ def test_detect_race_on_windows_treats_live_pid_as_race(
     )
     monkeypatch.setattr(intent_state.sys, "platform", "win32")
 
-    def _kill_raises_valueerror(pid, sig):
-        raise ValueError("Windows não suporta signal 0")
-
-    monkeypatch.setattr(intent_state.os, "kill", _kill_raises_valueerror)
+    # WR-02: o branch win32 NUNCA chama os.kill (assume vivo direto), então
+    # não há probe pra monkeypatchar. Patchar os.kill aqui era código morto
+    # que sugeria cobertura inexistente do caminho ValueError.
 
     with pytest.raises(intent_state.RaceDetectedError):
         intent_state.detect_race(tmp_project_root, new_intent_id="other-id")
