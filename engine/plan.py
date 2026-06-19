@@ -40,6 +40,7 @@ from engine.memory.l1 import (
     L1State,
     acquire_phase_lock,
     append_history,
+    current_phase_lock,
     current_subtype,
     list_active_features,
     read_elicitation,
@@ -1926,8 +1927,9 @@ def run(argv: list[str]) -> int:
     # default ("product") seeds correctly for greenfield features.
     state = _initialize_status(slug, project_root)
     if not acquire_phase_lock(slug, project_root, "planning"):
-        current = read_l1_status(slug, project_root)
-        held = current.phase_lock if current else "?"
+        # P-17: read the holder sentinel-first so the message names the real
+        # owner (the status.json mirror can be a stale None).
+        held = current_phase_lock(slug, project_root) or "?"
         sys.stderr.write(
             f"forge plan: '{slug}' phase-locked by '{held}'. "
             "Run `forge undo` to release, or wait for the other command to finish.\n"
