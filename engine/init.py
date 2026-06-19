@@ -1551,7 +1551,10 @@ def _run_pipeline(project_root: Path) -> int:
     _save_checkpoint(checkpoint)
 
     renderer.write("")
-    renderer.write("[0:01] Scanning repo + cards canônicos…")
+    renderer.write(
+        "[1/7] Lendo o repositório + cards canônicos "
+        "(pode levar ~30s em monorepos grandes)…"
+    )
 
     canonical_dir = cards_canonical_dir()
     if not canonical_dir.is_dir():
@@ -1691,7 +1694,7 @@ def _run_pipeline(project_root: Path) -> int:
     )
 
     renderer.write("")
-    renderer.write("[1:00] Backend — preciso da sua escolha")
+    renderer.write("[5/7] Backend — preciso da sua escolha")
 
     backend_cells: dict[str, Any] = {}
     if has_signals:

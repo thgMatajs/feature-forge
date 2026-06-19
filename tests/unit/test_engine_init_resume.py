@@ -381,3 +381,34 @@ def test_preset_prompt_has_no_dead_outro_option(
     assert "não disponível" not in blob and "v1" not in blob, (
         f"texto dev vazou no menu de preset: {blob!r}"
     )
+
+
+# ── WS-D-4: rótulo de passo em vez de relógio interno (P-12) ────────────────
+
+
+def test_init_progress_labels_not_clock_like(
+    tmp_project_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A saída do init não deve usar prefixos [m:ss] crus que parecem
+    relógio/ETA — P-12. Usar rótulo de passo (ex.: [1/7])."""
+    import contextlib
+    import io
+    import re
+
+    monkeypatch.chdir(tmp_project_root)
+    _pin_intent_file_host(monkeypatch)
+
+    # Roda o init até a primeira pausa real (sem response no disco). A saída
+    # cinematográfica até lá cobre o discovery + o banner de backend.
+    from engine.ui.question import PausedForInputError
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        try:
+            init.run([])
+        except (PausedForInputError, SystemExit):
+            pass
+    out = buf.getvalue()
+    assert not re.search(r"\[\d:\d{2}\]", out), (
+        f"prefixo relógio-like ainda presente (P-12): {out!r}"
+    )
