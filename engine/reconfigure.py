@@ -223,34 +223,49 @@ def run(argv: list[str]) -> int:
     draft_path = claude_dir(project_root) / _DRAFT_NAME
     draft = _load_draft(draft_path)
     if draft is not None:
-        # DRIFT-1 W2.T3b — save checkpoint ANTES do draft-confirm prompt.
-        # Outcome C — per-subcommand dataclass, no engine.qa.checkpoint import.
-        _save_reconfigure_checkpoint(
-            _ReconfigureCheckpoint(
-                step="step-draft-confirm",
-                at=_utc_now_iso_reconfigure(),
-                project_root=str(project_root),
-                intent_id=question.stable_intent_id(
-                    "confirm",
-                    "Detectei um draft de reconfigure não aplicado. Retomar?",
-                    {"s": "sim", "n": "não"},
-                    extra={
-                        "default": "s",
-                        "min-selected": None,
-                        "validator-hint": None,
-                    },
-                ),
-                menu_path=["draft-confirm"],
-            )
-        )
-        if question.confirm(
+        # DRIFT-1 W2.T3b — intent-id do draft-confirm, derivado uma vez e
+        # reusado no checkpoint + no gate de replay (DRY; P-15).
+        _draft_confirm_id = question.stable_intent_id(
+            "confirm",
             "Detectei um draft de reconfigure não aplicado. Retomar?",
-            default=True,
-        ):
+            {"s": "sim", "n": "não"},
+            extra={
+                "default": "s",
+                "min-selected": None,
+                "validator-hint": None,
+            },
+        )
+        # Gate de re-entrada (P-15, mesma classe de G1/G2/G3): sob loop mecânico
+        # do host existe uma response downstream pendente (ex.: category-menu).
+        # Emitir o draft-confirm aqui injetaria um intent que colide com essa
+        # response → IntentMismatchError. Sob replay adotamos o draft (= caminho
+        # "sim"/retomar) sem perguntar — preserva trabalho, coerente com o
+        # contrato auto-resumable da Decisão 27 e com o default True do confirm.
+        # Re-entrada humana mantém o confirm. Ver §4.1 do intent-protocol.
+        from engine.ui import intent_state  # noqa: PLC0415
+
+        if intent_state.host_is_replaying(project_root, _draft_confirm_id):
             working = draft
         else:
-            draft_path.unlink(missing_ok=True)
-            working = deepcopy(current)
+            # DRIFT-1 W2.T3b — save checkpoint ANTES do draft-confirm prompt.
+            # Outcome C — per-subcommand dataclass, no engine.qa.checkpoint import.
+            _save_reconfigure_checkpoint(
+                _ReconfigureCheckpoint(
+                    step="step-draft-confirm",
+                    at=_utc_now_iso_reconfigure(),
+                    project_root=str(project_root),
+                    intent_id=_draft_confirm_id,
+                    menu_path=["draft-confirm"],
+                )
+            )
+            if question.confirm(
+                "Detectei um draft de reconfigure não aplicado. Retomar?",
+                default=True,
+            ):
+                working = draft
+            else:
+                draft_path.unlink(missing_ok=True)
+                working = deepcopy(current)
     else:
         working = deepcopy(current)
 

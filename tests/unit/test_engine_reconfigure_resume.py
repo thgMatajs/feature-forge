@@ -255,3 +255,119 @@ def test_resume_from_checkpoint(
         "response file must survive consume after delegation (CR-002 — "
         "cleanup is cli.main finally's job, not the per-prompt consume)"
     )
+
+
+# ── P-15: gating do draft-confirm durante loop mecânico (host_is_replaying) ──
+
+
+def _pin_intent_file_host(project_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin host=intent-file (espelha o setup dos testes existentes)."""
+    forge_dir = project_root / ".claude" / "forge"
+    forge_dir.mkdir(parents=True, exist_ok=True)
+    (forge_dir / "forge-config.yaml").write_text(
+        "host: intent-file\n", encoding="utf-8"
+    )
+    from engine.host import detect as _host_detect
+
+    _host_detect._clear_cache()
+    from engine.ui import intent_state as _intent_state
+
+    _intent_state._reset_log_cache()
+
+
+def _draft_confirm_intent_id() -> str:
+    """intent-id do draft-confirm — espelha o callsite em reconfigure.run."""
+    return question.stable_intent_id(
+        "confirm",
+        "Detectei um draft de reconfigure não aplicado. Retomar?",
+        {"s": "sim", "n": "não"},
+        extra={"default": "s", "min-selected": None, "validator-hint": None},
+    )
+
+
+def _run_reconfigure_and_capture_first_pending(project_root: Path) -> dict | None:
+    """Roda reconfigure.run([]) e devolve o intent do primeiro pending emitido.
+
+    PausedForInputError → o intent em-voo. Retorno normal/SystemExit/
+    IntentMismatchError → None (sem pending emitido pra inspeção). Pra
+    discriminar leak via mismatch use ``_run_reconfigure_expected_mismatch_id``.
+    """
+    from engine.ui.question import PausedForInputError
+    from engine.ui.intent_state import IntentMismatchError
+
+    try:
+        reconfigure.run([])
+    except PausedForInputError as exc:
+        return dict(exc.intent or {})
+    except IntentMismatchError:
+        return None
+    except SystemExit:
+        return None
+    return None
+
+
+def _run_reconfigure_expected_mismatch_id(project_root: Path) -> str | None:
+    """Roda reconfigure.run([]) e, se houver IntentMismatchError, devolve o
+    intent-id ESPERADO (o que o pipeline pediu ao consumir). Esse id revela
+    QUAL prompt o handler alcançou: se for o draft-confirm, o guard vazou;
+    se for downstream (category-menu), o gate funcionou."""
+    import re as _re
+    from engine.ui.intent_state import IntentMismatchError
+
+    try:
+        reconfigure.run([])
+    except IntentMismatchError as exc:
+        m = _re.search(r"expected '([^']+)'", str(exc))
+        return m.group(1) if m else None
+    except Exception:  # noqa: BLE001 — outros caminhos não nos interessam aqui
+        return None
+    return None
+
+
+def test_draft_confirm_suppressed_during_host_replay(
+    tmp_forge_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mesma classe de P-15: existe draft + response downstream pendente →
+    o draft-confirm NÃO deve emitir; o handler adota o draft e segue até o
+    prompt downstream (category-menu). Sem o gate, o draft-confirm seria o
+    prompt alcançado e o mismatch citaria SEU id (leak)."""
+    _seed_workflow_config(tmp_forge_project)
+    monkeypatch.chdir(tmp_forge_project)
+    _pin_intent_file_host(tmp_forge_project, monkeypatch)
+    from engine.ui import intent_state
+
+    intent_state.write_response(
+        tmp_forge_project,
+        {
+            "schema-version": 1,
+            "intent-id": "category-menu-downstream",
+            "value": ["backend"],
+        },
+    )
+    draft_confirm_id = _draft_confirm_intent_id()
+    # O id ESPERADO pelo consume revela qual prompt o handler alcançou. Sob o
+    # gate, o handler adota o draft e avança até o category-menu → o expected
+    # id NÃO é o draft-confirm. Sem o gate, o draft-confirm é o prompt e o
+    # expected id SERIA o draft-confirm (leak).
+    expected_id = _run_reconfigure_expected_mismatch_id(tmp_forge_project)
+    assert expected_id is not None, (
+        "esperava um mismatch downstream (handler avançou além do draft-confirm)"
+    )
+    assert expected_id != draft_confirm_id, (
+        "draft-confirm vazou durante loop mecânico — o handler não passou do guard"
+    )
+
+
+def test_draft_confirm_shown_on_genuine_human_reentry(
+    tmp_forge_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-entrada humana: draft existe, SEM response pendente → o draft-confirm
+    DEVE aparecer (comportamento preservado)."""
+    _seed_workflow_config(tmp_forge_project)
+    monkeypatch.chdir(tmp_forge_project)
+    _pin_intent_file_host(tmp_forge_project, monkeypatch)
+    draft_confirm_id = _draft_confirm_intent_id()
+    pending = _run_reconfigure_and_capture_first_pending(tmp_forge_project)
+    assert pending is not None and pending.get("intent-id") == draft_confirm_id, (
+        "draft-confirm deve aparecer em re-entrada humana sem response pendente"
+    )
