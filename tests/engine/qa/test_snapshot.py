@@ -135,3 +135,80 @@ def test_snapshot_handles_path_outside_project_root(tmp_path: Path) -> None:
     assert len(copied) == 1
     flat_dest = tree.snapshot_dir / "outside.yaml"
     assert flat_dest.is_file()
+
+
+def _setup_feature_dir(tmp_path: Path) -> tuple[Path, Path]:
+    """Cria project_root + feature dir (DIRETORIO) com artefatos reais.
+
+    Espelha o layout que `engine.qa.scope.resolve_scope` produz pra
+    scope=feature: `scope.paths=(feature_dir,)` onde feature_dir e um
+    diretorio que contem feature-spec.yaml, bdd.json e tasks/.
+    """
+    proj = tmp_path / "proj"
+    (proj / ".git").mkdir(parents=True)
+    feature_dir = (
+        proj
+        / "docs"
+        / "feature-implementation-workflow"
+        / "features"
+        / "snap-feat"
+    )
+    feature_dir.mkdir(parents=True)
+    (feature_dir / "feature-spec.yaml").write_text(
+        "schema-version: 1\nslug: snap-feat\n", encoding="utf-8"
+    )
+    (feature_dir / "bdd.json").write_text('{"scenarios": []}\n', encoding="utf-8")
+    (feature_dir / "tasks").mkdir()
+    (feature_dir / "tasks" / "TASK-0001.yaml").write_text(
+        "id: TASK-0001\n", encoding="utf-8"
+    )
+    return proj, feature_dir
+
+
+def test_snapshot_recurses_into_directory(tmp_path: Path) -> None:
+    """scope.paths de feature e um DIRETORIO — snapshot recursa nos arquivos.
+
+    P-19: snapshot/ ficava vazio porque os.link/copy2 em diretorio levanta
+    OSError engolido pelo except. O fix recursa nos arquivos do dir.
+    """
+    proj, feature_dir = _setup_feature_dir(tmp_path)
+    scope = Scope(type="feature", target="snap-feat", paths=(feature_dir,))
+    tree = create_run_tree(scope, project_root=proj)
+
+    copied = snapshot_artefacts(scope, tree.snapshot_dir, project_root=proj)
+
+    base = (
+        tree.snapshot_dir
+        / "docs"
+        / "feature-implementation-workflow"
+        / "features"
+        / "snap-feat"
+    )
+    assert (base / "feature-spec.yaml").is_file()
+    assert (base / "bdd.json").is_file()
+    assert (base / "tasks" / "TASK-0001.yaml").is_file()
+    assert len(copied) >= 3
+
+
+def test_snapshot_directory_preserves_nested_layout(tmp_path: Path) -> None:
+    """Subdir `tasks/` e recriado dentro do snapshot (nao achatado)."""
+    proj, feature_dir = _setup_feature_dir(tmp_path)
+    scope = Scope(type="feature", target="snap-feat", paths=(feature_dir,))
+    tree = create_run_tree(scope, project_root=proj)
+
+    snapshot_artefacts(scope, tree.snapshot_dir, project_root=proj)
+
+    base = (
+        tree.snapshot_dir
+        / "docs"
+        / "feature-implementation-workflow"
+        / "features"
+        / "snap-feat"
+    )
+    # Layout nested preservado: tasks/ existe como subdir, conteudo dentro.
+    assert (base / "tasks").is_dir()
+    assert (base / "tasks" / "TASK-0001.yaml").read_text(
+        encoding="utf-8"
+    ) == "id: TASK-0001\n"
+    # E NAO achatado direto no base (TASK-0001.yaml so existe dentro de tasks/).
+    assert not (base / "TASK-0001.yaml").exists()
