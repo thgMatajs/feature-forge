@@ -1324,6 +1324,30 @@ def _handle_done_feature_branch(
         # with normal flow, which will re-check state).
         return parent_slug
 
+    _menu_options = {
+        "1": "Retomar (re-plan inteiro — descarta artefatos, recomeça)",
+        "2": "Começar feature nova (saio agora — invoque com slug novo)",
+        "3": "Estender (novo slug derivado herda contexto da pai — Gap 9)",
+        "4": "Abortar",
+    }
+    # Gate de re-entrada (P-15, mesma classe de G1/G2): sob loop mecânico do
+    # host, este menu emitiria um intent que colide com a response downstream
+    # → IntentMismatchError. Sob replay retornamos parent_slug (= caminho
+    # "retomar") sem prompt; o pipeline alcança o prompt downstream dono da
+    # response. O ``ask`` deste guard NÃO passa default → effective_default=None,
+    # então o stable_intent_id usa default=None pra casar o id real emitido.
+    # Re-entrada humana mantém os 4 caminhos. Ver §4.1 do intent-protocol.
+    from engine.ui import intent_state  # noqa: PLC0415
+
+    _guard_id = question.stable_intent_id(
+        "ask",
+        "O que você quer?",
+        _menu_options,
+        extra={"default": None, "min-selected": None, "validator-hint": None},
+    )
+    if intent_state.host_is_replaying(project_root, _guard_id):
+        return parent_slug
+
     renderer.write("")
     renderer.write(
         renderer.bold(
@@ -1334,12 +1358,7 @@ def _handle_done_feature_branch(
     renderer.write("Quatro caminhos:")
     choice = question.ask(
         "O que você quer?",
-        {
-            "1": "Retomar (re-plan inteiro — descarta artefatos, recomeça)",
-            "2": "Começar feature nova (saio agora — invoque com slug novo)",
-            "3": "Estender (novo slug derivado herda contexto da pai — Gap 9)",
-            "4": "Abortar",
-        },
+        _menu_options,
         allow_pause=True,
     )
 
