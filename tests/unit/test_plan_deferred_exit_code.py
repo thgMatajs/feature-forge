@@ -75,6 +75,36 @@ def test_run_waves_for_subtype_returns_130_when_wave_defers(
     )
 
 
+def test_pause_or_cancel_groups_real_exceptions_not_dead_type():
+    """C-06 (PR18-R4): os handlers de pausa do plan.py capturam as exceções
+    REAIS de pausa/cancelamento (UserPausedError/UserCancelledError/
+    PausedForInputError), NÃO o PromptAbortedError morto.
+
+    O bug: question.ask* levanta essas três, nenhuma subclasse de
+    PromptAbortedError (RuntimeError, nunca levantado em engine/) — então
+    `except PromptAbortedError` era dead-code e a pausa escapava sem persistir
+    o deferred → L1 órfã em 'planning'.
+    """
+    from engine.ui.question import (
+        PausedForInputError,
+        PromptAbortedError,
+        UserCancelledError,
+        UserPausedError,
+    )
+
+    assert plan_mod._PAUSE_OR_CANCEL == (
+        PausedForInputError,
+        UserPausedError,
+        UserCancelledError,
+    )
+    # Nenhuma das exceções de pausa reais é subclasse do tipo morto.
+    for exc in plan_mod._PAUSE_OR_CANCEL:
+        assert not issubclass(exc, PromptAbortedError), (
+            f"{exc.__name__} não pode ser subclasse de PromptAbortedError — "
+            "senão o handler antigo já as pegaria e o bug não existiria"
+        )
+
+
 def test_run_waves_for_subtype_returns_0_on_full_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):

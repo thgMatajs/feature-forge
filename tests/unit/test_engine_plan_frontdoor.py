@@ -440,14 +440,56 @@ def test_intake_frontmatter_yaml_safe_benign_phrase(
 
 
 def test_slug_collision_handled_by_existing_run_machinery() -> None:
-    """Doc-test: a colisão de slug derivado é tratada pela maquinaria EXISTENTE
-    do `run()` (done-branch + phase-lock + confirm via `ask_text`), NÃO pelo
-    front-door. A T1 não introduz UI de sufixo/3-caminhos nova — só garante
-    que o slug derivado é válido (H-001) pra alimentar essa maquinaria.
-
-    Este teste apenas ancora os símbolos existentes pra que um refactor que
-    os remova quebre aqui (regression anchor), sem exercitar comportamento
-    novo de colisão.
+    """Doc-test: a colisão com feature DONE é tratada por
+    `_handle_done_feature_branch`; a colisão com feature ATIVA não-done por
+    `_handle_active_slug_collision` (C-03). Ambos vivem em `run()`.
     """
     assert callable(plan._handle_done_feature_branch)
+    assert callable(plan._handle_active_slug_collision)
     assert callable(plan.run)
+
+
+def test_active_slug_collision_offers_three_paths(monkeypatch, tmp_path) -> None:
+    """C-03 (PR18-R3): colisão com feature ativa não-done apresenta 3-caminhos.
+
+    'nova' → devolve o slug sufixado; 'retomar' → devolve o slug existente;
+    'abortar' → None.
+    """
+    from engine.memory.l1 import L1State
+
+    state = L1State(
+        feature_slug="lembrete-rega",
+        status="planning",
+        last_action_at="2026-06-18T00:00:00Z",
+        last_action_kind="plan-started",
+    )
+
+    # 'nova' → sufixo (lembrete-rega-2, livre pois nada está em L1 no tmp).
+    monkeypatch.setattr(plan.question, "ask", lambda *a, **k: "nova")
+    assert (
+        plan._handle_active_slug_collision("lembrete-rega", state, tmp_path)
+        == "lembrete-rega-2"
+    )
+
+    # 'retomar' → o próprio slug.
+    monkeypatch.setattr(plan.question, "ask", lambda *a, **k: "retomar")
+    assert (
+        plan._handle_active_slug_collision("lembrete-rega", state, tmp_path)
+        == "lembrete-rega"
+    )
+
+    # 'abortar' → None.
+    monkeypatch.setattr(plan.question, "ask", lambda *a, **k: "abortar")
+    assert (
+        plan._handle_active_slug_collision("lembrete-rega", state, tmp_path) is None
+    )
+
+
+def test_active_collision_states_cover_non_done_active() -> None:
+    """C-03: planning/planned/deferred/blocked-on-external disparam o handler."""
+    assert plan._ACTIVE_COLLISION_STATES == {
+        "planning",
+        "planned",
+        "deferred",
+        "blocked-on-external",
+    }

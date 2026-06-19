@@ -264,9 +264,10 @@ def test_elicit_skips_non_product_subtype(
     feature = tmp_path / "feature"
     feature.mkdir()
     # Garante que NÃO pergunta — qualquer chamada a ask_text falha o teste.
+    # C-08: retorno agora é lista — vazia quando não pergunta.
     monkeypatch.setattr(question, "ask_text", _boom_ask_text)
-    assert plan._elicit_screenshot(feature, "refactor", "A") is None
-    assert plan._elicit_screenshot(feature, "bugfix", "A") is None
+    assert plan._elicit_screenshot(feature, "refactor", "A") == []
+    assert plan._elicit_screenshot(feature, "bugfix", "A") == []
 
 
 def test_elicit_skips_resume_wave(
@@ -276,8 +277,8 @@ def test_elicit_skips_resume_wave(
     feature.mkdir()
     # Resume em wave != A → não re-pergunta (sem poluir nem duplicar).
     monkeypatch.setattr(question, "ask_text", _boom_ask_text)
-    assert plan._elicit_screenshot(feature, "product", "B") is None
-    assert plan._elicit_screenshot(feature, "product", "C") is None
+    assert plan._elicit_screenshot(feature, "product", "B") == []
+    assert plan._elicit_screenshot(feature, "product", "C") == []
 
 
 def test_elicit_none_answer_returns_none(
@@ -286,7 +287,7 @@ def test_elicit_none_answer_returns_none(
     feature = tmp_path / "feature"
     feature.mkdir()
     monkeypatch.setattr(question, "ask_text", lambda *a, **k: "none")
-    assert plan._elicit_screenshot(feature, "product", "A") is None
+    assert plan._elicit_screenshot(feature, "product", "A") == []
 
 
 def test_elicit_valid_png_returns_ingest_dict(
@@ -297,10 +298,40 @@ def test_elicit_valid_png_returns_ingest_dict(
     _write_png(feature / "screenshots" / "tela.png", width=400, height=900)
     # ask_text devolve o bare filename → ingest resolve em screenshots/.
     monkeypatch.setattr(question, "ask_text", lambda *a, **k: "tela.png")
-    result = plan._elicit_screenshot(feature, "product", "A")
-    assert result is not None
-    assert result["path"] == "screenshots/tela.png"
-    assert len(result["fingerprint"]) == 64
+    results = plan._elicit_screenshot(feature, "product", "A")
+    assert len(results) == 1
+    assert results[0]["path"] == "screenshots/tela.png"
+    assert len(results[0]["fingerprint"]) == 64
+
+
+def test_elicit_multiple_paths_ingests_all(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C-08 (PR18-R8): múltiplos paths separados por vírgula/espaço → todos
+    ingeridos; o run() preenche count + CSV a partir da lista."""
+    feature = tmp_path / "feature"
+    (feature / "screenshots").mkdir(parents=True)
+    _write_png(feature / "screenshots" / "home.png", width=400, height=900)
+    _write_png(feature / "screenshots" / "detail.png", width=400, height=900)
+    monkeypatch.setattr(question, "ask_text", lambda *a, **k: "home.png, detail.png")
+    results = plan._elicit_screenshot(feature, "product", "A")
+    paths = sorted(r["path"] for r in results)
+    assert paths == ["screenshots/detail.png", "screenshots/home.png"]
+
+
+def test_elicit_partial_invalid_degrades_gracefully(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C-08: um path inválido NÃO derruba os válidos — degradação parcial."""
+    feature = tmp_path / "feature"
+    (feature / "screenshots").mkdir(parents=True)
+    _write_png(feature / "screenshots" / "ok.png", width=400, height=900)
+    monkeypatch.setattr(
+        question, "ask_text", lambda *a, **k: "ok.png nao-existe-zzz.png"
+    )
+    results = plan._elicit_screenshot(feature, "product", "A")
+    assert len(results) == 1
+    assert results[0]["path"] == "screenshots/ok.png"
 
 
 # ── token merge / render — pelo threading T1 (intake_tokens → Wave A) ────────
