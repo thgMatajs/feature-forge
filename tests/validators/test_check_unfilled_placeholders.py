@@ -111,3 +111,33 @@ def test_escape_marker_comment_ignores_line(tmp_path: Path) -> None:
     )
     res = validate(tmp_path, scope="feature", id="demo")
     assert res["status"] == "pass"
+
+
+def test_fails_on_placeholder_with_trailing_brace(tmp_path: Path) -> None:
+    """WR-01: token cru seguido de `}` (template malformado) ainda dispara.
+
+    O lookahead `(?!\\})` antigo deixava `{{val}}}` escapar a detecção — um
+    placeholder cru colado a uma chave de fechamento extra. A forma escapada
+    deliberada `{{{token}}}` (C-52) continua sendo ignorada porque o lookbehind
+    `(?<!\\{)` cobre o caso de 3 chaves à esquerda.
+    """
+    _write_feature_artifact(
+        tmp_path, "demo", "prd.md", "# PRD\nObjetivo: {{val}}}\n"
+    )
+    res = validate(tmp_path, scope="feature", id="demo")
+    assert res["status"] == "fail"
+    assert "val" in str(res)
+
+
+def test_fails_on_placeholder_inside_json_object(tmp_path: Path) -> None:
+    """WR-01: placeholder cru dentro de objeto JSON (`{"x": {{val}}}`) dispara.
+
+    O `}` de fechamento do objeto vem colado ao `}}` do token; o gate não pode
+    deixar passar só por causa do brace adjacente.
+    """
+    _write_feature_artifact(
+        tmp_path, "demo", "bdd.json", '{"x": {{val}}}\n'
+    )
+    res = validate(tmp_path, scope="feature", id="demo")
+    assert res["status"] == "fail"
+    assert "val" in str(res)

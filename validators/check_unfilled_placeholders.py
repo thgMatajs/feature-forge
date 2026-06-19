@@ -36,9 +36,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))  # noqa: E402
 from engine.memory.l1 import current_subtype  # noqa: E402
 from engine.utils.paths import feature_path  # noqa: E402
 
-# Token de 2 chaves. O lookahead/lookbehind `(?<!\{)`/`(?!\})` exclui a forma
-# escapada de 3 chaves `{{{token}}}` (C-52 — literal intencional).
-_PLACEHOLDER_RE = re.compile(r"(?<!\{)\{\{\s*[\w.\-]+\s*\}\}(?!\})")
+# Token de 2 chaves. O lookbehind `(?<!\{)` exclui a forma escapada de 3 chaves
+# `{{{token}}}` (C-52 — literal intencional): o `{{token}}` interno tem `{` à
+# esquerda e é descartado. WR-01: NÃO usar lookahead `(?!\})` no fechamento —
+# ele fazia tokens crus colados a `}` escaparem a detecção (`{{val}}}` malformado
+# ou `{"x": {{val}}}` dentro de JSON). O lookbehind sozinho já isola o escape
+# deliberado sem criar essa janela de false-negative à direita.
+_PLACEHOLDER_RE = re.compile(r"(?<!\{)\{\{\s*[\w.\-]+\s*\}\}")
 # C-45: slug-id de task é estritamente `TASK-<dígitos>`. Uma feature slugada
 # `task-foo` (kebab) NÃO casa — então não é mis-classificada como task id.
 _TASK_ID_RE = re.compile(r"^TASK-\d+$", re.IGNORECASE)
