@@ -296,3 +296,53 @@ def test_resume_prompt_shown_on_genuine_human_reentry(
     assert pending is not None and pending.get("intent-id") == resume_id, (
         "resume prompt deve aparecer em re-entrada humana sem response pendente"
     )
+
+
+# ── WS-A-2: resume real (P-11) ──────────────────────────────────────────────
+
+
+def test_resume_continues_from_checkpoint_step(
+    tmp_project_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """resume escolhido em re-entrada humana com checkpoint em
+    step-5-backend-selection (preset já confirmado) → o init NÃO deve
+    re-perguntar 'Confirmar preset kmp-mobile?'; deve reaproveitar
+    checkpoint.preset e seguir do backend selection (P-11).
+
+    Cenário: re-entrada HUMANA (sem response pendente) com checkpoint
+    além do preset; a primeira pausa é o resume. Após o host escrever
+    'resume', a PRÓXIMA pausa deve ser o backend — nunca o preset.
+    """
+    monkeypatch.chdir(tmp_project_root)
+    _pin_intent_file_host(monkeypatch)
+    _seed_init_checkpoint(
+        tmp_project_root, step="step-5-backend-selection", preset="kmp-mobile"
+    )
+    from engine.ui.question import PausedForInputError
+
+    # Iteração 1: re-entrada humana → pausa no resume.
+    with pytest.raises(PausedForInputError) as exc1:
+        init.run([])
+    intent1 = dict(exc1.value.intent or {})
+    assert "Resume de init pendente" in intent1.get("question", "")
+
+    # Host escreve 'resume' pra ESSE intent + re-invoca. O gate de P-01
+    # suprime o re-prompt do resume; o pipeline continua do step salvo
+    # (preset pulado) e pausa no backend. O resume real (WS-A-2) garante
+    # que NÃO é o preset.
+    _seed_pending_response(
+        tmp_project_root, intent_id=intent1.get("intent-id"), value="resume"
+    )
+    next_pending = _capture_first_pending(tmp_project_root)
+    next_q = (next_pending or {}).get("question", "")
+    assert "Confirmar preset" not in next_q, (
+        f"resume re-perguntou o preset — não continuou do step (P-11): {next_q!r}"
+    )
+
+
+def test_resume_labels_do_not_claim_false_continuation() -> None:
+    """Guard de voz: a label da opção que continua não deve afirmar
+    'mantendo o checkpoint como audit'. Pós fix, 'resume' = 'continuar'."""
+    labels = init._resume_option_labels()
+    assert "continuar" in labels["resume"].lower()
+    assert "audit" not in labels["resume"].lower()

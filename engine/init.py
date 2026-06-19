@@ -1322,6 +1322,21 @@ def _run_pipeline(project_root: Path) -> int:
         )
         return fail_with_tag(ERR_ABORTED)
 
+    # WS-A-2 (P-11): pontos de retomada derivados do checkpoint. Quando o
+    # resume é honrado (escolha humana 'resume' OU loop mecânico do host com
+    # checkpoint além do preset), o pipeline PULA os steps já completos em vez
+    # de recomeçar do zero — honrando a promessa "auto-resumable" da Decisão
+    # 27. Escopo conservador R1: cobrir o caminho linear até backend-selection
+    # (onde o piloto trava). Steps após backend caem no pipeline normal.
+    _STEPS_PAST_PRESET = {
+        "step-5-backend-selection",
+        "step-6-resolve",
+        "step-7-snapshot",
+        "step-7-5-orphan-signals",
+    }
+    _resume_step: str | None = None
+    _resume_preset: str | None = None
+
     existing_checkpoint = _load_checkpoint(project_root)
     if existing_checkpoint:
         # Gate do resume (pilot R1, P-01): durante o loop mecânico do host
@@ -1345,6 +1360,10 @@ def _run_pipeline(project_root: Path) -> int:
                     "dim_grey",
                 )
             )
+            # Loop mecânico: continua do step salvo (não re-pergunta o que já
+            # foi confirmado num ciclo anterior do mesmo init).
+            _resume_step = str(existing_checkpoint.get("step") or "step-1-greeting")
+            _resume_preset = existing_checkpoint.get("preset")
         else:
             renderer.write(
                 renderer.colored(
@@ -1397,8 +1416,14 @@ def _run_pipeline(project_root: Path) -> int:
                     "Ok, abortado. O checkpoint segue intacto pra inspeção manual."
                 )
                 return fail_with_tag(ERR_ABORTED)
-            # resume → segue sem apagar o checkpoint; o pipeline regrava no
-            # final via _clear_checkpoint quando completar com sucesso.
+            elif resume_choice == "resume":
+                # WS-A-2 (P-11): resume REAL — continua do step salvo,
+                # reaproveitando preset/selected_card_names. O pipeline regrava
+                # o checkpoint no final via _clear_checkpoint ao completar.
+                _resume_step = str(
+                    existing_checkpoint.get("step") or "step-1-greeting"
+                )
+                _resume_preset = existing_checkpoint.get("preset")
 
     # ── Step 2 — Discovery (cinematic) ───────────────────────────────────────
     checkpoint.step = "step-2-discovery"
@@ -1483,23 +1508,39 @@ def _run_pipeline(project_root: Path) -> int:
     renderer.write(renderer.box("Resumo da detecção", summary_lines, width=78))
 
     # ── Step 4 — Preset confirmation ─────────────────────────────────────────
-    renderer.write("")
-    choice = ui_question.ask(
-        "Confirmar preset kmp-mobile?",
-        {
-            "sim": f"confirmar {PRESET_NAME} (recomendado se signals casaram)",
-            "outro": "escolher outro preset (não disponível no v1 — só kmp-mobile)",
-            "abortar": "sair do init agora",
-        },
-        default="sim",
+    # WS-A-2 (P-11): em resume além do preset (checkpoint em step-5+), pula a
+    # confirmação e reaproveita o preset salvo. Discovery (Step 2) re-roda
+    # sempre — é idempotente e produz os canonical_cards que o pipeline usa.
+    _resuming_past_preset = (
+        _resume_step in _STEPS_PAST_PRESET and _resume_preset is not None
     )
-    if choice == "abortar":
-        renderer.write("ok, parado.")
-        return 0
-    if choice == "outro":
-        raise InitError(
-            "no v1 só existe o preset kmp-mobile. Os outros chegam no Phase 6."
+    if _resuming_past_preset:
+        renderer.write("")
+        renderer.write(
+            renderer.colored(
+                f"Resume: preset {_resume_preset} já confirmado num ciclo "
+                "anterior — sigo direto pro backend selection.",
+                "dim_grey",
+            )
         )
+    else:
+        renderer.write("")
+        choice = ui_question.ask(
+            "Confirmar preset kmp-mobile?",
+            {
+                "sim": f"confirmar {PRESET_NAME} (recomendado se signals casaram)",
+                "outro": "escolher outro preset (não disponível no v1 — só kmp-mobile)",
+                "abortar": "sair do init agora",
+            },
+            default="sim",
+        )
+        if choice == "abortar":
+            renderer.write("ok, parado.")
+            return 0
+        if choice == "outro":
+            raise InitError(
+                "no v1 só existe o preset kmp-mobile. Os outros chegam no Phase 6."
+            )
 
     checkpoint.preset = PRESET_NAME
     checkpoint.step = "step-5-backend-selection"
