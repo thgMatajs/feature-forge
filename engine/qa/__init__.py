@@ -80,6 +80,20 @@ from engine.qa.synthesis import (
 __all__ = ["run_qa"]
 
 
+# Auditores canonicos do contrato qa-conductor.md (Phase 1+2). Sao os 4
+# vetores estaticos+adversariais sempre presentes; extensoes de card entram
+# por cima e podem ser desabilitadas via qa.extensions.disabled. Hard-coded
+# aqui porque o contrato (agents/qa-conductor.md §Inputs) os trata como
+# garantidos — o filtro extensions_disabled e defensivo (core nao costuma
+# ser desabilitavel, mas documenta a intencao).
+_CORE_AUDITORS: tuple[str, ...] = (
+    "spec-vs-spec",
+    "coverage",
+    "chaos",
+    "validator-claim",
+)
+
+
 def run_qa(
     raw_target: str,
     *,
@@ -215,7 +229,12 @@ def run_qa(
             # handoff. Conductor consome esse campo pra propagar ao subprocess.
             allowed_extras = _compute_allowed_extras(project_root, workflow_config)
             _write_conductor_handoff(
-                scope, run_tree, cfg, allowed_extras=allowed_extras
+                scope,
+                run_tree,
+                cfg,
+                allowed_extras=allowed_extras,
+                snapshot_paths=snapshot_copied,
+                workflow_config=workflow_config,
             )
             resumed_checkpoint = None
         else:
@@ -253,7 +272,12 @@ def run_qa(
         # que o conductor propague ao subprocess (run_sandbox extras=...).
         allowed_extras = _compute_allowed_extras(project_root, workflow_config)
         _write_conductor_handoff(
-            scope, run_tree, cfg, allowed_extras=allowed_extras
+            scope,
+            run_tree,
+            cfg,
+            allowed_extras=allowed_extras,
+            snapshot_paths=snapshot_copied,
+            workflow_config=workflow_config,
         )
 
     # Track phase progresso pro SIGINT handler. List-of-int pra mutar
@@ -680,6 +704,8 @@ def _write_conductor_handoff(
     cfg: QAConfig,
     *,
     allowed_extras: tuple[str, ...] = (),
+    snapshot_paths: Iterable[Path] = (),
+    workflow_config: dict[str, Any] | None = None,
 ) -> None:
     """Escreve ``<run_tree.root>/conductor-handoff.json``.
 
@@ -697,7 +723,30 @@ def _write_conductor_handoff(
             ``_compute_allowed_extras``. O conductor DEVE repassar essa
             lista como ``extras=`` ao invocar ``run_sandbox`` (ver
             ``agents/qa-conductor.md §Sandbox env``).
+        snapshot_paths: destinos efetivamente criados por
+            ``snapshot_artefacts`` (P-20). Serializados como paths relativos
+            a ``run_tree.root`` — portaveis no JSON, sem absolutos da maquina
+            que rodou a Phase 0.
+        workflow_config: workflow-config completo (P-20). A section ``qa:`` e
+            congelada em ``config_snapshot`` per contrato §Inputs do
+            qa-conductor (estado da config no momento da run).
     """
+    snapshot_rel: list[str] = []
+    for p in snapshot_paths:
+        try:
+            snapshot_rel.append(str(p.relative_to(run_tree.root)))
+        except ValueError:
+            # Defensivo: dest fora da run tree (nao deveria acontecer —
+            # snapshot_artefacts grava sempre sob snapshot_dir). Cai pro
+            # nome pra nao vazar absoluto.
+            snapshot_rel.append(p.name)
+
+    config_snapshot = (workflow_config or {}).get("qa", {})
+    if not isinstance(config_snapshot, dict):
+        config_snapshot = {}
+
+    auditors = [a for a in _CORE_AUDITORS if a not in cfg.extensions_disabled]
+
     handoff: dict[str, Any] = {
         "scope": {
             "type": scope.type,
@@ -706,6 +755,11 @@ def _write_conductor_handoff(
         },
         "run_id": run_tree.run_id,
         "root": str(run_tree.root),
+        # Contrato qa-conductor.md §Inputs: snapshot paths (read-only),
+        # config_snapshot (qa: section congelada), auditors ativos.
+        "snapshot": snapshot_rel,
+        "config_snapshot": config_snapshot,
+        "auditors": auditors,
         "config": {
             "sandbox_budget_seconds_total": cfg.sandbox_budget_seconds_total,
             "agent_timeout_seconds": cfg.agent_timeout_seconds,
