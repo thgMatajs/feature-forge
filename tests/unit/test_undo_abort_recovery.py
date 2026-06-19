@@ -74,7 +74,9 @@ def test_double_abort_preserves_original_pre_abort_status(
     assert st2.status == "implementing"
 
 
-def test_abort_tolerates_non_dict_raw(tmp_project_root: Path) -> None:
+def test_abort_tolerates_non_dict_raw(
+    tmp_project_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """C-50 (PR22-B-03): status.json com `raw` não-dict não derruba _abort_feature."""
     # Escreve um status.json com raw corrompido (top-level não-dict no campo).
     write_l1_status(
@@ -91,19 +93,15 @@ def test_abort_tolerates_non_dict_raw(tmp_project_root: Path) -> None:
     state.raw = "not-a-dict"  # type: ignore[assignment]
     # _abort_feature deve coagir raw pra dict sem estourar AttributeError.
     import engine.undo as undo_mod
-    monkeypatch_state = state
 
     def _fake_read(slug, root):
-        return monkeypatch_state if slug == "corrupt" else None
+        return state if slug == "corrupt" else None
 
-    orig = undo_mod.read_l1_status
-    undo_mod.read_l1_status = _fake_read  # type: ignore[assignment]
-    try:
-        assert undo_mod._abort_feature(tmp_project_root, "corrupt", "x") is True
-    finally:
-        undo_mod.read_l1_status = orig  # type: ignore[assignment]
-    assert isinstance(monkeypatch_state.raw, dict)
-    assert monkeypatch_state.raw.get("pre-abort-status") == "planning"
+    # WR-03: usa o fixture monkeypatch (auto-restore) em vez de try/finally manual.
+    monkeypatch.setattr(undo_mod, "read_l1_status", _fake_read)
+    assert undo_mod._abort_feature(tmp_project_root, "corrupt", "x") is True
+    assert isinstance(state.raw, dict)
+    assert state.raw.get("pre-abort-status") == "planning"
 
 
 def test_undo_abort_defaults_deferred_when_no_marker(
