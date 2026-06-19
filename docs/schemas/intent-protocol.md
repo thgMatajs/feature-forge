@@ -1,4 +1,4 @@
-# Schema — `.claude/state/forge-pending.json` + `forge-response.json`
+# Schema — `.claude/forge/state/forge-pending.json` + `forge-response.json`
 
 The **intent protocol** is how the engine asks for input without ever
 reading stdin directly. The chokepoint in `engine/ui/question.py` emits
@@ -21,14 +21,16 @@ Authoritative design contract:
 
 ## File locations
 
-Both files live under `.claude/state/` inside the project root:
+Both files live under `.claude/forge/state/` inside the project root
+(C-02 — sub-namespace canônico v1.3, bate com `engine.utils.paths.forge_state_dir`):
 
 ```
 <project-root>/
   .claude/
-    state/
-      forge-pending.json    # written by engine, read by caller
-      forge-response.json   # written by caller, read by engine
+    forge/
+      state/
+        forge-pending.json    # written by engine, read by caller
+        forge-response.json   # written by caller, read by engine
 ```
 
 A single global pair (sub-Q **Sa** locked): no per-command or
@@ -288,7 +290,7 @@ pending com `intent-id` diferente do que vai escrever:
 
 - `created-at` > 10 minutos atrás → stale, deleta + segue.
 - `created-at` recente (≤ 10 min) → raise erro claro: "outra invocação
-  ativa em PID X, aguarde ou delete `.claude/state/forge-pending.json`".
+  ativa em PID X, aguarde ou delete `.claude/forge/state/forge-pending.json`".
   Exit 1.
 
 Lock file via `fcntl.flock` foi considerado e deferido pra v1.2.x —
@@ -310,7 +312,7 @@ adicionar só se race aparecer em produção. Acompanha em
 
 ### Arquivo
 
-`.claude/state/forge-intent-log.jsonl` — JSONL append-only. Uma entry
+`.claude/forge/state/forge-intent-log.jsonl` — JSONL append-only. Uma entry
 por linha, cada entry é um dict JSON.
 
 ### Shape de cada entry
