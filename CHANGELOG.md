@@ -43,6 +43,13 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Fixed
 
+- W-GRAPH I-2: `session-start-drift-check.sh` agora detecta TTY no fd 2
+  (stderr) e não no fd 1 (stdout). O lembrete graph-first é emitido em stderr
+  (`} >&2`), então a heurística de host-awareness precisa casar o stream usado
+  — antes (`-t 1`) ela mentia em redirecionamento assimétrico (stdout pra
+  arquivo + stderr no terminal renderizava ASCII; vice-versa escrevia emoji
+  num log). Test helper de integração ligado a stdout+stderr no mesmo pty pra
+  acompanhar.
 - CASING-BUG: `_render_template` agora preenche `{{feature_slug}}` lowercase
   (a forma que os templates usam) + os tokens de origem — antes só substituía
   `{{FEATURE_SLUG}}` uppercase e o token lowercase sobrava cru nos artefatos

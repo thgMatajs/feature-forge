@@ -27,8 +27,10 @@ FORGE_BIN="${FORGE_BIN:-forge}"
 # no shell (aditivo, não colide com o renderer host-aware). Saída em stderr; a
 # sessão sempre começa. Silencioso quando o grafo ainda não foi construído.
 if [[ -f "$PROJECT_ROOT/.claude/graph.db" ]]; then
-    # Host-aware: emoji só em TTY interativo fora do Claude Code; senão ASCII.
-    if [[ -t 1 && -z "${CLAUDECODE:-}" ]]; then
+    # Host-aware: emoji só quando o fd 2 (stderr, pra onde o lembrete vai) é um
+    # TTY interativo fora do Claude Code; senão ASCII. Testamos fd 2 e não fd 1
+    # porque o bloco abaixo é redirecionado pra stderr (`} >&2`).
+    if [[ -t 2 && -z "${CLAUDECODE:-}" ]]; then
         _g_prefix="🔎 graph"
     else
         _g_prefix="[graph]"
