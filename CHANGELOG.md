@@ -7,6 +7,8 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-06-19
+
 ### Added
 
 - **PLACEHOLDER-VERIFY** (W-DEBT, 2026-06-18): novo validator

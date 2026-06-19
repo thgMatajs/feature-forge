@@ -2,7 +2,7 @@
 
 > Guia operacional pra Claude Code mantendo este repo.
 > Voz: mentor calmo — firme nos gates, didático nos exemplos.
-> Última atualização: 2026-06-03 · Versão do projeto: v1.2.0 + Gap 9 cumulativo
+> Última atualização: 2026-06-19 · Versão do projeto: v1.5.0
 
 ## Identidade rápida
 
