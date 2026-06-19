@@ -95,6 +95,10 @@ def test_verify_cascade_position(tmp_path: Path) -> None:
     assert "check_no_invented_behavior" in names, (
         "expected check_no_invented_behavior to anchor the cascade"
     )
+    # C-50d (PR22-B-05): assert de presença antes dos .index abaixo — senão um
+    # validator removido estoura ValueError cru em vez de uma msg acionável.
+    assert "check_cyclomatic_complexity" in names, f"cc gate ausente: {names}"
+    assert "check_unfilled_placeholders" in names, f"placeholder gate ausente: {names}"
     # PLACEHOLDER-VERIFY (W-DEBT) é inserido entre NIB e CC (cheap gate). CC
     # continua DEPOIS de NIB; a adjacência estrita virou ordering relacional.
     assert (
@@ -119,7 +123,7 @@ def test_cascade_failfast_skips_cc_when_earlier_validator_fails(
 
     captured: list[str] = []
 
-    def fake_invoke(spec, root):
+    def fake_invoke(spec, root, *, scope_type=None, scope_target=None):
         captured.append(spec.name)
         if spec.name == "check_no_invented_behavior":
             return verify._ValidatorResult(

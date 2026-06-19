@@ -281,6 +281,10 @@ def test_pending_lock_serializes_detect_race_and_write(tmp_path):
             tag = "wrote"
         except intent_state.RaceDetectedError:
             tag = "race"
+        except Exception as exc:  # noqa: BLE001 — B-06 (PR22-B-06): reporta falha
+            # inesperada do worker em vez de deixar a thread morrer silenciosa
+            # (outcomes ficaria curto e o assert de contagem falharia opaco).
+            tag = f"error: {exc}"
         with outcomes_lock:
             outcomes.append(tag)
 
@@ -292,6 +296,10 @@ def test_pending_lock_serializes_detect_race_and_write(tmp_path):
         assert not t.is_alive(), "worker hung past timeout"
 
     assert len(outcomes) == n_threads
+    # B-06: nenhum worker pode ter falhado de forma inesperada.
+    assert not [o for o in outcomes if o.startswith("error:")], (
+        f"worker(s) falharam inesperadamente: {outcomes}"
+    )
     # Exatamente um writer vence; os demais veem o pending do vencedor e
     # levantam RaceDetectedError de forma DETERMINÍSTICA (sem janela TOCTOU).
     assert outcomes.count("wrote") == 1, f"esperava 1 vencedor, veio {outcomes}"
