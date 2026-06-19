@@ -628,6 +628,76 @@ def read_response(
     return response
 
 
+# --- host_is_replaying (re-entry guard gating) -----------------------------
+
+
+def host_is_replaying(
+    project_root: Path,
+    guard_intent_id: str,
+    *,
+    state_dir: Path | None = None,
+) -> bool:
+    """``True`` quando o host está no meio de um loop mecânico downstream.
+
+    Gate compartilhado pra guards de re-entrada (P-15). Um *guard de
+    re-entrada* é um prompt condicional emitido no TOPO de um handler com
+    base em estado pré-existente (checkpoint do ``init``, L1 do ``plan``,
+    draft do ``reconfigure``) — não no checkpoint do próprio prompt em-voo.
+    Durante o loop AI-first (responder + re-invocar argv idêntico), esse
+    guard emitiria um intent NOVO que colide com a response já no disco pra
+    um prompt downstream → ``IntentMismatchError`` → exit 1 (o deadlock do
+    piloto MeoBonsai). Este helper deixa o guard decidir "devo me calar?".
+
+    O consumed-log (``_read_intent_log``, §4 do schema) NÃO resolve isso: o
+    intent do guard é NOVO a cada re-entrada, nunca foi consumido. Aqui
+    observamos o estado on-disk de fora.
+
+    Semântica (5 casos), ver §4.1 do ``docs/schemas/intent-protocol.md``:
+
+    1. Sem ``forge-response.json`` no disco → ``False``. Não há loop
+       mecânico em curso → re-entrada humana genuína; o guard deve aparecer.
+    2. Response malformada / leitura transitória (``JsonIOError`` /
+       ``OSError``) → ``False``. Não dá pra provar replay; degrada pro
+       caminho humano em vez de suprimir cego.
+    3. ``intent-id`` da response ``== guard_intent_id`` → ``False``. A
+       resposta do PRÓPRIO guard está chegando; não suprimir (o guard
+       consome normalmente). Este caso é o refinamento sobre o gate cru
+       de P-01 (``_response_path().exists()``), que suprimia mesmo aqui.
+    4. ``intent-id`` ``!= guard`` MAS já no consumed-log → ``False``.
+       Stale-leftover de um prompt anterior deste lifecycle (mesma lógica
+       do stale-consumed guard de ``read_response``), não in-flight.
+    5. ``intent-id`` ``!= guard`` E NÃO no log → ``True``. Response
+       in-flight pra um prompt downstream → o host está em replay mecânico;
+       o guard deve se calar e deixar o pipeline alcançar o prompt dono
+       dessa response.
+
+    Substitui o ``_response_path().exists()`` cru do gate de P-01 em
+    ``engine/init.py`` por uma decisão correta (distingue o caso 3).
+
+    Refs: P-15 (relatório piloto), P-01 (gate original do init).
+    """
+    path = _response_path(project_root, state_dir=state_dir)
+    if not path.exists():
+        return False
+    try:
+        response = json_io.read_json(path)
+    except (json_io.JsonIOError, OSError):
+        # Malformed/transient — não dá pra provar replay; degrada pro
+        # caminho humano (mostra o guard) em vez de suprimir cego.
+        return False
+    if not isinstance(response, dict):
+        return False
+    written_id = response.get("intent-id")
+    if written_id == guard_intent_id:
+        # A resposta do próprio guard está chegando — não suprimir.
+        return False
+    log = _read_intent_log(project_root, state_dir=state_dir)
+    if written_id in log:
+        # Stale-leftover já consumido neste lifecycle, não in-flight.
+        return False
+    return True
+
+
 # --- schema-version guard --------------------------------------------------
 
 
