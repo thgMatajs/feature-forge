@@ -37,7 +37,7 @@ def test_run_waves_for_subtype_returns_130_when_wave_defers(
     """
     slug = "paused-feature"
 
-    def deferred_wave(label, templates, slug_arg, project_root, feature_path):
+    def deferred_wave(label, templates, slug_arg, project_root, feature_path, **_kwargs):
         # Mirror the real wave's behavior: persist deferred BEFORE returning.
         plan_mod._persist_deferred(slug_arg, project_root, f"wave-{label.lower()}")
         return WaveResult(artefacts=[], deferred=True)

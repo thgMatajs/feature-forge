@@ -12,7 +12,6 @@ the human (with ``forge plan`` + ``forge implement``) decides **how**.
 
 from __future__ import annotations
 
-import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
@@ -20,6 +19,7 @@ from typing import Iterable
 from engine.memory.distiller import DistillationProposal
 from engine.memory.l1 import L1State, write_l1_status
 from engine.utils.paths import forge_home
+from engine.utils.slug import kebabify as _kebabify
 from engine.utils.template_render import render_template
 
 # Relative location inside the project for the refactor track. Mirrors what
@@ -150,14 +150,6 @@ def _slug_for(proposal: DistillationProposal) -> str:
     if not body:
         body = _kebabify(proposal.title) or proposal.id.lower()
     return f"refactor-{body}".strip("-")
-
-
-_KEBAB_PARTS = re.compile(r"[A-Za-z][a-z0-9]+|[A-Z]+(?![a-z])|\d+")
-
-
-def _kebabify(text: str) -> str:
-    matches = _KEBAB_PARTS.findall(text or "")
-    return "-".join(m.lower() for m in matches if m).strip("-")
 
 
 def _build_template_context(

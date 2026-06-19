@@ -7,7 +7,46 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-(nada ainda)
+### Added
+
+- Camada de interação AI-first (Wave 1): driver `skills/feature-forge/SKILL.md`
+  (Claude Code) + `templates/AGENTS.md.template` (opencode) instalados
+  brownfield-safe por `forge init`. Ensinam o host a dirigir o intent loop
+  (exit 2 + linha `<FORGE_INTENT/>` → AskUserQuestion com options-JSON →
+  response com o mesmo intent-id → re-invoca o argv idêntico) e a dispatchar
+  o `planning-conductor.md` lido do FORGE_HOME. Decisão 22 preservada — são
+  comportamento pro host, não import do engine.
+- `forge plan` front-door: aceita ticket-id (ex.: `IN-37234`) ou frase livre
+  como argv posicional, deriva um slug kebab-case determinístico, confirma
+  conversacionalmente e semeia o texto cru no `feature-intake.md` pro grill
+  refinar. Decisão 10 preservada — argv posicional, sem flag.
+- Grounded-challenge Phase 2.5 no `planning-conductor.md`: antes de elicitar,
+  confronta o pedido contra grafo (Q1/Q11-Q17) + inventory + L2 em quatro
+  frentes (duplicação / terminologia / decisão frozen / fora-do-design-system).
+  Não-bloqueante (D3: confronta + humano decide), com no-visual branch
+  (3-caminhos) e degradação graciosa quando grafo/inventory/L2 estão ausentes.
+- Readiness enforce: `validators/validate_readiness.py` + `readiness-reviewer.md`
+  Phase 5 agora escaneiam `needs-elicitation` não-promovido — block-severity
+  em contract spec (match estruturado), warning em narrativa. Fecha o
+  ponto-cego "thin-but-structurally-complete".
+
+### Fixed
+
+- CASING-BUG: `_render_template` agora preenche `{{feature_slug}}` lowercase
+  (a forma que os templates usam) + os tokens de origem — antes só substituía
+  `{{FEATURE_SLUG}}` uppercase e o token lowercase sobrava cru nos artefatos
+  gerados.
+
+### Changed
+
+- `engine/vision/screenshot.py` (antes dormente) agora é ligado ao front-door
+  do `forge plan`: screenshot fornecido conversacionalmente na source-inquiry
+  é sanitizado (normalize traversal-safe), validado, copiado pra
+  `{feature}/screenshots/` e registrado com fingerprint sha256. Aceita também
+  mockup externo validate-gated. O engine não interpreta pixel — `platform_hint`
+  é só hint de baixa confiança que o conductor pode sobrepor.
+- `_render_template` passou a fazer substituição single-pass (sem reinjection
+  de token entre passos).
 
 ## [1.4.0] - 2026-06-17
 

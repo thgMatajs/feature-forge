@@ -874,6 +874,83 @@ def _merge_forge_hooks_into_settings(project_root: Path) -> None:
     settings_path.write_text(json.dumps(merged, indent=2) + "\n")
 
 
+# ── AI driver install (Step 13.5) ────────────────────────────────────────────
+
+# Sentinel comum à SKILL.md (Claude Code) e ao bloco da AGENTS.md (opencode).
+# Serve dois propósitos: (1) detectar "é a nossa SKILL.md" sem parsear
+# front-matter (H-002); (2) marcar o bloco append-only na AGENTS.md
+# (idempotência). A SKILL.md canônica carrega o marker no topo (L5);
+# `templates/AGENTS.md.template` recebe o marker prefixado no install.
+_FORGE_DRIVER_MARKER = "<!-- FORGE_AI_DRIVER -->"
+
+
+def _install_ai_driver(project_root: Path) -> None:
+    """Instala a SKILL.md (Claude Code) + AGENTS.md (opencode) no consumidor.
+
+    Brownfield-safe (spec §4 C1):
+    - `SKILL.md` → `.claude/skills/feature-forge/SKILL.md`: copia do FORGE_HOME.
+      Se já existe e NÃO carrega o marker do forge (``_FORGE_DRIVER_MARKER``),
+      preserva a skill do usuário (não clobber); senão sobrescreve (canonical
+      wins, idempotente). Detecção via marker — não substring de front-matter —
+      pra evitar falso-positivo (skill homônima do usuário citando o nome) e
+      falso-negativo (front-matter canônico que mude no futuro).
+    - `AGENTS.md` (raiz): append-only via marker. Se o marker já existe, no-op;
+      se o arquivo existe sem o marker, anexa o bloco do forge preservando o
+      conteúdo do usuário; se ausente, cria.
+
+    Decisão 22 (load-bearing): o engine NÃO importa nada da SKILL.md/AGENTS.md —
+    são instruções de comportamento pro host. Esta função só COPIA arquivos.
+    Decisão 18: o FORGE_HOME canônico é resolvido via ``forge_home()``, nunca
+    hardcodado. Se o FORGE_HOME não carregar os artefatos (clone parcial), o
+    install emite um aviso mentor-calmo (não falha) — o driver fica dormente
+    até reinstalar, e o aviso converte um failure silencioso num sinal acionável.
+    """
+    home = forge_home()
+
+    # SKILL.md
+    skill_src = home / "skills" / "feature-forge" / "SKILL.md"
+    if skill_src.is_file():
+        skill_dst = project_root / ".claude" / "skills" / "feature-forge" / "SKILL.md"
+        canonical = skill_src.read_text(encoding="utf-8")
+        if not skill_dst.exists():
+            ensure_dir(skill_dst.parent)
+            skill_dst.write_text(canonical, encoding="utf-8")
+        elif _FORGE_DRIVER_MARKER in skill_dst.read_text(encoding="utf-8"):
+            # É a nossa skill (carrega o marker) → canonical wins (idempotente).
+            skill_dst.write_text(canonical, encoding="utf-8")
+        # else: existe mas é do usuário (sem marker) → preserva, não clobber.
+
+    # AGENTS.md (append-only via marker)
+    agents_tpl = home / "templates" / "AGENTS.md.template"
+    if agents_tpl.is_file():
+        block = _FORGE_DRIVER_MARKER + "\n" + agents_tpl.read_text(encoding="utf-8")
+        agents_dst = project_root / "AGENTS.md"
+        if not agents_dst.exists():
+            agents_dst.write_text(block + "\n", encoding="utf-8")
+        else:
+            current = agents_dst.read_text(encoding="utf-8")
+            if _FORGE_DRIVER_MARKER not in current:
+                agents_dst.write_text(
+                    current.rstrip("\n") + "\n\n" + block + "\n", encoding="utf-8"
+                )
+            # else: marker presente → idempotente, no-op.
+
+    # M-002: no-op observável. Se o FORGE_HOME não carrega os artefatos
+    # (clone parcial/sparse-checkout), o driver fica dormente — `forge plan`
+    # morre no 1º prompt sem pista. Um aviso amarelo mentor-calmo converte
+    # esse failure silencioso num sinal acionável. Não bloqueia o install.
+    if not skill_src.is_file() or not agents_tpl.is_file():
+        renderer.write(
+            renderer.colored(
+                f"driver AI-first não instalado — FORGE_HOME em {home} não "
+                "carrega skills/feature-forge/SKILL.md ou templates/"
+                "AGENTS.md.template (clone parcial?). forge plan vai falhar no "
+                "1º prompt até reinstalar.",
+                "yellow",
+            )
+        )
+
+
 # ── Entry point ──────────────────────────────────────────────────────────────
 
 
@@ -1615,6 +1692,9 @@ def _run_pipeline(project_root: Path) -> int:
         # (brownfield-safe, append-only, dedup via merge_settings_json).
         # Must run AFTER hooks are copied so settings.json points to real files.
         _merge_forge_hooks_into_settings(project_root)
+        # Step 13.5 — driver AI-first (SKILL.md CC + AGENTS.md opencode).
+        # Brownfield-safe, idempotente (spec §4 C1).
+        _install_ai_driver(project_root)
         if n_hooks:
             renderer.write(f"  └─ {n_hooks} hooks instalados em .claude/forge/hooks/")
     except (OSError, shutil.Error) as exc:  # pragma: no cover - hooks must not block init

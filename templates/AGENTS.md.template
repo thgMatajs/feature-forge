@@ -1,0 +1,42 @@
+# feature-forge — driver (opencode)
+
+Você dirige o `forge`. O engine emite intenções e pausa; você responde e re-invoca.
+
+## Protocolo do intent loop (opencode)
+
+Ao rodar um `forge` que sai com **exit 2** + linha `<FORGE_INTENT .../>`:
+
+1. Leia o pending em `.claude/forge/state/forge-pending.json` (ou parseie o
+   marker do stdout). Atributos sempre presentes: `kind`, `intent-id`,
+   `question`, `options`, `default`, `allow-pause`; opcionais: `validator-hint`,
+   `min-selected`, `paths-detail`. Valores no marker vêm XML-escaped — unescape.
+2. **`options` vem JSON-encoded** — faça JSON-parse pra obter `{key: label}`
+   (não trate como texto plano). Respeite `default` (≠ `"null"` → pré-seleção)
+   e `allow-pause` (`false` → sem pausa). Pra `ask_multi`, `min-selected` é o piso.
+3. **Se `kind=ask_three_paths`**, parseie também `paths-detail` (lista JSON
+   `[{key,label,motive}]`) e renderize o bloco 3-caminhos canônico (disciplina §1)
+   com `label` + `motive` por caminho — `motive` é o "motivo provável". Sem ele
+   o prompt fica anêmico.
+4. Pergunte ao usuário (mecanismo opencode) com `question` + as opções decodificadas.
+5. Escreva `.claude/forge/state/forge-response.json` com o **mesmo `intent-id`**
+   (schema completo: `docs/schemas/intent-protocol.md`).
+6. Re-invoque o `forge` com **argv idêntico**.
+7. Repita até exit 0/1/130. Legenda: 0=ok · 1=erro · 2=pausado · 130=cancelado.
+
+Atributos, kinds e shape da response em detalhe: `docs/schemas/intent-protocol.md`.
+
+## Workflow
+
+`forge plan` é interativo wave-a-wave — duas coisas interleaved:
+
+1. **O engine dirige o stepping das waves** e emite os próprios prompts
+   `<FORGE_INTENT>` (exit 2 a cada um): slug, subtype, sub-questão de bugfix,
+   source-inquiry de screenshot, task-count (Wave D) e o gate continuar/pausar
+   ao fim de cada wave (A→B→C→D→E). Responda cada um pelo intent loop acima.
+2. **O conductor preenche o conteúdo** de cada esqueleto que o engine renderiza:
+   entre os gates de continuar, consulte `agents/planning-conductor.md` (do
+   FORGE_HOME) pra a elicitação profunda (Phase 4).
+
+"Dispatch o conductor" não é um passo único no início — o engine continua
+dirigindo o stepping; o conductor preenche os esqueletos conforme o loop avança.
+Screenshot entra conversacionalmente (path na source-inquiry), sem flag.

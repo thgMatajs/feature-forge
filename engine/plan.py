@@ -28,7 +28,9 @@ Exit codes follow CLI convention:
 
 from __future__ import annotations
 
+import json
 import re
+import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -371,6 +373,221 @@ def _is_valid_slug(value: str) -> bool:
     return bool(_SLUG_PATTERN.match(value))
 
 
+# Front-door (spec §4 C3): slug derivado de ticket/frase vive na casa
+# canônica `engine.utils.slug`. Re-exportado com o nome interno usado por
+# `run()`/`_elicit_slug`. Reuso no nível do módulo compartilhado (Mandamento 3) —
+# mesma casa que `kebabify`, mas char-level (ver nota de divergência em slug.py).
+from engine.utils.slug import derive_slug as _derive_slug  # noqa: E402
+
+
+def _looks_like_ticket(text: str) -> bool:
+    """True quando o argv INTEIRO é um ticket-id (ex.: `IN-37234`).
+
+    Reusa `_TICKET_PATTERN` (~L163) — mesma fonte de verdade que o
+    subtype-detection já usa; nenhum regex paralelo (Mandamento 3). Usa
+    `fullmatch` (não `search`): uma frase que só MENCIONA um ticket (ex.:
+    `"fix IN-123 agora"`) é frase livre, não um ticket-id — vira `text`, não
+    `ticket`. Assim o `source-ref` do intake só carrega `ticket` quando o
+    argv é, de fato, uma referência verificável.
+    """
+    return _TICKET_PATTERN.fullmatch((text or "").strip()) is not None
+
+
+def _yaml_double_quote_safe(value: str) -> str:
+    """Sanitiza `value` pra entrar num scalar YAML *double-quoted* do template.
+
+    O `feature-intake.md` declara `source-ref: "{{source_ref_or_none}}"` (scalar
+    entre aspas duplas, source-of-truth do conductor). Um valor cru com `"` ou
+    newline fecharia o scalar e malformaria o frontmatter — ou pior, injetaria
+    uma chave YAML nova (`"\\n<key>: <val>`). Colapsa runs de whitespace (incl.
+    newlines) em um único espaço, faz strip, e escapa `\\` → `\\\\` depois `"`
+    → `\\"` (nessa ordem — barra primeiro pra não duplicar o escape das aspas).
+    Resultado: `source-ref: "<retorno>"` parseia como YAML válido pra QUALQUER
+    argv.
+    """
+    collapsed = re.sub(r"\s+", " ", value).strip()
+    return collapsed.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _source_tokens_for(argv_slug: Optional[str]) -> dict[str, str]:
+    """Tokens de source pro intake (spec §4 C3), computados do argv CRU.
+
+    Sempre devolve `{{source_type}}` + `{{source_ref_or_none}}` preenchidos —
+    isso mata o vazamento do token cru universalmente (mesmo quando o argv já
+    é slug válido ou veio do prompt interativo). `argv_slug` é o valor cru
+    (nunca reescrito em `run()`).
+
+    `source-type` casa o enum do template (`feature-intake.template.md` L12:
+    `ticket | text | screenshot | mixed`):
+
+      - ticket            → type=ticket, ref=<ticket cru, YAML-safe>
+      - frase / slug      → type=text,   ref=<texto cru, YAML-safe> | none
+      - sem argv (interativo) → type=text, ref=none
+
+    (`screenshot`/`mixed` ficam pra Task 2 — entrada visual.) O `source-ref`
+    passa por `_yaml_double_quote_safe` porque o template quota o campo e o
+    argv é frase livre do usuário/host (sem isso, `"`/newline malformam o
+    frontmatter que o conductor consome — spec §6).
+    """
+    if not argv_slug:
+        return {"{{source_type}}": "text", "{{source_ref_or_none}}": "none"}
+    if _is_valid_slug(argv_slug):
+        return {"{{source_type}}": "text", "{{source_ref_or_none}}": "none"}
+    source_type = "ticket" if _looks_like_ticket(argv_slug) else "text"
+    return {
+        "{{source_type}}": source_type,
+        "{{source_ref_or_none}}": _yaml_double_quote_safe(argv_slug),
+    }
+
+
+def _ingest_screenshot(raw_input: str, feature_path: Path) -> Optional[dict]:
+    """Sanitiza + registra um screenshot fornecido conversacionalmente.
+
+    spec §4 C3a — o engine NÃO interpreta pixel: normaliza o path
+    (traversal-safe), valida formato/tamanho, copia pra
+    ``{feature}/screenshots/`` e calcula o fingerprint sha256. Devolve
+    ``None`` em qualquer rejeição (path inválido, formato inválido) —
+    mensagem mentor-calmo no stderr, segue sem a imagem. ``platform_hint``
+    é só hint de baixa confiança que o conductor pode sobrepor. Reuso puro
+    de ``engine.vision.screenshot`` (Mandamento 3) — nunca crasha.
+
+    Source externo (mockup do host): um path ABSOLUTO que existe e resolve
+    FORA da feature dir é aceito com semântica copy-in — o gate real continua
+    sendo ``validate_screenshot`` (rejeita não-imagem → None). Caminhos
+    relativos/bare/internos passam por ``normalize_screenshot_path`` (estrito:
+    traversal-safe, contido na feature) — esse contrato NÃO muda pros outros
+    callers. Todo o corpo (resolve → validate → copy → fingerprint → load)
+    roda sob um único ``try`` que captura ``(ValueError, FileNotFoundError,
+    OSError)`` — qualquer falha de IO/TOCTOU degrada gracioso em vez de
+    propagar traceback bruto (honra "nunca crasha" mesmo depois do lock).
+    """
+    from engine.vision import screenshot as _ss
+
+    try:
+        candidate = Path(raw_input)
+        if (
+            candidate.is_absolute()
+            and candidate.exists()
+            and not candidate.resolve().is_relative_to(feature_path.resolve())
+        ):
+            resolved = candidate.resolve()  # mockup externo — copy-in semantics
+        else:
+            # Estrito p/ relativo/bare/interno: traversal-safe, contido na feature.
+            resolved = _ss.normalize_screenshot_path(raw_input, feature_path)
+
+        issues = _ss.validate_screenshot(resolved)
+        if issues:
+            sys.stderr.write(
+                "forge plan: screenshot ignorado — "
+                + "; ".join(issues)
+                + ". Sigo sem a imagem; marque needs-elicitation se for UI.\n"
+            )
+            return None
+
+        screenshots_dir = feature_path / "screenshots"
+        ensure_dir(screenshots_dir)
+        dest = screenshots_dir / resolved.name
+        if resolved.resolve() != dest.resolve():
+            shutil.copy2(resolved, dest)
+
+        fingerprint = _ss.compute_screenshot_fingerprint(dest)
+        meta = _ss.load_screenshot(dest)
+        # `platform_inference` é Optional no dataclass (default None) — `load_screenshot`
+        # sempre popula, mas o guard é defense-in-depth contra o tipo.
+        inference = meta.platform_inference
+        platform = inference.platform if inference else "unknown"
+        confidence = inference.confidence if inference else None
+        return {
+            "path": str(dest.relative_to(feature_path)),
+            "fingerprint": fingerprint,
+            "platform_hint": platform,
+            "platform_confidence": confidence,
+        }
+    except (ValueError, FileNotFoundError, OSError) as exc:
+        sys.stderr.write(
+            f"forge plan: screenshot ignorado — {exc}. "
+            "Sigo sem a imagem.\n"
+        )
+        return None
+
+
+def _record_screenshot_manifest(feature_path: Path, result: dict) -> None:
+    """Persiste o dict de `_ingest_screenshot` em `screenshots/manifest.json`.
+
+    spec §4 C3a / WR-02 — `_ingest_screenshot` computa `fingerprint` (dedup da
+    Wave B) + `platform_hint` (hint de baixa confiança que o conductor pode
+    sobrepor). Antes esses campos eram descartados (o `run()` lia só path+count),
+    tornando a computação trabalho morto e quebrando o link de provenance que o
+    spec desenha. O manifest fecha o handoff: o conductor herda fingerprint +
+    platform sem recomputar os pixels.
+
+    Merge por `filename` (idempotente): re-ingerir o mesmo arquivo sobrescreve a
+    entry em vez de duplicar; arquivos distintos acumulam. Um manifest
+    pré-existente corrompido (JSON inválido) é re-semeado gracioso — nunca
+    crasha (mesmo contrato "nunca crasha" de `_ingest_screenshot`). Falha de IO
+    na escrita degrada com aviso mentor-calmo no stderr; o fluxo segue (o
+    arquivo do screenshot já está em screenshots/, então o conductor o tem).
+    """
+    try:
+        filename = Path(result["path"]).name
+        manifest_path = feature_path / "screenshots" / "manifest.json"
+        manifest: dict[str, Any] = {}
+        if manifest_path.is_file():
+            try:
+                loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    manifest = loaded
+            except (json.JSONDecodeError, ValueError, OSError):
+                # Manifest corrompido → re-seed limpo (não propaga).
+                manifest = {}
+        manifest[filename] = {
+            "fingerprint": result.get("fingerprint"),
+            "platform_hint": result.get("platform_hint"),
+            "platform_confidence": result.get("platform_confidence"),
+            "ingested_at": utc_now_iso(),
+        }
+        ensure_dir(manifest_path.parent)
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        sys.stderr.write(
+            f"forge plan: manifest de screenshot não persistido — {exc}. "
+            "O screenshot foi copiado; sigo sem o registro de provenance.\n"
+        )
+
+
+def _elicit_screenshot(
+    feature_path: Path,
+    subtype: str,
+    starting_wave: str,
+) -> Optional[dict]:
+    """Source-inquiry: pergunta por material visual e ingere se houver.
+
+    spec §4 C3a + §5 — só pergunta quando a feature é UI-capable e o render
+    é fresco: ``subtype == "product"`` E ``starting_wave == "A"``. Refactor/
+    bugfix não têm Wave B (sem mockup), e em resume (wave != A) não
+    re-pergunta — devolve ``None`` em silêncio nesses casos. A resposta
+    ``"none"`` (ou vazia, via default) também devolve ``None``. Reusa a infra
+    de prompt (``question.ask_text``, como ``_ask_task_count``) — participa do
+    intent loop/resume via o ``stable_intent_id`` que o adapter computa. A
+    análise multimodal dos pixels é do conductor (Wave B), não daqui.
+    """
+    if subtype != "product" or starting_wave != "A":
+        return None
+    resp = question.ask_text(
+        "Tem material visual pra essa tela? "
+        "(path do screenshot/mockup, ou 'none')",
+        default="none",
+    )
+    # `ask_text(default="none")` nunca devolve falsy (vazio resolve pro default),
+    # então só o sentinel "none" precisa de check — o ramo `not resp` era morto.
+    if resp.strip().lower() == "none":
+        return None
+    return _ingest_screenshot(resp.strip(), feature_path)
+
+
 def _forge_home() -> Path:
     from engine.utils.paths import forge_home as _fh
 
@@ -381,12 +598,24 @@ def _templates_dir() -> Path:
     return _forge_home() / _TEMPLATES_SUBDIR
 
 
-def _render_template(template_name: str, target: Path, slug: str) -> bool:
+def _render_template(
+    template_name: str,
+    target: Path,
+    slug: str,
+    *,
+    extra_tokens: Optional[dict[str, str]] = None,
+) -> bool:
     """Copy `templates/{template_name}` to `target`. Returns True if newly created.
 
-    Lightweight templating: replaces {{FEATURE_SLUG}} occurrences. Anything
-    else stays verbatim — full template population is the user's (or Claude's)
-    job between waves.
+    Templating leve: substitui os tokens que o engine conhece de forma
+    confiável — slug (lowercase `{{feature_slug}}`, como os templates usam,
+    74×; uppercase `{{FEATURE_SLUG}}` preservado p/ compat), timestamp, e —
+    via `extra_tokens` — a origem (`{{source_type}}`/`{{source_ref_or_none}}`).
+    Tudo o mais fica verbatim — a população completa é trabalho do host entre
+    as waves. `extra_tokens` é kw-only com default None (backward-compat); os
+    tokens de source só existem no intake — `.replace` é no-op nos demais
+    templates (inofensivo). O guard `target.exists()` mantém o once-only no
+    resume (não re-renderiza/re-preenche).
     """
     src = _templates_dir() / template_name
     if not src.is_file():
@@ -398,7 +627,25 @@ def _render_template(template_name: str, target: Path, slug: str) -> bool:
         return False
     ensure_dir(target.parent)
     raw = src.read_text(encoding="utf-8")
-    raw = raw.replace("{{FEATURE_SLUG}}", slug)
+    substitutions: dict[str, str] = {
+        "{{feature_slug}}": slug,
+        "{{FEATURE_SLUG}}": slug,  # legacy uppercase — preservado p/ compat
+        "{{generated_at_iso8601}}": utc_now_iso(),
+    }
+    if extra_tokens:
+        substitutions.update(extra_tokens)
+    # Substituição single-pass: um único `re.sub` escaneia o template UMA vez e
+    # troca cada token pelo lookup no dict. Diferente do `.replace` em cascata,
+    # NÃO re-escaneia valores já inseridos — então um valor (e.g. source-ref do
+    # argv livre) contendo o literal de outro token (`{{screenshots_count}}`)
+    # sobrevive intacto. `sorted(longest-first)` evita ambiguidade de prefixo;
+    # o guard `if substitutions` evita um regex vazio (sempre há ao menos os 3
+    # tokens base, mas o guard mantém o invariante explícito).
+    if substitutions:
+        _pat = re.compile(
+            "|".join(re.escape(k) for k in sorted(substitutions, key=len, reverse=True))
+        )
+        raw = _pat.sub(lambda m: substitutions[m.group(0)], raw)
     target.write_text(raw, encoding="utf-8")
     return True
 
@@ -495,14 +742,22 @@ def _run_static_wave(
     slug: str,
     project_root: Path,
     feature_path: Path,
+    *,
+    extra_tokens: Optional[dict[str, str]] = None,
 ) -> WaveResult:
-    """Render a wave's templates, narrate, then block on continuar/pausar."""
+    """Render a wave's templates, narrate, then block on continuar/pausar.
+
+    `extra_tokens` (kw-only, default None) é repassado a `_render_template` —
+    a Wave A usa pra preencher os tokens de source no intake (spec §4 C3).
+    """
     renderer.write("")
     renderer.write(renderer.bold(f"⚡ Wave {label}"))
     created: list[Path] = []
     for template_name, output_name in templates:
         target = feature_path / output_name
-        was_new = _render_template(template_name, target, slug)
+        was_new = _render_template(
+            template_name, target, slug, extra_tokens=extra_tokens
+        )
         marker = "NEW " if was_new else "EXIST"
         renderer.write(f"  ├ {marker}  {target.relative_to(project_root)}")
         created.append(target)
@@ -1077,12 +1332,27 @@ def _handle_done_feature_branch(
 
 def _elicit_slug(argv_slug: Optional[str], project_root: Optional[Path] = None) -> str:
     if argv_slug:
-        if not _is_valid_slug(argv_slug):
-            raise SystemExit(
-                f"forge plan: slug '{argv_slug}' invalid. "
-                "kebab-case lowercase, 2..50 chars, [a-z0-9-]."
+        if _is_valid_slug(argv_slug):
+            return argv_slug
+        # Não é slug válido → trata como ticket/frase: deriva + confirma.
+        # Front-door (spec §4 C3) · Decisão 10: argv posicional, sem flag.
+        # Slug-derivável NÃO é erro — só vira exit 1 se realmente impossível.
+        try:
+            derived = _derive_slug(argv_slug)
+        except ValueError:
+            sys.stderr.write(
+                f"forge plan: não consegui derivar um slug de {argv_slug!r}. "
+                "Tente uma frase com ao menos uma letra (ex.: 'lembrete de rega').\n"
             )
-        return argv_slug
+            raise SystemExit(1)
+        return question.ask_text(
+            f"Derivei '{derived}' do que você passou — confirma ou ajusta?",
+            default=derived,
+            validator=_is_valid_slug,
+            validator_hint=(
+                "kebab-case lowercase, 2..50 chars, deve começar com letra."
+            ),
+        )
 
     # DRIFT-1 W2.T3b — persist checkpoint com intent-id determinado da
     # pergunta de slug ANTES de invocar ``question.ask_text``. On exit-2 +
@@ -1332,6 +1602,7 @@ def _run_waves_for_subtype(
     feature_path: Path,
     *,
     wave_b_required: Optional[bool] = None,
+    intake_tokens: Optional[dict[str, str]] = None,
 ) -> int:
     """Dispatch waves according to subtype. Returns exit code (0 ok, 130 paused).
 
@@ -1359,8 +1630,16 @@ def _run_waves_for_subtype(
 
     for wave_label in order[start_idx:]:
         if wave_label == "A":
+            # Wave A renderiza o feature-intake.md — único ponto onde os
+            # tokens de source (spec §4 C3) são preenchidos. B/C/D/E não
+            # recebem (os tokens só existem no intake).
             result = _run_static_wave(
-                "A", wave_a_templates, slug, project_root, feature_path
+                "A",
+                wave_a_templates,
+                slug,
+                project_root,
+                feature_path,
+                extra_tokens=intake_tokens,
             )
         elif wave_label == "B":
             result = _run_static_wave(
@@ -1523,6 +1802,33 @@ def run(argv: list[str]) -> int:
         )
         append_history(slug, project_root, {"event": "plan-resumed", "wave": starting_wave})
 
+    # Front-door (spec §4 C3): tokens de source preenchidos no intake da
+    # Wave A. Computados do `argv_slug` CRU (nunca reescrito) — sempre
+    # presentes, matando o vazamento do token cru universalmente.
+    intake_tokens = _source_tokens_for(argv_slug)
+
+    # Vision wire (spec §4 C3a): source-inquiry conversacional por material
+    # visual — só em product + Wave A (UI-capable + render fresco). Os 3 nomes
+    # de token de screenshot são SEMPRE preenchidos (product usa o nome puro;
+    # refactor/bugfix usam o sufixo `_or_none`) — o `.replace` no-opa o ausente
+    # por variante e nenhum token cru vaza em qualquer subtype. Fluem pelo MESMO
+    # threading dos tokens de source (intake_tokens → _run_waves_for_subtype →
+    # Wave A render). O engine só sanitiza/fingerprint; a análise é do conductor.
+    screenshot_result = _elicit_screenshot(feature_path, subtype, starting_wave)
+    if screenshot_result is not None:
+        # WR-02: persiste fingerprint + platform_hint (senão descartados) pro
+        # conductor herdar a provenance sem recomputar os pixels.
+        _record_screenshot_manifest(feature_path, screenshot_result)
+    _ss_count = "1" if screenshot_result else "0"
+    _ss_paths = screenshot_result["path"] if screenshot_result else "none"
+    intake_tokens.update(
+        {
+            "{{screenshots_count}}": _ss_count,
+            "{{screenshots_relative_paths_csv}}": _ss_paths,
+            "{{screenshots_relative_paths_csv_or_none}}": _ss_paths,
+        }
+    )
+
     # Wave dispatch loop (subtype-aware; bugfix branches on wave_b_required).
     try:
         rc = _run_waves_for_subtype(
@@ -1532,6 +1838,7 @@ def run(argv: list[str]) -> int:
             project_root,
             feature_path,
             wave_b_required=wave_b_required,
+            intake_tokens=intake_tokens,
         )
         if rc != 0:
             return rc

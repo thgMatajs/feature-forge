@@ -492,6 +492,79 @@ cause: missing screenshots, vague ticket, or stale memory.
 
 ---
 
+## Cena 8.5 — Grounded challenge (silent → confronto, 46–48s)
+
+Phase 2.5. Antes de abrir a boca pra perguntar, o conductor confronta o pedido
+contra o que JÁ existe (grafo Q1 + Q11-Q17, `engine/inventory/`, L2). Não é o
+grill uni-direcional que só semeia default — é confronto: quando algo do pedido
+colide com o que o projeto já tem, vira pergunta. A fase NÃO bloqueia — cada
+confronto entra no painel agrupado da Cena 9 (D3: confronta, humano decide).
+
+```
+[0:46] Confrontando o pedido com o que o projeto já tem...
+       (grafo Q1 · reuse-intelligence Q11-Q17 · inventory · L2)
+       
+       └ 1 colisão encontrada — vira pergunta junto da elicitação:
+         · duplicação:  `bonsai-list` já persiste `starred` (Q1, 88% match)
+```
+
+O confronto de duplicação não silencia a feature — ele entra na Cena 9 como
+uma das perguntas agrupadas, no formato "confronta + humano decide":
+
+```
+0. Persistência de "favorito" do lembrete
+   Q1 mostra que `bonsai-list` já persiste `starred` num campo equivalente.
+   Antes de criar do zero, confirma o caminho:
+   Influencia: data-contract-spec.yaml · rationale-trace.yaml
+   
+   • Reusar o campo/repo de `bonsai-list` (sem duplicar persistência)
+   • Estender o existente (mesmo store, campo novo)
+   • Criar novo (justifica por que não dá pra reusar — vai pro rationale-trace)
+```
+
+A escolha + o porquê vão pro `rationale-trace.yaml` — o confronto fica
+rastreável, não vira decisão silenciosa.
+
+### No-visual branch — feature de UI sem referência visual (D5)
+
+Quando a feature é de UI/product mas ninguém anexou screenshot nem descreveu a
+tela, o conductor não inventa pixel. Confronta no front da elicitação com os
+3-caminhos canônicos:
+
+```
+[0:47] Essa feature mexe em tela, mas não recebi nenhuma referência visual.
+       Planejar UI no escuro é onde o forge mais inventa — então paro e
+       pergunto antes:
+
+🛑 Feature de UI sem referência visual
+
+   1) Anexar mockup/screenshot
+      vira fluxo "com screenshot" (eu sanitizo + calculo o fingerprint).
+
+   2) Descrever a tela em texto
+      os estados viram `confirmed` com source: prd/intake.
+
+   3) Reusar a screen-analysis de uma feature similar da L2
+      herda a extração de uma tela parecida — Q1 mostra `bonsai-detail`
+      como candidato (84% match).
+
+   Abortar continua um caminho honesto só se nenhum dos três rolar.
+       
+       > 3
+       
+[0:48] Beleza — vou herdar a screen-analysis de `bonsai-detail` como ponto de
+       partida. Você confirma estado a estado na elicitação; nada é copiado
+       cego. Anotei a origem no rationale-trace.
+```
+
+**Note:** se grafo/inventory/L2 não existem (projeto sem bootstrap), o
+grounded-challenge degrada gracioso — pula o confronto que não tem fonte, anota
+no `rationale-trace` ("grafo ausente — confronto de duplicação pulado") e segue.
+NUNCA crasha por falta de fonte. O no-visual branch ainda roda (caminhos 1 e 2
+não dependem de grafo).
+
+---
+
 ## Cena 9 — Elicitation (48–80s)
 
 Phase 3. Single AskUserQuestion with the 4 unresolved nodes, each carrying:

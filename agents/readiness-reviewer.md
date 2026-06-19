@@ -258,6 +258,14 @@ Per 07-discipline.md and 06-command-surface.md:
   ```
   Each hit is a discipline violation. Block-severity if in a task contract
   or contract spec; warning-severity if in narrative artifacts.
+- **needs-elicitation não-promovido** (spec C5):
+  ```bash
+  grep -rEn 'needs-elicitation' docs/.../features/{slug}/*-spec.yaml \
+    docs/.../features/{slug}/tasks/
+  ```
+  Cada hit em contract spec ou task contract é **block-severity** (o campo
+  devia ter virado `blocking: true` open-question). Hits em narrativa
+  (PRD prosa, intake) são **warning-severity**.
 
 ### Phase 6 — Verdict + rationale
 
