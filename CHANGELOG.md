@@ -7,6 +7,26 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed (pilot R1 — unblock init AI-first)
+- P-01: gate do prompt de resume durante o loop mecânico do host (fim do deadlock IntentMismatchError).
+- P-11: resume real continua do step do checkpoint + labels honestas.
+- P-03: cards UI/nav declaram `identity.platforms` — fim do CONFLITO falso de pareamento KMP.
+- P-09: dep-closure de provider antes do resolver — fim do DEP-MISSING em firestore-security-rules.
+- P-10: gate RESOLVER-ERRORS pausa (exit 2) pra escolha em vez de abortar.
+- P-04: tabela de detecção como contexto, campo `question` curto.
+- P-02: remove texto dev "[W7.2 …]" das labels brownfield; W7.2 anotado em 04-pending.
+- P-05: `forge <subcmd> --help --json` emite JSON ou erro explícito.
+- P-07: abertura do init determinística (`greeting_stable`).
+- P-08: remove opção morta `outro` do prompt de preset.
+- P-12: rótulo de passo + nota de duração em vez de relógio interno.
+
+### Added (pilot R1)
+- `identity.platforms` documentado em `docs/schemas/card.md` (campo aditivo opcional).
+- Marker stdout `<FORGE_INTENT>` documentado em `docs/schemas/intent-protocol.md`.
+
+### Changed (pilot R1)
+- README: reconciliação de stats (22 validators + 3 helpers, 29 cards, tests 1863/204/30).
+
 ## [1.5.0] - 2026-06-19
 
 ### Added
