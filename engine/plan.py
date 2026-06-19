@@ -1254,13 +1254,35 @@ def _handle_active_slug_collision(
     """
     status = state.status
     suggestion = _suffix_slug(slug, project_root)
+    _options = {
+        "retomar": f"Retomar '{slug}' de onde parou (auto-resume)",
+        "nova": f"Criar nova com sufixo — '{suggestion}'",
+        "abortar": "Abortar (escolher outro slug manualmente)",
+    }
+    _question = (
+        f"Já existe uma feature ativa '{slug}' (status={status}). O que fazer?"
+    )
+    # Gate de re-entrada (P-15, mesma classe de P-01): durante o loop mecânico
+    # do host existe uma response downstream pendente. Emitir este guard aqui
+    # injetaria um intent cujo id NÃO casa com essa response →
+    # IntentMismatchError (o deadlock do piloto MeoBonsai). Sob replay,
+    # retornamos o slug existente (= caminho "retomar") sem prompt — o pipeline
+    # segue até o prompt downstream dono da response. Em re-entrada HUMANA
+    # (sem response in-flight) o guard aparece normalmente (3-caminhos
+    # preservado: proteger feature alheia). Ver §4.1 do intent-protocol.
+    from engine.ui import intent_state  # noqa: PLC0415
+
+    _guard_id = question.stable_intent_id(
+        "ask",
+        _question,
+        _options,
+        extra={"default": "retomar", "min-selected": None, "validator-hint": None},
+    )
+    if intent_state.host_is_replaying(project_root, _guard_id):
+        return slug
     choice = question.ask(
-        f"Já existe uma feature ativa '{slug}' (status={status}). O que fazer?",
-        {
-            "retomar": f"Retomar '{slug}' de onde parou (auto-resume)",
-            "nova": f"Criar nova com sufixo — '{suggestion}'",
-            "abortar": "Abortar (escolher outro slug manualmente)",
-        },
+        _question,
+        _options,
         default="retomar",
         project_root=project_root,
     )
