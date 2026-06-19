@@ -666,29 +666,35 @@ def run(argv: list[str]) -> int:
     if argv and argv[0] == "detect-incremental":
         return _run_detect_incremental(project_root, argv[1:])
 
-    # C-001: o modo JSON global (FORGE_OUTPUT=json) também conta como
-    # non-interactive — sob ele `renderer.write` vira no-op e cair no menu
-    # interativo dispararia o intent protocol (exit-2 + marker órfão), que é
-    # reservado ESTRITAMENTE pra pausa (DRIFT-1). Se o modo global resolve JSON
-    # mas NÃO há `--json` posicional em argv, exigimos a query explícita e
-    # saímos com erro determinístico (stderr + exit 1) em vez de prompar.
+    # C-001 / C-35: o modo JSON é ativado por DOIS caminhos equivalentes —
+    # `--json` posicional (`forge graph --json q3`) OU o env global
+    # (`FORGE_OUTPUT=json forge graph q3`). Ambos contam como non-interactive
+    # (renderer.write no-op; cair no menu dispararia o intent protocol, exit-2
+    # reservado ESTRITAMENTE pra pausa — DRIFT-1).
+    #
+    # C-35 (PR21-I3): antes, o env global SEM `--json` posicional caía num erro
+    # ("exige query explícita") — então `FORGE_OUTPUT=json forge graph q3` ficava
+    # quebrado embora a query ESTIVESSE em argv. Agora, em json_mode, a query é
+    # parseada de argv independente de qual caminho ativou:
+    #   - com `--json` posicional → query = argv[1], args = argv[2:]
+    #   - via env global          → query = argv[0], args = argv[1:]
     json_flag = bool(argv and argv[0] == "--json")
     global_json = output_mode.is_json_mode()
-    if global_json and not json_flag:
-        sys.stderr.write(
-            "forge graph: modo JSON exige query explícita — use "
-            "`forge graph --json <query> [args...]`.\n"
-        )
-        return 1
-    json_mode = json_flag
+    json_mode = json_flag or global_json
+    key = None
+    query_args: list[str] = []
     if json_mode:
-        if len(argv) < 2:
+        # Remove o token `--json` se presente; o resto é [query, *args].
+        json_argv = argv[1:] if json_flag else argv
+        if not json_argv:
             sys.stderr.write(_JSON_USAGE)
             return 1
-        key = _resolve_json_query_key(argv[1])
+        query_token = json_argv[0]
+        query_args = json_argv[1:]
+        key = _resolve_json_query_key(query_token)
         if key is None:
             sys.stderr.write(
-                f"forge graph --json: unknown query {argv[1]!r}. "
+                f"forge graph --json: unknown query {query_token!r}. "
                 f"Use q1..q17, r, ou label (e.g. symbols, orphan-files).\n"
             )
             return 1
@@ -710,7 +716,7 @@ def run(argv: list[str]) -> int:
         # em vez de re-chamar _resolve_json_query_key + assert. mypy se
         # contenta com o narrowing no bloco condicional.
         assert key is not None  # garantido pelo branch json_mode validation
-        return _run_json_query(project_root, key, argv[2:])
+        return _run_json_query(project_root, key, query_args)
 
     if not graph_db_path(project_root).exists():
         renderer.write(renderer.colored(
