@@ -34,12 +34,15 @@ from typing import Any
 import pytest
 
 from engine.qa.synthesis import (
+    SandboxResultStub,
     SynthesisResult,
     canonical_fingerprint,
     compute_verdict,
     dedup_findings,
+    hydrate_validator_claim_evidence,
     synthesize,
 )
+from validators.validate_qa_finding import validate_qa_finding
 
 
 def _mk(
@@ -286,3 +289,126 @@ def test_dedup_duplicates_dedupes_same_auditor_name():
 
     assert len(out) == 1
     assert out[0]["evidence"]["duplicates"] == ["b"]
+
+
+# ---------------------------------------------------------------------------
+# F-4: hydrate_validator_claim_evidence
+# ---------------------------------------------------------------------------
+
+
+def _mk_validator_claim_draft(
+    *,
+    fixture_path: str | None = "fixtures/validator-claim-foo.yaml",
+    sandbox_result: Any = None,
+) -> dict[str, Any]:
+    """Draft validator-claim COMPLETO (passa validate_qa_finding quando
+    sandbox_result é None ou dict válido)."""
+    evidence: dict[str, Any] = {
+        "auditor": "qa-auditor-validator-claim",
+        "auditor_reasoning": "validator deveria pegar mas nao pegou",
+        "sandbox_result": sandbox_result,
+    }
+    if fixture_path is not None:
+        evidence["fixture_path"] = fixture_path
+    return {
+        "id": "vc-0001",
+        "fingerprint": "a" * 64,
+        "vector": "validator-claim",
+        "severity": "high",
+        "title": "validator que mente",
+        "description": "validator forge nao detecta o caso",
+        "scope": {"files": ["validators/x.py"]},
+        "evidence": evidence,
+        "proposed_evolution": {
+            "type": "qa-finding-validator-claim",
+            "summary": "endurecer o validator",
+            "actionable": True,
+        },
+        "created_at": "2026-06-19T12:00:00Z",
+    }
+
+
+def test_hydrate_validator_claim_evidence():
+    """F-4: draft validator-claim com fixture executável casa com stub
+    (exit_code int) e ganha evidence.sandbox_result dict válido."""
+    draft = _mk_validator_claim_draft()
+    stub = SandboxResultStub(
+        fixture_name="validator-claim-foo",
+        status="ok",
+        exit_code=0,
+        stdout="",
+        stderr="",
+        duration_s=0.3,
+    )
+
+    out = hydrate_validator_claim_evidence([draft], [stub])
+
+    sr = out[0]["evidence"]["sandbox_result"]
+    assert isinstance(sr, dict)
+    assert sr["exit_code"] == 0
+    assert sr["stdout"] == ""
+    assert sr["stderr"] == ""
+    assert sr["duration_s"] == 0.3
+    # finding hidratado passa o validator de shape.
+    validate_qa_finding(out[0])
+    # nao muta o input.
+    assert draft["evidence"]["sandbox_result"] is None
+
+
+def test_hydrate_validator_claim_no_matching_stub_stays_null():
+    """F-4: draft validator-claim sem stub correspondente permanece None
+    (draft-válido); não inventa evidência."""
+    draft = _mk_validator_claim_draft()
+    other = SandboxResultStub(
+        fixture_name="validator-claim-bar", status="ok", exit_code=0
+    )
+
+    out = hydrate_validator_claim_evidence([draft], [other])
+
+    assert out[0]["evidence"]["sandbox_result"] is None
+    validate_qa_finding(out[0])
+
+
+def test_hydrate_validator_claim_other_vector_untouched():
+    """F-4: drafts de outro vetor (chaos) não são tocados."""
+    chaos = _mk(vector="chaos", evidence={"auditor": "qa-auditor-chaos"})
+    stub = SandboxResultStub(fixture_name="anything", status="ok", exit_code=0)
+
+    out = hydrate_validator_claim_evidence([chaos], [stub])
+
+    assert out[0] == chaos
+
+
+def test_hydrate_validator_claim_exit_code_none_stays_null():
+    """F-4: stub com exit_code None (timeout/skipped) NÃO hidrata dict
+    inválido — finding permanece None (validate_qa_finding aceita None)."""
+    draft = _mk_validator_claim_draft()
+    stub = SandboxResultStub(
+        fixture_name="validator-claim-foo",
+        status="timeout",
+        exit_code=None,
+        duration_s=10.0,
+    )
+
+    out = hydrate_validator_claim_evidence([draft], [stub])
+
+    assert out[0]["evidence"]["sandbox_result"] is None
+    validate_qa_finding(out[0])
+
+
+def test_hydrate_validator_claim_already_hydrated_not_overwritten():
+    """F-4: sandbox_result já preenchido pelo conductor não é sobrescrito."""
+    existing_sr = {
+        "exit_code": 2,
+        "stdout": "conductor",
+        "stderr": "",
+        "duration_s": 1.0,
+    }
+    draft = _mk_validator_claim_draft(sandbox_result=existing_sr)
+    stub = SandboxResultStub(
+        fixture_name="validator-claim-foo", status="ok", exit_code=0, duration_s=0.3
+    )
+
+    out = hydrate_validator_claim_evidence([draft], [stub])
+
+    assert out[0]["evidence"]["sandbox_result"] == existing_sr

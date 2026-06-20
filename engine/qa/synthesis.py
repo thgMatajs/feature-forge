@@ -19,6 +19,7 @@ API publica:
     from engine.qa.synthesis import (
         synthesize, canonical_fingerprint, dedup_findings,
         compute_verdict, SynthesisResult,
+        hydrate_validator_claim_evidence,
     )
 
     result = synthesize(draft_findings)
@@ -31,6 +32,7 @@ import hashlib
 import json
 from collections import Counter
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal
 
 from engine.utils.sha256 import normalise_description
@@ -264,6 +266,93 @@ def findings_from_sandbox_results(
         findings.append(finding)
 
     return findings
+
+
+def hydrate_validator_claim_evidence(
+    draft_findings: list[dict[str, Any]],
+    stubs: list[SandboxResultStub],
+) -> list[dict[str, Any]]:
+    """F-4: hidrata ``evidence.sandbox_result`` em findings validator-claim.
+
+    Diferente de ``findings_from_sandbox_results`` (que DERIVA findings
+    novos pra breach/timeout), este helper ENRIQUECE drafts validator-claim
+    existentes — emitidos pelo auditor com ``sandbox_result: null`` — casando
+    cada um com a entrada de ``sandbox-results.json`` que executou a sua
+    fixture. Sem isso, o headline "validator que mente" perde o audit trail
+    do subprocess no ``qa-report.json`` final.
+
+    Matching rule (A-4): ``Path(evidence["fixture_path"]).stem`` (basename sem
+    extensão) ↔ ``stub.fixture_name``. Alinhado ao exemplo do conductor
+    (``"validator-claim-traversal"`` sem extensão) e ao nome que o auditor
+    gera.
+
+    Determinístico e conservador — só hidrata quando há casamento seguro:
+
+    - vetor != ``validator-claim`` → intocado.
+    - ``evidence`` não-dict → intocado.
+    - ``sandbox_result`` já preenchido (pelo conductor) → NÃO sobrescreve.
+    - ``fixture_path`` ausente/não-str → intocado (sem adivinhação).
+    - sem stub correspondente → permanece ``None`` (draft-válido).
+    - stub com ``exit_code is None`` (timeout/skipped) → permanece ``None``;
+      ``validate_qa_finding`` exige ``exit_code: int`` quando o
+      ``sandbox_result`` é dict, então hidratar nesse caso geraria shape
+      inválido. ``None`` é placeholder aceito em draft.
+
+    Não muta o input — retorna cópias rasas dos findings (e do evidence)
+    tocados, pattern de ``dedup_findings``.
+
+    Args:
+        draft_findings: lista de findings draft (dicts).
+        stubs: ``SandboxResultStub`` de ``hydrate_sandbox_results``.
+
+    Returns:
+        Lista nova; findings validator-claim com fixture executável e stub
+        casado ganham ``evidence.sandbox_result`` dict. Demais inalterados.
+    """
+    if not isinstance(draft_findings, list):
+        raise TypeError(
+            f"draft_findings deve ser list pra "
+            f"hydrate_validator_claim_evidence, recebido tipo "
+            f"{type(draft_findings).__name__}"
+        )
+
+    # Index por fixture_name (último vence em colisão — não esperada).
+    by_name: dict[str, SandboxResultStub] = {s.fixture_name: s for s in stubs}
+
+    out: list[dict[str, Any]] = []
+    for f in draft_findings:
+        if not isinstance(f, dict) or f.get("vector") != "validator-claim":
+            out.append(f)
+            continue
+        ev = f.get("evidence")
+        if not isinstance(ev, dict):
+            out.append(f)
+            continue
+        if ev.get("sandbox_result") is not None:
+            out.append(f)  # já hidratado pelo conductor — não sobrescrever
+            continue
+        fp = ev.get("fixture_path")
+        if not isinstance(fp, str):
+            out.append(f)
+            continue
+        stub = by_name.get(Path(fp).stem)
+        if stub is None or stub.exit_code is None:
+            # sem casamento OU exit_code ausente → permanece None (válido).
+            out.append(f)
+            continue
+
+        new_evidence = dict(ev)
+        new_evidence["sandbox_result"] = {
+            "exit_code": int(stub.exit_code),
+            "stdout": stub.stdout,
+            "stderr": stub.stderr,
+            "duration_s": float(stub.duration_s),
+        }
+        new_finding = dict(f)
+        new_finding["evidence"] = new_evidence
+        out.append(new_finding)
+
+    return out
 
 
 Severity = Literal["critical", "high", "medium", "low", "info"]
