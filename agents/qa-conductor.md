@@ -84,7 +84,10 @@ card declara (`static` ou `generative`) — você dispatcha cada um com o
 mesmo overlay. Sem extensão = só os 4 core.
 
 **Phase 3 — Sandbox execution** (core Python, devolve controle).
-Você termina Phase 2 e re-invoca `engine.qa.run_qa(run_id, resume="phase-3")`.
+Você termina Phase 2 e re-invoca `forge qa <target>` — o **mesmo comando**, sem
+flag, sem run-id explícito (Decisão 10: zero flags). O engine reata a run em
+andamento via checkpoint (`find_resumable_run`) e continua da phase apropriada
+inferida pelo estado da run tree (findings presentes → sandbox + synthesis).
 Sandbox roda subprocess hardened contra cada fixture com `executable: true`.
 
 **Após Phase 3 — escreva `sandbox-results.json`** (obrigatório pra
@@ -163,10 +166,14 @@ lista intacta ao subprocess; sem filtragem extra, sem invenção de vars.
   + `sandbox-results.json` → escreve `qa-report.json` final com verdict.
 
 **Phase 5 — Emit** (core Python, devolve controle).
-Re-invoca `engine.qa.run_qa(run_id, resume="phase-5")`. Emite
-proposed-evolutions, imprime relatório cinemático, sai com exit code
-0 (PASS/FLAG) ou 1 + `[FORGE-ERR:QA-BLOCK]` em stderr (BLOCK), conforme
-`docs/design/06-command-surface.md`.
+Re-invoca `forge qa <target>` — o **mesmo comando**, sem flag nem run-id
+explícito. O engine reata a run via checkpoint e infere a phase pelo estado:
+com `qa-report.json` finalizado (synthesis rodou) ele emite proposed-evolutions,
+imprime relatório cinemático, **limpa o checkpoint** (a run deixa de ser
+resumível) e sai com exit code 0 (PASS/FLAG) ou 1 + `[FORGE-ERR:QA-BLOCK]` em
+stderr (BLOCK), conforme `docs/design/06-command-surface.md`. Você **não** passa
+`resume=phase-N` — esse contrato não existe no engine; a phase é inferida pelo
+estado da run tree.
 
 ---
 
