@@ -528,6 +528,21 @@ def _write_qa_report_skeleton(
     )
 
 
+def _normalize_iso_z(raw: str) -> str:
+    """WR-03: troca SÓ o sufixo ``Z`` por ``+00:00`` antes do ``fromisoformat``.
+
+    ``datetime.fromisoformat`` (3.11+) ja aceita ``Z`` sufixo, mas
+    normalizamos por robustez. O cuidado e nao usar ``str.replace("Z", ...)``
+    global — isso reescreveria qualquer ``Z`` interno de um timestamp
+    migrado/malformado, mascarando o defeito num parse plausivel-mas-errado.
+    Strip de sufixo preserva ``Z`` interno (que cai em degradacao graciosa no
+    parse), em vez de corromper silenciosamente.
+    """
+    if raw.endswith("Z"):
+        return raw[:-1] + "+00:00"
+    return raw
+
+
 def _compute_duration_s(started_raw: Any, finished_dt: datetime) -> float:
     """F-3: deriva run.duration_s de (finished - started).total_seconds().
 
@@ -548,8 +563,9 @@ def _compute_duration_s(started_raw: Any, finished_dt: datetime) -> float:
         return 0.0
     try:
         # ``datetime.fromisoformat`` (3.11+) aceita ``Z``; pra robustez em
-        # versoes anteriores, normalizamos ``Z`` -> ``+00:00`` antes do parse.
-        started_dt = datetime.fromisoformat(started_raw.replace("Z", "+00:00"))
+        # versoes anteriores, normalizamos o sufixo ``Z`` -> ``+00:00`` antes
+        # do parse (WR-03: strip do sufixo, nao replace global).
+        started_dt = datetime.fromisoformat(_normalize_iso_z(started_raw))
     except (ValueError, TypeError):
         return 0.0
     if started_dt.tzinfo is None:

@@ -13,8 +13,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from datetime import datetime, timezone
+
 from engine.qa import (
+    _compute_duration_s,
     _finalize_qa_report,
+    _normalize_iso_z,
     _write_qa_report_skeleton,
     run_qa,
 )
@@ -197,6 +201,53 @@ def test_finalize_duration_s_graceful_when_started_missing(tmp_path: Path) -> No
         (tree.root / "qa-report.json").read_text(encoding="utf-8")
     )
     assert final["run"]["duration_s"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# WR-03 — _compute_duration_s strip do sufixo Z (não global)
+# ---------------------------------------------------------------------------
+
+
+def test_compute_duration_s_strips_only_trailing_z() -> None:
+    """WR-03: started_at com `Z` SÓ no sufixo parseia normalmente — duration
+    derivada corretamente (sem regressão no caminho feliz)."""
+    started = "2026-06-19T12:00:00Z"
+    finished = datetime(2026, 6, 19, 12, 0, 30, tzinfo=timezone.utc)
+    assert _compute_duration_s(started, finished) == 30.0
+
+
+def test_normalize_iso_z_strips_only_trailing_z() -> None:
+    """WR-03: `_normalize_iso_z` troca SÓ o `Z` final por `+00:00`.
+
+    Pré-fix (`.replace("Z", "+00:00")` global) corrompe qualquer `Z`
+    interno — um timestamp migrado/malformado com `Z` no meio vê todas as
+    ocorrências reescritas, mascarando o defeito num parse plausível. O
+    strip de sufixo preserva o `Z` interno (que então cai em degradação
+    graciosa no parse), nunca o reescreve silenciosamente.
+    """
+    # Z só no sufixo → vira offset UTC.
+    assert _normalize_iso_z("2026-06-19T12:00:00Z") == "2026-06-19T12:00:00+00:00"
+    # Z interno + Z sufixo → só o final é trocado; o interno permanece intacto.
+    assert _normalize_iso_z("2026Z06-19T12:00:00Z") == "2026Z06-19T12:00:00+00:00"
+    # Z só no meio (sem sufixo) → string inalterada.
+    assert _normalize_iso_z("2026Z06-19T12:00:00") == "2026Z06-19T12:00:00"
+    # Sem Z nenhum → inalterado.
+    assert _normalize_iso_z("2026-06-19T12:00:00+00:00") == "2026-06-19T12:00:00+00:00"
+
+
+def test_compute_duration_s_z_in_middle_graceful() -> None:
+    """WR-03: um `Z` NÃO-sufixo cai em degradação graciosa (`0.0`), nunca um
+    valor errado silencioso derivado de reescrita global do `Z`."""
+    finished = datetime(2026, 6, 19, 12, 0, 30, tzinfo=timezone.utc)
+    weird = "2026Z06-19T12:00:00Z"
+    assert _compute_duration_s(weird, finished) == 0.0
+
+
+def test_compute_duration_s_offset_without_z_intact() -> None:
+    """WR-03: started_at com offset explícito (sem Z) parseia inalterado."""
+    started = "2026-06-19T09:00:00+00:00"
+    finished = datetime(2026, 6, 19, 9, 0, 45, tzinfo=timezone.utc)
+    assert _compute_duration_s(started, finished) == 45.0
 
 
 def test_finalize_qa_report_tolerates_missing_skeleton(tmp_path: Path) -> None:
