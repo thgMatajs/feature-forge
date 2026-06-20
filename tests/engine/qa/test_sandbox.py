@@ -511,3 +511,149 @@ def test_hardened_env_propagates_extras_to_build_safe_env(tmp_path, monkeypatch)
     env = _hardened_env(guard_dir, extras=["JAVA_HOME"])
 
     assert env["JAVA_HOME"] == "/opt/java"
+
+
+# ---------------------------------------------------------------------------
+# F-1 (A.1) — mini-tree + invocação --project-root
+# ---------------------------------------------------------------------------
+
+
+# Validator stub que espelha validators forge reais: lê --project-root via
+# argparse, tolera --scope/--id (parse-only), escaneia o tree e dá exit 1 se
+# achar um arquivo offending. Contrato canônico:
+#   python3 validator.py --project-root <path> [--scope <kind> --id <target>]
+_PROJECT_ROOT_VALIDATOR = """
+import argparse
+import sys
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--project-root", required=True)
+parser.add_argument("--scope")
+parser.add_argument("--id")
+args = parser.parse_args()
+
+root = Path(args.project_root)
+# Imprime o project-root recebido pra o teste poder asserir a invocação.
+print(f"PROJECT_ROOT={root}")
+
+offending = list(root.rglob("offending.kt"))
+if offending:
+    for f in offending:
+        print(f"OFFENDING: {f}", file=sys.stderr)
+    sys.exit(1)
+sys.exit(0)
+"""
+
+
+# Validator stub posicional legado: lê argv[1] como input path (caminho
+# antigo, pré-F-1). Usado pra confirmar que tree_rel_path=None preserva a
+# invocação posicional.
+_POSITIONAL_VALIDATOR = """
+import sys
+# argv[1] é o input posicional. Se chegou --project-root como argv[1], o
+# validator legado não saberia o que fazer — então imprimimos o argv cru
+# pra o teste asserir a forma da invocação.
+print(f"ARGV1={sys.argv[1] if len(sys.argv) > 1 else 'NONE'}")
+sys.exit(0)
+"""
+
+
+def test_run_sandbox_project_root_invocation(tmp_path: Path) -> None:
+    """Fixture com tree_rel_path → validator invocado com --project-root.
+
+    O validator argparse escaneia o mini-tree e acha o arquivo offending,
+    devolvendo exit 1 (validator "deveria falhar" — vetor validator-claim
+    funcional). Sem F-1 a invocação seria posicional e o argparse sairia 2
+    sem nunca ler o arquivo.
+    """
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    validator = _write_validator(
+        validators_dir, "project_root_validator.py", _PROJECT_ROOT_VALIDATOR
+    )
+
+    # mini-tree DENTRO de run_dir/fixtures/<name>/, com o arquivo offending
+    # no rel-path declarado.
+    mini_tree = sandbox_fixtures / "vc-foo"
+    offending = mini_tree / "src" / "offending.kt"
+    offending.parent.mkdir(parents=True, exist_ok=True)
+    offending.write_text("// offending content\n", encoding="utf-8")
+
+    fixture = Fixture(
+        name="vc-foo",
+        input_path=offending,
+        validator_path=validator,
+        tree_rel_path="src/offending.kt",
+    )
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=30.0, per_validator_s=10.0
+    )
+
+    assert len(results) == 1
+    r = results[0]
+    assert r.status == "ok", f"status={r.status} error={r.error!r} stderr={r.stderr!r}"
+    assert r.exit_code == 1, (
+        f"validator deveria achar offending.kt via --project-root e sair 1; "
+        f"exit={r.exit_code} stdout={r.stdout!r} stderr={r.stderr!r}"
+    )
+    # O project-root recebido aponta pro mini-tree dentro do sandbox.
+    assert str(mini_tree.resolve()) in r.stdout
+
+
+def test_run_sandbox_project_root_clean_tree_passes(tmp_path: Path) -> None:
+    """Mini-tree sem arquivo offending → validator passa (exit 0)."""
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    validator = _write_validator(
+        validators_dir, "project_root_validator.py", _PROJECT_ROOT_VALIDATOR
+    )
+
+    mini_tree = sandbox_fixtures / "vc-clean"
+    clean_file = mini_tree / "src" / "Clean.kt"
+    clean_file.parent.mkdir(parents=True, exist_ok=True)
+    clean_file.write_text("// clean\n", encoding="utf-8")
+
+    fixture = Fixture(
+        name="vc-clean",
+        input_path=clean_file,
+        validator_path=validator,
+        tree_rel_path="src/Clean.kt",
+    )
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=30.0, per_validator_s=10.0
+    )
+
+    assert len(results) == 1
+    r = results[0]
+    assert r.status == "ok"
+    assert r.exit_code == 0
+
+
+def test_run_sandbox_legacy_positional_invocation(tmp_path: Path) -> None:
+    """tree_rel_path=None preserva a invocação posicional legada (compat)."""
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    validator = _write_validator(
+        validators_dir, "positional_validator.py", _POSITIONAL_VALIDATOR
+    )
+    inp = _input_file(sandbox_fixtures, "fx-legacy.json")
+
+    fixture = Fixture(name="fx-legacy", input_path=inp, validator_path=validator)
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=5.0, per_validator_s=2.0
+    )
+
+    assert len(results) == 1
+    r = results[0]
+    assert r.status == "ok"
+    assert r.exit_code == 0
+    # O input chegou como argv posicional (não --project-root).
+    assert f"ARGV1={inp.resolve()}" in r.stdout
+    assert "--project-root" not in r.stdout

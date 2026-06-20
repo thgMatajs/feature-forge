@@ -96,11 +96,21 @@ class Fixture:
     ``input_path`` precisa resolver dentro do ``sandbox_cwd`` (run_dir/fixtures).
     ``validator_path`` pode ser absoluto fora — é o canon validator de
     produção, não conteúdo hostil.
+
+    ``tree_rel_path`` (F-1): quando setado, o validator é invocado com o
+    contrato real dos validators forge — ``--project-root <mini-tree>``, onde
+    ``<mini-tree> = run_dir/fixtures/<name>``. O arquivo materializado mora em
+    ``<mini-tree>/<tree_rel_path>`` e ``input_path`` deve apontá-lo. O validator
+    escaneia o tree e pega a fixture (exit 1 = pegou). Sem isso, validators
+    argparse rejeitam o input posicional com exit 2 e o vetor validator-claim
+    fica inerte. Quando ``None``, mantém a invocação posicional legada
+    (``[python, validator, input_path]``).
     """
 
     name: str
     input_path: Path
     validator_path: Path
+    tree_rel_path: str | None = None
 
 
 SandboxStatus = Literal["ok", "timeout", "skipped-budget", "sandbox-breach", "error"]
@@ -119,20 +129,21 @@ class SandboxResult:
     error: str = ""
 
 
-def _validate_paths_inside_sandbox(fixture: Fixture, sandbox_cwd: Path) -> None:
-    """Confere que ``fixture.input_path`` resolve dentro do sandbox_cwd.
+def _assert_inside_sandbox(
+    candidate: Path, sandbox_resolved: Path, *, label: str
+) -> Path:
+    """Resolve ``candidate`` e confirma que mora dentro de ``sandbox_resolved``.
 
-    ``validator_path`` é exceção legítima: o canon validator pode morar em
-    ``validators/`` do projeto (absoluto fora). Apenas input precisa estar
-    dentro do CWD isolado.
+    Levanta ``SandboxBreachError`` se o resolve falhar OU se o path escapar o
+    sandbox. Retorna o path resolvido. Helper interno pra aplicar o mesmo
+    containment check ao ``input_path`` e — pós-F-1 — ao mini-tree e ao arquivo
+    materializado, sem afrouxar o guard (Decisão 30: adiciona cobertura, não
+    remove).
     """
-    sandbox_resolved = sandbox_cwd.resolve()
     try:
-        resolved_input = fixture.input_path.resolve()
+        resolved = candidate.resolve()
     except OSError as exc:
-        raise SandboxBreachError(
-            f"fixture.input_path {fixture.input_path} não resolve: {exc}"
-        ) from exc
+        raise SandboxBreachError(f"{label} {candidate} não resolve: {exc}") from exc
 
     # Path.relative_to: containment check robusto (vs. startswith + os.sep
     # que falha em corner cases — ex.: sandbox=/tmp/a, input=/tmp/ab/x
@@ -140,13 +151,59 @@ def _validate_paths_inside_sandbox(fixture: Fixture, sandbox_cwd: Path) -> None:
     # com +os.sep ignora symlink resolution semantics em platforms onde
     # o path-string compare diverge da semantic-containment).
     try:
-        resolved_input.relative_to(sandbox_resolved)
+        resolved.relative_to(sandbox_resolved)
     except ValueError as exc:
         raise SandboxBreachError(
-            f"fixture.input_path {fixture.input_path} fora do sandbox {sandbox_cwd} "
-            f"(resolved={resolved_input}). Decisão 30: inputs devem morar em "
-            f"run_dir/fixtures/."
+            f"{label} {candidate} fora do sandbox (resolved={resolved}). "
+            f"Decisão 30: inputs/trees devem morar em run_dir/fixtures/."
         ) from exc
+    return resolved
+
+
+def _validate_paths_inside_sandbox(fixture: Fixture, sandbox_cwd: Path) -> None:
+    """Confere que os paths da fixture resolvem dentro do sandbox_cwd.
+
+    ``validator_path`` é exceção legítima: o canon validator pode morar em
+    ``validators/`` do projeto (absoluto fora). Apenas input/tree precisam
+    estar dentro do CWD isolado.
+
+    F-1: quando ``tree_rel_path`` está setado, o containment cobre TAMBÉM o
+    mini-tree (``sandbox_cwd/<name>``) e o arquivo materializado
+    (``<mini-tree>/<tree_rel_path>``). Um ``tree_rel_path`` com traversal
+    (``../../escape.kt``) resolve fora do sandbox e dispara
+    ``SandboxBreachError`` — o guard fica MAIS estrito, não mais frouxo.
+    """
+    sandbox_resolved = sandbox_cwd.resolve()
+
+    _assert_inside_sandbox(
+        fixture.input_path, sandbox_resolved, label="fixture.input_path"
+    )
+
+    if fixture.tree_rel_path is not None:
+        mini_tree = sandbox_cwd / fixture.name
+        # O mini-tree em si precisa morar dentro do sandbox (defende contra
+        # name com traversal, ex.: name="../escape").
+        mini_tree_resolved = _assert_inside_sandbox(
+            mini_tree, sandbox_resolved, label="mini-tree"
+        )
+        # O arquivo materializado (mini-tree/<tree_rel_path>) precisa morar
+        # dentro do mini-tree — bloqueia tree_rel_path com traversal.
+        materialized = mini_tree / fixture.tree_rel_path
+        materialized_resolved = _assert_inside_sandbox(
+            materialized, sandbox_resolved, label="fixture.tree_rel_path"
+        )
+        # Defense-in-depth extra: o arquivo materializado deve cair DENTRO do
+        # mini-tree (não só dentro do sandbox), senão um tree_rel_path tipo
+        # "../<outra-fixture>/x" vazaria pra fora do próprio tree mesmo
+        # permanecendo no sandbox.
+        try:
+            materialized_resolved.relative_to(mini_tree_resolved)
+        except ValueError as exc:
+            raise SandboxBreachError(
+                f"fixture.tree_rel_path {fixture.tree_rel_path} escapa o mini-tree "
+                f"{mini_tree} (resolved={materialized_resolved}). Decisão 30: o "
+                f"arquivo materializado deve morar dentro do próprio mini-tree."
+            ) from exc
 
 
 def _write_chdir_guard(run_dir: Path) -> Path:
@@ -295,19 +352,33 @@ def run_sandbox(
             results.append(SandboxResult(fixture=fixture, status="skipped-budget"))
             continue
 
+        # F-1: invocação muda conforme tree_rel_path. Com tree_rel_path setado,
+        # usa o contrato real dos validators forge (--project-root <mini-tree>);
+        # o validator escaneia o tree e pega a fixture. Sem ele (legado),
+        # mantém a invocação posicional [python, validator, input_path].
+        # .resolve() em todos: subprocess roda com cwd=sandbox_cwd, e paths
+        # relativos seriam interpretados relativos a esse cwd — quebrando se
+        # validator_path for absoluto fora do sandbox (caso canon de produção)
+        # ou input_path for path-relativo do caller. Resolver garante absolutos.
+        if fixture.tree_rel_path is not None:
+            mini_tree = sandbox_cwd / fixture.name
+            cmd = [
+                sys.executable,
+                str(fixture.validator_path.resolve()),
+                "--project-root",
+                str(mini_tree.resolve()),
+            ]
+        else:
+            cmd = [
+                sys.executable,
+                str(fixture.validator_path.resolve()),
+                str(fixture.input_path.resolve()),
+            ]
+
         t0 = time.monotonic()
         try:
-            # .resolve() em ambos: subprocess roda com cwd=sandbox_cwd, e
-            # paths relativos seriam interpretados relativos a esse cwd —
-            # quebrando se validator_path for absoluto fora do sandbox
-            # (caso canon de produção) ou input_path for path-relativo do
-            # caller. Resolver garante que ambos chegam absolutos.
             proc = subprocess.run(
-                [
-                    sys.executable,
-                    str(fixture.validator_path.resolve()),
-                    str(fixture.input_path.resolve()),
-                ],
+                cmd,
                 cwd=sandbox_cwd,
                 capture_output=True,
                 text=True,
