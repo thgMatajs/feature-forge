@@ -286,6 +286,14 @@ def hydrate_validator_claim_evidence(
     (``"validator-claim-traversal"`` sem extensão) e ao nome que o auditor
     gera.
 
+    WR-04: o índice ``stub.fixture_name → stub`` colapsava colisões com
+    "último vence" — dois fixtures de mesmo basename em dirs distintos
+    (``fixtures/a/validator-claim-foo`` e ``fixtures/b/validator-claim-foo``)
+    casavam ambos o mesmo stub, trocando o audit trail. Agora a colisão é
+    detectada ao montar o índice: ``fixture_name`` ambíguo (2+ stubs) NÃO
+    hidrata nenhum finding que case nele — conservador, alinhado ao "não
+    inventar evidência". O draft permanece ``sandbox_result=None`` (válido).
+
     Determinístico e conservador — só hidrata quando há casamento seguro:
 
     - vetor != ``validator-claim`` → intocado.
@@ -293,6 +301,8 @@ def hydrate_validator_claim_evidence(
     - ``sandbox_result`` já preenchido (pelo conductor) → NÃO sobrescreve.
     - ``fixture_path`` ausente/não-str → intocado (sem adivinhação).
     - sem stub correspondente → permanece ``None`` (draft-válido).
+    - ``fixture_name`` ambíguo (2+ stubs colidem no mesmo nome) → permanece
+      ``None`` (WR-04 — sem cross-contaminação).
     - stub com ``exit_code is None`` (timeout/skipped) → permanece ``None``;
       ``validate_qa_finding`` exige ``exit_code: int`` quando o
       ``sandbox_result`` é dict, então hidratar nesse caso geraria shape
@@ -316,8 +326,17 @@ def hydrate_validator_claim_evidence(
             f"{type(draft_findings).__name__}"
         )
 
-    # Index por fixture_name (último vence em colisão — não esperada).
-    by_name: dict[str, SandboxResultStub] = {s.fixture_name: s for s in stubs}
+    # WR-04: index por fixture_name detectando colisões. Em vez de "último
+    # vence" (que cross-contamina o audit trail quando dois fixtures
+    # compartilham basename cross-dir), marcamos nomes ambíguos pra NÃO
+    # hidratar nenhum finding que case neles.
+    by_name: dict[str, SandboxResultStub] = {}
+    ambiguous: set[str] = set()
+    for s in stubs:
+        if s.fixture_name in by_name:
+            ambiguous.add(s.fixture_name)
+        else:
+            by_name[s.fixture_name] = s
 
     out: list[dict[str, Any]] = []
     for f in draft_findings:
@@ -335,7 +354,13 @@ def hydrate_validator_claim_evidence(
         if not isinstance(fp, str):
             out.append(f)
             continue
-        stub = by_name.get(Path(fp).stem)
+        name = Path(fp).stem
+        if name in ambiguous:
+            # WR-04: fixture_name ambíguo → não hidrata (conservador, sem
+            # cross-contaminação). Permanece None (draft-válido).
+            out.append(f)
+            continue
+        stub = by_name.get(name)
         if stub is None or stub.exit_code is None:
             # sem casamento OU exit_code ausente → permanece None (válido).
             out.append(f)

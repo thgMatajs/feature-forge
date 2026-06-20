@@ -412,3 +412,66 @@ def test_hydrate_validator_claim_already_hydrated_not_overwritten():
     out = hydrate_validator_claim_evidence([draft], [stub])
 
     assert out[0]["evidence"]["sandbox_result"] == existing_sr
+
+
+# ---------------------------------------------------------------------------
+# WR-04: matching robusto — basename colidente cross-dir não cross-contamina
+# ---------------------------------------------------------------------------
+
+
+def test_hydrate_validator_claim_distinct_basenames_match_correctly():
+    """WR-04: dois findings com basenames DISTINTOS em dirs diferentes casam
+    cada um com o stub certo (matching por fixture_name único, não colisão).
+
+    Garante que tornar o matching robusto não regrediu o caminho feliz
+    multi-fixture.
+    """
+    draft_a = _mk_validator_claim_draft(
+        fixture_path="fixtures/a/validator-claim-foo.yaml"
+    )
+    draft_b = _mk_validator_claim_draft(
+        fixture_path="fixtures/b/validator-claim-bar.yaml"
+    )
+    stub_a = SandboxResultStub(
+        fixture_name="validator-claim-foo", status="ok", exit_code=0, duration_s=0.1
+    )
+    stub_b = SandboxResultStub(
+        fixture_name="validator-claim-bar", status="ok", exit_code=7, duration_s=0.2
+    )
+
+    out = hydrate_validator_claim_evidence([draft_a, draft_b], [stub_a, stub_b])
+
+    assert out[0]["evidence"]["sandbox_result"]["exit_code"] == 0
+    assert out[1]["evidence"]["sandbox_result"]["exit_code"] == 7
+
+
+def test_hydrate_validator_claim_basename_collision_skips_ambiguous():
+    """WR-04: dois fixtures com o MESMO basename em dirs distintos colidem no
+    índice por basename. Pré-fix, o "último vence" no índice fazia ambos os
+    findings receberem o MESMO stub (cross-contaminação do audit trail). O
+    matching robusto detecta a ambiguidade e NÃO hidrata nenhum dos dois —
+    conservador, alinhado ao "não inventar evidência". Permanecem None
+    (draft-válido).
+    """
+    draft_a = _mk_validator_claim_draft(
+        fixture_path="fixtures/a/validator-claim-foo.yaml"
+    )
+    draft_b = _mk_validator_claim_draft(
+        fixture_path="fixtures/b/validator-claim-foo.yaml"
+    )
+    # Dois stubs com MESMO fixture_name (basename colidente cross-dir).
+    stub_a = SandboxResultStub(
+        fixture_name="validator-claim-foo", status="ok", exit_code=0, duration_s=0.1
+    )
+    stub_b = SandboxResultStub(
+        fixture_name="validator-claim-foo", status="ok", exit_code=9, duration_s=0.2
+    )
+
+    out = hydrate_validator_claim_evidence([draft_a, draft_b], [stub_a, stub_b])
+
+    # Nenhum finding recebe o stub do OUTRO (sem cross-contaminação). O
+    # matching ambíguo é conservador: ambos permanecem None.
+    assert out[0]["evidence"]["sandbox_result"] is None
+    assert out[1]["evidence"]["sandbox_result"] is None
+    validate_qa_finding(out[0])
+    validate_qa_finding(out[1])
