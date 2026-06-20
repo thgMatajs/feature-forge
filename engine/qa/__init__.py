@@ -67,9 +67,11 @@ from engine.qa.scope import (
     resolve_scope,
 )
 from engine.qa.synthesis import (
+    SandboxResultStub,
     SynthesisResult,
     findings_from_sandbox_results,
     hydrate_sandbox_results,
+    hydrate_validator_claim_evidence,
     synthesize,
 )
 
@@ -362,6 +364,7 @@ def run_qa(
         # logic considerem os problemas de isolamento como first-class
         # findings (breach -> critical -> BLOCK).
         sandbox_results_file = run_tree.root / "sandbox-results.json"
+        stubs: list[SandboxResultStub] = []
         if sandbox_results_file.exists():
             try:
                 raw = json.loads(sandbox_results_file.read_text(encoding="utf-8"))
@@ -378,6 +381,12 @@ def run_qa(
                     "Ignorando — sandbox findings nao serao gerados nesta run.",
                     file=sys.stderr,
                 )
+
+        # F-4: hidrata evidence.sandbox_result nos drafts validator-claim a
+        # partir dos MESMOS stubs (casando por basename do fixture). No-op
+        # quando stubs=[] (sandbox-results ausente) — drafts permanecem
+        # sandbox_result=None, que e draft-valido.
+        all_findings = hydrate_validator_claim_evidence(all_findings, stubs)
 
         _phase[0] = 3  # findings + sandbox-results processados
         result = synthesize(all_findings)
