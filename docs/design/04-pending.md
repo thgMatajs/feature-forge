@@ -3,6 +3,43 @@
 What still needs to be drafted, in dependency order. Use this as the
 checklist for next sessions.
 
+## Pilot R7 — qa flow fixes (2026-06-19)
+
+Os fixes de `forge qa` (F-1..F-5 + CR-01) estão em CHANGELOG `## [Unreleased]
+§Fixed/Changed (pilot R7)`. Plano:
+`docs/superpowers/plans/2026-06-19-pilot-r7-qa-flow-fixes.md`. Os gaps abaixo
+foram deferidos com decisão consciente — fora do escopo do destrave do fluxo,
+e a maioria é trabalho de CONTRATO ou de schema que pede brainstorm separado.
+
+### Deferidos (decisão consciente do mantenedor — pilot R7)
+
+- **R7-CHAOS-WIRING (chaos-executable não wired no Phase 3)** — gap do Phase 3
+  sandbox: os findings chaos têm `executable: true`, mas o descritor não carrega
+  `validator_path` → não são reconstruíveis como `Fixture` hoje. Wiring exigiria
+  uma convenção nova (carregar o path do validator no descritor chaos). O vetor
+  validator-claim — o que F-1/F-4 destravam — JÁ está wired; o chaos fica de
+  fora até a convenção existir. Ref: `.planning/pilot-r7/REVIEW.md`.
+- **R7-LEGACY-ACTUAL-EXIT (`evidence.actual_exit_code` legado com placeholder)**
+  — a hidratação F-4 preenche `evidence.sandbox_result` (fonte de verdade do
+  audit trail do subprocess); o campo legado `evidence.actual_exit_code` NÃO é
+  reescrito e fica com o placeholder no report. Cosmético — o consumidor lê
+  `sandbox_result`. Limpar o campo legado (ou removê-lo do template) é trabalho
+  separado. Ref: `.planning/pilot-r7/REVIEW.md`.
+- **R7-VALIDATOR-PATH-XPROJ (resolução de `validator_path` cross-projeto)** —
+  os validators forge vivem no FORGE_HOME, não no projeto consumidor, e são
+  declarados por basename nu sem âncora de resolução. O vetor validator-claim
+  precisa hoje de path absoluto pro `Fixture`. Gap de SCHEMA — relacionado ao
+  **P-22** (`must_pass` sem path / resolver implícito não documentado do
+  `qa-conductor.md`). Especificar o resolver de `validator_path` ou tornar o
+  path explícito no descritor. Ref: `.planning/pilot-r7/REVIEW.md`.
+- **R7-FEATURE-SCOPED-ID (validators feature-scoped precisam de `--id`)** — o
+  sandbox da Phase 3 invoca o validator só com `--project-root <mini-tree>`;
+  validators que exigem `--scope feature --id <slug>` (ex.:
+  `validate_task_contract`, `validate_feature_package`) não são alvos limpos do
+  vetor validator-claim. Considerar threadar `--scope`/`--id` no Phase 3.
+  Relacionado a R7-VALIDATOR-PATH-XPROJ (ambos são contrato de invocação do
+  sandbox). Ref: `.planning/pilot-r7/REVIEW.md`.
+
 ## Pilot R6 — blockers AI-first (2026-06-19)
 
 ### Fechados nesta wave (pilot R6)
