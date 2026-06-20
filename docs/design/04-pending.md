@@ -8,37 +8,55 @@ checklist for next sessions.
 Os fixes de `forge qa` (F-1..F-5 + CR-01) estão em CHANGELOG `## [Unreleased]
 §Fixed/Changed (pilot R7)`. Plano:
 `docs/superpowers/plans/2026-06-19-pilot-r7-qa-flow-fixes.md`. Os gaps abaixo
-foram deferidos com decisão consciente — fora do escopo do destrave do fluxo,
-e a maioria é trabalho de CONTRATO ou de schema que pede brainstorm separado.
+foram tratados em duas levas: três fechados no pilot R8 (validator-path
+cross-projeto, feature-scoped `--id`, `actual_exit_code` legado no exemplo do
+auditor) e um REFRAMED como decisão de design (chaos não roda no sandbox).
 
-### Deferidos (decisão consciente do mantenedor — pilot R7)
+### Fechados no pilot R8 (2026-06-19)
 
-- **R7-CHAOS-WIRING (chaos-executable não wired no Phase 3)** — gap do Phase 3
-  sandbox: os findings chaos têm `executable: true`, mas o descritor não carrega
-  `validator_path` → não são reconstruíveis como `Fixture` hoje. Wiring exigiria
-  uma convenção nova (carregar o path do validator no descritor chaos). O vetor
-  validator-claim — o que F-1/F-4 destravam — JÁ está wired; o chaos fica de
-  fora até a convenção existir. Ref: `.planning/pilot-r7/REVIEW.md`.
-- **R7-LEGACY-ACTUAL-EXIT (`evidence.actual_exit_code` legado com placeholder)**
-  — a hidratação F-4 preenche `evidence.sandbox_result` (fonte de verdade do
-  audit trail do subprocess); o campo legado `evidence.actual_exit_code` NÃO é
-  reescrito e fica com o placeholder no report. Cosmético — o consumidor lê
-  `sandbox_result`. Limpar o campo legado (ou removê-lo do template) é trabalho
-  separado. Ref: `.planning/pilot-r7/REVIEW.md`.
 - **R7-VALIDATOR-PATH-XPROJ (resolução de `validator_path` cross-projeto)** —
-  os validators forge vivem no FORGE_HOME, não no projeto consumidor, e são
-  declarados por basename nu sem âncora de resolução. O vetor validator-claim
-  precisa hoje de path absoluto pro `Fixture`. Gap de SCHEMA — relacionado ao
-  **P-22** (`must_pass` sem path / resolver implícito não documentado do
-  `qa-conductor.md`). Especificar o resolver de `validator_path` ou tornar o
-  path explícito no descritor. Ref: `.planning/pilot-r7/REVIEW.md`.
-- **R7-FEATURE-SCOPED-ID (validators feature-scoped precisam de `--id`)** — o
-  sandbox da Phase 3 invoca o validator só com `--project-root <mini-tree>`;
-  validators que exigem `--scope feature --id <slug>` (ex.:
-  `validate_task_contract`, `validate_feature_package`) não são alvos limpos do
-  vetor validator-claim. Considerar threadar `--scope`/`--id` no Phase 3.
-  Relacionado a R7-VALIDATOR-PATH-XPROJ (ambos são contrato de invocação do
-  sandbox). Ref: `.planning/pilot-r7/REVIEW.md`.
+  ✅ FECHADO no R8 (item 3, commit `36c9948`). A reconstrução de `Fixture`
+  resolve o `validator_path` por precedência projeto > `FORGE_HOME/validators/`:
+  se o path não resolve sob a raiz do projeto, tenta
+  `FORGE_HOME/validators/<basename>`. Os validators forge canônicos vivem no
+  FORGE_HOME e eram declarados por basename nu; o fallback os torna alcançáveis
+  pelo vetor validator-claim. Relacionado a **P-22** (`must_pass` sem path);
+  o resolver implícito do `qa-conductor.md` continua a ser especificado por P-22.
+- **R7-FEATURE-SCOPED-ID (validators feature-scoped precisam de `--id`)** —
+  ✅ FECHADO no R8 (item 4, commit `bfd90e2`). A fixture validator-claim ganhou
+  `invocation_args` (ex.: `--scope feature --id <slug>`), threadado pro sandbox
+  via `Fixture.extra_args` e apendado pelo `run_sandbox` à invocação — validators
+  que exigem `--scope feature --id <slug>` (ex.: `validate_task_contract`,
+  `validate_feature_package`) viram alvos limpos do vetor. HARDENING da
+  Decisão 30 preservado: o engine continua dono do `--project-root` (mini-tree
+  do sandbox) e `_scrub_extra_args` neutraliza qualquer `--project-root`
+  injetado na fixture pela LLM — a fixture não escapa o sandbox por essa via.
+- **R7-LEGACY-ACTUAL-EXIT (`evidence.actual_exit_code` legado no exemplo)** —
+  ✅ FECHADO no R8 (item 2, commit `e058362`) na dimensão do exemplo do auditor:
+  removida a linha stale `actual_exit_code` de
+  `agents/qa-auditor-validator-claim.md`. O schema do report usa
+  `evidence.sandbox_result.exit_code` como fonte do exit-code do subprocess; o
+  campo `actual_exit_code` não existe no contrato e induzia o auditor a preencher
+  um campo fantasma. (Se algum template legado ainda emitir o campo no report
+  materializado, limpá-lo de lá é trabalho separado — o consumidor lê
+  `sandbox_result`.)
+
+### Decisão de design (não é gap — pilot R8)
+
+- **R7-CHAOS-WIRING (chaos não roda no sandbox) — DECISÃO CONSCIENTE, não gap.**
+  Reframe do R8: chaos é análise adversarial PURA (payload + reasoning,
+  `executable: false` por default); o spec do `forge qa` NÃO define semântica de
+  execução pra findings chaos. O vetor sandbox-executável do fluxo é o
+  validator-claim (que F-1/F-4 do R7 + os itens 3/4 do R8 destravaram), não o
+  chaos. Wiring de chaos-executável exigiria uma convenção nova (carregar
+  `validator_path` no descritor chaos) E uma semântica de execução que o spec
+  hoje não tem — fazê-lo agora seria inventar contrato. Fica como decisão de
+  design, reabrível como gap SE surgir um caso de uso concreto de
+  chaos-executável (aí o reframe vira spec). Ref: `.planning/pilot-r7/REVIEW.md`.
+
+### Deferidos remanescentes (decisão consciente do mantenedor — pilot R7)
+
+Nenhum gap remanescente do R7 fora dos fechados no R8 e da decisão de design acima. Os itens de CONTRATO/SCHEMA relacionados continuam rastreados em **P-22** (resolver implícito de `validator_path` no `qa-conductor.md`).
 
 ## Pilot R6 — blockers AI-first (2026-06-19)
 
