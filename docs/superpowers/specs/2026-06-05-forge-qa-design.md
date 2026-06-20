@@ -314,7 +314,11 @@ Algorithm:
 4. Imprime relatório cinemático ao user (§10 Cena 8).
 5. Retorna exit code:
    - `0` se verdict ∈ {PASS, FLAG}
-   - `8` se verdict == BLOCK (distinct exit code, novo — alinhado com Step 7.5 do Gap 5 que usa exit 8)
+   - `1` + `[FORGE-ERR:QA-BLOCK]` em stderr se verdict == BLOCK (via
+     `fail_with_tag(ERR_QA_BLOCK)`; ver `docs/design/06-command-surface.md`).
+     **Superseded:** o `8` original (alinhado ao Step 7.5 do Gap 5) foi
+     trocado pela convenção `fail_with_tag` em C3 EXIT-2-COLLISION / W2 — o
+     `8` colidia com o exit code reservado de outro contrato.
 
 **Atomic write:** `proposed.yaml` é escrito via temp file + rename pra evitar corrupção se Ctrl+C mid-write.
 

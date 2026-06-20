@@ -165,7 +165,8 @@ lista intacta ao subprocess; sem filtragem extra, sem invenção de vars.
 **Phase 5 — Emit** (core Python, devolve controle).
 Re-invoca `engine.qa.run_qa(run_id, resume="phase-5")`. Emite
 proposed-evolutions, imprime relatório cinemático, sai com exit code
-0 (PASS/FLAG) ou 8 (BLOCK).
+0 (PASS/FLAG) ou 1 + `[FORGE-ERR:QA-BLOCK]` em stderr (BLOCK), conforme
+`docs/design/06-command-surface.md`.
 
 ---
 

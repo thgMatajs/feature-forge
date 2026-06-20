@@ -103,7 +103,7 @@ def run_qa(
     project_root: Path,
     workflow_config: dict[str, Any],
 ) -> int:
-    """Entry-point chamado pelo CLI. Retorna exit code (0 ou 8).
+    """Entry-point chamado pelo CLI. Retorna exit code (0 ou 1+QA-BLOCK).
 
     Orquestra as phases na ordem canonica (§4 do spec):
 
@@ -112,7 +112,8 @@ def run_qa(
     3. Se ``findings/*.json`` ja presente (test/integration mode ou
        re-invocacao pos-conductor): Phase 4 synthesis + Phase 5 emit +
        render do verdict block
-    4. Exit code 8 se ``verdict == "BLOCK"``, 0 caso contrario
+    4. Exit code 1 + ``[FORGE-ERR:QA-BLOCK]`` (via ``fail_with_tag``) se
+       ``verdict == "BLOCK"``, 0 caso contrario
 
     Comportamento defensivo:
     - ``workflow_config`` None ou nao-dict e tratado como section ausente
@@ -135,7 +136,10 @@ def run_qa(
 
     Returns:
         Exit code: 0 (PASS/FLAG, qa desabilitado, scope error, conductor
-        dispatch pendente) ou 8 (verdict=BLOCK).
+        dispatch pendente) ou 1 + ``[FORGE-ERR:QA-BLOCK]`` em stderr
+        (verdict=BLOCK, via ``fail_with_tag(ERR_QA_BLOCK)``). O ``8`` antigo
+        foi superseded pela convencao ``fail_with_tag`` (C3 EXIT-2-COLLISION
+        / W2); ver ``docs/design/06-command-surface.md``.
     """
     # Type guard defensivo — workflow_config pode chegar None de callers
     # que ainda nao migraram (ex.: testes legados, smoke scripts).
