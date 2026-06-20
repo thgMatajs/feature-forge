@@ -657,3 +657,192 @@ def test_run_sandbox_legacy_positional_invocation(tmp_path: Path) -> None:
     # O input chegou como argv posicional (não --project-root).
     assert f"ARGV1={inp.resolve()}" in r.stdout
     assert "--project-root" not in r.stdout
+
+
+# ---------------------------------------------------------------------------
+# F-1 (A.4) — hardening preservado sob mini-tree (Decisão 30/31)
+#
+# Gate de segurança explícito: A.1 ADICIONA cobertura ao containment, nunca
+# afrouxa. Estes testes confirmam que traversal via tree_rel_path vira
+# sandbox-breach, que o chdir guard segue intacto sob a invocação --project-root,
+# e que o mini-tree não vaza paths absolutos fora do sandbox.
+# ---------------------------------------------------------------------------
+
+
+def test_tree_rel_path_traversal_is_breach(tmp_path: Path) -> None:
+    """tree_rel_path='../../escape.kt' → sandbox-breach, sem subprocess.
+
+    O containment estendido pega o arquivo materializado resolvendo fora do
+    mini-tree (e do sandbox). Decisão 30: traversal é breach, não exit do
+    validator. O subprocess nem dispara.
+    """
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    validator = _write_validator(
+        validators_dir, "project_root_validator.py", _PROJECT_ROOT_VALIDATOR
+    )
+    # input_path dentro do sandbox (pra isolar que o breach vem do
+    # tree_rel_path, não do input).
+    inp = _input_file(sandbox_fixtures, "fx-evil.json")
+
+    fixture = Fixture(
+        name="evil",
+        input_path=inp,
+        validator_path=validator,
+        tree_rel_path="../../escape.kt",
+    )
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=5.0, per_validator_s=2.0
+    )
+
+    assert len(results) == 1
+    r = results[0]
+    assert r.status == "sandbox-breach", (
+        f"esperado sandbox-breach pra tree_rel_path com traversal, obtido "
+        f"{r.status} (stdout={r.stdout!r})"
+    )
+    # Subprocess não disparou: sem stdout/exit_code do validator.
+    assert r.exit_code is None
+    assert r.stdout == ""
+    # A mensagem nomeia o vetor (tree_rel_path) ou o sandbox.
+    assert (
+        "tree_rel_path" in r.error
+        or "mini-tree" in r.error
+        or "sandbox" in r.error.lower()
+    )
+
+
+def test_tree_rel_path_input_outside_sandbox_is_breach(tmp_path: Path) -> None:
+    """tree_rel_path setado mas input_path FORA do sandbox → sandbox-breach.
+
+    Mesmo com tree_rel_path "inocente", o input_path continua sob o
+    containment check estendido (o guard não regrediu pro caminho legado).
+    """
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir(parents=True, exist_ok=True)
+
+    validator = _write_validator(
+        validators_dir, "project_root_validator.py", _PROJECT_ROOT_VALIDATOR
+    )
+    outside_input = outside_dir / "offending.kt"
+    outside_input.write_text("// outside\n", encoding="utf-8")
+
+    fixture = Fixture(
+        name="vc-outside",
+        input_path=outside_input,
+        validator_path=validator,
+        tree_rel_path="src/offending.kt",
+    )
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=5.0, per_validator_s=2.0
+    )
+
+    assert len(results) == 1
+    r = results[0]
+    assert r.status == "sandbox-breach"
+
+
+def test_chdir_guard_intact_under_project_root(tmp_path: Path) -> None:
+    """chdir guard segue bloqueando sob a invocação --project-root (F-1).
+
+    A.1 não tocou env/guard, mas confirmamos explicitamente que um validator
+    --project-root que tenta os.chdir é bloqueado pelo sitecustomize preload.
+    """
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    # Validator --project-root que tenta escapar via os.chdir antes de
+    # escanear. O guard deve levantar RuntimeError → exit != 0.
+    chdir_pr_validator = _write_validator(
+        validators_dir,
+        "project_root_chdir.py",
+        """
+        import argparse
+        import os
+        import sys
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--project-root", required=True)
+        parser.add_argument("--scope")
+        parser.add_argument("--id")
+        args = parser.parse_args()
+
+        try:
+            os.chdir("/")
+            print("CHDIR_NOT_BLOCKED", file=sys.stderr)
+            sys.exit(0)
+        except RuntimeError as e:
+            print(f"BLOCKED: {e}", file=sys.stderr)
+            sys.exit(2)
+        """,
+    )
+
+    mini_tree = sandbox_fixtures / "vc-chdir"
+    target = mini_tree / "src" / "Foo.kt"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("// foo\n", encoding="utf-8")
+
+    fixture = Fixture(
+        name="vc-chdir",
+        input_path=target,
+        validator_path=chdir_pr_validator,
+        tree_rel_path="src/Foo.kt",
+    )
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=5.0, per_validator_s=2.0
+    )
+
+    assert len(results) == 1
+    r = results[0]
+    assert r.status == "ok", (
+        f"chdir guard test exige subprocess completar; status={r.status} "
+        f"stderr={r.stderr!r}"
+    )
+    assert r.exit_code != 0, (
+        f"esperado exit_code != 0 (chdir blocked sob --project-root), obtido "
+        f"status={r.status} code={r.exit_code} stderr={r.stderr!r}"
+    )
+    assert (
+        "bloqueado pelo sandbox" in r.stderr.lower() or "blocked" in r.stderr.lower()
+    )
+
+
+def test_project_root_stays_inside_sandbox(tmp_path: Path) -> None:
+    """O --project-root passado ao validator mora DENTRO do sandbox.
+
+    Garante que o mini-tree nunca aponta pro projeto real (vazamento de path
+    absoluto fora do sandbox). O validator imprime o project-root recebido;
+    asseguramos que ele é prefixado por run_dir/fixtures.
+    """
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    validator = _write_validator(
+        validators_dir, "project_root_validator.py", _PROJECT_ROOT_VALIDATOR
+    )
+    mini_tree = sandbox_fixtures / "vc-scope"
+    f = mini_tree / "src" / "Clean.kt"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("// clean\n", encoding="utf-8")
+
+    fixture = Fixture(
+        name="vc-scope",
+        input_path=f,
+        validator_path=validator,
+        tree_rel_path="src/Clean.kt",
+    )
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=5.0, per_validator_s=2.0
+    )
+
+    r = results[0]
+    assert r.status == "ok"
+    # O project-root recebido está sob run_dir/fixtures (não fora do sandbox).
+    received = r.stdout.split("PROJECT_ROOT=", 1)[1].splitlines()[0].strip()
+    Path(received).resolve().relative_to(sandbox_fixtures.resolve())
