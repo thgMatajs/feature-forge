@@ -205,12 +205,16 @@ def _seed_run(
     *,
     verdict: str = "pending",
     with_checkpoint: bool = True,
+    scope_type: str | None = None,
 ) -> Path:
     """Helper: cria .planning/qa/<target>/<run_id>/ com qa-report + opcional checkpoint."""
     run_dir = project_root / ".planning" / "qa" / target / run_id
     run_dir.mkdir(parents=True)
+    report: dict = {"verdict": verdict}
+    if scope_type is not None:
+        report["run"] = {"scope": {"type": scope_type, "target": target}}
     (run_dir / "qa-report.json").write_text(
-        json.dumps({"verdict": verdict}), encoding="utf-8"
+        json.dumps(report), encoding="utf-8"
     )
     if with_checkpoint:
         (run_dir / "checkpoint.json").write_text(
@@ -263,6 +267,34 @@ def test_find_resumable_sanitizes_target(tmp_path: Path) -> None:
     result = find_resumable_run(tmp_path, "feature", "weird/target")
     assert result is not None
     assert result.parent.name == "weird_target"
+
+
+def test_find_resumable_filters_by_scope_type(tmp_path: Path) -> None:
+    """WR-01: dois targets homônimos cross-tipo (sanitizam pro mesmo dir) não
+    se reatam mutuamente. Uma run type=feature não é resumível como type=screen.
+
+    Pós-F-2 toda run grava checkpoint na fronteira de Phase 0, multiplicando a
+    chance de colisão; find_resumable_run deve discriminar pelo scope.type
+    gravado no qa-report.json.
+    """
+    _seed_run(tmp_path, "auth", "r-feature", scope_type="feature")
+    # Procurando uma run type=screen para o mesmo target sanitizado: a run
+    # type=feature NÃO deve ser reatada.
+    assert find_resumable_run(tmp_path, "screen", "auth") is None
+    # Procurando type=feature: reata a run correta.
+    result = find_resumable_run(tmp_path, "feature", "auth")
+    assert result is not None
+    assert result.name == "r-feature"
+
+
+def test_find_resumable_lenient_when_type_absent(tmp_path: Path) -> None:
+    """WR-01: qa-report sem run.scope.type (schema legado/migrado) NÃO é
+    excluído — só excluímos quando o tipo está presente E diverge. Backward-
+    compat com runs antigas que não gravaram o tipo."""
+    _seed_run(tmp_path, "f1", "r-1")  # sem scope_type
+    result = find_resumable_run(tmp_path, "feature", "f1")
+    assert result is not None
+    assert result.name == "r-1"
 
 
 def test_find_resumable_handles_corrupt_qa_report(tmp_path: Path) -> None:
