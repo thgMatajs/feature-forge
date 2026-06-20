@@ -287,6 +287,26 @@ def run_qa(
             workflow_config=workflow_config,
         )
 
+        # F-2 (B.2) — checkpoint na fronteira de Phase 0. Veredito do
+        # mantenedor (Decisao 10 / row 32): resume e flagless. O checkpoint,
+        # antes escrito so em SIGINT, passa a marcar a fronteira de Phase 0
+        # do fluxo normal — assim re-invocar `forge qa <target>` PURO (mesmo
+        # argv) reata esta run em andamento via find_resumable_run, em vez de
+        # criar run nova. O skeleton ja gravou verdict=pending acima, entao o
+        # par (checkpoint.json + qa-report.json pending) satisfaz o criterio
+        # de find_resumable_run. last_phase_completed=0 leva o resume ao
+        # branch _reattach_run_tree (nao ao branch stale >= 5). Cleanup na
+        # conclusao (Phase 5) garante que a run concluida nao fica presa em
+        # resume (M-002).
+        write_checkpoint(
+            run_tree.root,
+            run_id=run_tree.run_id,
+            scope_type=scope.type,
+            scope_target=scope.target,
+            last_phase_completed=0,
+            findings_partial_count=0,
+        )
+
     # Track phase progresso pro SIGINT handler. List-of-int pra mutar
     # dentro do closure (nonlocal nao funciona em handler registrado via
     # signal.signal pq frame e diferente).
