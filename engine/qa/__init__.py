@@ -75,6 +75,7 @@ from engine.qa.synthesis import (
     hydrate_validator_claim_evidence,
     synthesize,
 )
+from engine.utils.paths import forge_home
 
 # Alias local pra preservar uso interno (`_utc_iso_z()`) sem espalhar a
 # importacao publica em cada call-site. O helper canonico vive em
@@ -686,7 +687,11 @@ def _reconstruct_fixtures_from_findings(
         ``Fixture.name`` (IN-02) e com ``fixture_name`` em sandbox-results
         (matching do F-4).
       - ``evidence.validator_path`` — ``validators/<name>.py`` (canon de
-        produção; resolvido contra ``project_root`` quando relativo).
+        produção). Quando relativo, resolve com precedência projeto >
+        FORGE_HOME (Item 3): se ``project_root / validator_path`` não é
+        arquivo, cai pra ``forge_home() / "validators" / <basename>`` —
+        os validators canon vivem em ``FORGE_HOME/validators/``, não no
+        projeto consumidor, então um basename nu só resolve via fallback.
       - ``evidence.tree_rel_path`` — onde o arquivo do contra-exemplo mora no
         mini-tree (``fixtures/<fixture_id>/<tree_rel_path>``). O auditor
         materializou o arquivo lá; ``run_sandbox`` invoca o validator com
@@ -747,9 +752,30 @@ def _reconstruct_fixtures_from_findings(
             continue
         seen_names.add(name)
 
+        # Item 3 (R8): precedência projeto > FORGE_HOME pra validator_path
+        # relativo. Validators canon vivem em ``FORGE_HOME/validators/`` (não
+        # no projeto consumidor), então um basename nu
+        # (``validate_data_contract.py``) não resolve no consumidor. Regra:
+        #   1. project_root / validator_path — se existe como arquivo, vence
+        #      (validator local do projeto tem precedência).
+        #   2. forge_home() / "validators" / <basename> — fallback canon.
+        #   3. nenhum resolve → mantém project_root / validator_path
+        #      (comportamento atual; sandbox vira status=error, sem invenção).
         validator = Path(validator_path)
         if not validator.is_absolute():
-            validator = project_root / validator
+            project_candidate = project_root / validator
+            if project_candidate.is_file():
+                validator = project_candidate
+            else:
+                forge_candidate = (
+                    forge_home() / "validators" / Path(validator_path).name
+                )
+                if forge_candidate.is_file():
+                    validator = forge_candidate
+                else:
+                    # Nem projeto nem FORGE_HOME têm o validator — preserva o
+                    # comportamento atual (resolve sob project_root).
+                    validator = project_candidate
 
         input_path = run_tree.fixtures_dir / name / tree_rel_path
         fixtures.append(
