@@ -1,10 +1,16 @@
 """Tests for engine.qa._reconstruct_fixtures_from_findings.
 
-Item 3 (R8): ``validator_path`` relativo resolve com precedência
-projeto > FORGE_HOME. Validators canon vivem em ``FORGE_HOME/validators/``
-(não no projeto consumidor), então um basename nu deve cair no fallback
-FORGE_HOME quando o projeto não tem o arquivo. Validator local do projeto
-tem precedência.
+R8 cobre dois eixos do reconstruct de Fixtures a partir de findings
+validator-claim:
+
+  - Item 3: ``validator_path`` relativo resolve com precedência
+    projeto > FORGE_HOME. Validators canon vivem em
+    ``FORGE_HOME/validators/`` (não no projeto consumidor), então um
+    basename nu deve cair no fallback FORGE_HOME quando o projeto não
+    tem o arquivo. Validator local do projeto tem precedência.
+  - Item 4: ``invocation_args`` declarado no evidence/finding é threado
+    pra ``Fixture.extra_args`` (validators feature/task-scoped exigem
+    ``--scope feature --id <slug>``).
 """
 
 from __future__ import annotations
@@ -144,3 +150,86 @@ def test_validator_path_unresolvable_keeps_relative_under_project(
     assert len(fixtures) == 1
     # Sem invenção: resolve sob project_root (não vira FORGE_HOME nem absoluto).
     assert fixtures[0].validator_path == project_root / "validators" / "ghost.py"
+
+
+# ---------------------------------------------------------------------------
+# Item 4 — invocation_args threado pra Fixture.extra_args
+# ---------------------------------------------------------------------------
+
+
+def test_invocation_args_threaded_to_extra_args(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``invocation_args`` no evidence vira ``Fixture.extra_args``."""
+    forge_home = tmp_path / "forge_home"
+    (forge_home / "validators").mkdir(parents=True)
+    (forge_home / "validators" / "validate_task_contract.py").write_text(
+        "# canon\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("FORGE_HOME", str(forge_home))
+
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    run_tree = _run_tree(tmp_path / "run")
+
+    findings = [
+        _vc_finding(
+            validator_path="validate_task_contract.py",
+            invocation_args=["--scope", "feature", "--id", "foo"],
+        )
+    ]
+
+    fixtures = _reconstruct_fixtures_from_findings(
+        findings, run_tree, project_root=project_root
+    )
+
+    assert len(fixtures) == 1
+    assert fixtures[0].extra_args == ["--scope", "feature", "--id", "foo"]
+
+
+def test_invocation_args_absent_keeps_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sem ``invocation_args`` → ``extra_args`` permanece None (compat)."""
+    forge_home = tmp_path / "forge_home"
+    (forge_home / "validators").mkdir(parents=True)
+    (forge_home / "validators" / "v.py").write_text("# c\n", encoding="utf-8")
+    monkeypatch.setenv("FORGE_HOME", str(forge_home))
+
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    run_tree = _run_tree(tmp_path / "run")
+
+    findings = [_vc_finding(validator_path="v.py")]
+
+    fixtures = _reconstruct_fixtures_from_findings(
+        findings, run_tree, project_root=project_root
+    )
+
+    assert len(fixtures) == 1
+    assert fixtures[0].extra_args is None
+
+
+def test_invocation_args_non_list_ignored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``invocation_args`` não-lista (LLM mal-formado) é ignorado → None."""
+    forge_home = tmp_path / "forge_home"
+    (forge_home / "validators").mkdir(parents=True)
+    (forge_home / "validators" / "v.py").write_text("# c\n", encoding="utf-8")
+    monkeypatch.setenv("FORGE_HOME", str(forge_home))
+
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    run_tree = _run_tree(tmp_path / "run")
+
+    findings = [
+        _vc_finding(validator_path="v.py", invocation_args="--scope feature")
+    ]
+
+    fixtures = _reconstruct_fixtures_from_findings(
+        findings, run_tree, project_root=project_root
+    )
+
+    assert len(fixtures) == 1
+    assert fixtures[0].extra_args is None

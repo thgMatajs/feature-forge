@@ -111,6 +111,20 @@ class Fixture:
     input_path: Path
     validator_path: Path
     tree_rel_path: str | None = None
+    extra_args: list[str] | None = None
+    """Item 4 (R8): argumentos extra apendados à invocação do validator.
+
+    Validators feature/task-scoped (ex.: ``validate_task_contract.py``)
+    exigem ``--scope feature --id <slug>``; sem isso saem 2/warn. O auditor
+    declara ``invocation_args`` no descritor da fixture quando o validator-alvo
+    é scoped, e o engine threada pra cá.
+
+    HARDENING (Decisão 30 — NÃO afrouxar): ``extra_args`` são APENDADOS APÓS o
+    ``--project-root <mini-tree>`` que o engine controla. Qualquer tentativa de
+    re-setar ``--project-root`` via ``extra_args`` é NEUTRALIZADA em
+    ``run_sandbox`` (a fixture é gerada por LLM — não pode apontar o root pra
+    fora do sandbox). Passam como LISTA pro ``subprocess.run`` (sem shell —
+    sem injeção de shell)."""
 
 
 SandboxStatus = Literal["ok", "timeout", "skipped-budget", "sandbox-breach", "error"]
@@ -256,6 +270,40 @@ def _hardened_env(
     return env
 
 
+def _scrub_extra_args(extra_args: list[str] | None) -> list[str]:
+    """Item 4 (R8): remove qualquer ``--project-root`` injetado em extra_args.
+
+    HARDENING (Decisão 30): o engine é o único dono do ``--project-root`` —
+    ele sempre aponta pro mini-tree dentro do sandbox. ``extra_args`` vêm de
+    uma fixture gerada por LLM; permitir que reescrevam ``--project-root``
+    deixaria a fixture apontar o root pra fora do sandbox (ex.: ``/etc``).
+    Removemos o flag E o seu valor, qualquer que seja a forma:
+
+      - ``--project-root /etc`` (flag + valor em 2 tokens)
+      - ``--project-root=/etc`` (forma ``=``, 1 token)
+
+    Os demais args (``--scope feature``, ``--id foo``) passam intactos.
+    Retorna lista nova — não muta o input.
+    """
+    if not extra_args:
+        return []
+    scrubbed: list[str] = []
+    skip_next = False
+    for tok in extra_args:
+        if skip_next:
+            # Token anterior era ``--project-root`` (forma 2-token) → este é
+            # o valor injetado; descarta.
+            skip_next = False
+            continue
+        if tok == "--project-root":
+            skip_next = True  # descarta o próximo token (o valor)
+            continue
+        if tok.startswith("--project-root="):
+            continue  # forma ``=`` — descarta o token inteiro
+        scrubbed.append(tok)
+    return scrubbed
+
+
 def run_sandbox(
     run_dir: Path,
     fixtures: list[Fixture],
@@ -360,6 +408,10 @@ def run_sandbox(
         # relativos seriam interpretados relativos a esse cwd — quebrando se
         # validator_path for absoluto fora do sandbox (caso canon de produção)
         # ou input_path for path-relativo do caller. Resolver garante absolutos.
+        # Item 4 (R8): extra_args (--scope/--id de validators scoped) são
+        # apendados APÓS o --project-root que o engine controla. O scrub
+        # neutraliza qualquer --project-root injetado pela fixture (Decisão 30).
+        safe_extra_args = _scrub_extra_args(fixture.extra_args)
         if fixture.tree_rel_path is not None:
             mini_tree = sandbox_cwd / fixture.name
             cmd = [
@@ -367,12 +419,14 @@ def run_sandbox(
                 str(fixture.validator_path.resolve()),
                 "--project-root",
                 str(mini_tree.resolve()),
+                *safe_extra_args,
             ]
         else:
             cmd = [
                 sys.executable,
                 str(fixture.validator_path.resolve()),
                 str(fixture.input_path.resolve()),
+                *safe_extra_args,
             ]
 
         t0 = time.monotonic()

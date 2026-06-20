@@ -159,6 +159,22 @@ no mini-tree) e o `file_content` (o conteúdo que o validator deveria pegar).
 O sandbox invoca `python3 <validator> --project-root fixtures/<fixture_id>/`;
 o validator escaneia esse mini-tree e deveria pegar o arquivo materializado.
 
+**Validators feature/task-scoped** (ex.: `validate_task_contract.py`) exigem
+`--scope feature --id <slug>` além do `--project-root` — sem isso saem com
+exit 2 (warn) e o vetor fica inerte. Quando o validator-alvo for scoped,
+declare `invocation_args` no descritor da fixture (campo opcional do template
+`qa-fixture-validator-claim.template.yaml`):
+
+```yaml
+invocation_args: ["--scope", "feature", "--id", "<slug>"]
+```
+
+O `<slug>` é o alvo que o evidence carrega (o `scope.feature` do finding). O
+sandbox apenda esses args APÓS o `--project-root <mini-tree>` que o engine
+controla — você **não** pode (nem deve) declarar `--project-root` em
+`invocation_args`: o engine é o dono dele e qualquer tentativa é ignorada
+(Decisão 30). Omita `invocation_args` quando o validator só lê `--project-root`.
+
 Nomeie de forma estável e descritiva:
 `validator-claim-<validator-short>-<scenario-short>` (sem extensão na
 serialização de `fixture_name` que o conductor escreve em

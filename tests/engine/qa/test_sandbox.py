@@ -846,3 +846,154 @@ def test_project_root_stays_inside_sandbox(tmp_path: Path) -> None:
     # O project-root recebido está sob run_dir/fixtures (não fora do sandbox).
     received = r.stdout.split("PROJECT_ROOT=", 1)[1].splitlines()[0].strip()
     Path(received).resolve().relative_to(sandbox_fixtures.resolve())
+
+
+# ---------------------------------------------------------------------------
+# R8 (Item 4) — extra_args threada --scope/--id; engine controla --project-root
+#
+# Validators feature/task-scoped (ex.: validate_task_contract.py) exigem
+# --scope feature --id <slug>. A Fixture ganha extra_args (lista) que o
+# run_sandbox concatena APÓS o --project-root <mini-tree> que o engine
+# controla. HARDENING (Decisão 30): extra_args NÃO pode redefinir
+# --project-root — o engine sempre aponta pro mini-tree.
+# ---------------------------------------------------------------------------
+
+
+# Stub que ecoa o argv inteiro pra o teste asserir a forma exata da invocação
+# E lê --project-root via argparse pra confirmar o root efetivo. parse-only
+# pra --scope/--id (espelha validators feature-scoped reais).
+_ARGV_ECHO_VALIDATOR = """
+import argparse
+import sys
+from pathlib import Path
+
+print("ARGV=" + repr(sys.argv[1:]))
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--project-root", required=True)
+parser.add_argument("--scope")
+parser.add_argument("--id")
+# argparse com --project-root duplicado fica com o ÚLTIMO; por isso o
+# teste de segurança confia no neutralize do run_sandbox, não no argparse.
+args, _unknown = parser.parse_known_args()
+print(f"EFFECTIVE_ROOT={Path(args.project_root)}")
+print(f"SCOPE={args.scope}")
+print(f"ID={args.id}")
+sys.exit(0)
+"""
+
+
+def test_extra_args_appended_after_project_root(tmp_path: Path) -> None:
+    """Fixture.extra_args=['--scope','feature','--id','foo'] → invocação
+    recebe --project-root <tree> --scope feature --id foo (nessa ordem)."""
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    validator = _write_validator(
+        validators_dir, "argv_echo.py", _ARGV_ECHO_VALIDATOR
+    )
+    mini_tree = sandbox_fixtures / "vc-args"
+    f = mini_tree / "src" / "Clean.kt"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("// clean\n", encoding="utf-8")
+
+    fixture = Fixture(
+        name="vc-args",
+        input_path=f,
+        validator_path=validator,
+        tree_rel_path="src/Clean.kt",
+        extra_args=["--scope", "feature", "--id", "foo"],
+    )
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=5.0, per_validator_s=2.0
+    )
+
+    r = results[0]
+    assert r.status == "ok", f"status={r.status} stderr={r.stderr!r}"
+    argv = r.stdout.split("ARGV=", 1)[1].splitlines()[0]
+    # --project-root <tree> vem primeiro (engine controla), depois extra_args.
+    assert "'--project-root'" in argv
+    assert "'--scope', 'feature', '--id', 'foo'" in argv
+    # O --project-root antecede o --scope na invocação.
+    assert argv.index("'--project-root'") < argv.index("'--scope'")
+    assert "SCOPE=feature" in r.stdout
+    assert "ID=foo" in r.stdout
+    # O root efetivo continua o mini-tree.
+    assert str(mini_tree.resolve()) in r.stdout
+
+
+def test_extra_args_cannot_override_project_root(tmp_path: Path) -> None:
+    """SEGURANÇA: extra_args tentando re-setar --project-root é neutralizado.
+
+    Uma fixture (gerada por LLM) que injeta --project-root /etc NÃO pode
+    mudar o root efetivo — o engine controla o --project-root <mini-tree>.
+    """
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    validator = _write_validator(
+        validators_dir, "argv_echo.py", _ARGV_ECHO_VALIDATOR
+    )
+    mini_tree = sandbox_fixtures / "vc-breach"
+    f = mini_tree / "src" / "Clean.kt"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("// clean\n", encoding="utf-8")
+
+    fixture = Fixture(
+        name="vc-breach",
+        input_path=f,
+        validator_path=validator,
+        tree_rel_path="src/Clean.kt",
+        # Hostil: tenta apontar o root pra fora do sandbox.
+        extra_args=["--project-root", "/etc", "--scope", "feature"],
+    )
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=5.0, per_validator_s=2.0
+    )
+
+    r = results[0]
+    assert r.status == "ok", f"status={r.status} stderr={r.stderr!r}"
+    # /etc NUNCA chega como argv — o engine remove o --project-root injetado.
+    argv = r.stdout.split("ARGV=", 1)[1].splitlines()[0]
+    assert "/etc" not in argv, (
+        f"extra_args conseguiu injetar --project-root /etc: argv={argv!r}"
+    )
+    # Há exatamente UM --project-root, e ele aponta pro mini-tree do engine.
+    assert argv.count("'--project-root'") == 1
+    assert str(mini_tree.resolve()) in r.stdout
+    # O --scope legítimo (não-perigoso) sobrevive ao scrub.
+    assert "SCOPE=feature" in r.stdout
+
+
+def test_extra_args_none_preserves_legacy_command(tmp_path: Path) -> None:
+    """extra_args=None (default) → invocação inalterada (compat R7)."""
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    validator = _write_validator(
+        validators_dir, "argv_echo.py", _ARGV_ECHO_VALIDATOR
+    )
+    mini_tree = sandbox_fixtures / "vc-none"
+    f = mini_tree / "src" / "Clean.kt"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("// clean\n", encoding="utf-8")
+
+    fixture = Fixture(
+        name="vc-none",
+        input_path=f,
+        validator_path=validator,
+        tree_rel_path="src/Clean.kt",
+    )
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=5.0, per_validator_s=2.0
+    )
+
+    r = results[0]
+    assert r.status == "ok"
+    argv = r.stdout.split("ARGV=", 1)[1].splitlines()[0]
+    # Apenas --project-root <tree>, sem extras.
+    assert "'--project-root'" in argv
+    assert "'--scope'" not in argv

@@ -777,6 +777,17 @@ def _reconstruct_fixtures_from_findings(
                     # comportamento atual (resolve sob project_root).
                     validator = project_candidate
 
+        # Item 4 (R8): invocation_args (--scope/--id de validators scoped) é
+        # opcional. Lê do evidence quando presente e bem-formado (lista de
+        # strings); qualquer outra coisa (LLM mal-formado) vira None — sem
+        # invenção. O sandbox neutraliza --project-root injetado (Decisão 30).
+        raw_args = ev.get("invocation_args")
+        extra_args: list[str] | None = None
+        if isinstance(raw_args, list) and all(
+            isinstance(a, str) for a in raw_args
+        ):
+            extra_args = list(raw_args)
+
         input_path = run_tree.fixtures_dir / name / tree_rel_path
         fixtures.append(
             Fixture(
@@ -784,6 +795,7 @@ def _reconstruct_fixtures_from_findings(
                 input_path=input_path,
                 validator_path=validator,
                 tree_rel_path=tree_rel_path,
+                extra_args=extra_args,
             )
         )
     return fixtures
