@@ -59,6 +59,7 @@ from engine.qa.ingest import (
     parse_qa_config,
     snapshot_artefacts,
 )
+from engine.qa.sandbox import Fixture, SandboxResult, run_sandbox
 from engine.qa.scope import (
     Scope,
     ScopeAmbiguityError,
@@ -382,12 +383,45 @@ def run_qa(
                 if isinstance(nested, list):
                     all_findings.extend(nested)
 
+        # CR-01: o ENGINE é dono da Phase 3. Quando há findings com fixtures
+        # executáveis (vetor validator-claim, executable=true) E
+        # sandbox-results.json AUSENTE, o engine reconstrói as Fixtures dos
+        # findings, roda run_sandbox ELE MESMO e escreve sandbox-results.json.
+        # Sem isso, run_sandbox era dead code no flow e o vetor "validator que
+        # mente" (F-1/F-4) nunca executava — o synthesis settlava prematuro.
+        #
+        # Idempotente: só roda quando sandbox-results.json não existe. Sem
+        # fixtures executáveis → run_sandbox([]) == [] → não escreve arquivo
+        # vazio (não é settle "prematuro"; é legítimo não haver nada a rodar).
+        sandbox_results_file = run_tree.root / "sandbox-results.json"
+        if not sandbox_results_file.exists():
+            fixtures = _reconstruct_fixtures_from_findings(
+                all_findings, run_tree, project_root=project_root
+            )
+            if fixtures:
+                _phase[0] = 2  # entrando na Phase 3 (sandbox)
+                # Recomputa extras autorizados aqui (idempotente, fail-safe a
+                # ()): o resume reattach não passa pelo branch que computa
+                # allowed_extras pro handoff, então não dependemos da var de
+                # branch. Mesma lista que o handoff carrega (QA-11).
+                phase3_extras = _compute_allowed_extras(
+                    project_root, workflow_config
+                )
+                sandbox_results = run_sandbox(
+                    run_tree.root,
+                    fixtures,
+                    budget_total_s=cfg.sandbox_budget_seconds_total,
+                    per_validator_s=cfg.agent_timeout_seconds,
+                    extras=phase3_extras,
+                )
+                _write_sandbox_results(run_tree, sandbox_results)
+
         # CONF-003: sandbox breach/timeout viram findings deterministicos
-        # (§5.3). Le sandbox-results.json escrito pelo conductor; injeta
+        # (§5.3). Le sandbox-results.json escrito pelo engine na Phase 3
+        # (CR-01) — ou, em estados degradados/legados, pelo conductor; injeta
         # findings derivados antes do synthesize pra que dedup + verdict
         # logic considerem os problemas de isolamento como first-class
         # findings (breach -> critical -> BLOCK).
-        sandbox_results_file = run_tree.root / "sandbox-results.json"
         stubs: list[SandboxResultStub] = []
         if sandbox_results_file.exists():
             try:
@@ -627,6 +661,137 @@ def _finalize_qa_report(
     }
     report_path.write_text(
         json.dumps(report, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _reconstruct_fixtures_from_findings(
+    findings: list[dict[str, Any]],
+    run_tree: RunTree,
+    *,
+    project_root: Path,
+) -> list[Fixture]:
+    """CR-01: reconstrói ``Fixture`` executáveis a partir dos findings emitidos.
+
+    O coração do fix: o engine roda a Phase 3 (sandbox) ELE MESMO, então
+    precisa reconstruir os objetos ``Fixture`` a partir do que o auditor
+    validator-claim escreveu em ``findings/*.json`` + ``fixtures/``.
+
+    Contrato dos findings validator-claim (``agents/qa-auditor-validator-claim.md``
+    §Output + ``templates/qa-fixture-validator-claim.template.yaml``):
+      - ``finding["executable"] is True`` (invariante do vetor; ``false`` é
+        exceção documentada pra validator inexistente — pulamos).
+      - ``evidence.fixture_path`` — descritor ``fixtures/validator-claim-<slug>.yaml``.
+        O ``stem`` (basename sem extensão) é o ``fixture_id``, que casa com
+        ``Fixture.name`` (IN-02) e com ``fixture_name`` em sandbox-results
+        (matching do F-4).
+      - ``evidence.validator_path`` — ``validators/<name>.py`` (canon de
+        produção; resolvido contra ``project_root`` quando relativo).
+      - ``evidence.tree_rel_path`` — onde o arquivo do contra-exemplo mora no
+        mini-tree (``fixtures/<fixture_id>/<tree_rel_path>``). O auditor
+        materializou o arquivo lá; ``run_sandbox`` invoca o validator com
+        ``--project-root <mini-tree>``.
+
+    O ``input_path`` aponta o arquivo materializado
+    (``run_tree.fixtures_dir/<name>/<tree_rel_path>``) — ``run_sandbox`` exige
+    que ``input_path`` resolva dentro de ``run_dir/fixtures`` (Decisão 30); o
+    mini-tree mora exatamente ali.
+
+    Conservador: só reconstrói validator-claim com os 3 campos de evidence
+    presentes e ``executable`` não-``False``. Findings de outros vetores
+    (chaos carrega payload+contract no descritor, não validator_path na
+    evidence) ou sem os campos são pulados — sem invenção de Fixture.
+
+    Args:
+        findings: lista consolidada de findings draft (todos os auditores).
+        run_tree: ``RunTree`` da run em curso.
+        project_root: raiz do projeto consumidor (pra resolver validator_path
+            relativo ao canon de produção).
+
+    Returns:
+        Lista de ``Fixture`` reconstruídas, ordem dos findings preservada.
+        Vazia quando não há fixture executável reconstruível.
+    """
+    fixtures: list[Fixture] = []
+    seen_names: set[str] = set()
+    for f in findings:
+        if not isinstance(f, dict) or f.get("vector") != "validator-claim":
+            continue
+        # executable=true é o invariante; false (validator inexistente) pula.
+        if f.get("executable") is False:
+            continue
+        ev = f.get("evidence")
+        if not isinstance(ev, dict):
+            continue
+        fixture_path = ev.get("fixture_path")
+        validator_path = ev.get("validator_path")
+        tree_rel_path = ev.get("tree_rel_path")
+        if not (
+            isinstance(fixture_path, str)
+            and isinstance(validator_path, str)
+            and isinstance(tree_rel_path, str)
+            and fixture_path
+            and validator_path
+            and tree_rel_path
+        ):
+            # Campos insuficientes pra montar uma Fixture executável — pula
+            # sem inventar (ex.: validator-claim de validator inexistente que
+            # não declarou tree_rel_path). O finding ainda entra no synthesis
+            # como draft; só não roda no sandbox.
+            continue
+
+        name = Path(fixture_path).stem
+        if not name or name in seen_names:
+            # Nome vazio ou duplicado (mesmo fixture_id em 2 findings) — pula
+            # o duplicado pra não rodar o mesmo mini-tree 2x.
+            continue
+        seen_names.add(name)
+
+        validator = Path(validator_path)
+        if not validator.is_absolute():
+            validator = project_root / validator
+
+        input_path = run_tree.fixtures_dir / name / tree_rel_path
+        fixtures.append(
+            Fixture(
+                name=name,
+                input_path=input_path,
+                validator_path=validator,
+                tree_rel_path=tree_rel_path,
+            )
+        )
+    return fixtures
+
+
+def _write_sandbox_results(
+    run_tree: RunTree, results: list[SandboxResult]
+) -> None:
+    """CR-01: serializa ``SandboxResult`` em ``sandbox-results.json``.
+
+    O ENGINE escreve este arquivo na Phase 3 (antes era o conductor — veredito
+    do mantenedor moveu a responsabilidade pro core). Shape segue o contrato
+    de ``agents/qa-conductor.md`` (lista de dicts flat com ``fixture_name`` +
+    campos de status), consumido logo a seguir por ``hydrate_sandbox_results``
+    + ``findings_from_sandbox_results`` + ``hydrate_validator_claim_evidence``.
+
+    Args:
+        run_tree: ``RunTree`` da run em curso.
+        results: lista de ``SandboxResult`` de ``run_sandbox``.
+    """
+    payload = [
+        {
+            "fixture_name": r.fixture.name,
+            "status": r.status,
+            "exit_code": r.exit_code,
+            "stdout": r.stdout,
+            "stderr": r.stderr,
+            "duration_s": r.duration_s,
+            "error": r.error,
+        }
+        for r in results
+    ]
+    (run_tree.root / "sandbox-results.json").write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
 

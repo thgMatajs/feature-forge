@@ -21,6 +21,7 @@ Inferência de phase (lida do flow real):
 from __future__ import annotations
 
 import json
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -56,8 +57,24 @@ def _qa_run_dirs(proj: Path, slug: str) -> list[Path]:
     return sorted(d for d in scope_dir.iterdir() if d.is_dir())
 
 
-def _validator_claim_draft(fixture_path: str) -> dict:
-    return {
+def _validator_claim_draft(
+    fixture_path: str,
+    *,
+    validator_path: str | None = None,
+    tree_rel_path: str | None = None,
+    executable: bool | None = None,
+) -> dict:
+    evidence: dict = {
+        "auditor": "qa-auditor-validator-claim",
+        "auditor_reasoning": "deveria pegar mas nao pegou",
+        "fixture_path": fixture_path,
+        "sandbox_result": None,
+    }
+    if validator_path is not None:
+        evidence["validator_path"] = validator_path
+    if tree_rel_path is not None:
+        evidence["tree_rel_path"] = tree_rel_path
+    draft: dict = {
         "id": "vc-0001",
         "fingerprint": "a" * 64,
         "vector": "validator-claim",
@@ -65,12 +82,7 @@ def _validator_claim_draft(fixture_path: str) -> dict:
         "title": "validator que mente",
         "description": "validator forge nao detecta o caso",
         "scope": {"files": ["validators/x.py"]},
-        "evidence": {
-            "auditor": "qa-auditor-validator-claim",
-            "auditor_reasoning": "deveria pegar mas nao pegou",
-            "fixture_path": fixture_path,
-            "sandbox_result": None,
-        },
+        "evidence": evidence,
         "proposed_evolution": {
             "type": "qa-finding-validator-claim",
             "summary": "endurecer o validator",
@@ -78,6 +90,44 @@ def _validator_claim_draft(fixture_path: str) -> dict:
         },
         "created_at": "2026-06-19T12:00:00Z",
     }
+    if executable is not None:
+        draft["executable"] = executable
+    return draft
+
+
+def _write_lying_validator(proj: Path, rel: str = "validators/lying.py") -> str:
+    """Materializa um validator 'que mente' — sempre exit 0 (não pega nada),
+    consumindo --project-root. Retorna o path relativo (como o auditor
+    escreve em evidence.validator_path)."""
+    p = proj / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        textwrap.dedent(
+            """
+            import argparse
+            import sys
+
+            parser = argparse.ArgumentParser()
+            parser.add_argument("--project-root", required=True)
+            parser.parse_args()
+            # Mente: deveria pegar o contra-exemplo no tree, mas passa.
+            print("validator passou (mente)")
+            sys.exit(0)
+            """
+        ),
+        encoding="utf-8",
+    )
+    return rel
+
+
+def _materialize_fixture_tree(
+    run_dir: Path, fixture_id: str, tree_rel_path: str, content: str = "// hostil\n"
+) -> None:
+    """Materializa o arquivo do contra-exemplo no mini-tree
+    fixtures/<fixture_id>/<tree_rel_path> (como o auditor faria)."""
+    target = run_dir / "fixtures" / fixture_id / tree_rel_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -168,9 +218,16 @@ def test_checkpoint_cleared_on_completion(tmp_path: Path) -> None:
 
 
 @pytest.mark.integration
-def test_resume_infers_phase3_with_findings_no_sandbox(tmp_path: Path) -> None:
-    """findings presentes E sandbox-results AUSENTE: re-invoke reata e segue
-    o caminho synthesis→emit (Phase 3+) sem criar run nova."""
+def test_resume_runs_sandbox_with_findings_no_sandbox_results(
+    tmp_path: Path,
+) -> None:
+    """CR-01: findings com fixtures executáveis E sandbox-results AUSENTE — o
+    ENGINE roda a Phase 3 (run_sandbox) ELE MESMO, escreve sandbox-results.json
+    e SÓ ENTÃO synthesiza (não settla antes de executar o sandbox).
+
+    Reescreve o antigo `test_resume_infers_phase3_with_findings_no_sandbox`,
+    que asseverava o settle prematuro como correto — codificava o bug do CR-01.
+    """
     slug = "phase3-feature"
     proj = _make_feature_project(tmp_path, slug)
     wf = {"qa": {"enabled": True}}
@@ -178,10 +235,25 @@ def test_resume_infers_phase3_with_findings_no_sandbox(tmp_path: Path) -> None:
     run_qa(slug, project_root=proj, workflow_config=wf)
     run_dir = _qa_run_dirs(proj, slug)[0]
 
-    # Conductor escreveu findings, MAS ainda não escreveu sandbox-results.json.
+    validator_rel = _write_lying_validator(proj)
+    fixture_id = "validator-claim-foo"
+    tree_rel = "src/main/kotlin/Offending.kt"
+    _materialize_fixture_tree(run_dir, fixture_id, tree_rel)
+
+    # Conductor escreveu findings (fixtures executáveis), MAS ainda não
+    # escreveu sandbox-results.json — o engine deve rodar a Phase 3.
     (run_dir / "findings" / "validator-claim.json").write_text(
         json.dumps(
-            {"findings": [_validator_claim_draft("fixtures/validator-claim-foo.yaml")]}
+            {
+                "findings": [
+                    _validator_claim_draft(
+                        f"fixtures/{fixture_id}.yaml",
+                        validator_path=validator_rel,
+                        tree_rel_path=tree_rel,
+                        executable=True,
+                    )
+                ]
+            }
         ),
         encoding="utf-8",
     )
@@ -190,8 +262,60 @@ def test_resume_infers_phase3_with_findings_no_sandbox(tmp_path: Path) -> None:
     rc = run_qa(slug, project_root=proj, workflow_config=wf)
     assert rc in (0, 1)
 
-    # Não criou run nova; synthesis rodou (verdict deixou de ser pending).
+    # Não criou run nova.
     assert len(_qa_run_dirs(proj, slug)) == 1
+
+    # CR-01: o engine ESCREVEU sandbox-results.json (Phase 3 rodou).
+    sr_path = run_dir / "sandbox-results.json"
+    assert sr_path.is_file(), "engine deveria escrever sandbox-results.json (Phase 3)"
+    sandbox_results = json.loads(sr_path.read_text(encoding="utf-8"))
+    assert isinstance(sandbox_results, list) and len(sandbox_results) == 1
+    entry = sandbox_results[0]
+    assert entry["fixture_name"] == fixture_id
+    # O validator mente (exit 0) → status ok, exit_code 0 — capturado de fato.
+    assert entry["status"] == "ok"
+    assert entry["exit_code"] == 0
+
+    # E SÓ ENTÃO synthesizou (verdict settlado a partir do estado real).
+    report = json.loads((run_dir / "qa-report.json").read_text(encoding="utf-8"))
+    assert report["verdict"] != "pending"
+
+    # F-4: o finding validator-claim foi hidratado com o sandbox_result real.
+    vc = [f for f in report["findings"] if f.get("vector") == "validator-claim"]
+    assert vc, "finding validator-claim ausente no report"
+    sr = vc[0]["evidence"]["sandbox_result"]
+    assert isinstance(sr, dict), "F-4: sandbox_result deveria estar hidratado"
+    assert sr["exit_code"] == 0
+
+
+@pytest.mark.integration
+def test_resume_no_executable_fixtures_synthesizes_directly(
+    tmp_path: Path,
+) -> None:
+    """CR-01: sem fixtures executáveis (findings sem validator_path/tree_rel_path),
+    o engine NÃO escreve sandbox-results.json (nada a rodar) e segue direto pro
+    synthesize — legítimo, não settle prematuro."""
+    slug = "no-fixtures-feature"
+    proj = _make_feature_project(tmp_path, slug)
+    wf = {"qa": {"enabled": True}}
+
+    run_qa(slug, project_root=proj, workflow_config=wf)
+    run_dir = _qa_run_dirs(proj, slug)[0]
+
+    # Finding validator-claim SEM campos executáveis (ex.: validator inexistente).
+    (run_dir / "findings" / "validator-claim.json").write_text(
+        json.dumps(
+            {"findings": [_validator_claim_draft("fixtures/validator-claim-foo.yaml")]}
+        ),
+        encoding="utf-8",
+    )
+
+    rc = run_qa(slug, project_root=proj, workflow_config=wf)
+    assert rc in (0, 1)
+
+    # Sem fixtures executáveis → engine não escreve sandbox-results.json.
+    assert not (run_dir / "sandbox-results.json").exists()
+    # Mas synthesiza normalmente (verdict settlado).
     report = json.loads((run_dir / "qa-report.json").read_text(encoding="utf-8"))
     assert report["verdict"] != "pending"
 
