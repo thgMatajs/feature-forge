@@ -120,7 +120,6 @@ Dois grupos de arquivos no run dir
         "tree_rel_path": "src/main/kotlin/Offending.kt",
         "validator_path": "validators/<name>.py",
         "expected_exit_code": 1,
-        "actual_exit_code": "<a determinar em Phase 3 sandbox>",
         "invocation": "--project-root <mini-tree>",
         "auditor": "validator-claim",
         "auditor_reasoning": "<docstring claim X; regex/regra Y; contra-exemplo derivado>"
