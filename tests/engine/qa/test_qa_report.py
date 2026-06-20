@@ -21,6 +21,7 @@ from engine.qa import (
 from engine.qa.ingest import QAConfig, create_run_tree
 from engine.qa.scope import Scope
 from engine.qa.synthesis import synthesize
+from validators.validate_qa_report import validate_qa_report
 
 
 def _make_feature_project(tmp_path: Path, slug: str) -> Path:
@@ -145,6 +146,57 @@ def test_phase4_finalizes_qa_report_verdict(tmp_path: Path) -> None:
     assert final["summary"]["by_severity"]["critical"] == 1
     assert final["summary"]["by_vector"].get("validator-claim") == 1
     assert len(final["findings"]) == 1
+
+
+def _empty_synthesis_result():
+    """SynthesisResult PASS vazio com todas as keys que validate_qa_report
+    exige (by_severity 5 keys, by_vector 4 keys)."""
+    return synthesize([])
+
+
+def test_finalize_computes_duration_s(tmp_path: Path) -> None:
+    """F-3: finalize escreve run.duration_s coerente (>=0) derivado de
+    finished - started; validate_qa_report passa no report finalizado.
+    """
+    scope = Scope(type="feature", target="dur-feature", paths=())
+    tree = create_run_tree(scope, project_root=tmp_path)
+    cfg = QAConfig()
+    _write_qa_report_skeleton(scope, tree, cfg)
+
+    # Forca started_at num valor conhecido no passado pra duration ser > 0.
+    report_path = tree.root / "qa-report.json"
+    skeleton = json.loads(report_path.read_text(encoding="utf-8"))
+    skeleton["run"]["started_at"] = "2026-06-19T12:00:00Z"
+    report_path.write_text(
+        json.dumps(skeleton, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    result = _empty_synthesis_result()
+    _finalize_qa_report(tree, result)
+
+    final = json.loads(report_path.read_text(encoding="utf-8"))
+    assert "duration_s" in final["run"], "F-3: run.duration_s ausente"
+    assert isinstance(final["run"]["duration_s"], (int, float))
+    assert final["run"]["duration_s"] >= 0
+
+    # validate_qa_report exige run.duration_s presente (L62) — nao deve raise.
+    validate_qa_report(final)
+
+
+def test_finalize_duration_s_graceful_when_started_missing(tmp_path: Path) -> None:
+    """F-3: started_at ausente/malformado -> duration_s = 0.0 (degradacao
+    graciosa, nao derruba finalize)."""
+    scope = Scope(type="feature", target="dur-missing", paths=())
+    tree = create_run_tree(scope, project_root=tmp_path)
+
+    # Sem skeleton: finalize reconstroi envelope; started_at ausente.
+    result = _empty_synthesis_result()
+    _finalize_qa_report(tree, result)
+
+    final = json.loads(
+        (tree.root / "qa-report.json").read_text(encoding="utf-8")
+    )
+    assert final["run"]["duration_s"] == 0.0
 
 
 def test_finalize_qa_report_tolerates_missing_skeleton(tmp_path: Path) -> None:

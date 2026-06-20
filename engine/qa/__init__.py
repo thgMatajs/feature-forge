@@ -34,6 +34,7 @@ from __future__ import annotations
 import json
 import signal
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -494,6 +495,35 @@ def _write_qa_report_skeleton(
     )
 
 
+def _compute_duration_s(started_raw: Any, finished_dt: datetime) -> float:
+    """F-3: deriva run.duration_s de (finished - started).total_seconds().
+
+    ``started_raw`` vem do skeleton (``run.started_at``, ISO-8601 com sufixo
+    ``Z`` escrito por ``utc_iso_z``). Degradacao graciosa: se ausente ou
+    malformado, retorna ``0.0`` em vez de derrubar finalize — audit trail
+    incompleto e aceitavel (alinhado ao padrao "skeleton ausente" do metodo).
+
+    Args:
+        started_raw: valor de ``run.started_at`` (str ISO-Z esperado).
+        finished_dt: ``datetime`` tz-aware usado pra ``finished_at`` —
+            mesma referencia, sem jitter.
+
+    Returns:
+        Segundos decorridos (float, >= 0).
+    """
+    if not isinstance(started_raw, str):
+        return 0.0
+    try:
+        # ``datetime.fromisoformat`` (3.11+) aceita ``Z``; pra robustez em
+        # versoes anteriores, normalizamos ``Z`` -> ``+00:00`` antes do parse.
+        started_dt = datetime.fromisoformat(started_raw.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return 0.0
+    if started_dt.tzinfo is None:
+        started_dt = started_dt.replace(tzinfo=timezone.utc)
+    return max(0.0, (finished_dt - started_dt).total_seconds())
+
+
 def _finalize_qa_report(
     run_tree: RunTree, result: SynthesisResult
 ) -> None:
@@ -502,7 +532,8 @@ def _finalize_qa_report(
     Le o skeleton escrito em Phase 0 (preservando run.id, run.scope,
     run.config_snapshot, run.started_at), substitui ``verdict``,
     ``summary`` e ``findings`` pelos consolidados de Phase 4, e anexa
-    ``run.finished_at``.
+    ``run.finished_at`` + ``run.duration_s`` (F-3, derivado de
+    finished - started; ``validate_qa_report`` exige ambos).
 
     Tolerante a skeleton ausente — degradacao graciosa: se o file nao
     existe (caller chamou finalize sem skeleton previo, ou disk error em
@@ -525,7 +556,14 @@ def _finalize_qa_report(
     run_block = existing.get("run") if isinstance(existing.get("run"), dict) else {}
     run_block = dict(run_block)  # shallow copy pra evitar mutacao do dict lido
     run_block.setdefault("id", run_tree.run_id)
-    run_block["finished_at"] = _utc_iso_z()
+
+    # F-3: finished_at e duration_s derivam da MESMA referencia temporal
+    # (sem jitter de duas chamadas). validate_qa_report:62 exige run.duration_s.
+    finished_dt = datetime.now(timezone.utc)
+    run_block["finished_at"] = finished_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    run_block["duration_s"] = _compute_duration_s(
+        run_block.get("started_at"), finished_dt
+    )
 
     report: dict[str, Any] = {
         "schema_version": existing.get("schema_version", 1),
