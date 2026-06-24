@@ -47,6 +47,11 @@ estrutural total (ex: scope=screen mas screen-analysis ausente) é
 finding válido em si — severity=high, vector=coverage, indicando que
 o package está incompleto.
 
+**Inputs opcionais ausentes do snapshot → audite só o que está presente E
+registre a cobertura degradada** (ex.: um finding `coverage` notando "spec X
+ausente, heurística Y não auditável"). Rodar parcialmente inerte em silêncio
+esconde o gap — torne a degradação visível como finding, não como omissão.
+
 ---
 
 ## Mission
