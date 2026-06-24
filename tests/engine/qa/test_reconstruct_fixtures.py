@@ -91,7 +91,7 @@ def test_validator_path_falls_back_to_forge_home(
 
     fixtures = _reconstruct_fixtures_from_findings(
         findings, run_tree, project_root=project_root
-    )
+    ).fixtures
 
     assert len(fixtures) == 1
     # Resolve pro path em FORGE_HOME/validators/, não pro project_root.
@@ -121,7 +121,7 @@ def test_validator_path_project_takes_precedence_over_forge_home(
 
     fixtures = _reconstruct_fixtures_from_findings(
         findings, run_tree, project_root=project_root
-    )
+    ).fixtures
 
     assert len(fixtures) == 1
     # Project-first: resolve pro validator local, não pro FORGE_HOME.
@@ -145,7 +145,7 @@ def test_validator_path_unresolvable_keeps_relative_under_project(
 
     fixtures = _reconstruct_fixtures_from_findings(
         findings, run_tree, project_root=project_root
-    )
+    ).fixtures
 
     assert len(fixtures) == 1
     # Sem invenção: resolve sob project_root (não vira FORGE_HOME nem absoluto).
@@ -182,12 +182,16 @@ def test_validator_path_absolute_outside_roots_rejected(
 
     findings = [_vc_finding(validator_path=str(evil))]
 
-    fixtures = _reconstruct_fixtures_from_findings(
+    result = _reconstruct_fixtures_from_findings(
         findings, run_tree, project_root=project_root
     )
 
     # Rejeitado: nenhuma fixture executável montada apontando pra fora.
-    assert fixtures == []
+    assert result.fixtures == []
+    # A7 (review pr27 r2): o claim out-of-roots é registrado como irresolvível
+    # (pra o caller surfaçar um finding determinístico, não só logar).
+    assert len(result.unresolvable_out_of_roots) == 1
+    assert "fora dos roots" in result.unresolvable_out_of_roots[0].error
 
 
 def test_validator_path_traversal_escape_rejected(
@@ -209,11 +213,13 @@ def test_validator_path_traversal_escape_rejected(
 
     findings = [_vc_finding(validator_path="validators/../escape.py")]
 
-    fixtures = _reconstruct_fixtures_from_findings(
+    result = _reconstruct_fixtures_from_findings(
         findings, run_tree, project_root=project_root
     )
 
-    assert fixtures == []
+    assert result.fixtures == []
+    # A7: traversal-escape também registrado como irresolvível out-of-roots.
+    assert len(result.unresolvable_out_of_roots) == 1
 
 
 def test_validator_path_absolute_inside_forge_home_allowed(
@@ -234,7 +240,7 @@ def test_validator_path_absolute_inside_forge_home_allowed(
 
     fixtures = _reconstruct_fixtures_from_findings(
         findings, run_tree, project_root=project_root
-    )
+    ).fixtures
 
     assert len(fixtures) == 1
     assert fixtures[0].validator_path.resolve() == canon.resolve()
@@ -269,7 +275,7 @@ def test_invocation_args_threaded_to_extra_args(
 
     fixtures = _reconstruct_fixtures_from_findings(
         findings, run_tree, project_root=project_root
-    )
+    ).fixtures
 
     assert len(fixtures) == 1
     assert fixtures[0].extra_args == ["--scope", "feature", "--id", "foo"]
@@ -292,7 +298,7 @@ def test_invocation_args_absent_keeps_none(
 
     fixtures = _reconstruct_fixtures_from_findings(
         findings, run_tree, project_root=project_root
-    )
+    ).fixtures
 
     assert len(fixtures) == 1
     assert fixtures[0].extra_args is None
@@ -317,7 +323,7 @@ def test_invocation_args_non_list_ignored(
 
     fixtures = _reconstruct_fixtures_from_findings(
         findings, run_tree, project_root=project_root
-    )
+    ).fixtures
 
     assert len(fixtures) == 1
     assert fixtures[0].extra_args is None

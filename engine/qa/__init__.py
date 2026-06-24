@@ -35,6 +35,7 @@ import json
 import os
 import signal
 import sys
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -103,6 +104,41 @@ _CORE_AUDITORS: tuple[str, ...] = (
     "chaos",
     "validator-claim",
 )
+
+
+@dataclass(frozen=True)
+class _UnresolvableValidatorClaim:
+    """A7 (review pr27 r2): descritor de um validator-claim cujo validator_path
+    foi REJEITADO no reconstruct (fora dos roots permitidos / ``..`` traversal).
+
+    Diferente do caso in-roots-missing (que vira Fixture, roda no sandbox e sai
+    ``status=error`` naturalmente), o out-of-roots é dropado ANTES de virar
+    Fixture — então precisamos carregá-lo explicitamente pra que A4 derive um
+    finding ``validator-claim-unresolvable`` em vez de só logar em stderr
+    (detection asymmetry → false-clean no caso MAIS suspeito).
+
+    ``fingerprint`` é o do draft original validator-claim, usado por A8 pra
+    suprimir esse draft (dedup: 1 finding por issue).
+    """
+
+    fixture_name: str
+    error: str
+    fingerprint: str | None = None
+
+
+@dataclass
+class _ReconstructResult:
+    """Saída de ``_reconstruct_fixtures_from_findings`` (A7).
+
+    ``fixtures`` são os executáveis reconstruídos (validator_path resolvido
+    DENTRO dos roots). ``unresolvable_out_of_roots`` carrega os validator-claim
+    rejeitados por escape de roots, pra surfaçar como finding determinístico.
+    """
+
+    fixtures: list[Fixture] = field(default_factory=list)
+    unresolvable_out_of_roots: list[_UnresolvableValidatorClaim] = field(
+        default_factory=list
+    )
 
 
 def run_qa(
@@ -415,9 +451,10 @@ def run_qa(
         # arquivo veio do conductor (estados legados/degradados, §5.3) ou é
         # legítimo — preservamos o comportamento original e confiamos nele.
         sandbox_results_file = run_tree.root / "sandbox-results.json"
-        fixtures = _reconstruct_fixtures_from_findings(
+        reconstructed = _reconstruct_fixtures_from_findings(
             all_findings, run_tree, project_root=project_root
         )
+        fixtures = reconstructed.fixtures
         sandbox_phase_complete = (
             resumed_checkpoint is not None
             and resumed_checkpoint.last_phase_completed >= 3
@@ -485,30 +522,58 @@ def run_qa(
         # permite que findings_from_sandbox_results derive um finding pro
         # caso "validator irresolvível" (status=error) em vez de droppar
         # silenciosamente → false-clean pro vetor "validator que mente".
-        vc_fixture_names = {fx.name for fx in fixtures}
+        #
+        # A7 (review pr27 r2): inclui TAMBÉM os validator-claim rejeitados por
+        # validator_path fora dos roots (out-of-roots/traversal). Esse caso era
+        # dropado no reconstruct (nunca virava Fixture → nunca rodava sandbox →
+        # nunca derivava finding), deixando o caso MAIS suspeito false-clean.
+        out_of_roots = reconstructed.unresolvable_out_of_roots
+        out_of_roots_names = {u.fixture_name for u in out_of_roots}
+        vc_fixture_names = {fx.name for fx in fixtures} | out_of_roots_names
 
-        stubs: list[SandboxResultStub] = []
+        # A7: stubs sintéticos pros out-of-roots (status=error), pra que
+        # findings_from_sandbox_results derive o finding determinístico. Não
+        # vêm de sandbox-results.json (nunca rodaram); são construídos do
+        # descritor de rejeição.
+        stubs: list[SandboxResultStub] = [
+            SandboxResultStub(
+                fixture_name=u.fixture_name,
+                status="error",
+                error=u.error,
+            )
+            for u in out_of_roots
+        ]
+        for u in out_of_roots:
+            print(
+                f"⚠ validator-claim '{u.fixture_name}': {u.error}. "
+                f"Surfaced como finding medium (não settla clean) — A7.",
+                file=sys.stderr,
+            )
+
         if sandbox_results_file.exists():
             try:
                 raw = json.loads(sandbox_results_file.read_text(encoding="utf-8"))
                 # B2 (review pr27): raw pode ser qualquer JSON válido (list,
                 # dict, ou escalar). raw.get num escalar levantaria
                 # AttributeError NÃO capturado abaixo. Guarda os 3 casos.
-                stubs = hydrate_sandbox_results(
-                    raw
-                    if isinstance(raw, list)
-                    else (raw.get("results", []) if isinstance(raw, dict) else [])
+                stubs.extend(
+                    hydrate_sandbox_results(
+                        raw
+                        if isinstance(raw, list)
+                        else (
+                            raw.get("results", []) if isinstance(raw, dict) else []
+                        )
+                    )
                 )
-                derived = findings_from_sandbox_results(
-                    stubs,
-                    run_id=run_tree.run_id,
-                    validator_claim_fixtures=vc_fixture_names,
-                )
-                all_findings.extend(derived)
                 # A4: warning explícito em stderr pra cada validator-claim com
-                # validator irresolvível — visibilidade além do finding no report.
+                # validator irresolvível (in-roots-missing) — visibilidade além
+                # do finding no report.
                 for s in stubs:
-                    if s.status == "error" and s.fixture_name in vc_fixture_names:
+                    if (
+                        s.status == "error"
+                        and s.fixture_name in vc_fixture_names
+                        and s.fixture_name not in out_of_roots_names
+                    ):
                         print(
                             f"⚠ validator-claim '{s.fixture_name}': validator "
                             f"irresolvível — claim não verificável "
@@ -522,6 +587,32 @@ def run_qa(
                     "Ignorando — sandbox findings nao serao gerados nesta run.",
                     file=sys.stderr,
                 )
+
+        # A4 + A7: deriva findings dos stubs problemáticos (sandbox-breach,
+        # timeout, e validator irresolvível — in-roots-missing E out-of-roots).
+        derived = findings_from_sandbox_results(
+            stubs,
+            run_id=run_tree.run_id,
+            validator_claim_fixtures=vc_fixture_names,
+        )
+        all_findings.extend(derived)
+
+        # A8 (review pr27 r2): dedup — quando um validator-claim resolve
+        # irresolvível (in-roots-missing OU out-of-roots), o draft ORIGINAL
+        # validator-claim do auditor + o derivado validator-claim-unresolvable
+        # descreveriam o MESMO issue com 2 findings (vetores diferentes → sem
+        # dedup por fingerprint). Suprimimos o draft original pra reportar
+        # exatamente 1 finding por issue. Casamento por fixture_name (basename
+        # do fixture_path do draft ↔ fixture_name do stub).
+        unresolvable_names = {
+            getattr(r, "fixture_name", None)
+            for r in stubs
+            if getattr(r, "status", None) == "error"
+            and getattr(r, "fixture_name", None) in vc_fixture_names
+        }
+        all_findings = _suppress_superseded_validator_claims(
+            all_findings, unresolvable_names
+        )
 
         # F-4: hidrata evidence.sandbox_result nos drafts validator-claim a
         # partir dos MESMOS stubs (casando por basename do fixture). No-op
@@ -769,7 +860,7 @@ def _reconstruct_fixtures_from_findings(
     run_tree: RunTree,
     *,
     project_root: Path,
-) -> list[Fixture]:
+) -> _ReconstructResult:
     """CR-01: reconstrói ``Fixture`` executáveis a partir dos findings emitidos.
 
     O coração do fix: o engine roda a Phase 3 (sandbox) ELE MESMO, então
@@ -812,10 +903,13 @@ def _reconstruct_fixtures_from_findings(
             relativo ao canon de produção).
 
     Returns:
-        Lista de ``Fixture`` reconstruídas, ordem dos findings preservada.
-        Vazia quando não há fixture executável reconstruível.
+        ``_ReconstructResult`` com ``fixtures`` (executáveis, validator_path
+        dentro dos roots) + ``unresolvable_out_of_roots`` (validator-claim
+        rejeitados por escape de roots — A7, surfaçados como finding pelo
+        caller em vez de só logados). Ordem dos findings preservada.
     """
     fixtures: list[Fixture] = []
+    unresolvable: list[_UnresolvableValidatorClaim] = []
     seen_names: set[str] = set()
     allowed_roots = _allowed_validator_roots(project_root)
     for f in findings:
@@ -879,16 +973,34 @@ def _reconstruct_fixtures_from_findings(
         # A1 (review pr27): allowlist de roots. validator_path vem de uma
         # fixture LLM; um path absoluto fora ou ``../``-traversal apontaria o
         # sandbox pra QUALQUER .py do disco (arbitrary code execution). Rejeita
-        # aqui — o finding ainda entra no synthesis como draft (A4 deriva um
-        # finding de validator irresolvível downstream); só não vira Fixture
-        # executável.
+        # aqui — sem execução.
         if not validator_within_allowed_roots(validator, allowed_roots):
             print(
-                f"⚠ validator-claim '{Path(fixture_path).stem}' aponta "
+                f"⚠ validator-claim '{name}' aponta "
                 f"validator_path fora dos roots permitidos "
                 f"(project/validators/ ∪ FORGE_HOME/validators/): "
                 f"{validator_path}. Fixture NÃO executada (Decisão 30).",
                 file=sys.stderr,
+            )
+            # A7 (review pr27 r2): NÃO basta logar. O caso out-of-roots é o
+            # MAIS suspeito (possível tentativa de escape) e era dropado via
+            # ``continue`` → nunca virava Fixture → A4 nunca derivava finding →
+            # false-clean pro vetor "validator que mente". Registramos o claim
+            # como irresolvível pra o caller surfaçar um finding determinístico
+            # (validator-claim-unresolvable) e suprimir o draft original (A8).
+            unresolvable.append(
+                _UnresolvableValidatorClaim(
+                    fixture_name=name,
+                    error=(
+                        f"validator_path fora dos roots permitidos — possível "
+                        f"tentativa de escape (Decisão 30): {validator_path}"
+                    ),
+                    fingerprint=(
+                        f.get("fingerprint")
+                        if isinstance(f.get("fingerprint"), str)
+                        else None
+                    ),
+                )
             )
             continue
 
@@ -913,7 +1025,55 @@ def _reconstruct_fixtures_from_findings(
                 extra_args=extra_args,
             )
         )
-    return fixtures
+    return _ReconstructResult(
+        fixtures=fixtures, unresolvable_out_of_roots=unresolvable
+    )
+
+
+def _suppress_superseded_validator_claims(
+    findings: list[dict[str, Any]],
+    unresolvable_fixture_names: set[str | None],
+) -> list[dict[str, Any]]:
+    """A8 (review pr27 r2): remove o draft ``validator-claim`` ORIGINAL quando
+    um finding ``validator-claim-unresolvable`` o substitui pra a mesma fixture.
+
+    Sem isso, um claim irresolvível (in-roots-missing OU out-of-roots) gera
+    DOIS findings pro mesmo issue: o draft do auditor (vetor ``validator-claim``)
+    + o derivado pelo engine (vetor ``validator-claim-unresolvable``). Como os
+    vetores diferem, ``dedup_findings`` (que dedup por fingerprint canonical-
+    form, e fingerprint inclui o vetor) NÃO os colapsa. Suprimimos o draft
+    original — o derivado é mais informativo (carrega o erro de resolução) e
+    representa o estado real: o claim não pôde ser verificado.
+
+    Casamento conservador: só suprime um draft ``validator-claim`` cujo
+    ``Path(evidence.fixture_path).stem`` está em ``unresolvable_fixture_names``.
+    Drafts de fixtures resolvidas (que rodaram e podem ter findings legítimos)
+    permanecem intocados. Não muta o input — retorna lista nova.
+
+    Args:
+        findings: lista consolidada (drafts + derivados).
+        unresolvable_fixture_names: nomes de fixtures cujo validator-claim virou
+            irresolvível (do set de stubs status=error ∩ validator-claim).
+
+    Returns:
+        Lista nova sem os drafts ``validator-claim`` superseded.
+    """
+    if not unresolvable_fixture_names:
+        return list(findings)
+    out: list[dict[str, Any]] = []
+    for f in findings:
+        if not isinstance(f, dict) or f.get("vector") != "validator-claim":
+            out.append(f)
+            continue
+        ev = f.get("evidence")
+        fixture_path = ev.get("fixture_path") if isinstance(ev, dict) else None
+        if isinstance(fixture_path, str) and fixture_path:
+            name = Path(fixture_path).stem
+            if name in unresolvable_fixture_names:
+                # Superseded pelo validator-claim-unresolvable derivado — dedup.
+                continue
+        out.append(f)
+    return out
 
 
 def _write_sandbox_results(

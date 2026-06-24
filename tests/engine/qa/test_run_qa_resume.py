@@ -321,6 +321,243 @@ def test_resume_no_executable_fixtures_synthesizes_directly(
 
 
 # ---------------------------------------------------------------------------
+# A7 (review pr27 r2): validator_path fora dos roots → finding, não false-clean
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_out_of_roots_validator_path_surfaces_finding(tmp_path: Path) -> None:
+    """A7: um validator-claim cujo validator_path resolve FORA dos roots
+    permitidos (path absoluto fora ou ``../`` traversal) era dropado no
+    reconstruct via ``continue`` → nunca virava Fixture → A4 nunca derivava o
+    finding 'validator irresolvível' → só uma linha em stderr.
+
+    O caso MAIS suspeito (possível tentativa de escape) ficava false-clean. O
+    fix surfa um finding determinístico ``validator-claim-unresolvable`` também
+    pra esse caso — ambos os irresolvíveis (in-roots-missing E out-of-roots)
+    aparecem, não só um log.
+
+    Pré-fix: report.findings sem nenhum finding derivado do escape → effectively
+    clean. Pós-fix: há um finding surfaced (NOT clean).
+    """
+    slug = "out-of-roots-feature"
+    proj = _make_feature_project(tmp_path, slug)
+    wf = {"qa": {"enabled": True}}
+
+    run_qa(slug, project_root=proj, workflow_config=wf)
+    run_dir = _qa_run_dirs(proj, slug)[0]
+
+    fixture_id = "validator-claim-escape"
+    tree_rel = "src/main/kotlin/Offending.kt"
+    _materialize_fixture_tree(run_dir, fixture_id, tree_rel)
+
+    # validator_path com ``../`` traversal pra fora dos roots permitidos
+    # (project/validators/ ∪ FORGE_HOME/validators/) — tentativa de escape.
+    (run_dir / "findings" / "validator-claim.json").write_text(
+        json.dumps(
+            {
+                "findings": [
+                    _validator_claim_draft(
+                        f"fixtures/{fixture_id}.yaml",
+                        validator_path="validators/../../../../etc/escape.py",
+                        tree_rel_path=tree_rel,
+                        executable=True,
+                    )
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = run_qa(slug, project_root=proj, workflow_config=wf)
+    assert rc in (0, 1)
+    assert len(_qa_run_dirs(proj, slug)) == 1
+
+    report = json.loads((run_dir / "qa-report.json").read_text(encoding="utf-8"))
+    findings = report["findings"]
+    unresolvable = [
+        f for f in findings if f.get("vector") == "validator-claim-unresolvable"
+    ]
+    assert unresolvable, (
+        "A7: validator_path fora dos roots DEVE surfaçar um finding "
+        "validator-claim-unresolvable (não false-clean) — findings="
+        f"{[f.get('vector') for f in findings]}"
+    )
+    # E o finding deve indicar o motivo de escape no texto (description).
+    body = (unresolvable[0].get("description") or "") + (
+        unresolvable[0].get("title") or ""
+    )
+    assert "root" in body.lower() or "escape" in body.lower(), (
+        "A7: a description deveria indicar 'fora dos roots permitidos / "
+        f"escape' — recebi: {body!r}"
+    )
+
+
+@pytest.mark.integration
+def test_out_of_roots_validator_path_absolute_surfaces_finding(
+    tmp_path: Path,
+) -> None:
+    """A7 (variante): validator_path ABSOLUTO fora dos roots também surfa
+    finding (não só o caso ``../`` traversal)."""
+    slug = "out-of-roots-abs-feature"
+    proj = _make_feature_project(tmp_path, slug)
+    wf = {"qa": {"enabled": True}}
+
+    run_qa(slug, project_root=proj, workflow_config=wf)
+    run_dir = _qa_run_dirs(proj, slug)[0]
+
+    fixture_id = "validator-claim-abs"
+    tree_rel = "src/main/kotlin/Offending.kt"
+    _materialize_fixture_tree(run_dir, fixture_id, tree_rel)
+
+    outside = tmp_path / "outside" / "evil.py"
+    outside.parent.mkdir(parents=True, exist_ok=True)
+    outside.write_text("import sys; sys.exit(0)\n", encoding="utf-8")
+
+    (run_dir / "findings" / "validator-claim.json").write_text(
+        json.dumps(
+            {
+                "findings": [
+                    _validator_claim_draft(
+                        f"fixtures/{fixture_id}.yaml",
+                        validator_path=str(outside),
+                        tree_rel_path=tree_rel,
+                        executable=True,
+                    )
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = run_qa(slug, project_root=proj, workflow_config=wf)
+    assert rc in (0, 1)
+
+    report = json.loads((run_dir / "qa-report.json").read_text(encoding="utf-8"))
+    unresolvable = [
+        f
+        for f in report["findings"]
+        if f.get("vector") == "validator-claim-unresolvable"
+    ]
+    assert unresolvable, (
+        "A7: validator_path absoluto fora dos roots DEVE surfaçar finding "
+        f"unresolvable — findings={[f.get('vector') for f in report['findings']]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# A8 (review pr27 r2): dedup — 1 finding por issue irresolvível
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_unresolvable_in_roots_validator_claim_dedups_to_one_finding(
+    tmp_path: Path,
+) -> None:
+    """A8: um validator-claim in-roots-missing (validator_path dentro dos roots
+    mas o arquivo não existe) gerava DOIS findings pro mesmo issue: o draft
+    original do auditor (vetor validator-claim) + o derivado pelo engine (vetor
+    validator-claim-unresolvable). Vetores diferentes → dedup_findings não os
+    colapsava.
+
+    Fix: o draft original é suprimido quando o claim resolve irresolvível →
+    exatamente 1 finding por issue (o derivado, mais informativo)."""
+    slug = "in-roots-missing-feature"
+    proj = _make_feature_project(tmp_path, slug)
+    wf = {"qa": {"enabled": True}}
+
+    run_qa(slug, project_root=proj, workflow_config=wf)
+    run_dir = _qa_run_dirs(proj, slug)[0]
+
+    fixture_id = "validator-claim-missing"
+    tree_rel = "src/main/kotlin/Offending.kt"
+    _materialize_fixture_tree(run_dir, fixture_id, tree_rel)
+
+    # validator_path DENTRO dos roots (project/validators/) mas o arquivo NÃO
+    # existe → sandbox vira status=error (validator irresolvível in-roots).
+    # NÃO materializamos o validator.
+    (run_dir / "findings" / "validator-claim.json").write_text(
+        json.dumps(
+            {
+                "findings": [
+                    _validator_claim_draft(
+                        f"fixtures/{fixture_id}.yaml",
+                        validator_path="validators/nonexistent.py",
+                        tree_rel_path=tree_rel,
+                        executable=True,
+                    )
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = run_qa(slug, project_root=proj, workflow_config=wf)
+    assert rc in (0, 1)
+
+    report = json.loads((run_dir / "qa-report.json").read_text(encoding="utf-8"))
+    findings = report["findings"]
+    # A8: exatamente 1 finding pro issue — o validator-claim original suprimido,
+    # o validator-claim-unresolvable derivado presente.
+    vc_original = [f for f in findings if f.get("vector") == "validator-claim"]
+    vc_unresolvable = [
+        f for f in findings if f.get("vector") == "validator-claim-unresolvable"
+    ]
+    assert vc_unresolvable, "esperava o finding validator-claim-unresolvable"
+    assert not vc_original, (
+        "A8: o draft validator-claim original deveria ser suprimido (dedup) — "
+        f"recebi {len(vc_original)} draft(s) + {len(vc_unresolvable)} unresolvable"
+    )
+
+
+@pytest.mark.integration
+def test_resolved_validator_claim_draft_is_preserved(tmp_path: Path) -> None:
+    """A8 (guarda): um validator-claim RESOLVIDO (validator existe e roda) NÃO
+    é suprimido — o draft original permanece (não é irresolvível)."""
+    slug = "resolved-claim-feature"
+    proj = _make_feature_project(tmp_path, slug)
+    wf = {"qa": {"enabled": True}}
+
+    run_qa(slug, project_root=proj, workflow_config=wf)
+    run_dir = _qa_run_dirs(proj, slug)[0]
+
+    validator_rel = _write_lying_validator(proj)
+    fixture_id = "validator-claim-foo"
+    tree_rel = "src/main/kotlin/Offending.kt"
+    _materialize_fixture_tree(run_dir, fixture_id, tree_rel)
+    (run_dir / "findings" / "validator-claim.json").write_text(
+        json.dumps(
+            {
+                "findings": [
+                    _validator_claim_draft(
+                        f"fixtures/{fixture_id}.yaml",
+                        validator_path=validator_rel,
+                        tree_rel_path=tree_rel,
+                        executable=True,
+                    )
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = run_qa(slug, project_root=proj, workflow_config=wf)
+    assert rc in (0, 1)
+
+    report = json.loads((run_dir / "qa-report.json").read_text(encoding="utf-8"))
+    vc_original = [
+        f for f in report["findings"] if f.get("vector") == "validator-claim"
+    ]
+    vc_unresolvable = [
+        f
+        for f in report["findings"]
+        if f.get("vector") == "validator-claim-unresolvable"
+    ]
+    assert vc_original, "validator-claim resolvido deveria preservar o draft"
+    assert not vc_unresolvable, "claim resolvido não deveria virar unresolvable"
+
+
+# ---------------------------------------------------------------------------
 # A6 (review pr27 r2): phase-3 checkpoint → resume confia no sandbox completo
 # ---------------------------------------------------------------------------
 
