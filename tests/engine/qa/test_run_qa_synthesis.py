@@ -119,3 +119,93 @@ def test_validator_claim_evidence_hydrated_in_report(tmp_path: Path) -> None:
     assert sr["exit_code"] == 0
 
     validate_qa_report(final)
+
+
+def _validator_claim_executable_draft(
+    fixture_path: str, validator_path: str, tree_rel_path: str
+) -> dict:
+    """Draft validator-claim executável (reconstrói uma Fixture real)."""
+    d = _validator_claim_draft(fixture_path)
+    d["evidence"]["validator_path"] = validator_path
+    d["evidence"]["tree_rel_path"] = tree_rel_path
+    d["executable"] = True
+    return d
+
+
+@pytest.mark.integration
+def test_stale_sandbox_results_rerun_when_checkpoint_below_phase_3(
+    tmp_path: Path,
+) -> None:
+    """A3 (review pr27): sandbox-results.json existente mas checkpoint phase < 3
+    é STALE — engine re-roda o sandbox em vez de confiar no arquivo.
+
+    Cenário: crash após write parcial de sandbox-results.json, antes de
+    synthesis. O resume não pode replay verbatim um arquivo de fase incompleta.
+    """
+    slug = "stale-feature"
+    proj = _make_feature_project(tmp_path, slug)
+    workflow_config = {"qa": {"enabled": True}}
+
+    # Validator sintético no project/validators/ (root allowed pela A1) que
+    # escaneia o mini-tree e sai 1 se achar Offending.kt.
+    (proj / "validators").mkdir(parents=True)
+    (proj / "validators" / "vc_validator.py").write_text(
+        "import argparse, sys\n"
+        "from pathlib import Path\n"
+        "p = argparse.ArgumentParser()\n"
+        "p.add_argument('--project-root', required=True)\n"
+        "args, _ = p.parse_known_args()\n"
+        "hits = list(Path(args.project_root).rglob('Offending.kt'))\n"
+        "sys.exit(1 if hits else 0)\n",
+        encoding="utf-8",
+    )
+
+    scope = resolve_scope(slug, project_root=proj)
+    rt = create_run_tree(scope, project_root=proj)
+
+    # Materializa o mini-tree do contra-exemplo dentro de fixtures/<name>/.
+    mini_tree = rt.fixtures_dir / "validator-claim-foo" / "src"
+    mini_tree.mkdir(parents=True)
+    (mini_tree / "Offending.kt").write_text("// offending\n", encoding="utf-8")
+
+    draft = _validator_claim_executable_draft(
+        fixture_path="fixtures/validator-claim-foo.yaml",
+        validator_path="validators/vc_validator.py",
+        tree_rel_path="src/Offending.kt",
+    )
+    (rt.findings_dir / "validator-claim.json").write_text(
+        json.dumps({"findings": [draft]}), encoding="utf-8"
+    )
+
+    # sandbox-results.json STALE: entrada que NÃO corresponde a nenhuma fixture
+    # atual (basename inventado) — simula write de fase incompleta.
+    (rt.root / "sandbox-results.json").write_text(
+        json.dumps(
+            [{"fixture_name": "STALE-GHOST", "status": "ok", "exit_code": 0}]
+        ),
+        encoding="utf-8",
+    )
+
+    from engine.qa import _write_qa_report_skeleton
+
+    _write_qa_report_skeleton(scope, rt, QAConfig())
+    # Checkpoint phase 0 (< 3): sandbox NÃO completou — o arquivo é stale.
+    write_checkpoint(
+        rt.root,
+        run_id=rt.run_id,
+        scope_type=scope.type,
+        scope_target=scope.target,
+        last_phase_completed=0,
+        findings_partial_count=1,
+    )
+
+    run_qa(slug, project_root=proj, workflow_config=workflow_config)
+
+    # O engine re-rodou: a entrada STALE-GHOST sumiu, e a fixture real
+    # (validator-claim-foo) aparece no sandbox-results regenerado.
+    results = json.loads(
+        (rt.root / "sandbox-results.json").read_text(encoding="utf-8")
+    )
+    names = {r.get("fixture_name") for r in results}
+    assert "STALE-GHOST" not in names, "engine confiou no sandbox-results stale"
+    assert "validator-claim-foo" in names, "engine não re-rodou o sandbox"

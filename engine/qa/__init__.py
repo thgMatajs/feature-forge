@@ -32,6 +32,7 @@ Voz: mentor calmo. Sem auto-fix — verdict BLOCK exige escolha humana via
 from __future__ import annotations
 
 import json
+import os
 import signal
 import sys
 from datetime import datetime, timezone
@@ -399,11 +400,35 @@ def run_qa(
         # Idempotente: só roda quando sandbox-results.json não existe. Sem
         # fixtures executáveis → run_sandbox([]) == [] → não escreve arquivo
         # vazio (não é settle "prematuro"; é legítimo não haver nada a rodar).
+        #
+        # A3 (review pr27): existência NÃO é suficiente pra confiar num arquivo
+        # que o ENGINE deveria ter escrito. Um crash após write parcial/torn
+        # (pré-A3) ou antes de synthesis deixa um sandbox-results.json de FASE
+        # INCOMPLETA que o resume replay-aria verbatim, sem vínculo com os
+        # findings/fixtures atuais.
+        #
+        # Discriminador: o engine só é dono da Phase 3 quando há fixtures
+        # executáveis reconstruíveis dos findings. Nesse caso, a confiança no
+        # arquivo existente exige um checkpoint atestando phase >= 3
+        # (sandbox-done); sem isso o arquivo é stale e re-rodamos (o write
+        # atômico sobrescreve íntegro). Quando NÃO há fixtures executáveis, o
+        # arquivo veio do conductor (estados legados/degradados, §5.3) ou é
+        # legítimo — preservamos o comportamento original e confiamos nele.
         sandbox_results_file = run_tree.root / "sandbox-results.json"
-        if not sandbox_results_file.exists():
-            fixtures = _reconstruct_fixtures_from_findings(
-                all_findings, run_tree, project_root=project_root
-            )
+        fixtures = _reconstruct_fixtures_from_findings(
+            all_findings, run_tree, project_root=project_root
+        )
+        sandbox_phase_complete = (
+            resumed_checkpoint is not None
+            and resumed_checkpoint.last_phase_completed >= 3
+        )
+        # Re-rodar quando o engine é dono (há fixtures) E ou o arquivo não
+        # existe ou existe mas a fase do sandbox não concluiu (stale).
+        engine_owns_sandbox = bool(fixtures)
+        sandbox_results_trustworthy = sandbox_results_file.exists() and (
+            sandbox_phase_complete or not engine_owns_sandbox
+        )
+        if not sandbox_results_trustworthy:
             if fixtures:
                 _phase[0] = 2  # entrando na Phase 3 (sandbox)
                 # Recomputa extras autorizados aqui (idempotente, fail-safe a
@@ -872,10 +897,24 @@ def _write_sandbox_results(
         }
         for r in results
     ]
-    (run_tree.root / "sandbox-results.json").write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    # A3 (review pr27): write ATÔMICO (tmp + os.replace + fsync). O plain
+    # write_text anterior podia deixar um arquivo torn/parcial se o processo
+    # morresse no meio do flush — o resume então replay-aria lixo verbatim.
+    # os.replace é atômico em POSIX e Windows pra rename same-filesystem.
+    target = run_tree.root / "sandbox-results.json"
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    try:
+        with tmp.open("w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2, ensure_ascii=False)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, target)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
 
 def _mask_var_name(name: str) -> str:
