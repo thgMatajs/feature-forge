@@ -692,7 +692,6 @@ def _close_provider_deps(
 def _resolver_error_gate(
     errors: list[str],
     *,
-    selected_names: list[str],
     project_root: Path,
 ) -> str:
     """Gate de resolver-errors — PAUSA pra escolha (exit 2), não aborta (P-10).
@@ -743,23 +742,50 @@ def _drop_unresolvable_cards(
 ) -> list[CardManifest]:
     """Remove do conjunto os cards citados nos erros do resolver (best-effort).
 
-    Parse por prefixo estável das mensagens do resolver
-    (``DEP-MISSING``/``CONFLICT-*``: ``card '<name>' …``). Determinístico,
-    preserva a ordem original. NÃO é resolução completa — só uma poda do
-    subconjunto problemático pra um re-resolve no caminho "c" do gate.
+    M2: parse ANCORADO aos prefixos estáveis das mensagens do resolver
+    (``engine/cards/resolver.py``), em vez de varrer qualquer texto entre
+    colchetes (que casaria listas não relacionadas se o wording mudasse).
+    Só processamos linhas que começam com um marcador conhecido, e dentro
+    delas extraímos os ofensores nas posições estruturais conhecidas:
+
+    - ``DEP-MISSING: card '<name>' requires …``        → <name>
+    - ``CONFLICT-NAME: card '<name>' declares … '<x>'…``→ <name> (e <x>)
+    - ``CONFLICT-SINGULAR: … provided by multiple cards: [<list>]`` → lista
+    - ``CONFLICT-LABEL: card '<name>' … also provided by: [<list>]``
+      → <name> + lista
+
+    Determinístico, preserva a ordem original. NÃO é resolução completa —
+    só uma poda do subconjunto problemático pra um re-resolve no caminho "c"
+    do gate.
     """
     import re
 
+    # Marcadores conhecidos: só linhas com um destes prefixos são parseadas.
+    _KNOWN_PREFIXES = (
+        "DEP-MISSING:",
+        "CONFLICT-NAME:",
+        "CONFLICT-SINGULAR:",
+        "CONFLICT-LABEL:",
+    )
+    _card_name_re = re.compile(r"card '([^']+)'")
+    _bracket_list_re = re.compile(r"\[([^\]]*)\]")
+
     flagged: set[str] = set()
     for err in errors:
-        for match in re.finditer(r"card '([^']+)'", err):
+        stripped = err.strip()
+        if not stripped.startswith(_KNOWN_PREFIXES):
+            continue  # wording desconhecido — não arrisca poda incorreta
+        # Nome do card ofensor (posição ``card '<name>'`` — primeiro match).
+        for match in _card_name_re.finditer(stripped):
             flagged.add(match.group(1))
-        # CONFLICT-SINGULAR lista os providers numa list literal `[...]`.
-        for match in re.finditer(r"\[([^\]]*)\]", err):
-            for token in match.group(1).split(","):
-                name = token.strip().strip("'\"")
-                if name:
-                    flagged.add(name)
+        # Listas de providers em colisão SÓ existem nos marcadores de
+        # conflito singular/label — ancoradas a esses prefixos.
+        if stripped.startswith(("CONFLICT-SINGULAR:", "CONFLICT-LABEL:")):
+            for match in _bracket_list_re.finditer(stripped):
+                for token in match.group(1).split(","):
+                    name = token.strip().strip("'\"")
+                    if name:
+                        flagged.add(name)
     return [c for c in selected_cards if c.name not in flagged]
 
 
@@ -1553,9 +1579,13 @@ def _run_pipeline(project_root: Path) -> int:
                 )
                 return fail_with_tag(ERR_ABORTED)
             elif resume_choice == "resume":
-                # WS-A-2 (P-11): resume REAL — continua do step salvo,
-                # reaproveitando preset/selected_card_names. O pipeline regrava
-                # o checkpoint no final via _clear_checkpoint ao completar.
+                # WS-A-2 (P-11): resume — continua do step salvo reaproveitando
+                # o PRESET salvo (pula só a confirmação do Step 4). O backend
+                # (Step 5) é re-confirmado a partir desse preset; os
+                # selected_card_names salvos NÃO são reaproveitados pra avançar
+                # — só foram regravados acima pra manter o checkpoint de audit
+                # íntegro. Escopo R1 "conservador": resume volta à seleção de
+                # backend. O pipeline limpa o checkpoint ao completar.
                 _resume_step = str(
                     existing_checkpoint.get("step") or "step-1-greeting"
                 )
@@ -1658,7 +1688,8 @@ def _run_pipeline(project_root: Path) -> int:
         renderer.write(
             renderer.colored(
                 f"Resume: preset {_resume_preset} já confirmado num ciclo "
-                "anterior — sigo direto pro backend selection.",
+                "anterior — re-confirmo o backend a partir dele (a seleção "
+                "de cards é refeita aqui, não reaproveitada do checkpoint).",
                 "dim_grey",
             )
         )
@@ -1785,7 +1816,6 @@ def _run_pipeline(project_root: Path) -> int:
         # cosmético + fail_with_tag — o 3-caminhos não aceitava escolha.
         choice = _resolver_error_gate(
             res.errors,
-            selected_names=[c.name for c in selected_cards],
             project_root=project_root,
         )
         if choice == "a":
@@ -1801,6 +1831,16 @@ def _run_pipeline(project_root: Path) -> int:
         # choice == "c": filtra os cards citados em DEP-MISSING/CONFLICT e
         # re-resolve o subconjunto. Se o subconjunto resolve, segue; senão aborta.
         resolvable = _drop_unresolvable_cards(selected_cards, res.errors)
+        # M3: se a filtragem removeu TODOS os cards, não re-resolvemos lista
+        # vazia (resolve([]) instalaria zero cards silenciosamente). Aborta
+        # com mensagem clara.
+        if not resolvable:
+            renderer.write(
+                renderer.colored(
+                    "Nada resta resolvível — abortado.", "yellow"
+                )
+            )
+            return fail_with_tag(ERR_ABORTED)
         res = resolve(resolvable, user_provided_capabilities=LATENT_CAPS)
         if res.errors:
             renderer.write(
