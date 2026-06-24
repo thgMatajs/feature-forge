@@ -83,25 +83,26 @@ Extension auditors registrados em `qa-extensions` rodam na phase que o
 card declara (`static` ou `generative`) — você dispatcha cada um com o
 mesmo overlay. Sem extensão = só os 4 core.
 
-**Phase 3 — Sandbox execution** (core Python, devolve controle).
-Você termina Phase 2 e re-invoca `engine.qa.run_qa(run_id, resume="phase-3")`.
-Sandbox roda subprocess hardened contra cada fixture com `executable: true`.
+**Phase 3 — Sandbox execution** (core Python, **o engine roda**).
+Você termina Phase 2 (findings + fixtures escritos) e re-invoca
+`forge qa <target>` — o **mesmo comando**, sem flag, sem run-id explícito
+(Decisão 10: zero flags). O engine reata a run em andamento via checkpoint
+(`find_resumable_run`) e, com findings presentes E `sandbox-results.json`
+ausente, **roda o sandbox ELE MESMO**: reconstrói as `Fixture` executáveis a
+partir dos findings validator-claim que você emitiu (`evidence.fixture_path` /
+`validator_path` / `tree_rel_path`), invoca `run_sandbox` subprocess hardened
+contra cada uma, e **escreve `sandbox-results.json`** no run dir. Você **não**
+roda subprocess — sandbox é core Python (veredito do mantenedor: engine é dono
+da Phase 3).
 
-**Após Phase 3 — escreva `sandbox-results.json`** (obrigatório pra
-ativar findings determinísticos):
-
-Após `run_qa` retornar o controle pós-sandbox, você serializa a lista
-de `SandboxResult` em `.planning/qa/<slug>/<run-id>/sandbox-results.json`.
-Shape esperado (lista de dicts):
+**`sandbox-results.json` é escrito pelo ENGINE** (não por você). O arquivo é o
+contrato consumido por Phase 4 synthesis pra derivar findings determinísticos
+de `status=sandbox-breach` (critical, always BLOCK) e `status=timeout`
+(medium), e pra hidratar `evidence.sandbox_result` nos findings
+validator-claim. Shape (lista de dicts, escrita pelo engine):
 
 ```json
 [
-  {
-    "fixture_name": "chaos-null-token",
-    "status": "ok",
-    "exit_code": 0,
-    "duration_s": 0.42
-  },
   {
     "fixture_name": "validator-claim-traversal",
     "status": "sandbox-breach",
@@ -110,62 +111,64 @@ Shape esperado (lista de dicts):
     "duration_s": 0.11
   },
   {
-    "fixture_name": "chaos-slow-loop",
-    "status": "timeout",
-    "exit_code": null,
-    "duration_s": 15.0
+    "fixture_name": "validator-claim-empty-email",
+    "status": "ok",
+    "exit_code": 0,
+    "duration_s": 0.42
   }
 ]
 ```
 
 Status reconhecidos: `ok | timeout | sandbox-breach | skipped-budget | error`.
-Campos opcionais: `exit_code`, `stdout`, `stderr`, `duration_s`, `error`.
+Campos: `fixture_name`, `status`, `exit_code`, `stdout`, `stderr`,
+`duration_s`, `error`, `truncated`.
 
-**Por que importa:** Phase 4 synthesis usa este arquivo pra derivar
-findings determinísticos pra `status=sandbox-breach` (critical, always
-BLOCK) e `status=timeout` (medium). Sem este arquivo, esses findings
-ficam dependentes do synthesizer LLM inferir do stderr — fragile. Com
-ele, `synthesis.findings_from_sandbox_results` emite os findings em
-contrato deterministic, independente do auditor LLM ter chamado
-atenção pra eles.
+**Contrato status → auto-finding (synthesis §5.3):** nem todo status vira
+finding determinístico. Só `sandbox-breach` (→ critical, always BLOCK) e
+`timeout` (→ medium) geram finding automático. `ok` e `skipped-budget`
+**não geram nada**. `error` é condicional: num fixture **validator-claim** o
+engine deriva um finding `validator-claim-unresolvable` (medium — claim não
+verificável, não settla clean); `error` fora de validator-claim **não gera
+finding** (pode ser bug do validator, não do sandbox — fica pro auditor LLM
+julgar). O campo `truncated` (output capeado em 1 MiB/stream, defesa DoS) é
+informativo — não muda o status nem dispara finding por si só.
+
+**Como o engine reconstrói as Fixtures:** o auditor validator-claim materializa
+o arquivo do contra-exemplo em `fixtures/<fixture_id>/<tree_rel_path>` e
+referencia em `findings/validator-claim.json` via `evidence.fixture_path`
+(descritor — o `stem` é o `fixture_id`), `evidence.validator_path` (canon de
+produção) e `evidence.tree_rel_path`. O engine usa esses 3 campos pra montar
+`Fixture(name=<fixture_id>, validator_path=..., tree_rel_path=..., input_path=
+fixtures/<fixture_id>/<tree_rel_path>)` e invocar o validator com
+`--project-root <mini-tree>`. Por isso você **deve** preencher os 3 campos no
+finding — sem eles o engine pula a fixture (não roda o sandbox pra ela).
 
 ### Sandbox env (QA-11)
 
-O `conductor-handoff.json` inclui o campo `config.allowed_env_extras`
-(lista de env vars autorizadas pelos cards ativos do projeto + grants do
-user em `workflow-config.qa.sensitive-env-grants`). Quando você invocar
-o sandbox subprocess (direta ou indiretamente via
-`engine.qa.sandbox.run_sandbox`), PRECISA passar essa lista como
-parâmetro `extras=` pra que essas vars cheguem ao subprocess. Sem isso,
-o subprocess recebe apenas o `CORE_ALLOWLIST` minimal e cards que pedem
-`JAVA_HOME`, `ANDROID_HOME`, etc. quebram com erro de config ausente
-mesmo que o user já tenha declarado e granted as vars corretamente.
-
-Exemplo Python (caso você dispatche subprocess direto):
-
-```python
-from engine.qa.sandbox import run_sandbox
-import json
-handoff = json.loads((run_dir / "conductor-handoff.json").read_text())
-extras = handoff["config"].get("allowed_env_extras", [])
-results = run_sandbox(run_dir, fixtures, extras=extras, ...)
-```
-
-Vars sensitive (`TOKEN`/`SECRET`/`PASSWORD`/`AUTH`/`CREDENTIAL`/`API_KEY`/
-`PRIVATE_KEY`) que **não** tiveram grant explícito do user JÁ foram
-filtradas no engine antes de chegar ao handoff — `allowed_env_extras` só
-contém o que é seguro repassar. Sua responsabilidade é apenas propagar a
-lista intacta ao subprocess; sem filtragem extra, sem invenção de vars.
+O `conductor-handoff.json` inclui `config.allowed_env_extras` (env vars
+autorizadas pelos cards ativos + grants do user em
+`workflow-config.qa.sensitive-env-grants`). O **engine** consome esse campo e
+passa como `extras=` ao invocar `run_sandbox` na Phase 3 — você não precisa
+fazer nada com ele. Vars sensitive
+(`TOKEN`/`SECRET`/`PASSWORD`/`AUTH`/`CREDENTIAL`/`API_KEY`/`PRIVATE_KEY`) sem
+grant explícito JÁ foram filtradas no engine; `allowed_env_extras` só contém o
+que é seguro repassar.
 
 **Phase 4 — Synthesis** (você dispatcha após Phase 3 completar):
 
 - `Agent[qa-synthesizer]` → consome `findings/*.json` (4 core + N extension)
-  + `sandbox-results.json` → escreve `qa-report.json` final com verdict.
+  + `sandbox-results.json` (escrito pelo engine) → escreve `qa-report.json`
+  final com verdict.
 
 **Phase 5 — Emit** (core Python, devolve controle).
-Re-invoca `engine.qa.run_qa(run_id, resume="phase-5")`. Emite
-proposed-evolutions, imprime relatório cinemático, sai com exit code
-0 (PASS/FLAG) ou 8 (BLOCK).
+Re-invoca `forge qa <target>` — o **mesmo comando**, sem flag nem run-id
+explícito. O engine reata a run via checkpoint e infere a phase pelo estado:
+com `qa-report.json` finalizado (synthesis rodou) ele emite proposed-evolutions,
+imprime relatório cinemático, **limpa o checkpoint** (a run deixa de ser
+resumível) e sai com exit code 0 (PASS/FLAG) ou 1 + `[FORGE-ERR:QA-BLOCK]` em
+stderr (BLOCK), conforme `docs/design/06-command-surface.md`. Você **não** passa
+`resume=phase-N` — esse contrato não existe no engine; a phase é inferida pelo
+estado da run tree.
 
 ---
 
@@ -208,8 +211,9 @@ ao conductor + finding qa-auditor-malformed severity=high é gerado.
 - `.planning/qa/<slug>/<run-id>/fixtures/*` populados (Phase 2 + extensions
   generative).
 - `qa-report.json` finalizado pelo synthesizer (verdict ∈ {BLOCK, FLAG, PASS}).
-- Controle devolvido a `engine.qa.run_qa` pra Phase 3 (entre Phase 2 e 4)
-  e Phase 5 (após Phase 4).
+- Controle devolvido a `engine.qa.run_qa` pra Phase 3 (entre Phase 2 e 4 — o
+  engine roda o sandbox e escreve `sandbox-results.json`) e Phase 5 (após
+  Phase 4).
 
 ---
 
@@ -220,8 +224,11 @@ ao conductor + finding qa-auditor-malformed severity=high é gerado.
 - **Não invente attack vectors** fora dos 4 baseline (spec-vs-spec,
   coverage, chaos, validator-claim) + extensions registrados via
   `qa-extensions`. Sem registro = sem auditor.
-- **Não invada Phase 3 ou Phase 5** — sandbox subprocess e emit de
-  proposed-evolutions são core Python only. Devolva controle.
+- **Não invada Phase 3 ou Phase 5** — sandbox subprocess (o engine reconstrói
+  Fixtures dos findings, roda `run_sandbox` e escreve `sandbox-results.json`) e
+  emit de proposed-evolutions são **core Python only**. Você termina Phase 2,
+  re-invoca `forge qa <target>`, e devolve controle — sem rodar subprocess nem
+  escrever `sandbox-results.json` você mesmo.
 - **Não dispatche sub-agents sem o pacote de contexto acima** — auditor
   sem allowed-files explícito ou sem overlay declarado improvisa.
 - **Não combine outputs** — cada auditor escreve no SEU arquivo de findings.

@@ -1,13 +1,43 @@
-# Validator-claim fixture template — input pra subprocess do sandbox.
-# Auditor preenche shape que DEVERIA fazer o validator falhar.
+# Validator-claim fixture — descritor do arquivo que o validator DEVERIA pegar.
+#
+# Contrato pós-F-1: validators forge reais leem `--project-root <tree>` e
+# escaneiam a árvore (não um input posicional). O auditor materializa o
+# arquivo do contra-exemplo num mini-tree dentro do sandbox
+# (`fixtures/<fixture_id>/<tree_rel_path>`); o sandbox invoca o validator com
+# `--project-root <mini-tree>` e o validator escaneia o tree. Se ele passar
+# (exit 0) quando o arquivo viola a regra, o validator mente sobre cobertura.
+#
+# O auditor preenche: (a) tree_rel_path — onde o arquivo mora no mini-tree;
+# (b) file_content — o conteúdo que o validator deveria pegar; (c) a claim.
 
 fixture_id: "{{fixture_id}}"
-target_validator: "{{validator_path}}"
-language: "yaml"
+target_validator: "{{validator_path}}"  # validators/<name>.py do contract
 
-input: {}                              # payload sintético preenchido pelo auditor
+# Path relativo do arquivo dentro do mini-tree. A extensão reflete o que o
+# validator escaneia (ex.: src/main/kotlin/Offending.kt, tasks/TASK-0001.yaml).
+tree_rel_path: "{{tree_rel_path}}"
+
+# Conteúdo do arquivo materializado no mini-tree — o contra-exemplo que viola
+# o claim do validator. Escreva no formato/linguagem que o validator escaneia.
+file_content: |
+  {{file_content}}
 
 claim:
   what_validator_says: "{{claim}}"     # docstring/spec do validator
   what_we_test: "{{counter_example}}"  # contra-exemplo que viola o claim
   expected_exit_code: 1                # validator deveria sinalizar falha
+
+# OPCIONAL — argumentos extra que o sandbox apenda à invocação do validator.
+# Declare quando o validator-alvo é feature/task-scoped e EXIGE --scope/--id
+# (ex.: validate_task_contract.py sai 2/warn sem eles). Omita pra validators
+# que só leem --project-root.
+#
+# HARDENING (Decisão 30): o ENGINE controla o --project-root (sempre o mini-tree
+# do sandbox). O sandbox aplica um ALLOWLIST a estes args — só --scope e --id
+# (com seus valores) passam; QUALQUER outro token é DROPADO, incluindo
+# --project-root e suas abreviações (--p/--proj/--project/--project-roo, formas
+# espaço ou "="). Você NÃO pode redirecionar o root pra fora do sandbox: a
+# tentativa é descartada, não interpretada. (Defense-in-depth: os validators
+# forge também rodam com allow_abbrev=False.)
+#
+# invocation_args: ["--scope", "feature", "--id", "<slug>"]

@@ -2,7 +2,7 @@
 
 A standalone CLI skill that orchestrates end-to-end planning + implementation of mobile features across Android, iOS, KMP, and Web. Backend-agnostic (Firebase, REST, GraphQL, local-only).
 
-> **State:** 1.5.0 cortado · campanha pré-piloto completa em main · 2026-06-19 · rapid 1915 / integration 216 / e2e 31 passed (W-DEBT dívida residual: PHANTOM-STATES removido + CARDS-DISCONNECT + ABORTED-DEADEND + PLACEHOLDER-VERIFY + SCHEMA/STALE guards + readiness non-product + FORGE_HOME driver doctor + cleanup; W3 token economy: output-mode + read-commands `--json` + `--help --json` manifesto + workflow router, Revisita Decisão 10; W2 protocol robustness; camada de interação AI-first Wave 1: driver `SKILL.md`/`AGENTS.md` + front-door ticket/frase + grounded-challenge Phase 2.5 + readiness enforce + CASING-BUG fix; remediação cross-AI review PR #17; install.sh curl one-liner + forge upgrade + bash 3.2 portável; Wave 3 bug-fix sprint; Wave 2 host-aware execution; graph-ia-evolution ✅ shipped; PR #16 master review fix-pack Wave A+B+C aplicado integralmente) · 22 validators · 14 comandos · 29 cards · 4 bundles · 6 parsers (kotlin/swift/typescript + java/xml/objc) · driver `skills/feature-forge/SKILL.md` + `templates/AGENTS.md.template` · ~400 arquivos · ~52.5K LOC
+> **State:** 1.5.0 cortado · campanha pré-piloto completa em main · 2026-06-19 · rapid 1946 / integration 222 / e2e 31 passed (W-DEBT dívida residual: PHANTOM-STATES removido + CARDS-DISCONNECT + ABORTED-DEADEND + PLACEHOLDER-VERIFY + SCHEMA/STALE guards + readiness non-product + FORGE_HOME driver doctor + cleanup; W3 token economy: output-mode + read-commands `--json` + `--help --json` manifesto + workflow router, Revisita Decisão 10; W2 protocol robustness; camada de interação AI-first Wave 1: driver `SKILL.md`/`AGENTS.md` + front-door ticket/frase + grounded-challenge Phase 2.5 + readiness enforce + CASING-BUG fix; remediação cross-AI review PR #17; install.sh curl one-liner + forge upgrade + bash 3.2 portável; Wave 3 bug-fix sprint; Wave 2 host-aware execution; graph-ia-evolution ✅ shipped; PR #16 master review fix-pack Wave A+B+C aplicado integralmente) · 22 validators · 14 comandos · 29 cards · 4 bundles · 6 parsers (kotlin/swift/typescript + java/xml/objc) · driver `skills/feature-forge/SKILL.md` + `templates/AGENTS.md.template` · ~400 arquivos · ~52.5K LOC
 
 ## What it is
 
@@ -122,7 +122,7 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 | Validators Python | 22 + 3 helpers (`_gate_infra`, `_diff`, `_common`) — inclui `check_cyclomatic_complexity` (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon), `check_secrets` (gitleaks + trufflehog), `check_no_behavior_change` (refactor), `validate_extension_feature` (extends-feature cross-cutting), `validate_presets` (Phase B DET-6 — bundle YAML schema) |
 | Hooks | 9 + 1 reuse incremental (`post-edit-detect-duplications.sh`) |
 | Graph parsers | 6 (Kotlin / Swift / TypeScript + Java / XML / Objective-C — Java/XML/ObjC novos em v1.3.0 graph-ia-evolution). Body extraction (`symbols.body`) cobre brace-delimited bodies (5 linguagens; XML é NULL). |
-| Tests | rapid **1915 passed** / integration **216 passed** / e2e **31 passed** (pilot R6 — blockers AI-first P-17/18/19/20/24 + review holístico WR-01..04; suíte full 2162 passed / 18 skipped). Histórico: 1885/215/31 em pilot R4; 1863/204/30 em 1.5.0; 1797/190/30 na série AI-first; 1611/168/30 em 1.4.0 pilot-ready. Baseline histórico em CHANGELOG.md. |
+| Tests | rapid **1946 passed** / integration **222 passed** / e2e **31 passed** (pilot R8 — qa flow polish: validator_path FORGE_HOME fallback + invocation_args + actual_exit_code stale removido; suíte full 2199 passed / 18 skipped). Histórico: 1937/222/31 em pilot R7; 1915/216/31 em pilot R6; 1885/215/31 em pilot R4; 1863/204/30 em 1.5.0; 1797/190/30 na série AI-first; 1611/168/30 em 1.4.0 pilot-ready. Baseline histórico em CHANGELOG.md. |
 | LOC total | ~52.500 |
 | Engine LOC | ~33.500 (Python; engine/ apenas — validators/ adicional ~7.300) |
 | Files total | ~400 |
@@ -193,7 +193,7 @@ explicitamente.
   presets/kmp-mobile/                   canonical preset v1
   validators/                           22 validators + 3 helpers (inclui check_cyclomatic_complexity + check_secrets + check_unfilled_placeholders + validate_extension_feature)
   hooks/                                9 hooks + reuse incremental script
-  tests/                                rapid 1915 / integration 216 / e2e 31 (unit + integration + e2e)
+  tests/                                rapid 1946 / integration 222 / e2e 31 (unit + integration + e2e)
 
 [per project install via `forge init`]
 {project}/.claude/forge/                sub-namespace forge (v1.3+)

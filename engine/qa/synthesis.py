@@ -19,6 +19,7 @@ API publica:
     from engine.qa.synthesis import (
         synthesize, canonical_fingerprint, dedup_findings,
         compute_verdict, SynthesisResult,
+        hydrate_validator_claim_evidence,
     )
 
     result = synthesize(draft_findings)
@@ -29,8 +30,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from collections import Counter
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal
 
 from engine.utils.sha256 import normalise_description
@@ -131,6 +134,7 @@ def findings_from_sandbox_results(
     results: list[Any],
     *,
     run_id: str | None = None,
+    validator_claim_fixtures: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Converte SandboxResult/SandboxResultStub problematicos em findings.
 
@@ -140,9 +144,15 @@ def findings_from_sandbox_results(
       - ``status == "timeout"`` -> finding severity=medium,
         vector=sandbox-timeout.
 
-    Status ``ok`` / ``skipped-budget`` / ``error`` nao geram findings
-    automaticos (``error`` pode ser bug do validator nao do sandbox —
-    deixar pro auditor LLM julgar).
+    A4 (review pr27): ``status == "error"`` num fixture VALIDATOR-CLAIM
+    (``fixture_name`` em ``validator_claim_fixtures``) -> finding
+    severity=medium, vector=validator-claim-unresolvable. Antes isso era
+    DROPADO; pro vetor "validator que mente", um validator irresolvível
+    (project nem FORGE_HOME) significava NO evidence + NO sinal → false-clean.
+    Agora é surfaced. ``error`` de fixtures fora desse set continua dropado
+    (pode ser bug do validator, não do sandbox — deixa pro auditor LLM julgar).
+
+    Status ``ok`` / ``skipped-budget`` nao geram findings automaticos.
 
     Os findings sao deterministicos: fingerprint canonical-form (Decisao
     25) garante que re-runs com mesmo breach/timeout dedupam corretamente
@@ -175,13 +185,41 @@ def findings_from_sandbox_results(
             fixture_name = "unknown-fixture"
 
         status = getattr(r, "status", "ok")
-        if status not in ("sandbox-breach", "timeout"):
+        # A4: ``error`` só vira finding pra fixture validator-claim conhecido.
+        vc_set = validator_claim_fixtures or set()
+        is_unresolvable_vc = status == "error" and fixture_name in vc_set
+        if status not in ("sandbox-breach", "timeout") and not is_unresolvable_vc:
             continue
 
         seq += 1
         suffix = f"{seq:04d}"
 
-        if status == "sandbox-breach":
+        if is_unresolvable_vc:
+            severity = "medium"
+            vector = "validator-claim-unresolvable"
+            title = (
+                f"validator irresolvível em fixture '{fixture_name}' — "
+                f"claim não verificável"
+            )
+            description = (
+                f"O validator do claim '{fixture_name}' não pôde ser resolvido "
+                f"(nem em project/validators/ nem em FORGE_HOME/validators/), "
+                f"então o sandbox não conseguiu verificar se o validator de fato "
+                f"detecta o contra-exemplo. Erro: "
+                f"{getattr(r, 'error', '') or 'sem mensagem'}"
+            )
+            auditor_reasoning = (
+                "Validator-claim com validator irresolvível NÃO pode ser "
+                "settlado como clean: a ausência de evidência não é evidência "
+                "de ausência. Medium porque o claim fica não-verificável (pode "
+                "ser path errado no descritor OU validator realmente ausente) — "
+                "user decide via forge evolve."
+            )
+            evolution_summary = (
+                f"resolver o validator_path do claim '{fixture_name}' "
+                f"(corrigir descritor ou confirmar validator ausente)"
+            )
+        elif status == "sandbox-breach":
             severity = "critical"
             vector = "sandbox-breach"
             title = f"sandbox breach detectado em fixture '{fixture_name}'"
@@ -222,7 +260,12 @@ def findings_from_sandbox_results(
         if run_id:
             finding_id = f"qa-{run_id}-{suffix}"
         else:
-            finding_id = f"sandbox-{vector.split('-')[1]}-{fixture_name}-{suffix}"
+            # Fallback ID legível: usa o sufixo do vector (breach/timeout) ou o
+            # vector inteiro pro novo validator-claim-unresolvable.
+            vector_tag = (
+                vector.split("-", 1)[1] if vector.startswith("sandbox-") else vector
+            )
+            finding_id = f"sandbox-{vector_tag}-{fixture_name}-{suffix}"
 
         sandbox_result_evidence: dict[str, Any] = {
             "status": status,
@@ -264,6 +307,127 @@ def findings_from_sandbox_results(
         findings.append(finding)
 
     return findings
+
+
+def hydrate_validator_claim_evidence(
+    draft_findings: list[dict[str, Any]],
+    stubs: list[SandboxResultStub],
+) -> list[dict[str, Any]]:
+    """F-4: hidrata ``evidence.sandbox_result`` em findings validator-claim.
+
+    Diferente de ``findings_from_sandbox_results`` (que DERIVA findings
+    novos pra breach/timeout), este helper ENRIQUECE drafts validator-claim
+    existentes — emitidos pelo auditor com ``sandbox_result: null`` — casando
+    cada um com a entrada de ``sandbox-results.json`` que executou a sua
+    fixture. Sem isso, o headline "validator que mente" perde o audit trail
+    do subprocess no ``qa-report.json`` final.
+
+    Matching rule (A-4): ``Path(evidence["fixture_path"]).stem`` (basename sem
+    extensão) ↔ ``stub.fixture_name``. Alinhado ao exemplo do conductor
+    (``"validator-claim-traversal"`` sem extensão) e ao nome que o auditor
+    gera.
+
+    WR-04: o índice ``stub.fixture_name → stub`` colapsava colisões com
+    "último vence" — dois fixtures de mesmo basename em dirs distintos
+    (``fixtures/a/validator-claim-foo`` e ``fixtures/b/validator-claim-foo``)
+    casavam ambos o mesmo stub, trocando o audit trail. Agora a colisão é
+    detectada ao montar o índice: ``fixture_name`` ambíguo (2+ stubs) NÃO
+    hidrata nenhum finding que case nele — conservador, alinhado ao "não
+    inventar evidência". O draft permanece ``sandbox_result=None`` (válido).
+
+    Determinístico e conservador — só hidrata quando há casamento seguro:
+
+    - vetor != ``validator-claim`` → intocado.
+    - ``evidence`` não-dict → intocado.
+    - ``sandbox_result`` já preenchido (pelo conductor) → NÃO sobrescreve.
+    - ``fixture_path`` ausente/não-str → intocado (sem adivinhação).
+    - sem stub correspondente → permanece ``None`` (draft-válido).
+    - ``fixture_name`` ambíguo (2+ stubs colidem no mesmo nome) → permanece
+      ``None`` (WR-04 — sem cross-contaminação).
+    - stub com ``exit_code is None`` (timeout/skipped) → permanece ``None``;
+      ``validate_qa_finding`` exige ``exit_code: int`` quando o
+      ``sandbox_result`` é dict, então hidratar nesse caso geraria shape
+      inválido. ``None`` é placeholder aceito em draft.
+
+    Não muta o input — retorna cópias rasas dos findings (e do evidence)
+    tocados, pattern de ``dedup_findings``.
+
+    Args:
+        draft_findings: lista de findings draft (dicts).
+        stubs: ``SandboxResultStub`` de ``hydrate_sandbox_results``.
+
+    Returns:
+        Lista nova; findings validator-claim com fixture executável e stub
+        casado ganham ``evidence.sandbox_result`` dict. Demais inalterados.
+    """
+    if not isinstance(draft_findings, list):
+        raise TypeError(
+            f"draft_findings deve ser list pra "
+            f"hydrate_validator_claim_evidence, recebido tipo "
+            f"{type(draft_findings).__name__}"
+        )
+
+    # WR-04: index por fixture_name detectando colisões. Em vez de "último
+    # vence" (que cross-contamina o audit trail quando dois fixtures
+    # compartilham basename cross-dir), marcamos nomes ambíguos pra NÃO
+    # hidratar nenhum finding que case neles.
+    by_name: dict[str, SandboxResultStub] = {}
+    ambiguous: set[str] = set()
+    for s in stubs:
+        if s.fixture_name in by_name:
+            ambiguous.add(s.fixture_name)
+        else:
+            by_name[s.fixture_name] = s
+
+    out: list[dict[str, Any]] = []
+    for f in draft_findings:
+        if not isinstance(f, dict) or f.get("vector") != "validator-claim":
+            out.append(f)
+            continue
+        ev = f.get("evidence")
+        if not isinstance(ev, dict):
+            out.append(f)
+            continue
+        if ev.get("sandbox_result") is not None:
+            out.append(f)  # já hidratado pelo conductor — não sobrescrever
+            continue
+        fp = ev.get("fixture_path")
+        if not isinstance(fp, str):
+            out.append(f)
+            continue
+        name = Path(fp).stem
+        if name in ambiguous:
+            # WR-04: fixture_name ambíguo → não hidrata (conservador, sem
+            # cross-contaminação). Permanece None (draft-válido).
+            # B3 (review pr27): loga o skip pra traceability — sem isso o
+            # finding fica sem sandbox_result e o operador não sabe por quê.
+            print(
+                f"⚠ hydrate validator-claim: fixture_name '{name}' ambíguo "
+                f"(2+ stubs colidem no basename) — sandbox_result NÃO hidratado "
+                f"pra evitar cross-contaminação (WR-04). Draft permanece sem "
+                f"evidence de sandbox.",
+                file=sys.stderr,
+            )
+            out.append(f)
+            continue
+        stub = by_name.get(name)
+        if stub is None or stub.exit_code is None:
+            # sem casamento OU exit_code ausente → permanece None (válido).
+            out.append(f)
+            continue
+
+        new_evidence = dict(ev)
+        new_evidence["sandbox_result"] = {
+            "exit_code": int(stub.exit_code),
+            "stdout": stub.stdout,
+            "stderr": stub.stderr,
+            "duration_s": float(stub.duration_s),
+        }
+        new_finding = dict(f)
+        new_finding["evidence"] = new_evidence
+        out.append(new_finding)
+
+    return out
 
 
 Severity = Literal["critical", "high", "medium", "low", "info"]

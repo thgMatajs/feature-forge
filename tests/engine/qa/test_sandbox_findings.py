@@ -101,6 +101,53 @@ def test_synthesis_ignores_ok_and_skipped_results() -> None:
     assert findings == []
 
 
+# ---------------------------------------------------------------------------
+# A4 (review pr27) — validator-claim com validator irresolvível → finding
+# (anti silent false-clean)
+# ---------------------------------------------------------------------------
+
+
+def test_synthesis_error_on_validator_claim_derives_finding() -> None:
+    """status=error num fixture validator-claim → finding (não silent drop).
+
+    Quando o validator de um claim não resolve (project nem FORGE_HOME),
+    run_sandbox devolve status=error. Antes isso era DROPADO → false-clean
+    pro vetor 'validator que mente'. Agora deriva um finding surfaced.
+    """
+    stub = SandboxResultStub(
+        fixture_name="validator-claim-foo",
+        status="error",
+        error="validator_path não é arquivo: validators/ghost.py",
+    )
+    findings = findings_from_sandbox_results(
+        [stub],
+        validator_claim_fixtures={"validator-claim-foo"},
+    )
+    assert len(findings) == 1
+    f = findings[0]
+    assert f["vector"] == "validator-claim-unresolvable"
+    assert f["severity"] in ("low", "medium")
+    assert "irresolv" in f["title"].lower() or "irresolv" in f["description"].lower()
+    assert f["evidence"]["sandbox_result"]["status"] == "error"
+    assert len(f["fingerprint"]) == 64
+
+
+def test_synthesis_error_without_validator_claim_set_still_dropped() -> None:
+    """status=error sem o fixture estar no set validator-claim → drop (compat).
+
+    Mantém o comportamento legado: error de fixture não-validator-claim pode
+    ser bug do validator, não do sandbox — deixa pro auditor LLM julgar.
+    """
+    stub = SandboxResultStub(fixture_name="other", status="error", error="boom")
+    findings = findings_from_sandbox_results([stub])
+    assert findings == []
+    # Mesmo passando o set, um fixture FORA dele continua dropado.
+    findings2 = findings_from_sandbox_results(
+        [stub], validator_claim_fixtures={"validator-claim-foo"}
+    )
+    assert findings2 == []
+
+
 def test_synthesis_finding_uses_run_id_when_provided() -> None:
     """ID canonico: qa-<run_id>-NNNN quando run_id fornecido."""
     stub = SandboxResultStub(fixture_name="x", status="timeout")
@@ -308,3 +355,48 @@ def test_run_qa_malformed_sandbox_results_warns_and_continues(
     # (run_qa cria run_id novo cada chamada), confiamos no teste
     # unitario test_run_qa_reads_sandbox_results_when_present + a
     # logica try/except no codigo.
+
+
+def test_run_qa_scalar_json_root_sandbox_results_does_not_crash(
+    tmp_path: Path,
+) -> None:
+    """B2 (review pr27): sandbox-results.json com raiz JSON ESCALAR (não
+    list nem dict) não derruba run_qa com AttributeError.
+
+    raw.get num int/str levantaria AttributeError NÃO capturado pelo except
+    (que só pega JSONDecodeError/OSError). O guard isinstance(raw, dict)
+    fecha o caso — escalar vira [] (sem stubs) e a run segue.
+    """
+    import json as _json
+
+    from engine.qa import _write_qa_report_skeleton, run_qa
+    from engine.qa.checkpoint import write_checkpoint
+    from engine.qa.ingest import QAConfig, create_run_tree
+    from engine.qa.scope import resolve_scope
+
+    slug = "scalar-root"
+    proj = _make_feature_project(tmp_path, slug)
+    workflow_config = {"qa": {"enabled": True}}
+
+    scope = resolve_scope(slug, project_root=proj)
+    rt = create_run_tree(scope, project_root=proj)
+
+    (rt.findings_dir / "auditor.json").write_text(
+        _json.dumps({"findings": []}), encoding="utf-8"
+    )
+    # Raiz escalar (JSON válido, mas nem list nem dict).
+    (rt.root / "sandbox-results.json").write_text("42", encoding="utf-8")
+
+    _write_qa_report_skeleton(scope, rt, QAConfig())
+    write_checkpoint(
+        rt.root,
+        run_id=rt.run_id,
+        scope_type=scope.type,
+        scope_target=scope.target,
+        last_phase_completed=3,
+        findings_partial_count=0,
+    )
+
+    # Não deve raise (antes do B2: AttributeError em raw.get).
+    rc = run_qa(slug, project_root=proj, workflow_config=workflow_config)
+    assert rc in (0, 1)

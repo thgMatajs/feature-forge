@@ -120,6 +120,30 @@ def test_vector_extension_accepted():
     )  # no raise
 
 
+@pytest.mark.parametrize(
+    "vector",
+    ["sandbox-breach", "sandbox-timeout", "validator-claim-unresolvable"],
+)
+def test_engine_derived_vector_accepted(vector: str):
+    """A9 (review pr27 r2): vetores DERIVADOS pelo engine (sandbox-breach,
+    sandbox-timeout, validator-claim-unresolvable) são aceitos sem precisar de
+    known_extension_vectors — estão em _ENGINE_VECTORS (additive).
+
+    Esses findings vêm de findings_from_sandbox_results / A4-A7 (não de auditor
+    LLM); future-proofing pra um eventual wiring de validate_qa_finding nos
+    derivados. Espelham o shape que synthesis.py emite: evidence.auditor=
+    qa-sandbox + auditor_reasoning, sem sandbox_result obrigatório."""
+    finding = _minimal_valid_finding()
+    finding["vector"] = vector
+    finding["severity"] = "medium"
+    finding["evidence"] = {
+        "auditor": "qa-sandbox",
+        "auditor_reasoning": "derivado pelo engine na Phase 3/4",
+    }
+    finding["proposed_evolution"]["type"] = f"qa-finding-{vector}"
+    validate_qa_finding(finding)  # no raise — vetor engine-derived aceito
+
+
 def test_evidence_must_be_dict():
     """Defensive: evidence=string deve raise QAFindingValidationError, não AttributeError."""
     finding = _minimal_valid_finding()

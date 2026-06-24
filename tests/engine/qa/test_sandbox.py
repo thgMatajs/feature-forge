@@ -511,3 +511,967 @@ def test_hardened_env_propagates_extras_to_build_safe_env(tmp_path, monkeypatch)
     env = _hardened_env(guard_dir, extras=["JAVA_HOME"])
 
     assert env["JAVA_HOME"] == "/opt/java"
+
+
+# ---------------------------------------------------------------------------
+# F-1 (A.1) — mini-tree + invocação --project-root
+# ---------------------------------------------------------------------------
+
+
+# Validator stub que espelha validators forge reais: lê --project-root via
+# argparse, tolera --scope/--id (parse-only), escaneia o tree e dá exit 1 se
+# achar um arquivo offending. Contrato canônico:
+#   python3 validator.py --project-root <path> [--scope <kind> --id <target>]
+_PROJECT_ROOT_VALIDATOR = """
+import argparse
+import sys
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--project-root", required=True)
+parser.add_argument("--scope")
+parser.add_argument("--id")
+args = parser.parse_args()
+
+root = Path(args.project_root)
+# Imprime o project-root recebido pra o teste poder asserir a invocação.
+print(f"PROJECT_ROOT={root}")
+
+offending = list(root.rglob("offending.kt"))
+if offending:
+    for f in offending:
+        print(f"OFFENDING: {f}", file=sys.stderr)
+    sys.exit(1)
+sys.exit(0)
+"""
+
+
+# Validator stub posicional legado: lê argv[1] como input path (caminho
+# antigo, pré-F-1). Usado pra confirmar que tree_rel_path=None preserva a
+# invocação posicional.
+_POSITIONAL_VALIDATOR = """
+import sys
+# argv[1] é o input posicional. Se chegou --project-root como argv[1], o
+# validator legado não saberia o que fazer — então imprimimos o argv cru
+# pra o teste asserir a forma da invocação.
+print(f"ARGV1={sys.argv[1] if len(sys.argv) > 1 else 'NONE'}")
+sys.exit(0)
+"""
+
+
+def test_run_sandbox_project_root_invocation(tmp_path: Path) -> None:
+    """Fixture com tree_rel_path → validator invocado com --project-root.
+
+    O validator argparse escaneia o mini-tree e acha o arquivo offending,
+    devolvendo exit 1 (validator "deveria falhar" — vetor validator-claim
+    funcional). Sem F-1 a invocação seria posicional e o argparse sairia 2
+    sem nunca ler o arquivo.
+    """
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    validator = _write_validator(
+        validators_dir, "project_root_validator.py", _PROJECT_ROOT_VALIDATOR
+    )
+
+    # mini-tree DENTRO de run_dir/fixtures/<name>/, com o arquivo offending
+    # no rel-path declarado.
+    mini_tree = sandbox_fixtures / "vc-foo"
+    offending = mini_tree / "src" / "offending.kt"
+    offending.parent.mkdir(parents=True, exist_ok=True)
+    offending.write_text("// offending content\n", encoding="utf-8")
+
+    fixture = Fixture(
+        name="vc-foo",
+        input_path=offending,
+        validator_path=validator,
+        tree_rel_path="src/offending.kt",
+    )
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=30.0, per_validator_s=10.0
+    )
+
+    assert len(results) == 1
+    r = results[0]
+    assert r.status == "ok", f"status={r.status} error={r.error!r} stderr={r.stderr!r}"
+    assert r.exit_code == 1, (
+        f"validator deveria achar offending.kt via --project-root e sair 1; "
+        f"exit={r.exit_code} stdout={r.stdout!r} stderr={r.stderr!r}"
+    )
+    # O project-root recebido aponta pro mini-tree dentro do sandbox.
+    assert str(mini_tree.resolve()) in r.stdout
+
+
+def test_run_sandbox_project_root_clean_tree_passes(tmp_path: Path) -> None:
+    """Mini-tree sem arquivo offending → validator passa (exit 0)."""
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    validator = _write_validator(
+        validators_dir, "project_root_validator.py", _PROJECT_ROOT_VALIDATOR
+    )
+
+    mini_tree = sandbox_fixtures / "vc-clean"
+    clean_file = mini_tree / "src" / "Clean.kt"
+    clean_file.parent.mkdir(parents=True, exist_ok=True)
+    clean_file.write_text("// clean\n", encoding="utf-8")
+
+    fixture = Fixture(
+        name="vc-clean",
+        input_path=clean_file,
+        validator_path=validator,
+        tree_rel_path="src/Clean.kt",
+    )
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=30.0, per_validator_s=10.0
+    )
+
+    assert len(results) == 1
+    r = results[0]
+    assert r.status == "ok"
+    assert r.exit_code == 0
+
+
+def test_run_sandbox_legacy_positional_invocation(tmp_path: Path) -> None:
+    """tree_rel_path=None preserva a invocação posicional legada (compat)."""
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    validator = _write_validator(
+        validators_dir, "positional_validator.py", _POSITIONAL_VALIDATOR
+    )
+    inp = _input_file(sandbox_fixtures, "fx-legacy.json")
+
+    fixture = Fixture(name="fx-legacy", input_path=inp, validator_path=validator)
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=5.0, per_validator_s=2.0
+    )
+
+    assert len(results) == 1
+    r = results[0]
+    assert r.status == "ok"
+    assert r.exit_code == 0
+    # O input chegou como argv posicional (não --project-root).
+    assert f"ARGV1={inp.resolve()}" in r.stdout
+    assert "--project-root" not in r.stdout
+
+
+# ---------------------------------------------------------------------------
+# F-1 (A.4) — hardening preservado sob mini-tree (Decisão 30/31)
+#
+# Gate de segurança explícito: A.1 ADICIONA cobertura ao containment, nunca
+# afrouxa. Estes testes confirmam que traversal via tree_rel_path vira
+# sandbox-breach, que o chdir guard segue intacto sob a invocação --project-root,
+# e que o mini-tree não vaza paths absolutos fora do sandbox.
+# ---------------------------------------------------------------------------
+
+
+def test_tree_rel_path_traversal_is_breach(tmp_path: Path) -> None:
+    """tree_rel_path='../../escape.kt' → sandbox-breach, sem subprocess.
+
+    O containment estendido pega o arquivo materializado resolvendo fora do
+    mini-tree (e do sandbox). Decisão 30: traversal é breach, não exit do
+    validator. O subprocess nem dispara.
+    """
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    validator = _write_validator(
+        validators_dir, "project_root_validator.py", _PROJECT_ROOT_VALIDATOR
+    )
+    # input_path dentro do sandbox (pra isolar que o breach vem do
+    # tree_rel_path, não do input).
+    inp = _input_file(sandbox_fixtures, "fx-evil.json")
+
+    fixture = Fixture(
+        name="evil",
+        input_path=inp,
+        validator_path=validator,
+        tree_rel_path="../../escape.kt",
+    )
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=5.0, per_validator_s=2.0
+    )
+
+    assert len(results) == 1
+    r = results[0]
+    assert r.status == "sandbox-breach", (
+        f"esperado sandbox-breach pra tree_rel_path com traversal, obtido "
+        f"{r.status} (stdout={r.stdout!r})"
+    )
+    # Subprocess não disparou: sem stdout/exit_code do validator.
+    assert r.exit_code is None
+    assert r.stdout == ""
+    # A mensagem nomeia o vetor (tree_rel_path) ou o sandbox.
+    assert (
+        "tree_rel_path" in r.error
+        or "mini-tree" in r.error
+        or "sandbox" in r.error.lower()
+    )
+
+
+def test_tree_rel_path_input_outside_sandbox_is_breach(tmp_path: Path) -> None:
+    """tree_rel_path setado mas input_path FORA do sandbox → sandbox-breach.
+
+    Mesmo com tree_rel_path "inocente", o input_path continua sob o
+    containment check estendido (o guard não regrediu pro caminho legado).
+    """
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir(parents=True, exist_ok=True)
+
+    validator = _write_validator(
+        validators_dir, "project_root_validator.py", _PROJECT_ROOT_VALIDATOR
+    )
+    outside_input = outside_dir / "offending.kt"
+    outside_input.write_text("// outside\n", encoding="utf-8")
+
+    fixture = Fixture(
+        name="vc-outside",
+        input_path=outside_input,
+        validator_path=validator,
+        tree_rel_path="src/offending.kt",
+    )
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=5.0, per_validator_s=2.0
+    )
+
+    assert len(results) == 1
+    r = results[0]
+    assert r.status == "sandbox-breach"
+
+
+def test_chdir_guard_intact_under_project_root(tmp_path: Path) -> None:
+    """chdir guard segue bloqueando sob a invocação --project-root (F-1).
+
+    A.1 não tocou env/guard, mas confirmamos explicitamente que um validator
+    --project-root que tenta os.chdir é bloqueado pelo sitecustomize preload.
+    """
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    # Validator --project-root que tenta escapar via os.chdir antes de
+    # escanear. O guard deve levantar RuntimeError → exit != 0.
+    chdir_pr_validator = _write_validator(
+        validators_dir,
+        "project_root_chdir.py",
+        """
+        import argparse
+        import os
+        import sys
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--project-root", required=True)
+        parser.add_argument("--scope")
+        parser.add_argument("--id")
+        args = parser.parse_args()
+
+        try:
+            os.chdir("/")
+            print("CHDIR_NOT_BLOCKED", file=sys.stderr)
+            sys.exit(0)
+        except RuntimeError as e:
+            print(f"BLOCKED: {e}", file=sys.stderr)
+            sys.exit(2)
+        """,
+    )
+
+    mini_tree = sandbox_fixtures / "vc-chdir"
+    target = mini_tree / "src" / "Foo.kt"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("// foo\n", encoding="utf-8")
+
+    fixture = Fixture(
+        name="vc-chdir",
+        input_path=target,
+        validator_path=chdir_pr_validator,
+        tree_rel_path="src/Foo.kt",
+    )
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=5.0, per_validator_s=2.0
+    )
+
+    assert len(results) == 1
+    r = results[0]
+    assert r.status == "ok", (
+        f"chdir guard test exige subprocess completar; status={r.status} "
+        f"stderr={r.stderr!r}"
+    )
+    assert r.exit_code != 0, (
+        f"esperado exit_code != 0 (chdir blocked sob --project-root), obtido "
+        f"status={r.status} code={r.exit_code} stderr={r.stderr!r}"
+    )
+    assert (
+        "bloqueado pelo sandbox" in r.stderr.lower() or "blocked" in r.stderr.lower()
+    )
+
+
+def test_project_root_stays_inside_sandbox(tmp_path: Path) -> None:
+    """O --project-root passado ao validator mora DENTRO do sandbox.
+
+    Garante que o mini-tree nunca aponta pro projeto real (vazamento de path
+    absoluto fora do sandbox). O validator imprime o project-root recebido;
+    asseguramos que ele é prefixado por run_dir/fixtures.
+    """
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    validator = _write_validator(
+        validators_dir, "project_root_validator.py", _PROJECT_ROOT_VALIDATOR
+    )
+    mini_tree = sandbox_fixtures / "vc-scope"
+    f = mini_tree / "src" / "Clean.kt"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("// clean\n", encoding="utf-8")
+
+    fixture = Fixture(
+        name="vc-scope",
+        input_path=f,
+        validator_path=validator,
+        tree_rel_path="src/Clean.kt",
+    )
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=5.0, per_validator_s=2.0
+    )
+
+    r = results[0]
+    assert r.status == "ok"
+    # O project-root recebido está sob run_dir/fixtures (não fora do sandbox).
+    received = r.stdout.split("PROJECT_ROOT=", 1)[1].splitlines()[0].strip()
+    Path(received).resolve().relative_to(sandbox_fixtures.resolve())
+
+
+# ---------------------------------------------------------------------------
+# R8 (Item 4) — extra_args threada --scope/--id; engine controla --project-root
+#
+# Validators feature/task-scoped (ex.: validate_task_contract.py) exigem
+# --scope feature --id <slug>. A Fixture ganha extra_args (lista) que o
+# run_sandbox concatena APÓS o --project-root <mini-tree> que o engine
+# controla. HARDENING (Decisão 30): extra_args NÃO pode redefinir
+# --project-root — o engine sempre aponta pro mini-tree.
+# ---------------------------------------------------------------------------
+
+
+# Stub que ecoa o argv inteiro pra o teste asserir a forma exata da invocação
+# E lê --project-root via argparse pra confirmar o root efetivo. parse-only
+# pra --scope/--id (espelha validators feature-scoped reais).
+_ARGV_ECHO_VALIDATOR = """
+import argparse
+import sys
+from pathlib import Path
+
+print("ARGV=" + repr(sys.argv[1:]))
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--project-root", required=True)
+parser.add_argument("--scope")
+parser.add_argument("--id")
+# argparse com --project-root duplicado fica com o ÚLTIMO; por isso o
+# teste de segurança confia no neutralize do run_sandbox, não no argparse.
+args, _unknown = parser.parse_known_args()
+print(f"EFFECTIVE_ROOT={Path(args.project_root)}")
+print(f"SCOPE={args.scope}")
+print(f"ID={args.id}")
+sys.exit(0)
+"""
+
+
+def test_extra_args_appended_after_project_root(tmp_path: Path) -> None:
+    """Fixture.extra_args=['--scope','feature','--id','foo'] → invocação
+    recebe --project-root <tree> --scope feature --id foo (nessa ordem)."""
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    validator = _write_validator(
+        validators_dir, "argv_echo.py", _ARGV_ECHO_VALIDATOR
+    )
+    mini_tree = sandbox_fixtures / "vc-args"
+    f = mini_tree / "src" / "Clean.kt"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("// clean\n", encoding="utf-8")
+
+    fixture = Fixture(
+        name="vc-args",
+        input_path=f,
+        validator_path=validator,
+        tree_rel_path="src/Clean.kt",
+        extra_args=["--scope", "feature", "--id", "foo"],
+    )
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=5.0, per_validator_s=2.0
+    )
+
+    r = results[0]
+    assert r.status == "ok", f"status={r.status} stderr={r.stderr!r}"
+    argv = r.stdout.split("ARGV=", 1)[1].splitlines()[0]
+    # --project-root <tree> vem primeiro (engine controla), depois extra_args.
+    assert "'--project-root'" in argv
+    assert "'--scope', 'feature', '--id', 'foo'" in argv
+    # O --project-root antecede o --scope na invocação.
+    assert argv.index("'--project-root'") < argv.index("'--scope'")
+    assert "SCOPE=feature" in r.stdout
+    assert "ID=foo" in r.stdout
+    # O root efetivo continua o mini-tree.
+    assert str(mini_tree.resolve()) in r.stdout
+
+
+def test_extra_args_cannot_override_project_root(tmp_path: Path) -> None:
+    """SEGURANÇA: extra_args tentando re-setar --project-root é neutralizado.
+
+    Uma fixture (gerada por LLM) que injeta --project-root /etc NÃO pode
+    mudar o root efetivo — o engine controla o --project-root <mini-tree>.
+    """
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    validator = _write_validator(
+        validators_dir, "argv_echo.py", _ARGV_ECHO_VALIDATOR
+    )
+    mini_tree = sandbox_fixtures / "vc-breach"
+    f = mini_tree / "src" / "Clean.kt"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("// clean\n", encoding="utf-8")
+
+    fixture = Fixture(
+        name="vc-breach",
+        input_path=f,
+        validator_path=validator,
+        tree_rel_path="src/Clean.kt",
+        # Hostil: tenta apontar o root pra fora do sandbox.
+        extra_args=["--project-root", "/etc", "--scope", "feature"],
+    )
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=5.0, per_validator_s=2.0
+    )
+
+    r = results[0]
+    assert r.status == "ok", f"status={r.status} stderr={r.stderr!r}"
+    # /etc NUNCA chega como argv — o engine remove o --project-root injetado.
+    argv = r.stdout.split("ARGV=", 1)[1].splitlines()[0]
+    assert "/etc" not in argv, (
+        f"extra_args conseguiu injetar --project-root /etc: argv={argv!r}"
+    )
+    # Há exatamente UM --project-root, e ele aponta pro mini-tree do engine.
+    assert argv.count("'--project-root'") == 1
+    assert str(mini_tree.resolve()) in r.stdout
+    # O --scope legítimo (não-perigoso) sobrevive ao scrub.
+    assert "SCOPE=feature" in r.stdout
+
+
+def test_extra_args_none_preserves_legacy_command(tmp_path: Path) -> None:
+    """extra_args=None (default) → invocação inalterada (compat R7)."""
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    validator = _write_validator(
+        validators_dir, "argv_echo.py", _ARGV_ECHO_VALIDATOR
+    )
+    mini_tree = sandbox_fixtures / "vc-none"
+    f = mini_tree / "src" / "Clean.kt"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("// clean\n", encoding="utf-8")
+
+    fixture = Fixture(
+        name="vc-none",
+        input_path=f,
+        validator_path=validator,
+        tree_rel_path="src/Clean.kt",
+    )
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=5.0, per_validator_s=2.0
+    )
+
+    r = results[0]
+    assert r.status == "ok"
+    argv = r.stdout.split("ARGV=", 1)[1].splitlines()[0]
+    # Apenas --project-root <tree>, sem extras.
+    assert "'--project-root'" in argv
+    assert "'--scope'" not in argv
+
+
+# ---------------------------------------------------------------------------
+# C1/C2 (review pr27) — sandbox escape via argparse abbreviation (Decisão 30)
+#
+# Validators forge usam argparse; com allow_abbrev=True (default histórico),
+# --p / --proj / --project / --project-roo (e formas =valor) TODOS setam
+# project_root e, como ÚLTIMA ocorrência após o --project-root <sandbox> que o
+# engine controla, OVERRIDE o root (last-wins). Uma fixture LLM com
+# invocation_args ['--p','/etc'] rodaria o validator REAL contra /etc → escape
+# total. O scrub vira ALLOWLIST (passa só --scope/--id + valores, dropa o resto)
+# e o argparser compartilhado ganha allow_abbrev=False (defense-in-depth).
+#
+# Asserção FORTE (C2): o root EFETIVO visto pelo validator == mini-tree, não
+# mera ausência de substring "/etc" no argv.
+# ---------------------------------------------------------------------------
+
+
+# Matriz de spellings abreviados de --project-root, cada um em forma de espaço
+# (2 tokens) E forma "=" (1 token). allow_abbrev=True honraria todos.
+_ABBREV_SPELLINGS = ["--p", "--proj", "--project", "--project-roo"]
+
+
+def _abbrev_cases() -> list[list[str]]:
+    cases: list[list[str]] = []
+    for flag in _ABBREV_SPELLINGS:
+        cases.append([flag, "/etc"])  # forma espaço (2 tokens)
+        cases.append([f"{flag}=/etc"])  # forma "=" (1 token)
+    return cases
+
+
+@pytest.mark.parametrize("hostile_args", _abbrev_cases())
+def test_extra_args_abbreviation_cannot_override_project_root(
+    tmp_path: Path, hostile_args: list[str]
+) -> None:
+    """SEGURANÇA C1/C2: abreviação de --project-root via extra_args é dropada.
+
+    O scrub é allowlist: só --scope/--id + valores passam. Qualquer prefixo
+    --p…/--project… (espaço OU "=") é dropado. O root efetivo continua o
+    mini-tree dentro do sandbox — nunca /etc.
+    """
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    validator = _write_validator(
+        validators_dir, "argv_echo.py", _ARGV_ECHO_VALIDATOR
+    )
+    mini_tree = sandbox_fixtures / "vc-abbrev"
+    f = mini_tree / "src" / "Clean.kt"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("// clean\n", encoding="utf-8")
+
+    fixture = Fixture(
+        name="vc-abbrev",
+        input_path=f,
+        validator_path=validator,
+        tree_rel_path="src/Clean.kt",
+        extra_args=hostile_args,
+    )
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=5.0, per_validator_s=2.0
+    )
+
+    r = results[0]
+    assert r.status == "ok", f"status={r.status} stderr={r.stderr!r}"
+    # Asserção FORTE: o ROOT EFETIVO visto pelo validator é o mini-tree.
+    assert f"EFFECTIVE_ROOT={mini_tree.resolve()}" in r.stdout, (
+        f"abreviação {hostile_args!r} conseguiu override; stdout={r.stdout!r}"
+    )
+    # Defense-in-depth: /etc nunca chega como argv.
+    argv = r.stdout.split("ARGV=", 1)[1].splitlines()[0]
+    assert "/etc" not in argv, (
+        f"abreviação {hostile_args!r} vazou pro argv: {argv!r}"
+    )
+
+
+def test_extra_args_last_wins_override_neutralized(tmp_path: Path) -> None:
+    """SEGURANÇA C1: last-wins clássico (--project-root literal repetido)
+    é neutralizado — o root efetivo continua o mini-tree."""
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    validator = _write_validator(
+        validators_dir, "argv_echo.py", _ARGV_ECHO_VALIDATOR
+    )
+    mini_tree = sandbox_fixtures / "vc-lastwins"
+    f = mini_tree / "src" / "Clean.kt"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("// clean\n", encoding="utf-8")
+
+    fixture = Fixture(
+        name="vc-lastwins",
+        input_path=f,
+        validator_path=validator,
+        tree_rel_path="src/Clean.kt",
+        # Last-wins: o argparse default ficaria com o ÚLTIMO --project-root.
+        extra_args=["--scope", "feature", "--project-root=/etc"],
+    )
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=5.0, per_validator_s=2.0
+    )
+
+    r = results[0]
+    assert r.status == "ok", f"status={r.status} stderr={r.stderr!r}"
+    assert f"EFFECTIVE_ROOT={mini_tree.resolve()}" in r.stdout, (
+        f"last-wins conseguiu override; stdout={r.stdout!r}"
+    )
+    # O --scope legítimo sobrevive ao allowlist.
+    assert "SCOPE=feature" in r.stdout
+
+
+def test_extra_args_allowlist_drops_unknown_flags(tmp_path: Path) -> None:
+    """C1: o scrub é allowlist — flags fora de {--scope,--id} são dropadas
+    junto com seus valores; --scope/--id legítimos sobrevivem."""
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    validator = _write_validator(
+        validators_dir, "argv_echo.py", _ARGV_ECHO_VALIDATOR
+    )
+    mini_tree = sandbox_fixtures / "vc-allowlist"
+    f = mini_tree / "src" / "Clean.kt"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("// clean\n", encoding="utf-8")
+
+    fixture = Fixture(
+        name="vc-allowlist",
+        input_path=f,
+        validator_path=validator,
+        tree_rel_path="src/Clean.kt",
+        # Mistura: --scope/--id legítimos + flag desconhecida + bare value órfão.
+        extra_args=[
+            "--scope",
+            "feature",
+            "--evil-flag",
+            "payload",
+            "--id=foo",
+            "orphan-bare-value",
+        ],
+    )
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=5.0, per_validator_s=2.0
+    )
+
+    r = results[0]
+    assert r.status == "ok", f"status={r.status} stderr={r.stderr!r}"
+    argv = r.stdout.split("ARGV=", 1)[1].splitlines()[0]
+    assert "'--evil-flag'" not in argv, f"flag desconhecida vazou: {argv!r}"
+    assert "'payload'" not in argv, f"valor de flag dropada vazou: {argv!r}"
+    assert "'orphan-bare-value'" not in argv, f"bare value órfão vazou: {argv!r}"
+    # --scope (forma espaço) e --id (forma "=") sobrevivem.
+    assert "SCOPE=feature" in r.stdout
+    assert "ID=foo" in r.stdout
+
+
+# ---------------------------------------------------------------------------
+# A1 (review pr27) — validator_path allowlist defensivo em run_sandbox
+# ---------------------------------------------------------------------------
+
+
+def test_run_sandbox_rejects_validator_outside_allowed_roots(
+    tmp_path: Path,
+) -> None:
+    """run_sandbox com allowed_validator_roots rejeita validator fora deles.
+
+    Defesa-em-profundidade: mesmo que o reconstruct deixasse passar, o
+    sandbox não executa um .py fora de project/validators/ ∪ FORGE_HOME/
+    validators/ — vira status=error sem subprocess (Decisão 30).
+    """
+    run_dir = tmp_path / "run"
+    sandbox_fixtures = run_dir / "fixtures"
+    allowed_root = tmp_path / "validators"
+    allowed_root.mkdir(parents=True)
+
+    # Validator hostil FORA do root allowed (mas válido como arquivo .py).
+    evil = _write_validator(
+        tmp_path / "evil",
+        "payload.py",
+        """
+        import sys
+        print("SHOULD-NOT-RUN")
+        sys.exit(0)
+        """,
+    )
+    inp = _input_file(sandbox_fixtures, "fx.json")
+
+    fixture = Fixture(name="fx", input_path=inp, validator_path=evil)
+    results = run_sandbox(
+        run_dir,
+        [fixture],
+        budget_total_s=5.0,
+        per_validator_s=2.0,
+        allowed_validator_roots=[allowed_root],
+    )
+
+    r = results[0]
+    assert r.status == "error", f"status={r.status}"
+    assert "fora dos roots permitidos" in r.error
+    # O subprocess NÃO rodou — nenhum stdout do payload.
+    assert "SHOULD-NOT-RUN" not in r.stdout
+
+
+def test_run_sandbox_allows_validator_inside_allowed_roots(
+    tmp_path: Path,
+) -> None:
+    """run_sandbox executa normalmente quando o validator mora num root allowed."""
+    run_dir = tmp_path / "run"
+    sandbox_fixtures = run_dir / "fixtures"
+    allowed_root = tmp_path / "validators"
+
+    validator = _write_validator(
+        allowed_root,
+        "ok.py",
+        """
+        import sys
+        print("ran-ok")
+        sys.exit(0)
+        """,
+    )
+    inp = _input_file(sandbox_fixtures, "fx.json")
+
+    fixture = Fixture(name="fx", input_path=inp, validator_path=validator)
+    results = run_sandbox(
+        run_dir,
+        [fixture],
+        budget_total_s=5.0,
+        per_validator_s=2.0,
+        allowed_validator_roots=[allowed_root],
+    )
+
+    r = results[0]
+    assert r.status == "ok", f"status={r.status} error={r.error!r}"
+    assert "ran-ok" in r.stdout
+
+
+# ---------------------------------------------------------------------------
+# A2 (review pr27) — output cap (DoS / OOM)
+#
+# subprocess capturava stdout/stderr ilimitado; um validator hostil emitindo
+# GBs → OOM (×N fixtures). Cap por stream com marker truncated.
+# ---------------------------------------------------------------------------
+
+
+def test_run_sandbox_truncates_oversized_stdout(tmp_path: Path) -> None:
+    """Validator emitindo > ceiling de stdout é truncado e flagueado, não OOM."""
+    from engine.qa.sandbox import _OUTPUT_CAP_BYTES
+
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    # Emite ~3× o ceiling em stdout.
+    flood = _OUTPUT_CAP_BYTES * 3
+    validator = _write_validator(
+        validators_dir,
+        "flood.py",
+        f"""
+        import sys
+        # Escreve em chunks pra não estourar memória do próprio validator.
+        chunk = "A" * 65536
+        written = 0
+        while written < {flood}:
+            sys.stdout.write(chunk)
+            written += len(chunk)
+        sys.stdout.flush()
+        sys.exit(0)
+        """,
+    )
+    inp = _input_file(sandbox_fixtures, "fx.json")
+
+    fixture = Fixture(name="fx", input_path=inp, validator_path=validator)
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=15.0, per_validator_s=10.0
+    )
+
+    r = results[0]
+    assert r.status == "ok", f"status={r.status} error={r.error!r}"
+    # Captura limitada ao ceiling (com margem pro marker textual).
+    assert len(r.stdout.encode("utf-8")) <= _OUTPUT_CAP_BYTES + 256, (
+        f"stdout não foi capeado: {len(r.stdout.encode('utf-8'))} bytes"
+    )
+    assert r.truncated is True, "flag truncated não foi setada"
+
+
+def test_run_sandbox_does_not_flag_truncated_under_ceiling(tmp_path: Path) -> None:
+    """Output pequeno → truncated=False (não falso-positivo)."""
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    validator = _write_validator(
+        validators_dir,
+        "small.py",
+        """
+        import sys
+        print("tiny output")
+        sys.exit(0)
+        """,
+    )
+    inp = _input_file(sandbox_fixtures, "fx.json")
+
+    fixture = Fixture(name="fx", input_path=inp, validator_path=validator)
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=5.0, per_validator_s=2.0
+    )
+
+    r = results[0]
+    assert r.status == "ok"
+    assert "tiny output" in r.stdout
+    assert r.truncated is False
+
+
+# ---------------------------------------------------------------------------
+# A5 (review pr27 r2): grandchild deadlock / timeout bypass
+# ---------------------------------------------------------------------------
+
+
+def test_forking_validator_does_not_hang_on_timeout(tmp_path: Path) -> None:
+    """A5: um validator hostil que forka um grandchild herdando os pipes de
+    stdout/stderr não pode travar a run.
+
+    Pré-fix: o subprocess era spawned sem nova session/process-group; no
+    timeout só ``proc.kill()`` (o filho direto) era chamado. O grandchild
+    (que dorme) mantinha os write-ends dos pipes abertos → as drain threads
+    (``.join()`` sem timeout, non-daemon) bloqueavam pra sempre → ``forge qa``
+    travava.
+
+    Pós-fix: ``start_new_session=True`` + ``os.killpg`` no timeout mata o
+    grupo inteiro (filho + grandchild); os ``.join()`` com timeout + threads
+    daemon garantem que a run termine com status=timeout dentro do bound.
+    """
+    import time as _time
+
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    # Validator forka um grandchild que dorme 30s herdando stdout/stderr; o
+    # pai também dorme 30s. Pré-fix: ``proc.kill()`` matava só o pai; o
+    # grandchild mantinha os pipes abertos → drain threads travavam 30s
+    # (até o grandchild morrer sozinho). Pós-fix: killpg do grupo mata ambos.
+    validator = _write_validator(
+        validators_dir,
+        "forking_validator.py",
+        """
+        import os
+        import sys
+        import time
+
+        pid = os.fork()
+        if pid == 0:
+            # Grandchild: segura os pipes (stdout/stderr herdados) dormindo.
+            time.sleep(30)
+            os._exit(0)
+        # Pai também dorme — o timeout per-validator deve dispará-lo, e o
+        # killpg precisa derrubar o grandchild junto pra liberar os pipes.
+        time.sleep(30)
+        sys.exit(0)
+        """,
+    )
+    inp = _input_file(sandbox_fixtures, "fx-fork.json")
+
+    fixtures = [Fixture(name="fx-fork", input_path=inp, validator_path=validator)]
+
+    started = _time.monotonic()
+    results = run_sandbox(
+        run_dir, fixtures, budget_total_s=5.0, per_validator_s=0.5
+    )
+    elapsed = _time.monotonic() - started
+
+    # A run DEVE terminar dentro de um bound razoável (não travar 30s no
+    # grandchild). Margem generosa pra spawn + join-timeout, mas bem abaixo
+    # dos 30s do grandchild.
+    assert elapsed < 10.0, (
+        f"run travou {elapsed:.1f}s — grandchild manteve pipes abertos "
+        f"(A5 deadlock não corrigido)"
+    )
+    assert len(results) == 1
+    assert results[0].status == "timeout"
+
+
+# ---------------------------------------------------------------------------
+# WR-02 (review pr27 r3): drain join estoura no caminho NORMAL → truncated
+# ---------------------------------------------------------------------------
+
+
+def test_normal_path_drain_join_timeout_marks_truncated(tmp_path: Path) -> None:
+    """WR-02: no caminho normal (exit-code 0, SEM timeout do processo), se uma
+    drain thread não termina dentro do ``_JOIN_TIMEOUT_S`` porque um grandchild
+    benigno herdou e segura o write-end do pipe, o result DEVE vir com
+    ``truncated=True`` — captura parcial nunca é apresentada como íntegra.
+
+    Comportamento (behavioral, determinístico):
+
+    - O validator forka um grandchild que herda stdout e dorme ~3s (acima do
+      join-timeout de 2.0s), depois o pai (filho direto) sai com código 0
+      imediatamente.
+    - ``proc.wait(timeout=...)`` retorna normalmente (sem ``TimeoutExpired``):
+      caminho normal, NÃO o de timeout. Nenhum killpg é disparado aqui.
+    - A drain thread de stdout continua bloqueada no pipe que o grandchild
+      mantém aberto → ``t_out.join(timeout=2.0)`` estoura → ``t_out.is_alive()``
+      → ``drain_incomplete`` True → ``truncated`` True.
+
+    Pré-fix: ``truncated = out_trunc[0] or err_trunc[0]`` (sem o termo
+    ``drain_incomplete``) → este result vinha ``truncated=False``, apresentando
+    a captura parcial como completa. Remover ``or drain_incomplete`` da
+    implementação faz este teste falhar.
+    """
+    import time as _time
+
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    # Pai sai com exit-code 0 de imediato (caminho normal). O grandchild herda
+    # stdout e segura o pipe dormindo 3s — acima do join-timeout (2.0s) das
+    # drain threads. No caminho normal NÃO há killpg, então a drain thread de
+    # stdout fica viva quando o ``.join(timeout)`` estoura.
+    validator = _write_validator(
+        validators_dir,
+        "normal_exit_grandchild.py",
+        """
+        import os
+        import sys
+        import time
+
+        pid = os.fork()
+        if pid == 0:
+            # Grandchild: segura SÓ o stdout herdado aberto por 4s (> join-
+            # timeout). Fecha stderr de imediato pra que a drain thread de
+            # stderr termine na hora — só a de stdout estoura o join.
+            os.close(2)
+            time.sleep(4)
+            os._exit(0)
+        # Pai (filho direto) sai com 0 IMEDIATAMENTE — caminho normal, sem
+        # timeout do processo. Fecha o próprio stdout pra que o único write-end
+        # remanescente seja o do grandchild (caso contrário o pai sair já daria
+        # EOF cedo demais).
+        sys.exit(0)
+        """,
+    )
+    inp = _input_file(sandbox_fixtures, "fx-normal-grandchild.json")
+
+    fixture = Fixture(
+        name="fx-normal-grandchild", input_path=inp, validator_path=validator
+    )
+
+    started = _time.monotonic()
+    results = run_sandbox(
+        # per_validator generoso: o pai sai na hora, então o timeout do
+        # processo NUNCA dispara — o que exercita é o join-timeout das threads.
+        run_dir,
+        [fixture],
+        budget_total_s=30.0,
+        per_validator_s=20.0,
+    )
+    elapsed = _time.monotonic() - started
+
+    assert len(results) == 1
+    r = results[0]
+    # Caminho normal: o processo saiu sozinho com 0, não timeout.
+    assert r.status == "ok"
+    assert r.exit_code == 0
+    # O join-timeout estourou (~2.0s) porque o grandchild segurou o pipe; a run
+    # não esperou os 4s inteiros do grandchild (daemon thread + join bounded).
+    assert elapsed < 3.5, (
+        f"run esperou {elapsed:.1f}s — join não estava bounded no caminho "
+        f"normal (esperado ~2.0s do _JOIN_TIMEOUT_S)"
+    )
+    # Núcleo do WR-02: captura parcial marcada truncated. Falha se o termo
+    # ``or drain_incomplete`` for removido da implementação.
+    assert r.truncated is True, (
+        "WR-02: drain join estourou no caminho normal mas truncated veio False "
+        "— captura parcial apresentada como íntegra"
+    )

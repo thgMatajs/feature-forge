@@ -239,9 +239,24 @@ def run_sandbox(run_dir: Path, fixtures: list[Fixture], budget_total_s: float) -
 
         remaining = min(per_validator_timeout, budget_total_s - elapsed)
 
+        # F-1: validators forge reais usam o contrato argparse
+        # `--project-root <tree>` (escaneiam a árvore), NÃO um input
+        # posicional. Quando a fixture declara `tree_rel_path`, o sandbox monta
+        # um mini project-tree (`sandbox_cwd/<fixture.name>`) com o arquivo do
+        # contra-exemplo em `<mini-tree>/<tree_rel_path>` e invoca
+        # `[python, validator, "--project-root", <mini-tree>]`. Sem isso, o
+        # validator argparse rejeitaria o input posicional com exit 2 e o vetor
+        # validator-claim ficaria INERTE. `tree_rel_path=None` mantém a
+        # invocação posicional legada (compat com chaos/inputs estruturados).
+        if fixture.tree_rel_path is not None:
+            mini_tree = sandbox_cwd / fixture.name
+            cmd = [sys.executable, fixture.validator_path, "--project-root", mini_tree]
+        else:
+            cmd = [sys.executable, fixture.validator_path, fixture.input_path]
+
         try:
             proc = subprocess.run(
-                [sys.executable, fixture.validator_path, fixture.input_path],
+                cmd,
                 cwd=sandbox_cwd,
                 capture_output=True,
                 text=True,
@@ -264,6 +279,30 @@ def run_sandbox(run_dir: Path, fixtures: list[Fixture], budget_total_s: float) -
 ```
 
 **Pattern reusa `engine/verify.py`** (mandamento #3) — esse já dispara validators via subprocess; o delta é o CWD hardening + budget tracking.
+
+**Contrato de `Fixture` + invocação `--project-root` (F-1):** o `Fixture`
+dataclass carrega `name`, `input_path`, `validator_path` e — pós-F-1 — o campo
+opcional `tree_rel_path: str | None`. Validators forge reais (ex.:
+`validators/validate_task_contract.py`, `cards/*/validators/check-no-suppress.py`)
+expõem o contrato canônico `python3 <validator> --project-root <path>
+[--scope <kind> --id <target>]`, com `cwd=project_root`: eles **escaneiam a
+árvore**, não leem um input posicional. Passar a fixture como argumento
+posicional (`[python, validator, input_path]`) faz o argparse sair com exit 2
+sem nunca ler o arquivo — o vetor validator-claim fica INERTE. Por isso, quando
+`tree_rel_path` está setado, o sandbox monta um mini project-tree em
+`run_dir/fixtures/<name>/`, materializa o arquivo do contra-exemplo em
+`<mini-tree>/<tree_rel_path>`, e invoca o validator com
+`--project-root <mini-tree>`. O validator escaneia o tree e pega a fixture
+(exit 1 = pegou; exit 0 = validator mente). `tree_rel_path=None` mantém a
+invocação posicional legada (chaos / inputs estruturados).
+
+**Hardening preservado (D7 / Decisão 30/31):** o containment check
+(`_validate_paths_inside_sandbox`) passa a cobrir TAMBÉM o mini-tree e o arquivo
+materializado — um `tree_rel_path` com traversal (`../../escape.kt`) resolve
+fora do sandbox e dispara `SandboxBreachError` antes de qualquer subprocess. O
+guard fica MAIS estrito, nunca afrouxado. CWD isolado (`run_dir/fixtures`),
+chdir/fchdir guard via `sitecustomize`, env allowlist (sem PYTHONPATH herdado) e
+budget/timeout permanecem intactos sob o novo contrato.
 
 **Failure mode:** breach → finding `qa-sandbox-breach` severity=critical (sempre BLOCK), porque indica problema sério no validator dispatched. Timeout = finding severity=medium (budget pode ser ajustado).
 
@@ -314,7 +353,11 @@ Algorithm:
 4. Imprime relatório cinemático ao user (§10 Cena 8).
 5. Retorna exit code:
    - `0` se verdict ∈ {PASS, FLAG}
-   - `8` se verdict == BLOCK (distinct exit code, novo — alinhado com Step 7.5 do Gap 5 que usa exit 8)
+   - `1` + `[FORGE-ERR:QA-BLOCK]` em stderr se verdict == BLOCK (via
+     `fail_with_tag(ERR_QA_BLOCK)`; ver `docs/design/06-command-surface.md`).
+     **Superseded:** o `8` original (alinhado ao Step 7.5 do Gap 5) foi
+     trocado pela convenção `fail_with_tag` em C3 EXIT-2-COLLISION / W2 — o
+     `8` colidia com o exit code reservado de outro contrato.
 
 **Atomic write:** `proposed.yaml` é escrito via temp file + rename pra evitar corrupção se Ctrl+C mid-write.
 

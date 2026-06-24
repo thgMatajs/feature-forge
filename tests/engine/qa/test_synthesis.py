@@ -34,12 +34,15 @@ from typing import Any
 import pytest
 
 from engine.qa.synthesis import (
+    SandboxResultStub,
     SynthesisResult,
     canonical_fingerprint,
     compute_verdict,
     dedup_findings,
+    hydrate_validator_claim_evidence,
     synthesize,
 )
+from validators.validate_qa_finding import validate_qa_finding
 
 
 def _mk(
@@ -286,3 +289,189 @@ def test_dedup_duplicates_dedupes_same_auditor_name():
 
     assert len(out) == 1
     assert out[0]["evidence"]["duplicates"] == ["b"]
+
+
+# ---------------------------------------------------------------------------
+# F-4: hydrate_validator_claim_evidence
+# ---------------------------------------------------------------------------
+
+
+def _mk_validator_claim_draft(
+    *,
+    fixture_path: str | None = "fixtures/validator-claim-foo.yaml",
+    sandbox_result: Any = None,
+) -> dict[str, Any]:
+    """Draft validator-claim COMPLETO (passa validate_qa_finding quando
+    sandbox_result é None ou dict válido)."""
+    evidence: dict[str, Any] = {
+        "auditor": "qa-auditor-validator-claim",
+        "auditor_reasoning": "validator deveria pegar mas nao pegou",
+        "sandbox_result": sandbox_result,
+    }
+    if fixture_path is not None:
+        evidence["fixture_path"] = fixture_path
+    return {
+        "id": "vc-0001",
+        "fingerprint": "a" * 64,
+        "vector": "validator-claim",
+        "severity": "high",
+        "title": "validator que mente",
+        "description": "validator forge nao detecta o caso",
+        "scope": {"files": ["validators/x.py"]},
+        "evidence": evidence,
+        "proposed_evolution": {
+            "type": "qa-finding-validator-claim",
+            "summary": "endurecer o validator",
+            "actionable": True,
+        },
+        "created_at": "2026-06-19T12:00:00Z",
+    }
+
+
+def test_hydrate_validator_claim_evidence():
+    """F-4: draft validator-claim com fixture executável casa com stub
+    (exit_code int) e ganha evidence.sandbox_result dict válido."""
+    draft = _mk_validator_claim_draft()
+    stub = SandboxResultStub(
+        fixture_name="validator-claim-foo",
+        status="ok",
+        exit_code=0,
+        stdout="",
+        stderr="",
+        duration_s=0.3,
+    )
+
+    out = hydrate_validator_claim_evidence([draft], [stub])
+
+    sr = out[0]["evidence"]["sandbox_result"]
+    assert isinstance(sr, dict)
+    assert sr["exit_code"] == 0
+    assert sr["stdout"] == ""
+    assert sr["stderr"] == ""
+    assert sr["duration_s"] == 0.3
+    # finding hidratado passa o validator de shape.
+    validate_qa_finding(out[0])
+    # nao muta o input.
+    assert draft["evidence"]["sandbox_result"] is None
+
+
+def test_hydrate_validator_claim_no_matching_stub_stays_null():
+    """F-4: draft validator-claim sem stub correspondente permanece None
+    (draft-válido); não inventa evidência."""
+    draft = _mk_validator_claim_draft()
+    other = SandboxResultStub(
+        fixture_name="validator-claim-bar", status="ok", exit_code=0
+    )
+
+    out = hydrate_validator_claim_evidence([draft], [other])
+
+    assert out[0]["evidence"]["sandbox_result"] is None
+    validate_qa_finding(out[0])
+
+
+def test_hydrate_validator_claim_other_vector_untouched():
+    """F-4: drafts de outro vetor (chaos) não são tocados."""
+    chaos = _mk(vector="chaos", evidence={"auditor": "qa-auditor-chaos"})
+    stub = SandboxResultStub(fixture_name="anything", status="ok", exit_code=0)
+
+    out = hydrate_validator_claim_evidence([chaos], [stub])
+
+    assert out[0] == chaos
+
+
+def test_hydrate_validator_claim_exit_code_none_stays_null():
+    """F-4: stub com exit_code None (timeout/skipped) NÃO hidrata dict
+    inválido — finding permanece None (validate_qa_finding aceita None)."""
+    draft = _mk_validator_claim_draft()
+    stub = SandboxResultStub(
+        fixture_name="validator-claim-foo",
+        status="timeout",
+        exit_code=None,
+        duration_s=10.0,
+    )
+
+    out = hydrate_validator_claim_evidence([draft], [stub])
+
+    assert out[0]["evidence"]["sandbox_result"] is None
+    validate_qa_finding(out[0])
+
+
+def test_hydrate_validator_claim_already_hydrated_not_overwritten():
+    """F-4: sandbox_result já preenchido pelo conductor não é sobrescrito."""
+    existing_sr = {
+        "exit_code": 2,
+        "stdout": "conductor",
+        "stderr": "",
+        "duration_s": 1.0,
+    }
+    draft = _mk_validator_claim_draft(sandbox_result=existing_sr)
+    stub = SandboxResultStub(
+        fixture_name="validator-claim-foo", status="ok", exit_code=0, duration_s=0.3
+    )
+
+    out = hydrate_validator_claim_evidence([draft], [stub])
+
+    assert out[0]["evidence"]["sandbox_result"] == existing_sr
+
+
+# ---------------------------------------------------------------------------
+# WR-04: matching robusto — basename colidente cross-dir não cross-contamina
+# ---------------------------------------------------------------------------
+
+
+def test_hydrate_validator_claim_distinct_basenames_match_correctly():
+    """WR-04: dois findings com basenames DISTINTOS em dirs diferentes casam
+    cada um com o stub certo (matching por fixture_name único, não colisão).
+
+    Garante que tornar o matching robusto não regrediu o caminho feliz
+    multi-fixture.
+    """
+    draft_a = _mk_validator_claim_draft(
+        fixture_path="fixtures/a/validator-claim-foo.yaml"
+    )
+    draft_b = _mk_validator_claim_draft(
+        fixture_path="fixtures/b/validator-claim-bar.yaml"
+    )
+    stub_a = SandboxResultStub(
+        fixture_name="validator-claim-foo", status="ok", exit_code=0, duration_s=0.1
+    )
+    stub_b = SandboxResultStub(
+        fixture_name="validator-claim-bar", status="ok", exit_code=7, duration_s=0.2
+    )
+
+    out = hydrate_validator_claim_evidence([draft_a, draft_b], [stub_a, stub_b])
+
+    assert out[0]["evidence"]["sandbox_result"]["exit_code"] == 0
+    assert out[1]["evidence"]["sandbox_result"]["exit_code"] == 7
+
+
+def test_hydrate_validator_claim_basename_collision_skips_ambiguous():
+    """WR-04: dois fixtures com o MESMO basename em dirs distintos colidem no
+    índice por basename. Pré-fix, o "último vence" no índice fazia ambos os
+    findings receberem o MESMO stub (cross-contaminação do audit trail). O
+    matching robusto detecta a ambiguidade e NÃO hidrata nenhum dos dois —
+    conservador, alinhado ao "não inventar evidência". Permanecem None
+    (draft-válido).
+    """
+    draft_a = _mk_validator_claim_draft(
+        fixture_path="fixtures/a/validator-claim-foo.yaml"
+    )
+    draft_b = _mk_validator_claim_draft(
+        fixture_path="fixtures/b/validator-claim-foo.yaml"
+    )
+    # Dois stubs com MESMO fixture_name (basename colidente cross-dir).
+    stub_a = SandboxResultStub(
+        fixture_name="validator-claim-foo", status="ok", exit_code=0, duration_s=0.1
+    )
+    stub_b = SandboxResultStub(
+        fixture_name="validator-claim-foo", status="ok", exit_code=9, duration_s=0.2
+    )
+
+    out = hydrate_validator_claim_evidence([draft_a, draft_b], [stub_a, stub_b])
+
+    # Nenhum finding recebe o stub do OUTRO (sem cross-contaminação). O
+    # matching ambíguo é conservador: ambos permanecem None.
+    assert out[0]["evidence"]["sandbox_result"] is None
+    assert out[1]["evidence"]["sandbox_result"] is None
+    validate_qa_finding(out[0])
+    validate_qa_finding(out[1])

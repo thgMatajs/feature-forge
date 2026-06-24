@@ -3,6 +3,65 @@
 What still needs to be drafted, in dependency order. Use this as the
 checklist for next sessions.
 
+## Pilot R7 — qa flow fixes (2026-06-19)
+
+Os fixes de `forge qa` (F-1..F-5 + CR-01) estão em CHANGELOG `## [Unreleased]
+§Fixed/Changed (pilot R7)`. Plano:
+`docs/superpowers/plans/2026-06-19-pilot-r7-qa-flow-fixes.md`. Os gaps abaixo
+foram tratados em duas levas: três fechados no pilot R8 (validator-path
+cross-projeto, feature-scoped `--id`, `actual_exit_code` legado no exemplo do
+auditor) e um REFRAMED como decisão de design (chaos não roda no sandbox).
+
+### Fechados no pilot R8 (2026-06-19)
+
+- **R7-VALIDATOR-PATH-XPROJ (resolução de `validator_path` cross-projeto)** —
+  ✅ FECHADO no R8 (item 3, commit `36c9948`). A reconstrução de `Fixture`
+  resolve o `validator_path` por precedência projeto > `FORGE_HOME/validators/`:
+  se o path não resolve sob a raiz do projeto, tenta
+  `FORGE_HOME/validators/<basename>`. Os validators forge canônicos vivem no
+  FORGE_HOME e eram declarados por basename nu; o fallback os torna alcançáveis
+  pelo vetor validator-claim. Relacionado a **P-22** (`must_pass` sem path);
+  o resolver implícito do `qa-conductor.md` continua a ser especificado por P-22.
+- **R7-FEATURE-SCOPED-ID (validators feature-scoped precisam de `--id`)** —
+  ✅ FECHADO no R8 (item 4, commit `bfd90e2`). A fixture validator-claim ganhou
+  `invocation_args` (ex.: `--scope feature --id <slug>`), threadado pro sandbox
+  via `Fixture.extra_args` e apendado pelo `run_sandbox` à invocação — validators
+  que exigem `--scope feature --id <slug>` (ex.: `validate_task_contract`,
+  `validate_feature_package`) viram alvos limpos do vetor. HARDENING da
+  Decisão 30 preservado: o engine continua dono do `--project-root` (mini-tree
+  do sandbox) e `_scrub_extra_args` neutraliza qualquer `--project-root`
+  injetado na fixture pela LLM — a fixture não escapa o sandbox por essa via.
+- **R7-LEGACY-ACTUAL-EXIT (`evidence.actual_exit_code` legado no exemplo)** —
+  ✅ FECHADO no R8 (item 2, commit `e058362`) na dimensão do exemplo do auditor:
+  removida a linha stale `actual_exit_code` de
+  `agents/qa-auditor-validator-claim.md`. O schema do report usa
+  `evidence.sandbox_result.exit_code` como fonte do exit-code do subprocess; o
+  campo `actual_exit_code` não existe no contrato e induzia o auditor a preencher
+  um campo fantasma. (Se algum template legado ainda emitir o campo no report
+  materializado, limpá-lo de lá é trabalho separado — o consumidor lê
+  `sandbox_result`.)
+
+### Decisão de design (não é gap — pilot R8)
+
+- **R7-CHAOS-WIRING (chaos não roda no sandbox) — DECISÃO CONSCIENTE, não gap.**
+  Reframe do R8: chaos é análise adversarial PURA (payload + reasoning,
+  `executable: false` por default); o spec do `forge qa` NÃO define semântica de
+  execução pra findings chaos. O vetor sandbox-executável do fluxo é o
+  validator-claim (que F-1/F-4 do R7 + os itens 3/4 do R8 destravaram), não o
+  chaos. Wiring de chaos-executável exigiria uma convenção nova (carregar
+  `validator_path` no descritor chaos) E uma semântica de execução que o spec
+  hoje não tem — fazê-lo agora seria inventar contrato. Fica como decisão de
+  design, reabrível como gap SE surgir um caso de uso concreto de
+  chaos-executável (aí o reframe vira spec). Ref: `.planning/pilot-r7/REVIEW.md`.
+
+### Deferidos remanescentes (decisão consciente do mantenedor — pilot R7)
+
+Nenhum gap remanescente do R7 fora dos fechados no R8 e da decisão de design acima. Os itens de CONTRATO/SCHEMA relacionados continuam rastreados em **P-22** (resolver implícito de `validator_path` no `qa-conductor.md`).
+
+### Risco residual aceito (review pr27 round-2 — A11)
+
+- **A11 (allowed_root symlinkado segue pra fora da allowlist) — ACEITO, out-of-threat-model.** Se um `allowed_root` do sandbox (`project/validators/` ou `FORGE_HOME/validators/`) for ELE PRÓPRIO um symlink pra ex. `/etc`, `root.resolve()` em `validator_within_allowed_roots` (`engine/qa/sandbox.py`) segue o symlink e `/etc/*.py` passaria a allowlist. NÃO é vetor de input do LLM: a fixture só controla `evidence.validator_path`, nunca consegue escrever/repontar os allowed roots — exige comprometimento prévio do filesystem/deployment (trust boundary diferente). Rejeitar roots symlinkados quebraria checkouts legítimos via symlink (worktrees, `/var → /private/var` no macOS). Documentado no docstring de `validator_within_allowed_roots`. Reabrível como gap SE forge passar a rodar em ambiente multi-tenant onde os roots não são confiáveis.
+
 ## Pilot R6 — blockers AI-first (2026-06-19)
 
 ### Fechados nesta wave (pilot R6)

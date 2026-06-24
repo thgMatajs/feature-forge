@@ -67,13 +67,25 @@ Para cada validator declarado no scope, execute o workflow:
    Identifique a regra implícita: regex, range, schema match, presença
    de campo, ordem de transições, etc. Cite a linha/regex/condição
    exata no `auditor_reasoning`.
-3. **Gera contra-exemplo** — fixture sintético que cai **fora** do que
-   o validator declara aceitar (input hostil que a regra **deveria**
-   rejeitar). Se o validator passar esse fixture com exit 0, ele mente.
+3. **Gera contra-exemplo** — materialize um arquivo (no formato/linguagem
+   que o validator escaneia) que cai **fora** do que o validator declara
+   aceitar (conteúdo hostil que a regra **deveria** rejeitar). O sandbox
+   invoca o validator com `--project-root <mini-tree>` (contrato real dos
+   validators forge); o validator escaneia o tree e deveria pegar o arquivo.
+   Se ele passar com exit 0, ele mente.
 
 Cada validator declarado vira (no mínimo) 1 finding com fixture
 correspondente. Validators com claim composta (múltiplas regras) podem
 gerar múltiplos contra-exemplos — um por regra distinta.
+
+**Contrato de invocação (pós-F-1):** o sandbox NÃO passa a fixture como
+argumento posicional. Ele monta um mini project-tree
+(`fixtures/<fixture_id>/`) com o seu arquivo no `tree_rel_path` declarado e
+invoca `python3 <validator> --project-root <mini-tree>`. Por isso você
+declara, por contra-exemplo: (a) `tree_rel_path` — onde o arquivo mora no
+tree (ex.: `src/main/kotlin/Offending.kt`); (b) o conteúdo do arquivo no
+formato que o validator escaneia. Um input YAML posicional único não é mais
+o contrato — o validator argparse o rejeitaria com exit 2 sem nunca ler.
 
 ---
 
@@ -105,9 +117,10 @@ Dois grupos de arquivos no run dir
       },
       "evidence": {
         "fixture_path": "fixtures/validator-claim-<slug>.yaml",
+        "tree_rel_path": "src/main/kotlin/Offending.kt",
         "validator_path": "validators/<name>.py",
         "expected_exit_code": 1,
-        "actual_exit_code": "<a determinar em Phase 3 sandbox>",
+        "invocation": "--project-root <mini-tree>",
         "auditor": "validator-claim",
         "auditor_reasoning": "<docstring claim X; regex/regra Y; contra-exemplo derivado>"
       },
@@ -127,23 +140,49 @@ Dois grupos de arquivos no run dir
 `executable: true` é **invariante** — Phase 3 sandbox roda subprocess
 contra todo fixture que você emitir. Sem exceção.
 
-### 2. Fixtures (1 arquivo por contra-exemplo, na linguagem do validator)
+### 2. Fixtures (1 descritor por contra-exemplo + arquivo materializado)
 
-`fixtures/validator-claim-<slug>.{yaml,py,kt,swift}` — escolha a
-extension de acordo com o validator alvo:
+O descritor da fixture mora em
+`fixtures/validator-claim-<slug>.yaml` (use o template
+`templates/qa-fixture-validator-claim.template.yaml`). Ele declara o
+`target_validator`, o `tree_rel_path` (onde o arquivo do contra-exemplo mora
+no mini-tree) e o `file_content` (o conteúdo que o validator deveria pegar).
 
-- Validator Python (`validators/*.py`) → fixture pode ser `.yaml`
-  (input estruturado) e/ou `.py` (test harness)
-- Validator Kotlin (`validators/*.kt`, projetos KMP) → `.kt`
-- Validator Swift (`validators/*.swift`, projetos iOS) → `.swift`
-- Cross-language ou YAML-driven → `.yaml`
+**Materialize o arquivo do contra-exemplo no mini-tree** sob
+`fixtures/<fixture_id>/<tree_rel_path>`, na linguagem que o validator escaneia:
 
-Use os templates correspondentes em
-`templates/qa-fixture-validator-claim.template.{yaml,py,kt,swift}`.
+- Validator Python que escaneia `.kt` (KMP) → `Offending.kt`
+- Validator que escaneia task contracts → `tasks/TASK-0001.yaml`
+- Validator que escaneia `.swift` (iOS) → `Offending.swift`
+
+O sandbox invoca `python3 <validator> --project-root fixtures/<fixture_id>/`;
+o validator escaneia esse mini-tree e deveria pegar o arquivo materializado.
+
+**Validators feature/task-scoped** (ex.: `validate_task_contract.py`) exigem
+`--scope feature --id <slug>` além do `--project-root` — sem isso saem com
+exit 2 (warn) e o vetor fica inerte. Quando o validator-alvo for scoped,
+declare `invocation_args` no descritor da fixture (campo opcional do template
+`qa-fixture-validator-claim.template.yaml`):
+
+```yaml
+invocation_args: ["--scope", "feature", "--id", "<slug>"]
+```
+
+O `<slug>` é o alvo que o evidence carrega (o `scope.feature` do finding). O
+sandbox apenda esses args APÓS o `--project-root <mini-tree>` que o engine
+controla, mas aplica um **allowlist**: só `--scope` e `--id` (com seus valores)
+passam; qualquer outro token é DROPADO. Você **não** pode (nem deve) declarar
+`--project-root` em `invocation_args` — nem ele nem suas abreviações
+(`--p`/`--proj`/`--project`/`--project-roo`, formas espaço ou `=`) sobrevivem ao
+allowlist; o engine é o dono do root e a tentativa é descartada, não
+interpretada (Decisão 30). Omita `invocation_args` quando o validator só lê
+`--project-root`.
 
 Nomeie de forma estável e descritiva:
-`validator-claim-<validator-short>-<scenario-short>.<ext>`. Exemplo:
-`validator-claim-data-contract-empty-email.yaml`.
+`validator-claim-<validator-short>-<scenario-short>` (sem extensão na
+serialização de `fixture_name` que o conductor escreve em
+`sandbox-results.json` — alinha com a matching rule do synthesizer). Exemplo:
+`validator-claim-no-suppress-compose-suppress`.
 
 ---
 
@@ -201,7 +240,6 @@ do mentor.
 - Schema: `docs/schemas/qa-finding.md`.
 - Templates:
   - `templates/qa-finding.template.json`
-  - `templates/qa-fixture-validator-claim.template.yaml`
-  - `templates/qa-fixture-validator-claim.template.py`
-  - `templates/qa-fixture-validator-claim.template.kt`
-  - `templates/qa-fixture-validator-claim.template.swift`
+  - `templates/qa-fixture-validator-claim.template.yaml` (descritor do
+    contra-exemplo: `target_validator` + `tree_rel_path` + `file_content`;
+    o arquivo materializado é escrito em `fixtures/<fixture_id>/<tree_rel_path>`)

@@ -235,8 +235,10 @@ def find_resumable_run(
 
     Args:
         project_root: raiz do projeto consumidor.
-        scope_type: tipo do scope (mantido pra API; ainda nao usado na
-            busca — futuro: discriminar runs de targets homonimos).
+        scope_type: tipo do scope (WR-01: discrimina runs de targets
+            homonimos cross-tipo). Leniente — so exclui candidato quando o
+            ``run.scope.type`` do qa-report esta presente E diverge; report
+            legado sem o campo permanece resumivel (backward-compat).
         scope_target: target conforme passado pelo user. Sanitizado via
             :func:`engine.qa.ingest.sanitize_scope_target` (mesmo helper
             usado por ``create_run_tree``), garantindo simetria entre
@@ -277,6 +279,28 @@ def find_resumable_run(
             continue
         if report.get("verdict") != "pending":
             continue
+        # WR-01: discrimina por scope.type quando presente. Dois targets
+        # homonimos cross-tipo sanitizam pro mesmo dir; sem este filtro uma
+        # run type=feature reataria como type=screen (pos-F-2 toda run grava
+        # checkpoint, multiplicando a colisao). Leniente: so exclui quando o
+        # tipo esta presente E diverge — qa-report legado/migrado sem
+        # run.scope.type permanece resumivel (backward-compat).
+        run_block = report.get("run")
+        if isinstance(run_block, dict):
+            report_scope = run_block.get("scope")
+            if isinstance(report_scope, dict):
+                report_type = report_scope.get("type")
+                # B1 (review pr27): guarda AMBOS os lados. Sem o
+                # ``isinstance(scope_type, str)``, um ``scope_type`` None
+                # (caller que não passou tipo) faria ``report_type != None``
+                # → True pra todo report typed, excluindo TODOS os candidatos
+                # (defense-in-depth; latente hoje pois callers passam str).
+                if (
+                    isinstance(scope_type, str)
+                    and isinstance(report_type, str)
+                    and report_type != scope_type
+                ):
+                    continue
         candidates.append(entry)
 
     if not candidates:

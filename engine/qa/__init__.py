@@ -32,8 +32,11 @@ Voz: mentor calmo. Sem auto-fix — verdict BLOCK exige escolha humana via
 from __future__ import annotations
 
 import json
+import os
 import signal
 import sys
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -58,6 +61,12 @@ from engine.qa.ingest import (
     parse_qa_config,
     snapshot_artefacts,
 )
+from engine.qa.sandbox import (
+    Fixture,
+    SandboxResult,
+    run_sandbox,
+    validator_within_allowed_roots,
+)
 from engine.qa.scope import (
     Scope,
     ScopeAmbiguityError,
@@ -66,11 +75,14 @@ from engine.qa.scope import (
     resolve_scope,
 )
 from engine.qa.synthesis import (
+    SandboxResultStub,
     SynthesisResult,
     findings_from_sandbox_results,
     hydrate_sandbox_results,
+    hydrate_validator_claim_evidence,
     synthesize,
 )
+from engine.utils.paths import forge_home
 
 # Alias local pra preservar uso interno (`_utc_iso_z()`) sem espalhar a
 # importacao publica em cada call-site. O helper canonico vive em
@@ -94,13 +106,60 @@ _CORE_AUDITORS: tuple[str, ...] = (
 )
 
 
+@dataclass(frozen=True)
+class _UnresolvableValidatorClaim:
+    """A7 (review pr27 r2): descritor de um validator-claim cujo validator_path
+    foi REJEITADO no reconstruct (fora dos roots permitidos / ``..`` traversal).
+
+    Diferente do caso in-roots-missing (que vira Fixture, roda no sandbox e sai
+    ``status=error`` naturalmente), o out-of-roots é dropado ANTES de virar
+    Fixture — então precisamos carregá-lo explicitamente pra que A4 derive um
+    finding ``validator-claim-unresolvable`` em vez de só logar em stderr
+    (detection asymmetry → false-clean no caso MAIS suspeito).
+
+    ``fingerprint`` é o do draft original validator-claim, usado por A8 pra
+    suprimir esse draft (dedup: 1 finding por issue).
+
+    ``fixture_path`` (WR-01, review pr27 r3) é o ``evidence.fixture_path``
+    COMPLETO do draft, usado por A8 como chave de supressão inequívoca — dois
+    fixtures com o mesmo basename em dirs distintos não se canibalizam.
+    """
+
+    fixture_name: str
+    error: str
+    fingerprint: str | None = None
+    fixture_path: str | None = None
+
+
+@dataclass
+class _ReconstructResult:
+    """Saída de ``_reconstruct_fixtures_from_findings`` (A7).
+
+    ``fixtures`` são os executáveis reconstruídos (validator_path resolvido
+    DENTRO dos roots). ``unresolvable_out_of_roots`` carrega os validator-claim
+    rejeitados por escape de roots, pra surfaçar como finding determinístico.
+
+    ``fixture_path_by_name`` (WR-01, review pr27 r3) mapeia ``Fixture.name``
+    (stem) → ``evidence.fixture_path`` completo do draft que o originou. Como o
+    sandbox-results.json só carrega ``fixture_name`` (stem), esse mapa permite
+    o caller recuperar o path íntegro de um fixture in-roots-missing pra a
+    chave de supressão A8 ser inequívoca.
+    """
+
+    fixtures: list[Fixture] = field(default_factory=list)
+    unresolvable_out_of_roots: list[_UnresolvableValidatorClaim] = field(
+        default_factory=list
+    )
+    fixture_path_by_name: dict[str, str] = field(default_factory=dict)
+
+
 def run_qa(
     raw_target: str,
     *,
     project_root: Path,
     workflow_config: dict[str, Any],
 ) -> int:
-    """Entry-point chamado pelo CLI. Retorna exit code (0 ou 8).
+    """Entry-point chamado pelo CLI. Retorna exit code (0 ou 1+QA-BLOCK).
 
     Orquestra as phases na ordem canonica (§4 do spec):
 
@@ -109,7 +168,8 @@ def run_qa(
     3. Se ``findings/*.json`` ja presente (test/integration mode ou
        re-invocacao pos-conductor): Phase 4 synthesis + Phase 5 emit +
        render do verdict block
-    4. Exit code 8 se ``verdict == "BLOCK"``, 0 caso contrario
+    4. Exit code 1 + ``[FORGE-ERR:QA-BLOCK]`` (via ``fail_with_tag``) se
+       ``verdict == "BLOCK"``, 0 caso contrario
 
     Comportamento defensivo:
     - ``workflow_config`` None ou nao-dict e tratado como section ausente
@@ -132,7 +192,10 @@ def run_qa(
 
     Returns:
         Exit code: 0 (PASS/FLAG, qa desabilitado, scope error, conductor
-        dispatch pendente) ou 8 (verdict=BLOCK).
+        dispatch pendente) ou 1 + ``[FORGE-ERR:QA-BLOCK]`` em stderr
+        (verdict=BLOCK, via ``fail_with_tag(ERR_QA_BLOCK)``). O ``8`` antigo
+        foi superseded pela convencao ``fail_with_tag`` (C3 EXIT-2-COLLISION
+        / W2); ver ``docs/design/06-command-surface.md``.
     """
     # Type guard defensivo — workflow_config pode chegar None de callers
     # que ainda nao migraram (ex.: testes legados, smoke scripts).
@@ -280,6 +343,26 @@ def run_qa(
             workflow_config=workflow_config,
         )
 
+        # F-2 (B.2) — checkpoint na fronteira de Phase 0. Veredito do
+        # mantenedor (Decisao 10 / row 32): resume e flagless. O checkpoint,
+        # antes escrito so em SIGINT, passa a marcar a fronteira de Phase 0
+        # do fluxo normal — assim re-invocar `forge qa <target>` PURO (mesmo
+        # argv) reata esta run em andamento via find_resumable_run, em vez de
+        # criar run nova. O skeleton ja gravou verdict=pending acima, entao o
+        # par (checkpoint.json + qa-report.json pending) satisfaz o criterio
+        # de find_resumable_run. last_phase_completed=0 leva o resume ao
+        # branch _reattach_run_tree (nao ao branch stale >= 5). Cleanup na
+        # conclusao (Phase 5) garante que a run concluida nao fica presa em
+        # resume (M-002).
+        write_checkpoint(
+            run_tree.root,
+            run_id=run_tree.run_id,
+            scope_type=scope.type,
+            scope_target=scope.target,
+            last_phase_completed=0,
+            findings_partial_count=0,
+        )
+
     # Track phase progresso pro SIGINT handler. List-of-int pra mutar
     # dentro do closure (nonlocal nao funciona em handler registrado via
     # signal.signal pq frame e diferente).
@@ -334,6 +417,11 @@ def run_qa(
             return 0
 
         all_findings: list[dict[str, Any]] = []
+        # PC-2 (review pr27): acumula os nomes dos drafts pulados pra um único
+        # resumo em stderr DEPOIS do loop. O log per-file (mantido) some no
+        # ruído quando há muitos drafts; sem o resumo agregado o under-reporting
+        # de findings passa silencioso.
+        skipped_findings_files: list[str] = []
         for ff in findings_files:
             # Degradação graciosa: arquivo malformado (JSON quebrado) ou
             # ilegível (perm error) não derruba synthesis — outros auditores
@@ -347,6 +435,7 @@ def run_qa(
                     "Ignorando este arquivo para degradação graciosa.",
                     file=sys.stderr,
                 )
+                skipped_findings_files.append(ff.name)
                 continue
             if isinstance(data, list):
                 all_findings.extend(data)
@@ -355,28 +444,225 @@ def run_qa(
                 if isinstance(nested, list):
                     all_findings.extend(nested)
 
+        # PC-2: resumo agregado dos drafts pulados — visibilidade de
+        # under-reporting que o log per-file dilui.
+        if skipped_findings_files:
+            print(
+                f"⚠ {len(skipped_findings_files)} findings file(s) puladas por "
+                f"erro de leitura/parse: {', '.join(skipped_findings_files)}",
+                file=sys.stderr,
+            )
+
+        # CR-01: o ENGINE é dono da Phase 3. Quando há findings com fixtures
+        # executáveis (vetor validator-claim, executable=true) E
+        # sandbox-results.json AUSENTE, o engine reconstrói as Fixtures dos
+        # findings, roda run_sandbox ELE MESMO e escreve sandbox-results.json.
+        # Sem isso, run_sandbox era dead code no flow e o vetor "validator que
+        # mente" (F-1/F-4) nunca executava — o synthesis settlava prematuro.
+        #
+        # Idempotente: só roda quando sandbox-results.json não existe. Sem
+        # fixtures executáveis → run_sandbox([]) == [] → não escreve arquivo
+        # vazio (não é settle "prematuro"; é legítimo não haver nada a rodar).
+        #
+        # A3 (review pr27): existência NÃO é suficiente pra confiar num arquivo
+        # que o ENGINE deveria ter escrito. Um crash após write parcial/torn
+        # (pré-A3) ou antes de synthesis deixa um sandbox-results.json de FASE
+        # INCOMPLETA que o resume replay-aria verbatim, sem vínculo com os
+        # findings/fixtures atuais.
+        #
+        # Discriminador: o engine só é dono da Phase 3 quando há fixtures
+        # executáveis reconstruíveis dos findings. Nesse caso, a confiança no
+        # arquivo existente exige um checkpoint atestando phase >= 3
+        # (sandbox-done); sem isso o arquivo é stale e re-rodamos (o write
+        # atômico sobrescreve íntegro). Quando NÃO há fixtures executáveis, o
+        # arquivo veio do conductor (estados legados/degradados, §5.3) ou é
+        # legítimo — preservamos o comportamento original e confiamos nele.
+        sandbox_results_file = run_tree.root / "sandbox-results.json"
+        reconstructed = _reconstruct_fixtures_from_findings(
+            all_findings, run_tree, project_root=project_root
+        )
+        fixtures = reconstructed.fixtures
+        sandbox_phase_complete = (
+            resumed_checkpoint is not None
+            and resumed_checkpoint.last_phase_completed >= 3
+        )
+        # Re-rodar quando o engine é dono (há fixtures) E ou o arquivo não
+        # existe ou existe mas a fase do sandbox não concluiu (stale).
+        engine_owns_sandbox = bool(fixtures)
+        sandbox_results_trustworthy = sandbox_results_file.exists() and (
+            sandbox_phase_complete or not engine_owns_sandbox
+        )
+        if not sandbox_results_trustworthy:
+            if fixtures:
+                _phase[0] = 2  # entrando na Phase 3 (sandbox)
+                # Recomputa extras autorizados aqui (idempotente, fail-safe a
+                # ()): o resume reattach não passa pelo branch que computa
+                # allowed_extras pro handoff, então não dependemos da var de
+                # branch. Mesma lista que o handoff carrega (QA-11).
+                phase3_extras = _compute_allowed_extras(
+                    project_root, workflow_config
+                )
+                sandbox_results = run_sandbox(
+                    run_tree.root,
+                    fixtures,
+                    budget_total_s=cfg.sandbox_budget_seconds_total,
+                    per_validator_s=cfg.agent_timeout_seconds,
+                    extras=phase3_extras,
+                    # A1 (review pr27): defesa-em-profundidade — run_sandbox
+                    # rejeita validator_path fora destes roots mesmo que algo
+                    # escape o filtro do reconstruct.
+                    allowed_validator_roots=_allowed_validator_roots(project_root),
+                )
+                _write_sandbox_results(run_tree, sandbox_results)
+                # A6 (review pr27 r2): persiste checkpoint phase-3 IMEDIATAMENTE
+                # após escrever sandbox-results.json. Sem isso nenhum caminho
+                # normal alcançava last_phase_completed>=3 (o SIGINT handler
+                # capturava _phase[0]=2, setado ANTES do run_sandbox), então o
+                # branch 'trust existing sandbox-results' era dead code e todo
+                # resume de run engine-owned RE-RODAVA o sandbox — gasto de
+                # budget + side-effects de validator repetidos, violando a
+                # Decisão 27 ('resume continua, não refaz'). Com o checkpoint
+                # phase-3 gravado aqui, um interrupt/crash entre o sandbox e o
+                # synthesis deixa o resume CONFIAR no arquivo completo. Phase<3
+                # (sandbox não concluiu) continua re-rodando — arquivo possível
+                # torn/stale.
+                _phase[0] = 3  # Phase 3 (sandbox) concluída
+                write_checkpoint(
+                    run_tree.root,
+                    run_id=run_tree.run_id,
+                    scope_type=scope.type,
+                    scope_target=scope.target,
+                    last_phase_completed=3,
+                    findings_partial_count=len(
+                        list(run_tree.findings_dir.glob("*.json"))
+                    ),
+                )
+
         # CONF-003: sandbox breach/timeout viram findings deterministicos
-        # (§5.3). Le sandbox-results.json escrito pelo conductor; injeta
+        # (§5.3). Le sandbox-results.json escrito pelo engine na Phase 3
+        # (CR-01) — ou, em estados degradados/legados, pelo conductor; injeta
         # findings derivados antes do synthesize pra que dedup + verdict
         # logic considerem os problemas de isolamento como first-class
         # findings (breach -> critical -> BLOCK).
-        sandbox_results_file = run_tree.root / "sandbox-results.json"
+        # A4 (review pr27): todo fixture reconstruído é validator-claim
+        # (_reconstruct_fixtures_from_findings filtra por vetor). Esse set
+        # permite que findings_from_sandbox_results derive um finding pro
+        # caso "validator irresolvível" (status=error) em vez de droppar
+        # silenciosamente → false-clean pro vetor "validator que mente".
+        #
+        # A7 (review pr27 r2): inclui TAMBÉM os validator-claim rejeitados por
+        # validator_path fora dos roots (out-of-roots/traversal). Esse caso era
+        # dropado no reconstruct (nunca virava Fixture → nunca rodava sandbox →
+        # nunca derivava finding), deixando o caso MAIS suspeito false-clean.
+        out_of_roots = reconstructed.unresolvable_out_of_roots
+        out_of_roots_names = {u.fixture_name for u in out_of_roots}
+        vc_fixture_names = {fx.name for fx in fixtures} | out_of_roots_names
+
+        # A7: stubs sintéticos pros out-of-roots (status=error), pra que
+        # findings_from_sandbox_results derive o finding determinístico. Não
+        # vêm de sandbox-results.json (nunca rodaram); são construídos do
+        # descritor de rejeição.
+        stubs: list[SandboxResultStub] = [
+            SandboxResultStub(
+                fixture_name=u.fixture_name,
+                status="error",
+                error=u.error,
+            )
+            for u in out_of_roots
+        ]
+        for u in out_of_roots:
+            print(
+                f"⚠ validator-claim '{u.fixture_name}': {u.error}. "
+                f"Surfaced como finding medium (não settla clean) — A7.",
+                file=sys.stderr,
+            )
+
         if sandbox_results_file.exists():
             try:
                 raw = json.loads(sandbox_results_file.read_text(encoding="utf-8"))
-                stubs = hydrate_sandbox_results(
-                    raw if isinstance(raw, list) else raw.get("results", [])
+                # B2 (review pr27): raw pode ser qualquer JSON válido (list,
+                # dict, ou escalar). raw.get num escalar levantaria
+                # AttributeError NÃO capturado abaixo. Guarda os 3 casos.
+                stubs.extend(
+                    hydrate_sandbox_results(
+                        raw
+                        if isinstance(raw, list)
+                        else (
+                            raw.get("results", []) if isinstance(raw, dict) else []
+                        )
+                    )
                 )
-                derived = findings_from_sandbox_results(
-                    stubs, run_id=run_tree.run_id
-                )
-                all_findings.extend(derived)
+                # A4: warning explícito em stderr pra cada validator-claim com
+                # validator irresolvível (in-roots-missing) — visibilidade além
+                # do finding no report.
+                for s in stubs:
+                    if (
+                        s.status == "error"
+                        and s.fixture_name in vc_fixture_names
+                        and s.fixture_name not in out_of_roots_names
+                    ):
+                        print(
+                            f"⚠ validator-claim '{s.fixture_name}': validator "
+                            f"irresolvível — claim não verificável "
+                            f"({s.error or 'sem detalhe'}). Surfaced como finding "
+                            f"medium (não settla clean).",
+                            file=sys.stderr,
+                        )
             except (json.JSONDecodeError, OSError) as exc:
                 print(
                     f"⚠ sandbox-results.json malformado ({exc}). "
                     "Ignorando — sandbox findings nao serao gerados nesta run.",
                     file=sys.stderr,
                 )
+
+        # A4 + A7: deriva findings dos stubs problemáticos (sandbox-breach,
+        # timeout, e validator irresolvível — in-roots-missing E out-of-roots).
+        derived = findings_from_sandbox_results(
+            stubs,
+            run_id=run_tree.run_id,
+            validator_claim_fixtures=vc_fixture_names,
+        )
+        all_findings.extend(derived)
+
+        # A8 (review pr27 r2): dedup — quando um validator-claim resolve
+        # irresolvível (in-roots-missing OU out-of-roots), o draft ORIGINAL
+        # validator-claim do auditor + o derivado validator-claim-unresolvable
+        # descreveriam o MESMO issue com 2 findings (vetores diferentes → sem
+        # dedup por fingerprint). Suprimimos o draft original pra reportar
+        # exatamente 1 finding por issue.
+        #
+        # WR-01 (review pr27 r3): a chave de supressão é o fixture_path COMPLETO,
+        # não o basename. Dois validator-claim fixtures em dirs distintos com o
+        # mesmo basename não podem se canibalizar. O stub só carrega fixture_name
+        # (stem), então recuperamos o path íntegro: out-of-roots via
+        # _UnresolvableValidatorClaim.fixture_path, in-roots-missing via o mapa
+        # stem→path do reconstruct.
+        out_of_roots_path_by_name = {
+            u.fixture_name: u.fixture_path
+            for u in out_of_roots
+            if u.fixture_path
+        }
+        unresolvable_paths: set[str | None] = set()
+        for r in stubs:
+            if getattr(r, "status", None) != "error":
+                continue
+            stem = getattr(r, "fixture_name", None)
+            if stem not in vc_fixture_names:
+                continue
+            full_path = out_of_roots_path_by_name.get(
+                stem
+            ) or reconstructed.fixture_path_by_name.get(stem)
+            if full_path:
+                unresolvable_paths.add(full_path)
+        all_findings = _suppress_superseded_validator_claims(
+            all_findings, unresolvable_paths
+        )
+
+        # F-4: hidrata evidence.sandbox_result nos drafts validator-claim a
+        # partir dos MESMOS stubs (casando por basename do fixture). No-op
+        # quando stubs=[] (sandbox-results ausente) — drafts permanecem
+        # sandbox_result=None, que e draft-valido.
+        all_findings = hydrate_validator_claim_evidence(all_findings, stubs)
 
         _phase[0] = 3  # findings + sandbox-results processados
         result = synthesize(all_findings)
@@ -441,6 +727,62 @@ def _reattach_run_tree(run_dir: Path, _checkpoint: Checkpoint) -> RunTree:
     )
 
 
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Escreve ``content`` em ``path`` de forma ATÔMICA (tmp + fsync + replace).
+
+    PC-1 (review pr27): centraliza o padrão de write durável que o
+    ``_write_sandbox_results`` já aplicava (A3/A10) pra reusá-lo nas escritas
+    de ``qa-report.json`` (Phase 0 skeleton + Phase 4 finalize), que antes
+    usavam ``write_text`` pelado — um crash no meio do flush deixava o
+    output PRINCIPAL da run torn/parcial.
+
+    Mecânica (Mandamento 3 — DRY, fonte única):
+      1. escreve num tmp irmão (``{path}.tmp``);
+      2. ``flush`` + ``os.fsync`` do arquivo (durabiliza o conteúdo);
+      3. ``os.replace`` (fronteira atômica — POSIX e Windows same-fs);
+      4. ``os.fsync`` do diretório pai (durabiliza a ENTRADA do rename;
+         best-effort — plataformas sem fsync de dir levantam OSError, que
+         engolimos, pois o fsync do arquivo já cobre o caso comum).
+
+    O ``finally`` limpa o tmp se o ``os.replace`` não chegou a renomeá-lo —
+    nunca deixa resíduo ``.tmp``. ``OSError`` (ex.: disco cheio) PROPAGA:
+    melhor falhar alto do que persistir um half-write silencioso.
+
+    Args:
+        path: destino final.
+        content: texto já serializado a persistir.
+
+    Raises:
+        OSError: se a escrita/replace falhar (disco cheio, perm). O caller
+            decide o handling — não silenciamos.
+    """
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        with tmp.open("w", encoding="utf-8") as fh:
+            fh.write(content)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+        # fsync do diretório pai APÓS o rename — durabiliza a entrada do
+        # rename em POSIX. Best-effort: Windows / filesystems exóticos sem
+        # fsync de dir levantam OSError, que engolimos (o fsync do arquivo
+        # acima já cobre o caso comum).
+        try:
+            dir_fd = os.open(str(path.parent), os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError:
+            pass
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
 def _write_qa_report_skeleton(
     scope: Scope, run_tree: RunTree, cfg: QAConfig
 ) -> None:
@@ -488,10 +830,57 @@ def _write_qa_report_skeleton(
         },
         "findings": [],
     }
-    (run_tree.root / "qa-report.json").write_text(
+    # PC-1 (review pr27): write atômico — qa-report.json é o output PRINCIPAL
+    # da run; um torn write deixava a run inconsistente.
+    _atomic_write_text(
+        run_tree.root / "qa-report.json",
         json.dumps(report, indent=2, ensure_ascii=False),
-        encoding="utf-8",
     )
+
+
+def _normalize_iso_z(raw: str) -> str:
+    """WR-03: troca SÓ o sufixo ``Z`` por ``+00:00`` antes do ``fromisoformat``.
+
+    ``datetime.fromisoformat`` (3.11+) ja aceita ``Z`` sufixo, mas
+    normalizamos por robustez. O cuidado e nao usar ``str.replace("Z", ...)``
+    global — isso reescreveria qualquer ``Z`` interno de um timestamp
+    migrado/malformado, mascarando o defeito num parse plausivel-mas-errado.
+    Strip de sufixo preserva ``Z`` interno (que cai em degradacao graciosa no
+    parse), em vez de corromper silenciosamente.
+    """
+    if raw.endswith("Z"):
+        return raw[:-1] + "+00:00"
+    return raw
+
+
+def _compute_duration_s(started_raw: Any, finished_dt: datetime) -> float:
+    """F-3: deriva run.duration_s de (finished - started).total_seconds().
+
+    ``started_raw`` vem do skeleton (``run.started_at``, ISO-8601 com sufixo
+    ``Z`` escrito por ``utc_iso_z``). Degradacao graciosa: se ausente ou
+    malformado, retorna ``0.0`` em vez de derrubar finalize — audit trail
+    incompleto e aceitavel (alinhado ao padrao "skeleton ausente" do metodo).
+
+    Args:
+        started_raw: valor de ``run.started_at`` (str ISO-Z esperado).
+        finished_dt: ``datetime`` tz-aware usado pra ``finished_at`` —
+            mesma referencia, sem jitter.
+
+    Returns:
+        Segundos decorridos (float, >= 0).
+    """
+    if not isinstance(started_raw, str):
+        return 0.0
+    try:
+        # ``datetime.fromisoformat`` (3.11+) aceita ``Z``; pra robustez em
+        # versoes anteriores, normalizamos o sufixo ``Z`` -> ``+00:00`` antes
+        # do parse (WR-03: strip do sufixo, nao replace global).
+        started_dt = datetime.fromisoformat(_normalize_iso_z(started_raw))
+    except (ValueError, TypeError):
+        return 0.0
+    if started_dt.tzinfo is None:
+        started_dt = started_dt.replace(tzinfo=timezone.utc)
+    return max(0.0, (finished_dt - started_dt).total_seconds())
 
 
 def _finalize_qa_report(
@@ -502,7 +891,8 @@ def _finalize_qa_report(
     Le o skeleton escrito em Phase 0 (preservando run.id, run.scope,
     run.config_snapshot, run.started_at), substitui ``verdict``,
     ``summary`` e ``findings`` pelos consolidados de Phase 4, e anexa
-    ``run.finished_at``.
+    ``run.finished_at`` + ``run.duration_s`` (F-3, derivado de
+    finished - started; ``validate_qa_report`` exige ambos).
 
     Tolerante a skeleton ausente — degradacao graciosa: se o file nao
     existe (caller chamou finalize sem skeleton previo, ou disk error em
@@ -525,7 +915,14 @@ def _finalize_qa_report(
     run_block = existing.get("run") if isinstance(existing.get("run"), dict) else {}
     run_block = dict(run_block)  # shallow copy pra evitar mutacao do dict lido
     run_block.setdefault("id", run_tree.run_id)
-    run_block["finished_at"] = _utc_iso_z()
+
+    # F-3: finished_at e duration_s derivam da MESMA referencia temporal
+    # (sem jitter de duas chamadas). validate_qa_report:62 exige run.duration_s.
+    finished_dt = datetime.now(timezone.utc)
+    run_block["finished_at"] = finished_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    run_block["duration_s"] = _compute_duration_s(
+        run_block.get("started_at"), finished_dt
+    )
 
     report: dict[str, Any] = {
         "schema_version": existing.get("schema_version", 1),
@@ -538,9 +935,320 @@ def _finalize_qa_report(
         },
         "findings": list(result.findings),
     }
-    report_path.write_text(
+    # PC-1 (review pr27): write atômico — finalize sobrescreve o output
+    # PRINCIPAL; um torn write no finalize perderia verdict/findings.
+    _atomic_write_text(
+        report_path,
         json.dumps(report, indent=2, ensure_ascii=False),
-        encoding="utf-8",
+    )
+
+
+def _allowed_validator_roots(project_root: Path) -> list[Path]:
+    """A1 (review pr27): roots onde um ``validator_path`` pode legitimamente
+    morar — ``project/validators/`` ∪ ``FORGE_HOME/validators/``.
+
+    Os validators canon de produção vivem em ``FORGE_HOME/validators/``; um
+    projeto consumidor pode ter validators locais em ``project/validators/``.
+    Qualquer ``.py`` fora desses dois roots não é um validator forge legítimo —
+    rejeitar previne arbitrary code execution via ``evidence.validator_path``
+    hostil (path absoluto fora ou ``../``-traversal).
+    """
+    return [
+        project_root / "validators",
+        forge_home() / "validators",
+    ]
+
+
+def _reconstruct_fixtures_from_findings(
+    findings: list[dict[str, Any]],
+    run_tree: RunTree,
+    *,
+    project_root: Path,
+) -> _ReconstructResult:
+    """CR-01: reconstrói ``Fixture`` executáveis a partir dos findings emitidos.
+
+    O coração do fix: o engine roda a Phase 3 (sandbox) ELE MESMO, então
+    precisa reconstruir os objetos ``Fixture`` a partir do que o auditor
+    validator-claim escreveu em ``findings/*.json`` + ``fixtures/``.
+
+    Contrato dos findings validator-claim (``agents/qa-auditor-validator-claim.md``
+    §Output + ``templates/qa-fixture-validator-claim.template.yaml``):
+      - ``finding["executable"] is True`` (invariante do vetor; ``false`` é
+        exceção documentada pra validator inexistente — pulamos).
+      - ``evidence.fixture_path`` — descritor ``fixtures/validator-claim-<slug>.yaml``.
+        O ``stem`` (basename sem extensão) é o ``fixture_id``, que casa com
+        ``Fixture.name`` (IN-02) e com ``fixture_name`` em sandbox-results
+        (matching do F-4).
+      - ``evidence.validator_path`` — ``validators/<name>.py`` (canon de
+        produção). Quando relativo, resolve com precedência projeto >
+        FORGE_HOME (Item 3): se ``project_root / validator_path`` não é
+        arquivo, cai pra ``forge_home() / "validators" / <basename>`` —
+        os validators canon vivem em ``FORGE_HOME/validators/``, não no
+        projeto consumidor, então um basename nu só resolve via fallback.
+      - ``evidence.tree_rel_path`` — onde o arquivo do contra-exemplo mora no
+        mini-tree (``fixtures/<fixture_id>/<tree_rel_path>``). O auditor
+        materializou o arquivo lá; ``run_sandbox`` invoca o validator com
+        ``--project-root <mini-tree>``.
+
+    O ``input_path`` aponta o arquivo materializado
+    (``run_tree.fixtures_dir/<name>/<tree_rel_path>``) — ``run_sandbox`` exige
+    que ``input_path`` resolva dentro de ``run_dir/fixtures`` (Decisão 30); o
+    mini-tree mora exatamente ali.
+
+    Conservador: só reconstrói validator-claim com os 3 campos de evidence
+    presentes e ``executable`` não-``False``. Findings de outros vetores
+    (chaos carrega payload+contract no descritor, não validator_path na
+    evidence) ou sem os campos são pulados — sem invenção de Fixture.
+
+    Args:
+        findings: lista consolidada de findings draft (todos os auditores).
+        run_tree: ``RunTree`` da run em curso.
+        project_root: raiz do projeto consumidor (pra resolver validator_path
+            relativo ao canon de produção).
+
+    Returns:
+        ``_ReconstructResult`` com ``fixtures`` (executáveis, validator_path
+        dentro dos roots) + ``unresolvable_out_of_roots`` (validator-claim
+        rejeitados por escape de roots — A7, surfaçados como finding pelo
+        caller em vez de só logados). Ordem dos findings preservada.
+    """
+    fixtures: list[Fixture] = []
+    unresolvable: list[_UnresolvableValidatorClaim] = []
+    fixture_path_by_name: dict[str, str] = {}
+    seen_names: set[str] = set()
+    allowed_roots = _allowed_validator_roots(project_root)
+    for f in findings:
+        if not isinstance(f, dict) or f.get("vector") != "validator-claim":
+            continue
+        # executable=true é o invariante; false (validator inexistente) pula.
+        if f.get("executable") is False:
+            continue
+        ev = f.get("evidence")
+        if not isinstance(ev, dict):
+            continue
+        fixture_path = ev.get("fixture_path")
+        validator_path = ev.get("validator_path")
+        tree_rel_path = ev.get("tree_rel_path")
+        if not (
+            isinstance(fixture_path, str)
+            and isinstance(validator_path, str)
+            and isinstance(tree_rel_path, str)
+            and fixture_path
+            and validator_path
+            and tree_rel_path
+        ):
+            # Campos insuficientes pra montar uma Fixture executável — pula
+            # sem inventar (ex.: validator-claim de validator inexistente que
+            # não declarou tree_rel_path). O finding ainda entra no synthesis
+            # como draft; só não roda no sandbox.
+            continue
+
+        name = Path(fixture_path).stem
+        if not name or name in seen_names:
+            # Nome vazio ou duplicado (mesmo fixture_id em 2 findings) — pula
+            # o duplicado pra não rodar o mesmo mini-tree 2x.
+            continue
+        seen_names.add(name)
+
+        # Item 3 (R8): precedência projeto > FORGE_HOME pra validator_path
+        # relativo. Validators canon vivem em ``FORGE_HOME/validators/`` (não
+        # no projeto consumidor), então um basename nu
+        # (``validate_data_contract.py``) não resolve no consumidor. Regra:
+        #   1. project_root / validator_path — se existe como arquivo, vence
+        #      (validator local do projeto tem precedência).
+        #   2. forge_home() / "validators" / <basename> — fallback canon.
+        #   3. nenhum resolve → mantém project_root / validator_path
+        #      (comportamento atual; sandbox vira status=error, sem invenção).
+        validator = Path(validator_path)
+        if not validator.is_absolute():
+            project_candidate = project_root / validator
+            if project_candidate.is_file():
+                validator = project_candidate
+            else:
+                forge_candidate = (
+                    forge_home() / "validators" / Path(validator_path).name
+                )
+                if forge_candidate.is_file():
+                    validator = forge_candidate
+                else:
+                    # Nem projeto nem FORGE_HOME têm o validator — preserva o
+                    # comportamento atual (resolve sob project_root, sandbox
+                    # vira status=error e A4 surfaça validator-claim-unresolvable
+                    # downstream). PC-3 (review pr27): warning mentor-calmo
+                    # nomeando os paths tentados, pra debuggability na hora do
+                    # reconstruct (o finding A4 chega só depois do sandbox).
+                    print(
+                        f"⚠ validator-claim '{name}': validator_path "
+                        f"'{validator_path}' não resolve nem no projeto "
+                        f"({project_candidate}) nem no FORGE_HOME "
+                        f"({forge_candidate}). Claim não verificável — surfaçado "
+                        f"como finding downstream (A4).",
+                        file=sys.stderr,
+                    )
+                    validator = project_candidate
+
+        # A1 (review pr27): allowlist de roots. validator_path vem de uma
+        # fixture LLM; um path absoluto fora ou ``../``-traversal apontaria o
+        # sandbox pra QUALQUER .py do disco (arbitrary code execution). Rejeita
+        # aqui — sem execução.
+        if not validator_within_allowed_roots(validator, allowed_roots):
+            print(
+                f"⚠ validator-claim '{name}' aponta "
+                f"validator_path fora dos roots permitidos "
+                f"(project/validators/ ∪ FORGE_HOME/validators/): "
+                f"{validator_path}. Fixture NÃO executada (Decisão 30).",
+                file=sys.stderr,
+            )
+            # A7 (review pr27 r2): NÃO basta logar. O caso out-of-roots é o
+            # MAIS suspeito (possível tentativa de escape) e era dropado via
+            # ``continue`` → nunca virava Fixture → A4 nunca derivava finding →
+            # false-clean pro vetor "validator que mente". Registramos o claim
+            # como irresolvível pra o caller surfaçar um finding determinístico
+            # (validator-claim-unresolvable) e suprimir o draft original (A8).
+            unresolvable.append(
+                _UnresolvableValidatorClaim(
+                    fixture_name=name,
+                    error=(
+                        f"validator_path fora dos roots permitidos — possível "
+                        f"tentativa de escape (Decisão 30): {validator_path}"
+                    ),
+                    fingerprint=(
+                        f.get("fingerprint")
+                        if isinstance(f.get("fingerprint"), str)
+                        else None
+                    ),
+                    # WR-01: path íntegro pra chave de supressão inequívoca.
+                    fixture_path=fixture_path,
+                )
+            )
+            continue
+
+        # Item 4 (R8): invocation_args (--scope/--id de validators scoped) é
+        # opcional. Lê do evidence quando presente e bem-formado (lista de
+        # strings); qualquer outra coisa (LLM mal-formado) vira None — sem
+        # invenção. O sandbox neutraliza --project-root injetado (Decisão 30).
+        raw_args = ev.get("invocation_args")
+        extra_args: list[str] | None = None
+        if isinstance(raw_args, list) and all(
+            isinstance(a, str) for a in raw_args
+        ):
+            extra_args = list(raw_args)
+
+        input_path = run_tree.fixtures_dir / name / tree_rel_path
+        fixtures.append(
+            Fixture(
+                name=name,
+                input_path=input_path,
+                validator_path=validator,
+                tree_rel_path=tree_rel_path,
+                extra_args=extra_args,
+            )
+        )
+        # WR-01: registra stem → fixture_path completo pra o caller recuperar
+        # o path íntegro de um fixture in-roots-missing na chave de supressão.
+        fixture_path_by_name[name] = fixture_path
+    return _ReconstructResult(
+        fixtures=fixtures,
+        unresolvable_out_of_roots=unresolvable,
+        fixture_path_by_name=fixture_path_by_name,
+    )
+
+
+def _suppress_superseded_validator_claims(
+    findings: list[dict[str, Any]],
+    unresolvable_fixture_paths: set[str | None],
+) -> list[dict[str, Any]]:
+    """A8 (review pr27 r2): remove o draft ``validator-claim`` ORIGINAL quando
+    um finding ``validator-claim-unresolvable`` o substitui pra a mesma fixture.
+
+    Sem isso, um claim irresolvível (in-roots-missing OU out-of-roots) gera
+    DOIS findings pro mesmo issue: o draft do auditor (vetor ``validator-claim``)
+    + o derivado pelo engine (vetor ``validator-claim-unresolvable``). Como os
+    vetores diferem, ``dedup_findings`` (que dedup por fingerprint canonical-
+    form, e fingerprint inclui o vetor) NÃO os colapsa. Suprimimos o draft
+    original — o derivado é mais informativo (carrega o erro de resolução) e
+    representa o estado real: o claim não pôde ser verificado.
+
+    Casamento conservador: só suprime um draft ``validator-claim`` cujo
+    ``evidence.fixture_path`` COMPLETO está em ``unresolvable_fixture_paths``.
+
+    WR-01 (review pr27 r3): o casamento usa o ``fixture_path`` íntegro, não o
+    basename (``Path(...).stem``). Dois validator-claim fixtures em diretórios
+    distintos podem compartilhar o mesmo basename (ex.:
+    ``dir-a/validator-claim-foo.yaml`` e ``dir-b/validator-claim-foo.yaml``).
+    Se a supressão casasse por stem, declarar UM deles irresolvível suprimiria
+    AMBOS os drafts — perda de sinal real do claim legítimo. Casar pelo path
+    completo torna a chave inequívoca. Drafts de fixtures resolvidas (que
+    rodaram e podem ter findings legítimos) permanecem intocados. Não muta o
+    input — retorna lista nova.
+
+    Args:
+        findings: lista consolidada (drafts + derivados).
+        unresolvable_fixture_paths: ``fixture_path`` completos de fixtures cujo
+            validator-claim virou irresolvível (in-roots-missing ∪ out-of-roots).
+
+    Returns:
+        Lista nova sem os drafts ``validator-claim`` superseded.
+    """
+    if not unresolvable_fixture_paths:
+        return list(findings)
+    out: list[dict[str, Any]] = []
+    for f in findings:
+        if not isinstance(f, dict) or f.get("vector") != "validator-claim":
+            out.append(f)
+            continue
+        ev = f.get("evidence")
+        fixture_path = ev.get("fixture_path") if isinstance(ev, dict) else None
+        if (
+            isinstance(fixture_path, str)
+            and fixture_path
+            and fixture_path in unresolvable_fixture_paths
+        ):
+            # Superseded pelo validator-claim-unresolvable derivado — dedup.
+            continue
+        out.append(f)
+    return out
+
+
+def _write_sandbox_results(
+    run_tree: RunTree, results: list[SandboxResult]
+) -> None:
+    """CR-01: serializa ``SandboxResult`` em ``sandbox-results.json``.
+
+    O ENGINE escreve este arquivo na Phase 3 (antes era o conductor — veredito
+    do mantenedor moveu a responsabilidade pro core). Shape segue o contrato
+    de ``agents/qa-conductor.md`` (lista de dicts flat com ``fixture_name`` +
+    campos de status), consumido logo a seguir por ``hydrate_sandbox_results``
+    + ``findings_from_sandbox_results`` + ``hydrate_validator_claim_evidence``.
+
+    Args:
+        run_tree: ``RunTree`` da run em curso.
+        results: lista de ``SandboxResult`` de ``run_sandbox``.
+    """
+    payload = [
+        {
+            "fixture_name": r.fixture.name,
+            "status": r.status,
+            "exit_code": r.exit_code,
+            "stdout": r.stdout,
+            "stderr": r.stderr,
+            "duration_s": r.duration_s,
+            "error": r.error,
+            # A2 (review pr27): marca captura truncada (DoS sinal).
+            "truncated": r.truncated,
+        }
+        for r in results
+    ]
+    # A3/A10 (review pr27): write ATÔMICO (tmp + fsync + os.replace + dir
+    # fsync). O plain write_text anterior podia deixar um arquivo torn/parcial
+    # se o processo morresse no meio do flush — o resume então replay-aria
+    # lixo verbatim. PC-1 (review pr27): a mecânica vive em _atomic_write_text
+    # (fonte única — Mandamento 3); aqui só serializamos e delegamos. Sem
+    # mudança de comportamento (mesmo tmp suffix, mesma durabilidade).
+    target = run_tree.root / "sandbox-results.json"
+    _atomic_write_text(
+        target,
+        json.dumps(payload, indent=2, ensure_ascii=False),
     )
 
 

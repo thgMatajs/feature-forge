@@ -13,14 +13,22 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from datetime import datetime, timezone
+
+import pytest
+
 from engine.qa import (
+    _atomic_write_text,
+    _compute_duration_s,
     _finalize_qa_report,
+    _normalize_iso_z,
     _write_qa_report_skeleton,
     run_qa,
 )
 from engine.qa.ingest import QAConfig, create_run_tree
 from engine.qa.scope import Scope
 from engine.qa.synthesis import synthesize
+from validators.validate_qa_report import validate_qa_report
 
 
 def _make_feature_project(tmp_path: Path, slug: str) -> Path:
@@ -145,6 +153,188 @@ def test_phase4_finalizes_qa_report_verdict(tmp_path: Path) -> None:
     assert final["summary"]["by_severity"]["critical"] == 1
     assert final["summary"]["by_vector"].get("validator-claim") == 1
     assert len(final["findings"]) == 1
+
+
+def _empty_synthesis_result():
+    """SynthesisResult PASS vazio com todas as keys que validate_qa_report
+    exige (by_severity 5 keys, by_vector 4 keys)."""
+    return synthesize([])
+
+
+def test_finalize_computes_duration_s(tmp_path: Path) -> None:
+    """F-3: finalize escreve run.duration_s coerente (>=0) derivado de
+    finished - started; validate_qa_report passa no report finalizado.
+    """
+    scope = Scope(type="feature", target="dur-feature", paths=())
+    tree = create_run_tree(scope, project_root=tmp_path)
+    cfg = QAConfig()
+    _write_qa_report_skeleton(scope, tree, cfg)
+
+    # Forca started_at num valor conhecido no passado pra duration ser > 0.
+    report_path = tree.root / "qa-report.json"
+    skeleton = json.loads(report_path.read_text(encoding="utf-8"))
+    skeleton["run"]["started_at"] = "2026-06-19T12:00:00Z"
+    report_path.write_text(
+        json.dumps(skeleton, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    result = _empty_synthesis_result()
+    _finalize_qa_report(tree, result)
+
+    final = json.loads(report_path.read_text(encoding="utf-8"))
+    assert "duration_s" in final["run"], "F-3: run.duration_s ausente"
+    assert isinstance(final["run"]["duration_s"], (int, float))
+    assert final["run"]["duration_s"] >= 0
+
+    # validate_qa_report exige run.duration_s presente (L62) — nao deve raise.
+    validate_qa_report(final)
+
+
+def test_finalize_duration_s_graceful_when_started_missing(tmp_path: Path) -> None:
+    """F-3: started_at ausente/malformado -> duration_s = 0.0 (degradacao
+    graciosa, nao derruba finalize)."""
+    scope = Scope(type="feature", target="dur-missing", paths=())
+    tree = create_run_tree(scope, project_root=tmp_path)
+
+    # Sem skeleton: finalize reconstroi envelope; started_at ausente.
+    result = _empty_synthesis_result()
+    _finalize_qa_report(tree, result)
+
+    final = json.loads(
+        (tree.root / "qa-report.json").read_text(encoding="utf-8")
+    )
+    assert final["run"]["duration_s"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# WR-03 — _compute_duration_s strip do sufixo Z (não global)
+# ---------------------------------------------------------------------------
+
+
+def test_compute_duration_s_strips_only_trailing_z() -> None:
+    """WR-03: started_at com `Z` SÓ no sufixo parseia normalmente — duration
+    derivada corretamente (sem regressão no caminho feliz)."""
+    started = "2026-06-19T12:00:00Z"
+    finished = datetime(2026, 6, 19, 12, 0, 30, tzinfo=timezone.utc)
+    assert _compute_duration_s(started, finished) == 30.0
+
+
+def test_normalize_iso_z_strips_only_trailing_z() -> None:
+    """WR-03: `_normalize_iso_z` troca SÓ o `Z` final por `+00:00`.
+
+    Pré-fix (`.replace("Z", "+00:00")` global) corrompe qualquer `Z`
+    interno — um timestamp migrado/malformado com `Z` no meio vê todas as
+    ocorrências reescritas, mascarando o defeito num parse plausível. O
+    strip de sufixo preserva o `Z` interno (que então cai em degradação
+    graciosa no parse), nunca o reescreve silenciosamente.
+    """
+    # Z só no sufixo → vira offset UTC.
+    assert _normalize_iso_z("2026-06-19T12:00:00Z") == "2026-06-19T12:00:00+00:00"
+    # Z interno + Z sufixo → só o final é trocado; o interno permanece intacto.
+    assert _normalize_iso_z("2026Z06-19T12:00:00Z") == "2026Z06-19T12:00:00+00:00"
+    # Z só no meio (sem sufixo) → string inalterada.
+    assert _normalize_iso_z("2026Z06-19T12:00:00") == "2026Z06-19T12:00:00"
+    # Sem Z nenhum → inalterado.
+    assert _normalize_iso_z("2026-06-19T12:00:00+00:00") == "2026-06-19T12:00:00+00:00"
+
+
+def test_compute_duration_s_z_in_middle_graceful() -> None:
+    """WR-03: um `Z` NÃO-sufixo cai em degradação graciosa (`0.0`), nunca um
+    valor errado silencioso derivado de reescrita global do `Z`."""
+    finished = datetime(2026, 6, 19, 12, 0, 30, tzinfo=timezone.utc)
+    weird = "2026Z06-19T12:00:00Z"
+    assert _compute_duration_s(weird, finished) == 0.0
+
+
+def test_compute_duration_s_offset_without_z_intact() -> None:
+    """WR-03: started_at com offset explícito (sem Z) parseia inalterado."""
+    started = "2026-06-19T09:00:00+00:00"
+    finished = datetime(2026, 6, 19, 9, 0, 45, tzinfo=timezone.utc)
+    assert _compute_duration_s(started, finished) == 45.0
+
+
+# ---------------------------------------------------------------------------
+# PC-1 — qa-report.json write atômico (helper compartilhado + no torn file)
+# ---------------------------------------------------------------------------
+
+
+def test_atomic_write_text_roundtrips(tmp_path: Path) -> None:
+    """PC-1: o helper escreve o conteúdo íntegro e não deixa resíduo .tmp."""
+    target = tmp_path / "out.json"
+    payload = json.dumps({"hello": "ção", "n": 1}, ensure_ascii=False)
+    _atomic_write_text(target, payload)
+
+    assert target.is_file()
+    assert json.loads(target.read_text(encoding="utf-8")) == {"hello": "ção", "n": 1}
+    assert not (tmp_path / "out.json.tmp").exists()
+
+
+def test_atomic_write_text_failure_leaves_no_partial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PC-1: uma falha no meio do write (os.replace) não deixa o destino
+    corrompido nem o tmp órfão — o original é preservado/ausente, nunca
+    half-written."""
+    import engine.qa as qa_mod
+
+    target = tmp_path / "out.json"
+    target.write_text('{"original": true}', encoding="utf-8")
+
+    def _boom(*_args, **_kwargs):
+        raise OSError("simulated mid-write failure")
+
+    monkeypatch.setattr(qa_mod.os, "replace", _boom)
+
+    with pytest.raises(OSError):
+        _atomic_write_text(target, '{"new": "incompleto"}')
+
+    # Destino preservado (nunca half-written).
+    assert json.loads(target.read_text(encoding="utf-8")) == {"original": True}
+    # tmp não sobra.
+    assert not (tmp_path / "out.json.tmp").exists()
+
+
+def test_phase0_skeleton_uses_atomic_write(tmp_path: Path) -> None:
+    """PC-1: Phase 0 escreve qa-report.json atomicamente — round-trips e sem
+    .tmp residual."""
+    scope = Scope(type="feature", target="atomic-skel", paths=())
+    tree = create_run_tree(scope, project_root=tmp_path)
+    cfg = QAConfig()
+    _write_qa_report_skeleton(scope, tree, cfg)
+
+    report_path = tree.root / "qa-report.json"
+    assert report_path.is_file()
+    assert json.loads(report_path.read_text(encoding="utf-8"))["verdict"] == "pending"
+    assert not (tree.root / "qa-report.json.tmp").exists()
+
+
+def test_finalize_qa_report_atomic_no_partial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PC-1: se o finalize falha no os.replace, o skeleton anterior é
+    preservado (verdict=pending) — nunca um qa-report.json torn."""
+    import engine.qa as qa_mod
+
+    scope = Scope(type="feature", target="atomic-fin", paths=())
+    tree = create_run_tree(scope, project_root=tmp_path)
+    cfg = QAConfig()
+    _write_qa_report_skeleton(scope, tree, cfg)
+
+    report_path = tree.root / "qa-report.json"
+
+    def _boom(*_args, **_kwargs):
+        raise OSError("simulated mid-write failure")
+
+    monkeypatch.setattr(qa_mod.os, "replace", _boom)
+
+    result = synthesize([])
+    with pytest.raises(OSError):
+        _finalize_qa_report(tree, result)
+
+    # Skeleton preservado — não half-written.
+    preserved = json.loads(report_path.read_text(encoding="utf-8"))
+    assert preserved["verdict"] == "pending"
+    assert not (tree.root / "qa-report.json.tmp").exists()
 
 
 def test_finalize_qa_report_tolerates_missing_skeleton(tmp_path: Path) -> None:
