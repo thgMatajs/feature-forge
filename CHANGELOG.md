@@ -7,6 +7,10 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-06-24
+
+Milestone: campanha de piloto — unblock do ciclo AI-first (resume de `init`/`plan`/`reconfigure`) + fluxo agêntico de `forge qa` operacional + hardening de segurança do sandbox (Decisão 30) + e2e do secrets-gate.
+
 ### Tests
 - Cobertura e2e do secrets-gate (`check_secrets`): novo `tests/integration/test_secrets_gate_end_to_end.py` (marker `integration`) com os cenários determinísticos que os unit tests com mock NÃO cobrem — per-task fail + 3-paths block (o `.kt` realmente staged num repo git de verdade flui via `git_staged_files` → `_dispatch_for_stage` → parse até o `what-failed`) e override-permit (`SECRETS-OVERRIDE` no commit body silencia limpo o único finding → `pass`). Mais dois smoke tests locais com gitleaks/trufflehog reais guardados por `@pytest.mark.skipif` (skipam quando as tools nativas estão ausentes; quando presentes, asserts determinísticos: gitleaks detecta o AKIA do fixture → `fail`, trufflehog `--only-verified` não confirma o token FAKE → `pass`). Cenários redundantes com os unit tests do engine (cascade position, fail-fast skip, bypass JSONL) NÃO entram — são dups verbatim de `test_secrets_position_after_cc` / `test_secrets_fail_fast_respected` / `test_run_secrets_gate_bypassed_by_env_var`. Acompanha as fixtures-fonte `tests/fixtures/secrets/file_with_secret.kt` e `file_with_test_fixture.kt`. Doc-sync: bloco `check_secrets` em `.claude/rules/testing.md` §"Validators são código" — corrigido o path do bypass log pra `.claude/forge/state/secrets-gate-bypass.jsonl` (`forge_state_dir`).
 
