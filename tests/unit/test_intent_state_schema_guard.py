@@ -166,3 +166,81 @@ def test_detect_race_raises_on_schema_version_mismatch(tmp_project_root):
     assert "99" in str(exc.value)
     # Pending preservado pra inspeção forense — não varrido.
     assert path.exists()
+
+
+# ── M5/M6/B1 (PR #26 review): non-dict root + non-str intent-id guards ─────────
+#
+# Contrato "nunca vaza traceback bruto": cli.py só mapeia JsonIOError /
+# IntentMismatchError / RaceDetectedError. Um forge-response.json ou
+# forge-pending.json corrompido (root lista/escalar, ou intent-id não-string
+# unhashable) NÃO pode estourar AttributeError/TypeError cru.
+
+
+def _response_path(project_root: Path) -> Path:
+    return project_root / ".claude" / "forge" / "state" / "forge-response.json"
+
+
+def test_read_response_non_dict_root_raises_typed(tmp_project_root):
+    """M5: response root não-dict (lista) → IntentMismatchError tipado +
+    arquivo preservado, em vez de AttributeError cru em `_check_schema_version`.
+    """
+    path = _response_path(tmp_project_root)
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(["nao", "sou", "dict"]), encoding="utf-8")
+
+    with pytest.raises(intent_state.IntentMismatchError):
+        intent_state.read_response(tmp_project_root, intent_id="alvo")
+    assert path.exists()  # forense
+
+
+def test_read_response_non_str_intent_id_raises_typed(tmp_project_root):
+    """M6: intent-id não-string (lista unhashable) → IntentMismatchError tipado,
+    não TypeError cru em `written_id in log`.
+    """
+    path = _response_path(tmp_project_root)
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps({"schema-version": 1, "intent-id": ["a", "b"], "value": 1}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(intent_state.IntentMismatchError):
+        intent_state.read_response(tmp_project_root, intent_id="alvo")
+    assert path.exists()
+
+
+def test_host_is_replaying_non_dict_root_returns_false(tmp_project_root):
+    """host_is_replaying já tolerava non-dict — trava o invariante (não raise)."""
+    path = _response_path(tmp_project_root)
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps("escalar"), encoding="utf-8")
+
+    assert intent_state.host_is_replaying(tmp_project_root, "guard-id") is False
+
+
+def test_host_is_replaying_non_str_intent_id_returns_false(tmp_project_root):
+    """M6: intent-id não-string em host_is_replaying → False (degrada pro
+    caminho humano), não TypeError cru em `written_id in log`.
+    """
+    path = _response_path(tmp_project_root)
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps({"schema-version": 1, "intent-id": {"k": "v"}}),
+        encoding="utf-8",
+    )
+
+    assert intent_state.host_is_replaying(tmp_project_root, "guard-id") is False
+
+
+def test_read_pending_non_dict_root_raises_jsonio(tmp_project_root):
+    """B1: pending root não-dict (lista) → JsonIOError tipado (mapeado por
+    cli.py), simétrico ao contrato dict da response.
+    """
+    from engine.utils import json_io
+
+    path = _pending_path(tmp_project_root)
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+
+    with pytest.raises(json_io.JsonIOError):
+        intent_state.read_pending(tmp_project_root)

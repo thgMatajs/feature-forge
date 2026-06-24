@@ -488,6 +488,16 @@ def read_pending(
     if not path.exists():
         return None
     payload = json_io.read_json(path)
+    # B1 (PR #26 review): simetria com o contrato dict da response/host_is_
+    # replaying — um pending root não-dict (lista/escalar) faria
+    # `"schema-version" in payload` ter semântica errada (membership em lista)
+    # ou estourar pra escalar. Trata como malformed via JsonIOError (mapeado
+    # por cli.py — sem traceback cru).
+    if not isinstance(payload, dict):
+        raise json_io.JsonIOError(
+            f"pending root não é um objeto JSON (got {type(payload).__name__}) "
+            f"em {path}."
+        )
     if "schema-version" in payload:
         _check_schema_version(payload, path=path, kind="pending")
     return payload
@@ -585,6 +595,18 @@ def read_response(
         return None
 
     response = json_io.read_json(path)
+    # M5 (PR #26 review): root não-dict (lista/escalar de um forge-response.json
+    # corrompido ou editado à mão) faria `_check_schema_version` →
+    # `response.get(...)` estourar um AttributeError CRU, violando o contrato
+    # "nunca vaza traceback bruto" (cli.py só mapeia JsonIO/IntentMismatch/
+    # RaceDetected). Guard antes do check: trata como mismatch e preserva o
+    # arquivo pra forense, simétrico à postura estrita da response.
+    if not isinstance(response, dict):
+        raise IntentMismatchError(
+            "response root não é um objeto JSON "
+            f"(got {type(response).__name__}). File preserved at {path} "
+            "for inspection."
+        )
     # IN-03 (holistic review W-DEBT r2): este check é INCONDICIONAL de
     # propósito — diferente do guard `if "schema-version" in ...` que o WR-02
     # introduziu em `read_pending` + `detect_race`. A divergência é deliberada,
@@ -602,6 +624,16 @@ def read_response(
     # estrito. Não unificar — alinhar enfraqueceria uma asserção de contrato.
     _check_schema_version(response, path=path, kind="response")
     written_id = response.get("intent-id")
+    # M6 (PR #26 review): `intent-id` é output não-confiável do host; se vier
+    # como lista/dict (unhashable), `written_id in log` abaixo estouraria um
+    # TypeError sem tratamento. Guard estrito: trata como mismatch e preserva
+    # o arquivo (mesma postura do mismatch de id divergente).
+    if not isinstance(written_id, str):
+        raise IntentMismatchError(
+            "response intent-id não é string "
+            f"(got {type(written_id).__name__}). File preserved at {path} "
+            "for inspection."
+        )
     if written_id != intent_id:
         if written_id in log:
             # Stale-consumido: o file carrega um intent-id JÁ consumido
@@ -688,6 +720,12 @@ def host_is_replaying(
     if not isinstance(response, dict):
         return False
     written_id = response.get("intent-id")
+    # M6 (PR #26 review): `intent-id` é output não-confiável do host; um valor
+    # não-string (lista/dict unhashable) faria `written_id in log` estourar
+    # TypeError. Aqui degradamos pro caminho humano (não dá pra provar replay
+    # com id inválido) → False, coerente com os casos 2/4 acima.
+    if not isinstance(written_id, str):
+        return False
     if written_id == guard_intent_id:
         # A resposta do próprio guard está chegando — não suprimir.
         return False
