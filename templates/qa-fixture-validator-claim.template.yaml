@@ -32,8 +32,12 @@ claim:
 # (ex.: validate_task_contract.py sai 2/warn sem eles). Omita pra validators
 # que só leem --project-root.
 #
-# HARDENING: o ENGINE controla o --project-root (sempre o mini-tree do sandbox).
-# Estes args são APENDADOS depois; um --project-root aqui é IGNORADO — você não
-# pode redirecionar o root pra fora do sandbox (Decisão 30).
+# HARDENING (Decisão 30): o ENGINE controla o --project-root (sempre o mini-tree
+# do sandbox). O sandbox aplica um ALLOWLIST a estes args — só --scope e --id
+# (com seus valores) passam; QUALQUER outro token é DROPADO, incluindo
+# --project-root e suas abreviações (--p/--proj/--project/--project-roo, formas
+# espaço ou "="). Você NÃO pode redirecionar o root pra fora do sandbox: a
+# tentativa é descartada, não interpretada. (Defense-in-depth: os validators
+# forge também rodam com allow_abbrev=False.)
 #
 # invocation_args: ["--scope", "feature", "--id", "<slug>"]

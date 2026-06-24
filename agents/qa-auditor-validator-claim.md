@@ -170,9 +170,13 @@ invocation_args: ["--scope", "feature", "--id", "<slug>"]
 
 O `<slug>` é o alvo que o evidence carrega (o `scope.feature` do finding). O
 sandbox apenda esses args APÓS o `--project-root <mini-tree>` que o engine
-controla — você **não** pode (nem deve) declarar `--project-root` em
-`invocation_args`: o engine é o dono dele e qualquer tentativa é ignorada
-(Decisão 30). Omita `invocation_args` quando o validator só lê `--project-root`.
+controla, mas aplica um **allowlist**: só `--scope` e `--id` (com seus valores)
+passam; qualquer outro token é DROPADO. Você **não** pode (nem deve) declarar
+`--project-root` em `invocation_args` — nem ele nem suas abreviações
+(`--p`/`--proj`/`--project`/`--project-roo`, formas espaço ou `=`) sobrevivem ao
+allowlist; o engine é o dono do root e a tentativa é descartada, não
+interpretada (Decisão 30). Omita `invocation_args` quando o validator só lê
+`--project-root`.
 
 Nomeie de forma estável e descritiva:
 `validator-claim-<validator-short>-<scenario-short>` (sem extensão na

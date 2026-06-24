@@ -121,7 +121,17 @@ validator-claim. Shape (lista de dicts, escrita pelo engine):
 
 Status reconhecidos: `ok | timeout | sandbox-breach | skipped-budget | error`.
 Campos: `fixture_name`, `status`, `exit_code`, `stdout`, `stderr`,
-`duration_s`, `error`.
+`duration_s`, `error`, `truncated`.
+
+**Contrato status → auto-finding (synthesis §5.3):** nem todo status vira
+finding determinístico. Só `sandbox-breach` (→ critical, always BLOCK) e
+`timeout` (→ medium) geram finding automático. `ok` e `skipped-budget`
+**não geram nada**. `error` é condicional: num fixture **validator-claim** o
+engine deriva um finding `validator-claim-unresolvable` (medium — claim não
+verificável, não settla clean); `error` fora de validator-claim **não gera
+finding** (pode ser bug do validator, não do sandbox — fica pro auditor LLM
+julgar). O campo `truncated` (output capeado em 1 MiB/stream, defesa DoS) é
+informativo — não muda o status nem dispara finding por si só.
 
 **Como o engine reconstrói as Fixtures:** o auditor validator-claim materializa
 o arquivo do contra-exemplo em `fixtures/<fixture_id>/<tree_rel_path>` e
