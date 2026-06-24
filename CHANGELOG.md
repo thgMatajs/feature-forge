@@ -7,6 +7,17 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-06-24
+
+Remediação do piloto: rodar `forge qa` end-to-end contra o consumer real MeoBonsai-qa expôs um bug no `forge doctor` que rejeitava o `schema-version` canônico que o próprio `forge init` escreve — todo consumer recém-inicializado falhava o primeiro `doctor`. Junto, alinhamentos de consistência entre os templates/agents do fluxo qa e o que o engine de fato lê.
+
+### Fixed
+- A (HIGH — afeta todo consumer vivo): `forge doctor` rejeitava o `schema-version` canônico. `engine/doctor.py` `_check_config` só aceitava `schema-version == 1` e marcava qualquer outra coisa como hard FAIL; mas `forge init` escreve `schema-version: "1.3"` (string) e RULE-001 (`docs/schemas/forge-config.md`) documenta o conjunto aceito como `[1, 1.3]`. Resultado: todo consumer recém-`init`-ado falhava o primeiro `forge doctor` na categoria Config integrity. Fix: doctor agora aceita `{1, "1", 1.3, "1.3"}` → OK; versão desconhecida → WARN (doctor não migra, mas um config válido atual NÃO pode ler como red). Canon do `init` e dos config writers intocado — só a aceitação do doctor mudou. RED→GREEN: `tests/unit/test_doctor_schema_version.py`.
+- B (usabilidade qa): o template `templates/qa-fixture-validator-claim.template.yaml` usava o campo `target_validator`, que o engine ignora — o reconstruct lê `evidence.{fixture_path, validator_path, tree_rel_path}` do FINDING + o arquivo materializado, não o descritor YAML. Renomeado `target_validator` → `validator_path` e adicionado cabeçalho deixando explícito que o descritor é humano-legível apenas (`file_content`/`expected_exit_code` não são lidos pelo engine — materialize o arquivo real). Espelhado em `agents/qa-auditor-validator-claim.md`.
+- C (consistência de doc): `templates/qa-finding.template.json` descrevia o fingerprint como `{vector, target, normalized-description}`, mas o canon (Decisão 25 + `docs/schemas/qa-finding.md` + `.claude/rules/disciplines.md §6`) é `{type, name, normalized-description, sorted-provenance-set}`. Template corrigido pra casar com o canon (o synthesizer recalcula na Phase 4 — o valor do draft é placeholder).
+- D (sinal de cobertura degradada): `agents/qa-auditor-{spec-vs-spec,coverage,chaos}.md` ganharam uma linha instruindo a auditar só o que está presente E registrar a cobertura degradada como finding quando inputs opcionais (navigation/ui-state/analytics-spec, screen-analysis) faltam no snapshot — torna a degradação visível em vez de silenciosa.
+- E (precisão de mensagem): (1) `templates/qa-finding.template.json` — reescrita a regra de `evidence.sandbox_result` pra dizer "null no draft; o engine hidrata na Phase 3" (antes lia como se null fosse inválido); (2) `engine/qa/__init__.py` — a mensagem de emit nomeava `proposed-evolutions.yaml`, mas o arquivo real é `.claude/memory/L1/proposed-evolutions/proposed.yaml` — corrigido pra o usuário achar o arquivo.
+
 ## [1.6.0] - 2026-06-24
 
 Milestone: campanha de piloto — unblock do ciclo AI-first (resume de `init`/`plan`/`reconfigure`) + fluxo agêntico de `forge qa` operacional + hardening de segurança do sandbox (Decisão 30) + e2e do secrets-gate.

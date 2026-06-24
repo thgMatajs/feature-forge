@@ -145,8 +145,15 @@ contra todo fixture que você emitir. Sem exceção.
 O descritor da fixture mora em
 `fixtures/validator-claim-<slug>.yaml` (use o template
 `templates/qa-fixture-validator-claim.template.yaml`). Ele declara o
-`target_validator`, o `tree_rel_path` (onde o arquivo do contra-exemplo mora
+`validator_path`, o `tree_rel_path` (onde o arquivo do contra-exemplo mora
 no mini-tree) e o `file_content` (o conteúdo que o validator deveria pegar).
+
+**O descritor é humano-legível apenas.** O output load-bearing — o que o
+engine de fato lê na Phase 3 — é o trio `evidence.{fixture_path,
+validator_path, tree_rel_path}` do FINDING somado ao **arquivo materializado**
+em `fixtures/<fixture_id>/<tree_rel_path>`. O engine não lê o YAML do descritor
+pra reconstruir o fixture; `file_content` e `expected_exit_code` no descritor
+servem ao revisor humano. Materialize o arquivo real, ou o vetor fica inerte.
 
 **Materialize o arquivo do contra-exemplo no mini-tree** sob
 `fixtures/<fixture_id>/<tree_rel_path>`, na linguagem que o validator escaneia:
@@ -240,6 +247,7 @@ do mentor.
 - Schema: `docs/schemas/qa-finding.md`.
 - Templates:
   - `templates/qa-finding.template.json`
-  - `templates/qa-fixture-validator-claim.template.yaml` (descritor do
-    contra-exemplo: `target_validator` + `tree_rel_path` + `file_content`;
-    o arquivo materializado é escrito em `fixtures/<fixture_id>/<tree_rel_path>`)
+  - `templates/qa-fixture-validator-claim.template.yaml` (descritor
+    humano-legível: `validator_path` + `tree_rel_path` + `file_content`;
+    o load-bearing é o `evidence` trio do finding + o arquivo materializado
+    em `fixtures/<fixture_id>/<tree_rel_path>`)

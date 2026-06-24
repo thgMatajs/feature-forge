@@ -425,14 +425,20 @@ def _check_config(project_root: Path, config_path: Path, config: dict) -> _Categ
 
     checks.append(_Check("workflow-config.yaml", _STATUS_OK, "parses cleanly"))
     schema_version = config.get("schema-version")
-    if schema_version == 1:
-        checks.append(_Check("schema-version", _STATUS_OK, "= 1"))
+    # RULE-001 (docs/schemas/forge-config.md): schema-version must be in
+    # [1, 1.3]. `forge init` writes "1.3" (string), older configs may carry 1
+    # (int) — accept both numeric and string forms of the documented set. An
+    # unknown version warns (doctor can't migrate it) but is NOT a hard fail:
+    # a valid current config must pass, and a config doctor merely doesn't
+    # recognize shouldn't read as red.
+    if schema_version in {1, "1", 1.3, "1.3"}:
+        checks.append(_Check("schema-version", _STATUS_OK, f"= {schema_version}"))
     else:
         checks.append(
             _Check(
                 "schema-version",
-                _STATUS_FAIL,
-                f"= {schema_version!r} (forge supports 1)",
+                _STATUS_WARN,
+                f"= {schema_version!r} (forge suporta [1, 1.3])",
                 "atualize o forge ou regenere o config",
             )
         )

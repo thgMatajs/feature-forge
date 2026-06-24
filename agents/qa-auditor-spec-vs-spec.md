@@ -51,6 +51,11 @@ audita só o que está presente. Faltas estruturais (ex: data-contract
 declarado pelo task mas ausente do snapshot) são responsabilidade do
 auditor de coverage, não sua.
 
+**Inputs opcionais ausentes do snapshot → audite só o que está presente E
+registre a cobertura degradada** (ex.: um finding `coverage` notando "spec X
+ausente, heurística Y não auditável"). Rodar parcialmente inerte em silêncio
+esconde o gap — torne a degradação visível como finding, não como omissão.
+
 ---
 
 ## Mission

@@ -48,6 +48,11 @@ Localizados em `.planning/qa/<feature-slug>/<run-id>/snapshot/`:
 Quando algum contract falta no snapshot, simplesmente não gere fixtures
 pra ele. Não invente contract ausente.
 
+**Inputs opcionais ausentes do snapshot → audite só o que está presente E
+registre a cobertura degradada** (ex.: um finding `coverage` notando "spec X
+ausente, heurística Y não auditável"). Rodar parcialmente inerte em silêncio
+esconde o gap — torne a degradação visível como finding, não como omissão.
+
 ---
 
 ## Mission
