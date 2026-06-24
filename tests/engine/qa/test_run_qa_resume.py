@@ -845,3 +845,59 @@ def test_resume_phase5_emit_is_idempotent(tmp_path: Path) -> None:
     report2 = json.loads((run_dir / "qa-report.json").read_text(encoding="utf-8"))
     assert report2["verdict"] == settled, "emit idempotente preserva verdict"
     assert read_checkpoint(run_dir) is None
+
+
+# ---------------------------------------------------------------------------
+# PC-2 (review pr27): drafts malformados → resumo agregado em stderr
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_malformed_findings_files_emit_aggregate_summary(
+    tmp_path: Path, capsys
+) -> None:
+    """PC-2: dois drafts malformados → um único resumo em stderr nomeia AMBOS;
+    o draft válido segue processado (degradação graciosa)."""
+    slug = "malformed-summary-feature"
+    proj = _make_feature_project(tmp_path, slug)
+    wf = {"qa": {"enabled": True}}
+
+    run_qa(slug, project_root=proj, workflow_config=wf)
+    run_dir = _qa_run_dirs(proj, slug)[0]
+    findings_dir = run_dir / "findings"
+
+    # Dois drafts malformados (JSON quebrado) + um válido.
+    (findings_dir / "broken-a.json").write_text("{ not valid json", encoding="utf-8")
+    (findings_dir / "broken-b.json").write_text("}}}", encoding="utf-8")
+    (findings_dir / "valid.json").write_text(
+        json.dumps(
+            {
+                "findings": [
+                    {
+                        "vector": "behavior-claim",
+                        "severity": "medium",
+                        "title": "demo válido",
+                        "description": "draft válido processado normalmente",
+                        "scope": {"files": ["src/x.kt"]},
+                        "evidence": {"auditor": "demo"},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    capsys.readouterr()  # limpa o buffer da primeira invocação
+    rc = run_qa(slug, project_root=proj, workflow_config=wf)
+    assert rc in (0, 1)
+
+    err = capsys.readouterr().err
+    # Resumo agregado nomeia AMBOS os drafts pulados.
+    assert "2 findings file(s) puladas" in err
+    assert "broken-a.json" in err
+    assert "broken-b.json" in err
+
+    # O draft válido foi processado (finding presente no report).
+    report = json.loads((run_dir / "qa-report.json").read_text(encoding="utf-8"))
+    titles = [f.get("title") for f in report["findings"]]
+    assert "demo válido" in titles

@@ -417,6 +417,11 @@ def run_qa(
             return 0
 
         all_findings: list[dict[str, Any]] = []
+        # PC-2 (review pr27): acumula os nomes dos drafts pulados pra um único
+        # resumo em stderr DEPOIS do loop. O log per-file (mantido) some no
+        # ruído quando há muitos drafts; sem o resumo agregado o under-reporting
+        # de findings passa silencioso.
+        skipped_findings_files: list[str] = []
         for ff in findings_files:
             # Degradação graciosa: arquivo malformado (JSON quebrado) ou
             # ilegível (perm error) não derruba synthesis — outros auditores
@@ -430,6 +435,7 @@ def run_qa(
                     "Ignorando este arquivo para degradação graciosa.",
                     file=sys.stderr,
                 )
+                skipped_findings_files.append(ff.name)
                 continue
             if isinstance(data, list):
                 all_findings.extend(data)
@@ -437,6 +443,15 @@ def run_qa(
                 nested = data.get("findings", [])
                 if isinstance(nested, list):
                     all_findings.extend(nested)
+
+        # PC-2: resumo agregado dos drafts pulados — visibilidade de
+        # under-reporting que o log per-file dilui.
+        if skipped_findings_files:
+            print(
+                f"⚠ {len(skipped_findings_files)} findings file(s) puladas por "
+                f"erro de leitura/parse: {', '.join(skipped_findings_files)}",
+                file=sys.stderr,
+            )
 
         # CR-01: o ENGINE é dono da Phase 3. Quando há findings com fixtures
         # executáveis (vetor validator-claim, executable=true) E
