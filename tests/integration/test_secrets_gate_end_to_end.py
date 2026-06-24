@@ -193,7 +193,7 @@ def test_per_task_override_permits_commit(tmp_path: Path, monkeypatch) -> None:
     # Nota: U+2014 em-dash é load-bearing — o regex strict exige ele.
     (tmp_path / ".git" / "COMMIT_EDITMSG").write_text(
         "feat(config): aws fixture\n\n"
-        "SECRETS-OVERRIDE: app/AwsConfig.kt:4 kind=aws-access-key — test fixture, chars FAKE\n",
+        "SECRETS-OVERRIDE: app/AwsConfig.kt:5 kind=aws-access-key — test fixture, chars FAKE\n",
         encoding="utf-8",
     )
 
@@ -206,7 +206,7 @@ def test_per_task_override_permits_commit(tmp_path: Path, monkeypatch) -> None:
             language="any",
             tool_found=True,
             crashed=False,
-            raw_stdout=_gitleaks_json_for("app/AwsConfig.kt", 4),
+            raw_stdout=_gitleaks_json_for("app/AwsConfig.kt", 5),
             error_message="",
         ),
     )
