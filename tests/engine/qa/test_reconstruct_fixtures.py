@@ -153,6 +153,94 @@ def test_validator_path_unresolvable_keeps_relative_under_project(
 
 
 # ---------------------------------------------------------------------------
+# A1 (review pr27) — validator_path allowlist (anti arbitrary code execution)
+#
+# validator_path é reconstruído de evidence.validator_path (LLM). Sem allowlist,
+# um path absoluto fora ou um '../'-traversal aponta o sandbox pra QUALQUER .py
+# do disco, executado com sys.executable. Constrangimento: resolved path deve
+# cair em project/validators/ ∪ FORGE_HOME/validators/. Fora disso → rejeitado
+# (Fixture não reconstruída), surfaced via A4 downstream.
+# ---------------------------------------------------------------------------
+
+
+def test_validator_path_absolute_outside_roots_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Path absoluto fora dos roots allowed → fixture NÃO reconstruída."""
+    forge_home = tmp_path / "forge_home"
+    (forge_home / "validators").mkdir(parents=True)
+    monkeypatch.setenv("FORGE_HOME", str(forge_home))
+
+    project_root = tmp_path / "project"
+    (project_root / "validators").mkdir(parents=True)
+    run_tree = _run_tree(tmp_path / "run")
+
+    # Um .py hostil fora de qualquer validators/ root.
+    evil = tmp_path / "evil" / "payload.py"
+    evil.parent.mkdir(parents=True)
+    evil.write_text("import os; os.system('echo pwned')\n", encoding="utf-8")
+
+    findings = [_vc_finding(validator_path=str(evil))]
+
+    fixtures = _reconstruct_fixtures_from_findings(
+        findings, run_tree, project_root=project_root
+    )
+
+    # Rejeitado: nenhuma fixture executável montada apontando pra fora.
+    assert fixtures == []
+
+
+def test_validator_path_traversal_escape_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``validators/../../escape.py`` (traversal) → fixture NÃO reconstruída."""
+    forge_home = tmp_path / "forge_home"
+    (forge_home / "validators").mkdir(parents=True)
+    monkeypatch.setenv("FORGE_HOME", str(forge_home))
+
+    project_root = tmp_path / "project"
+    (project_root / "validators").mkdir(parents=True)
+    run_tree = _run_tree(tmp_path / "run")
+
+    # Materializa o alvo do traversal pra garantir que a rejeição é por
+    # containment, não por inexistência.
+    escape = tmp_path / "project" / "escape.py"
+    escape.write_text("# escape\n", encoding="utf-8")
+
+    findings = [_vc_finding(validator_path="validators/../escape.py")]
+
+    fixtures = _reconstruct_fixtures_from_findings(
+        findings, run_tree, project_root=project_root
+    )
+
+    assert fixtures == []
+
+
+def test_validator_path_absolute_inside_forge_home_allowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Path ABSOLUTO mas dentro de FORGE_HOME/validators/ é allowed."""
+    forge_home = tmp_path / "forge_home"
+    (forge_home / "validators").mkdir(parents=True)
+    canon = forge_home / "validators" / "validate_data_contract.py"
+    canon.write_text("# canon\n", encoding="utf-8")
+    monkeypatch.setenv("FORGE_HOME", str(forge_home))
+
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    run_tree = _run_tree(tmp_path / "run")
+
+    findings = [_vc_finding(validator_path=str(canon))]
+
+    fixtures = _reconstruct_fixtures_from_findings(
+        findings, run_tree, project_root=project_root
+    )
+
+    assert len(fixtures) == 1
+    assert fixtures[0].validator_path.resolve() == canon.resolve()
+
+
+# ---------------------------------------------------------------------------
 # Item 4 — invocation_args threado pra Fixture.extra_args
 # ---------------------------------------------------------------------------
 

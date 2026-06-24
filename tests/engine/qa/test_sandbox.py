@@ -1153,3 +1153,83 @@ def test_extra_args_allowlist_drops_unknown_flags(tmp_path: Path) -> None:
     # --scope (forma espaço) e --id (forma "=") sobrevivem.
     assert "SCOPE=feature" in r.stdout
     assert "ID=foo" in r.stdout
+
+
+# ---------------------------------------------------------------------------
+# A1 (review pr27) — validator_path allowlist defensivo em run_sandbox
+# ---------------------------------------------------------------------------
+
+
+def test_run_sandbox_rejects_validator_outside_allowed_roots(
+    tmp_path: Path,
+) -> None:
+    """run_sandbox com allowed_validator_roots rejeita validator fora deles.
+
+    Defesa-em-profundidade: mesmo que o reconstruct deixasse passar, o
+    sandbox não executa um .py fora de project/validators/ ∪ FORGE_HOME/
+    validators/ — vira status=error sem subprocess (Decisão 30).
+    """
+    run_dir = tmp_path / "run"
+    sandbox_fixtures = run_dir / "fixtures"
+    allowed_root = tmp_path / "validators"
+    allowed_root.mkdir(parents=True)
+
+    # Validator hostil FORA do root allowed (mas válido como arquivo .py).
+    evil = _write_validator(
+        tmp_path / "evil",
+        "payload.py",
+        """
+        import sys
+        print("SHOULD-NOT-RUN")
+        sys.exit(0)
+        """,
+    )
+    inp = _input_file(sandbox_fixtures, "fx.json")
+
+    fixture = Fixture(name="fx", input_path=inp, validator_path=evil)
+    results = run_sandbox(
+        run_dir,
+        [fixture],
+        budget_total_s=5.0,
+        per_validator_s=2.0,
+        allowed_validator_roots=[allowed_root],
+    )
+
+    r = results[0]
+    assert r.status == "error", f"status={r.status}"
+    assert "fora dos roots permitidos" in r.error
+    # O subprocess NÃO rodou — nenhum stdout do payload.
+    assert "SHOULD-NOT-RUN" not in r.stdout
+
+
+def test_run_sandbox_allows_validator_inside_allowed_roots(
+    tmp_path: Path,
+) -> None:
+    """run_sandbox executa normalmente quando o validator mora num root allowed."""
+    run_dir = tmp_path / "run"
+    sandbox_fixtures = run_dir / "fixtures"
+    allowed_root = tmp_path / "validators"
+
+    validator = _write_validator(
+        allowed_root,
+        "ok.py",
+        """
+        import sys
+        print("ran-ok")
+        sys.exit(0)
+        """,
+    )
+    inp = _input_file(sandbox_fixtures, "fx.json")
+
+    fixture = Fixture(name="fx", input_path=inp, validator_path=validator)
+    results = run_sandbox(
+        run_dir,
+        [fixture],
+        budget_total_s=5.0,
+        per_validator_s=2.0,
+        allowed_validator_roots=[allowed_root],
+    )
+
+    r = results[0]
+    assert r.status == "ok", f"status={r.status} error={r.error!r}"
+    assert "ran-ok" in r.stdout

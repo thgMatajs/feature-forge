@@ -89,13 +89,56 @@ class SandboxBreachError(RuntimeError):
     """
 
 
+def validator_within_allowed_roots(
+    validator_path: Path, allowed_roots: Iterable[Path]
+) -> bool:
+    """A1 (review pr27): confirma que ``validator_path`` mora num root allowed.
+
+    ``validator_path`` é reconstruído de ``evidence.validator_path`` — campo
+    de uma fixture gerada por LLM. Sem allowlist, um path absoluto fora ou um
+    ``../``-traversal aponta o sandbox pra QUALQUER ``.py`` do disco, executado
+    com ``sys.executable`` → arbitrary code execution. A defesa: resolve o path
+    e exige que caia DENTRO de um dos ``allowed_roots`` (tipicamente
+    ``project/validators/`` ∪ ``FORGE_HOME/validators/``).
+
+    Resolve ambos os lados antes do ``relative_to`` pra que ``..`` traversal e
+    symlinks sejam normalizados — um ``validators/../escape.py`` resolve pra
+    fora do root e é rejeitado. Roots inexistentes são resolvidos via
+    ``strict=False`` (não falham); a comparação é puramente lexical pós-resolve.
+
+    Returns:
+        ``True`` se o path resolvido cai dentro de algum root allowed,
+        ``False`` caso contrário (rejeição — sem execução).
+    """
+    try:
+        resolved = validator_path.resolve()
+    except OSError:
+        return False
+    for root in allowed_roots:
+        try:
+            root_resolved = root.resolve()
+        except OSError:
+            continue
+        try:
+            resolved.relative_to(root_resolved)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
 @dataclass(frozen=True)
 class Fixture:
     """Entrada para o sandbox: validator + input + nome.
 
     ``input_path`` precisa resolver dentro do ``sandbox_cwd`` (run_dir/fixtures).
-    ``validator_path`` pode ser absoluto fora — é o canon validator de
-    produção, não conteúdo hostil.
+    ``validator_path`` pode ser absoluto fora do sandbox, MAS NÃO é confiável:
+    em validator-claim ele é reconstruído de ``evidence.validator_path`` (campo
+    de fixture gerada por LLM). Por isso é constrangido a uma allowlist de roots
+    (``project/validators/`` ∪ ``FORGE_HOME/validators/``) tanto no reconstruct
+    (``engine/qa/__init__.py``) quanto defensivamente em ``run_sandbox`` via
+    ``allowed_validator_roots`` (A1, review pr27). Um path fora ou com
+    ``../``-traversal é rejeitado sem execução — Decisão 30.
 
     ``tree_rel_path`` (F-1): quando setado, o validator é invocado com o
     contrato real dos validators forge — ``--project-root <mini-tree>``, onde
@@ -340,6 +383,7 @@ def run_sandbox(
     budget_total_s: float = 60.0,
     per_validator_s: float = 15.0,
     extras: Iterable[str] = (),
+    allowed_validator_roots: Iterable[Path] | None = None,
 ) -> list[SandboxResult]:
     """Loop subprocess pra cada fixture com hardening conforme Decisão 30.
 
@@ -364,6 +408,14 @@ def run_sandbox(
         Env vars declaradas em ``qa-extensions.env-needs`` dos cards
         ativos. Filtradas contra grants em workflow-config antes do
         caller chamar (QA-11).
+    allowed_validator_roots : Iterable[Path] | None
+        A1 (review pr27): allowlist de roots onde um ``validator_path`` pode
+        morar (``project/validators/`` ∪ ``FORGE_HOME/validators/``). Quando
+        fornecido, qualquer fixture cujo ``validator_path`` resolva fora desses
+        roots vira ``status="error"`` (sem execução) — defesa-em-profundidade
+        contra arbitrary code execution mesmo se o caller (reconstruct) não
+        tiver filtrado. ``None`` desliga o check (compat com callers de teste
+        que passam validators sintéticos em ``tmp_path``).
     """
     if budget_total_s <= 0:
         raise ValueError(
@@ -393,6 +445,25 @@ def run_sandbox(
         elapsed = time.monotonic() - started
         if elapsed >= budget_total_s:
             results.append(SandboxResult(fixture=fixture, status="skipped-budget"))
+            continue
+
+        # A1 (review pr27): defense-in-depth — mesmo que o reconstruct já
+        # tenha filtrado, confirmamos aqui que o validator_path mora num root
+        # allowed. Um path fora (absoluto hostil ou traversal) vira error sem
+        # execução, em vez de rodar um .py arbitrário com sys.executable.
+        if allowed_validator_roots is not None and not validator_within_allowed_roots(
+            fixture.validator_path, allowed_validator_roots
+        ):
+            results.append(
+                SandboxResult(
+                    fixture=fixture,
+                    status="error",
+                    error=(
+                        f"validator_path fora dos roots permitidos "
+                        f"(Decisão 30): {fixture.validator_path}"
+                    ),
+                )
+            )
             continue
 
         # IN-04: validator_path inexistente vira status=error com mensagem

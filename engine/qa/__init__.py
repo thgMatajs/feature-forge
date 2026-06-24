@@ -59,7 +59,12 @@ from engine.qa.ingest import (
     parse_qa_config,
     snapshot_artefacts,
 )
-from engine.qa.sandbox import Fixture, SandboxResult, run_sandbox
+from engine.qa.sandbox import (
+    Fixture,
+    SandboxResult,
+    run_sandbox,
+    validator_within_allowed_roots,
+)
 from engine.qa.scope import (
     Scope,
     ScopeAmbiguityError,
@@ -414,6 +419,10 @@ def run_qa(
                     budget_total_s=cfg.sandbox_budget_seconds_total,
                     per_validator_s=cfg.agent_timeout_seconds,
                     extras=phase3_extras,
+                    # A1 (review pr27): defesa-em-profundidade — run_sandbox
+                    # rejeita validator_path fora destes roots mesmo que algo
+                    # escape o filtro do reconstruct.
+                    allowed_validator_roots=_allowed_validator_roots(project_root),
                 )
                 _write_sandbox_results(run_tree, sandbox_results)
 
@@ -666,6 +675,22 @@ def _finalize_qa_report(
     )
 
 
+def _allowed_validator_roots(project_root: Path) -> list[Path]:
+    """A1 (review pr27): roots onde um ``validator_path`` pode legitimamente
+    morar — ``project/validators/`` ∪ ``FORGE_HOME/validators/``.
+
+    Os validators canon de produção vivem em ``FORGE_HOME/validators/``; um
+    projeto consumidor pode ter validators locais em ``project/validators/``.
+    Qualquer ``.py`` fora desses dois roots não é um validator forge legítimo —
+    rejeitar previne arbitrary code execution via ``evidence.validator_path``
+    hostil (path absoluto fora ou ``../``-traversal).
+    """
+    return [
+        project_root / "validators",
+        forge_home() / "validators",
+    ]
+
+
 def _reconstruct_fixtures_from_findings(
     findings: list[dict[str, Any]],
     run_tree: RunTree,
@@ -719,6 +744,7 @@ def _reconstruct_fixtures_from_findings(
     """
     fixtures: list[Fixture] = []
     seen_names: set[str] = set()
+    allowed_roots = _allowed_validator_roots(project_root)
     for f in findings:
         if not isinstance(f, dict) or f.get("vector") != "validator-claim":
             continue
@@ -776,6 +802,22 @@ def _reconstruct_fixtures_from_findings(
                     # Nem projeto nem FORGE_HOME têm o validator — preserva o
                     # comportamento atual (resolve sob project_root).
                     validator = project_candidate
+
+        # A1 (review pr27): allowlist de roots. validator_path vem de uma
+        # fixture LLM; um path absoluto fora ou ``../``-traversal apontaria o
+        # sandbox pra QUALQUER .py do disco (arbitrary code execution). Rejeita
+        # aqui — o finding ainda entra no synthesis como draft (A4 deriva um
+        # finding de validator irresolvível downstream); só não vira Fixture
+        # executável.
+        if not validator_within_allowed_roots(validator, allowed_roots):
+            print(
+                f"⚠ validator-claim '{Path(fixture_path).stem}' aponta "
+                f"validator_path fora dos roots permitidos "
+                f"(project/validators/ ∪ FORGE_HOME/validators/): "
+                f"{validator_path}. Fixture NÃO executada (Decisão 30).",
+                file=sys.stderr,
+            )
+            continue
 
         # Item 4 (R8): invocation_args (--scope/--id de validators scoped) é
         # opcional. Lê do evidence quando presente e bem-formado (lista de
