@@ -320,6 +320,177 @@ def test_resume_no_executable_fixtures_synthesizes_directly(
     assert report["verdict"] != "pending"
 
 
+# ---------------------------------------------------------------------------
+# A6 (review pr27 r2): phase-3 checkpoint → resume confia no sandbox completo
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_phase3_checkpoint_persisted_then_resume_does_not_rerun_sandbox(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A6: a regressão de fundo é que NENHUM caminho normal persistia
+    last_phase_completed>=3 — o branch 'trust existing sandbox-results' era
+    DEAD code, então todo resume de run engine-owned RE-RODAVA o sandbox
+    (gasta budget + dispara side-effects do validator de novo), violando a
+    Decisão 27 'resume continua, não refaz'.
+
+    Este teste simula um crash/interrupt mid-phase-3 (logo após o sandbox
+    concluir e escrever sandbox-results.json, ANTES do synthesis→emit que
+    limparia o checkpoint): fazemos synthesize() sys.exit(130) na 1ª invocação
+    pós-findings, espelhando o SIGINT. Então verificamos que:
+
+      1. o checkpoint persistido atesta last_phase_completed>=3 (FIX — pré-fix
+         o checkpoint ficava em phase<3 e o resume desconfiava); e
+      2. a re-invocação (resume) CONFIA no sandbox-results.json e NÃO re-roda
+         run_sandbox.
+
+    Pré-fix, (1) falha (checkpoint nunca alcança phase 3 no flow normal) → (2)
+    re-roda o sandbox. Pós-fix, _write_sandbox_results é imediatamente seguido
+    de um checkpoint phase-3.
+    """
+    import engine.qa as qa_mod
+    from engine.qa.checkpoint import read_checkpoint
+
+    slug = "phase3-trust-feature"
+    proj = _make_feature_project(tmp_path, slug)
+    wf = {"qa": {"enabled": True}}
+
+    run_qa(slug, project_root=proj, workflow_config=wf)
+    run_dir = _qa_run_dirs(proj, slug)[0]
+
+    validator_rel = _write_lying_validator(proj)
+    fixture_id = "validator-claim-foo"
+    tree_rel = "src/main/kotlin/Offending.kt"
+    _materialize_fixture_tree(run_dir, fixture_id, tree_rel)
+    (run_dir / "findings" / "validator-claim.json").write_text(
+        json.dumps(
+            {
+                "findings": [
+                    _validator_claim_draft(
+                        f"fixtures/{fixture_id}.yaml",
+                        validator_path=validator_rel,
+                        tree_rel_path=tree_rel,
+                        executable=True,
+                    )
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # 1ª invocação pós-findings: roda Phase 3 (sandbox), mas "crasha" antes do
+    # synthesis→emit (sys.exit no synthesize) — assim o checkpoint NÃO é limpo,
+    # espelhando um interrupt mid-run. O FIX garante que, neste ponto, o
+    # checkpoint já atesta phase-3.
+    def _boom(*_a, **_kw):
+        raise SystemExit(130)
+
+    monkeypatch.setattr(qa_mod, "synthesize", _boom)
+    with pytest.raises(SystemExit):
+        run_qa(slug, project_root=proj, workflow_config=wf)
+    monkeypatch.undo()
+
+    # (1) FIX: o sandbox escreveu seus resultados E o checkpoint atesta phase-3.
+    assert (run_dir / "sandbox-results.json").is_file()
+    cp = read_checkpoint(run_dir)
+    assert cp is not None, "checkpoint deveria sobreviver ao interrupt mid-run"
+    assert cp.last_phase_completed >= 3, (
+        "A6: após _write_sandbox_results o checkpoint DEVE atestar phase>=3 "
+        f"(recebi phase={cp.last_phase_completed}) — sem isso o resume re-roda "
+        "o sandbox (regressão Decisão 27)"
+    )
+
+    # (2) Resume: run_sandbox NÃO deve ser re-chamado (sandbox-results confiável).
+    calls: list[int] = []
+    real_run_sandbox = qa_mod.run_sandbox
+
+    def _spy_run_sandbox(*args, **kwargs):
+        calls.append(1)
+        return real_run_sandbox(*args, **kwargs)
+
+    monkeypatch.setattr(qa_mod, "run_sandbox", _spy_run_sandbox)
+
+    rc = run_qa(slug, project_root=proj, workflow_config=wf)
+    assert rc in (0, 1)
+    assert len(_qa_run_dirs(proj, slug)) == 1, "resume não cria run nova"
+    assert calls == [], (
+        "A6: resume após phase-3 completa NÃO deve re-rodar run_sandbox "
+        f"(chamado {len(calls)}x — regressão da Decisão 27)"
+    )
+
+
+@pytest.mark.integration
+def test_resume_mid_phase3_reruns_sandbox(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A6 (complemento): se o sandbox-results.json existe mas o checkpoint NÃO
+    atesta phase>=3 (fase incompleta/stale — crash mid-phase-3), o resume DEVE
+    re-rodar o sandbox (o arquivo pode ser torn/parcial)."""
+    import engine.qa as qa_mod
+
+    slug = "phase3-stale-feature"
+    proj = _make_feature_project(tmp_path, slug)
+    wf = {"qa": {"enabled": True}}
+
+    run_qa(slug, project_root=proj, workflow_config=wf)
+    run_dir = _qa_run_dirs(proj, slug)[0]
+
+    validator_rel = _write_lying_validator(proj)
+    fixture_id = "validator-claim-foo"
+    tree_rel = "src/main/kotlin/Offending.kt"
+    _materialize_fixture_tree(run_dir, fixture_id, tree_rel)
+    (run_dir / "findings" / "validator-claim.json").write_text(
+        json.dumps(
+            {
+                "findings": [
+                    _validator_claim_draft(
+                        f"fixtures/{fixture_id}.yaml",
+                        validator_path=validator_rel,
+                        tree_rel_path=tree_rel,
+                        executable=True,
+                    )
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # Semeia um sandbox-results.json STALE (fase incompleta) + checkpoint
+    # phase-0 (NÃO atesta phase>=3). O resume deve desconfiar e re-rodar.
+    (run_dir / "sandbox-results.json").write_text(
+        json.dumps([{"fixture_name": fixture_id, "status": "ok", "exit_code": 0}]),
+        encoding="utf-8",
+    )
+    from engine.qa.checkpoint import write_checkpoint
+
+    scope = resolve_scope(slug, project_root=proj)
+    write_checkpoint(
+        run_dir,
+        run_id=run_dir.name,
+        scope_type=scope.type,
+        scope_target=scope.target,
+        last_phase_completed=0,
+        findings_partial_count=1,
+    )
+
+    calls: list[int] = []
+    real_run_sandbox = qa_mod.run_sandbox
+
+    def _spy_run_sandbox(*args, **kwargs):
+        calls.append(1)
+        return real_run_sandbox(*args, **kwargs)
+
+    monkeypatch.setattr(qa_mod, "run_sandbox", _spy_run_sandbox)
+
+    rc = run_qa(slug, project_root=proj, workflow_config=wf)
+    assert rc in (0, 1)
+    assert calls == [1], (
+        "A6: resume mid-phase-3 (checkpoint phase<3) DEVE re-rodar run_sandbox "
+        f"(stale/torn possível) — chamado {len(calls)}x"
+    )
+
+
 @pytest.mark.integration
 def test_resume_phase5_emit_is_idempotent(tmp_path: Path) -> None:
     """Phase 5 emit é idempotente: reatar uma run pendente com findings +

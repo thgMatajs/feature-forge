@@ -450,6 +450,29 @@ def run_qa(
                     allowed_validator_roots=_allowed_validator_roots(project_root),
                 )
                 _write_sandbox_results(run_tree, sandbox_results)
+                # A6 (review pr27 r2): persiste checkpoint phase-3 IMEDIATAMENTE
+                # após escrever sandbox-results.json. Sem isso nenhum caminho
+                # normal alcançava last_phase_completed>=3 (o SIGINT handler
+                # capturava _phase[0]=2, setado ANTES do run_sandbox), então o
+                # branch 'trust existing sandbox-results' era dead code e todo
+                # resume de run engine-owned RE-RODAVA o sandbox — gasto de
+                # budget + side-effects de validator repetidos, violando a
+                # Decisão 27 ('resume continua, não refaz'). Com o checkpoint
+                # phase-3 gravado aqui, um interrupt/crash entre o sandbox e o
+                # synthesis deixa o resume CONFIAR no arquivo completo. Phase<3
+                # (sandbox não concluiu) continua re-rodando — arquivo possível
+                # torn/stale.
+                _phase[0] = 3  # Phase 3 (sandbox) concluída
+                write_checkpoint(
+                    run_tree.root,
+                    run_id=run_tree.run_id,
+                    scope_type=scope.type,
+                    scope_target=scope.target,
+                    last_phase_completed=3,
+                    findings_partial_count=len(
+                        list(run_tree.findings_dir.glob("*.json"))
+                    ),
+                )
 
         # CONF-003: sandbox breach/timeout viram findings deterministicos
         # (§5.3). Le sandbox-results.json escrito pelo engine na Phase 3
