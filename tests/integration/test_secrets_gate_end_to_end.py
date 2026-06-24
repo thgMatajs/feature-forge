@@ -154,8 +154,17 @@ def test_per_task_fail_blocks_commit(tmp_path: Path, monkeypatch) -> None:
     assert result["status"] == "fail", (
         f"esperado fail quando gitleaks reporta finding sem override; got {result}"
     )
+    # 3-caminhos é contrato load-bearing do projeto (disciplina §1) — o campo
+    # ``paths`` carrega os 3 caminhos de resolução, não os arquivos.
     assert len(result["paths"]) == 3, (
         f"disciplina §1 exige exatamente 3 paths; got {len(result['paths'])}"
+    )
+    # Valor único deste e2e: o .kt REALMENTE staged no repo git flui até o
+    # finding — o wiring git_staged_files → _dispatch_for_stage → parse tem que
+    # carregar o arquivo do leak pro what-failed. Mock de unit não cobre isso.
+    assert "app/AwsConfig.kt:4" in result["what-failed"], (
+        f"o .kt staged deve aparecer no finding (what-failed); "
+        f"got {result['what-failed']!r}"
     )
     render = result.get("render", "")
     assert "🛑 Check Secrets gate" in render, "render deve trazer o header canônico"
@@ -203,8 +212,11 @@ def test_per_task_override_permits_commit(tmp_path: Path, monkeypatch) -> None:
     )
 
     result = v.validate(tmp_path, stage="per_task")
-    assert result["status"] in ("pass", "warn"), (
-        f"override deve silenciar o único finding; got {result}"
+    # Override válido deve silenciar limpo o ÚNICO finding → pass. Aceitar
+    # "warn" deixaria um override quebrado / warning malformado passar como
+    # falso-verde.
+    assert result["status"] == "pass", (
+        f"override deve silenciar limpo o único finding (pass, não warn); got {result}"
     )
 
 
@@ -217,9 +229,11 @@ def test_per_task_override_permits_commit(tmp_path: Path, monkeypatch) -> None:
 def test_smoke_gitleaks_real_detects_fixture(tmp_path: Path) -> None:
     """gitleaks de verdade roda no fixture e detecta o token AWS-style.
 
-    Não mocka nada — exercita o cmd_builder real + parse end-to-end. Resultado
-    aceitável: fail (detectou) ou pass (default ruleset do gitleaks pode variar
-    por versão). O invariante forte é não-crash e shape de result válido.
+    Não mocka nada — exercita o cmd_builder real + parse end-to-end. O fixture
+    ``file_with_secret.kt`` carrega um ``AKIA...`` que casa com a regra
+    aws-access-key default do gitleaks, então o caminho positivo é determinístico:
+    detectou ⇒ fail. Aceitar pass/warn aqui tornaria o smoke uma tautologia
+    (aceita tudo = testa nada).
     """
     _git_init(tmp_path)
     _setup_workflow_config(tmp_path)
@@ -231,13 +245,13 @@ def test_smoke_gitleaks_real_detects_fixture(tmp_path: Path) -> None:
 
     v = _import_validator()
     result = v.validate(tmp_path, stage="per_task")
-    assert result["status"] in ("fail", "pass", "warn"), (
-        f"pipeline gitleaks real retornou status inesperado: {result.get('status')!r}"
+    assert result["status"] == "fail", (
+        f"gitleaks real deve detectar o AKIA do fixture (fail); "
+        f"got {result.get('status')!r}"
     )
-    if result["status"] == "fail":
-        assert len(result["paths"]) == 3, (
-            "fail real do gitleaks deve carregar exatamente 3 paths"
-        )
+    assert len(result["paths"]) == 3, (
+        "fail real do gitleaks deve carregar exatamente 3 paths (disciplina §1)"
+    )
 
 
 # ── Scenario: smoke trufflehog real (skip when missing) ──────────────────────
@@ -265,7 +279,10 @@ def test_smoke_trufflehog_real_skips_fake_token(tmp_path: Path) -> None:
 
     v = _import_validator()
     result = v.validate(tmp_path, stage="cascade")
-    assert result["status"] in ("pass", "warn"), (
-        f"token FAKE não deve ser verified por trufflehog --only-verified; "
-        f"got {result}"
+    # Caminho negativo determinístico: nenhum finding verified sobrevive ⇒ pass
+    # limpo. "warn" indicaria finding malformado ou warning espúrio — não é o
+    # esperado pro fixture FAKE.
+    assert result["status"] == "pass", (
+        f"token FAKE não deve ser verified por trufflehog --only-verified (pass "
+        f"limpo, não warn); got {result}"
     )
