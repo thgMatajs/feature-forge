@@ -139,7 +139,7 @@ Novo validator em `validators/` exige:
   (verificação ativa). Binário (detectou = fail) — sem threshold numérico.
   Override-justify via `SECRETS-OVERRIDE: <file>:<line> kind=<token-type> —
   <razão>` no commit body; bypass emergencial via `NO_SECRETS_GATE=1` logado
-  em `.claude/state/secrets-gate-bypass.jsonl`. Composto inteiro da infra
+  em `.claude/forge/state/secrets-gate-bypass.jsonl`. Composto inteiro da infra
   Phase 0 (`dispatch_native_tool` / `apply_overrides` / `check_tool_available`
   / `git_staged_files` / `read_commit_body` / `result_*`).
   Tests em:
