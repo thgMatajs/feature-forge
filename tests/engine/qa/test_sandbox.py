@@ -1310,3 +1310,72 @@ def test_run_sandbox_does_not_flag_truncated_under_ceiling(tmp_path: Path) -> No
     assert r.status == "ok"
     assert "tiny output" in r.stdout
     assert r.truncated is False
+
+
+# ---------------------------------------------------------------------------
+# A5 (review pr27 r2): grandchild deadlock / timeout bypass
+# ---------------------------------------------------------------------------
+
+
+def test_forking_validator_does_not_hang_on_timeout(tmp_path: Path) -> None:
+    """A5: um validator hostil que forka um grandchild herdando os pipes de
+    stdout/stderr não pode travar a run.
+
+    Pré-fix: o subprocess era spawned sem nova session/process-group; no
+    timeout só ``proc.kill()`` (o filho direto) era chamado. O grandchild
+    (que dorme) mantinha os write-ends dos pipes abertos → as drain threads
+    (``.join()`` sem timeout, non-daemon) bloqueavam pra sempre → ``forge qa``
+    travava.
+
+    Pós-fix: ``start_new_session=True`` + ``os.killpg`` no timeout mata o
+    grupo inteiro (filho + grandchild); os ``.join()`` com timeout + threads
+    daemon garantem que a run termine com status=timeout dentro do bound.
+    """
+    import time as _time
+
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    # Validator forka um grandchild que dorme 30s herdando stdout/stderr; o
+    # pai também dorme 30s. Pré-fix: ``proc.kill()`` matava só o pai; o
+    # grandchild mantinha os pipes abertos → drain threads travavam 30s
+    # (até o grandchild morrer sozinho). Pós-fix: killpg do grupo mata ambos.
+    validator = _write_validator(
+        validators_dir,
+        "forking_validator.py",
+        """
+        import os
+        import sys
+        import time
+
+        pid = os.fork()
+        if pid == 0:
+            # Grandchild: segura os pipes (stdout/stderr herdados) dormindo.
+            time.sleep(30)
+            os._exit(0)
+        # Pai também dorme — o timeout per-validator deve dispará-lo, e o
+        # killpg precisa derrubar o grandchild junto pra liberar os pipes.
+        time.sleep(30)
+        sys.exit(0)
+        """,
+    )
+    inp = _input_file(sandbox_fixtures, "fx-fork.json")
+
+    fixtures = [Fixture(name="fx-fork", input_path=inp, validator_path=validator)]
+
+    started = _time.monotonic()
+    results = run_sandbox(
+        run_dir, fixtures, budget_total_s=5.0, per_validator_s=0.5
+    )
+    elapsed = _time.monotonic() - started
+
+    # A run DEVE terminar dentro de um bound razoável (não travar 30s no
+    # grandchild). Margem generosa pra spawn + join-timeout, mas bem abaixo
+    # dos 30s do grandchild.
+    assert elapsed < 10.0, (
+        f"run travou {elapsed:.1f}s — grandchild manteve pipes abertos "
+        f"(A5 deadlock não corrigido)"
+    )
+    assert len(results) == 1
+    assert results[0].status == "timeout"

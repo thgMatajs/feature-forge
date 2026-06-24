@@ -37,13 +37,15 @@ externamente é imutável".
 
 from __future__ import annotations
 
+import os
+import signal
 import subprocess
 import sys
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Literal
+from typing import Any, Iterable, Literal
 
 from engine._sandbox.env import build_safe_env
 
@@ -425,6 +427,17 @@ def _run_bounded(
     ``proc.wait(timeout)``; em estouro, mata o processo e propaga
     ``TimeoutExpired`` (mesma semântica que ``subprocess.run`` expunha).
 
+    A5 (review pr27 r2): hardening contra deadlock por grandchild. O subprocess
+    é spawned com ``start_new_session=True`` (POSIX) → ele vira líder de um novo
+    process-group. No timeout, ``os.killpg(os.getpgid(pid), SIGKILL)`` mata o
+    GRUPO INTEIRO (filho + qualquer grandchild que ele tenha forkado), não só o
+    filho direto. Sem isso, um validator hostil que forka um grandchild herdando
+    os write-ends dos pipes mantinha os pipes abertos após ``proc.kill()`` → as
+    drain threads bloqueavam pra sempre em ``.join()`` → ``forge qa`` travava.
+    Defense-in-depth adicional: os ``.join()`` agora têm timeout e as threads são
+    ``daemon=True`` (last-resort — se algo escapar o killpg, a thread não impede
+    o interpreter de sair).
+
     Returns:
         ``(returncode, stdout, stderr, truncated)`` — strings decodificadas em
         UTF-8 com ``errors="replace"``; ``truncated`` é ``True`` se algum stream
@@ -432,43 +445,84 @@ def _run_bounded(
 
     Raises:
         subprocess.TimeoutExpired: se o processo não terminar dentro de
-            ``timeout`` (após kill + reap).
+            ``timeout`` (após kill do grupo + reap).
     """
+    # A5: bound dos .join() pós-kill. Pequeno o suficiente pra não somar
+    # latência perceptível ao caminho normal (EOF chega imediato quando o
+    # grupo morre), grande o suffix pra absorver jitter de scheduler.
+    _JOIN_TIMEOUT_S = 2.0
+
+    # A5: start_new_session=True (POSIX) cria um novo process-group liderado
+    # pelo subprocess; permite matar o grupo inteiro no timeout via killpg.
     proc = subprocess.Popen(
         cmd,
         cwd=str(cwd),
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        start_new_session=True,
     )
     out_sink: list[bytes] = []
     err_sink: list[bytes] = []
     out_trunc = [False]
     err_trunc = [False]
+    # A5: daemon=True — last-resort safety. Se o killpg não liberar os pipes
+    # (improvável), a thread não impede o processo pai de sair.
     t_out = threading.Thread(
-        target=_drain_bounded, args=(proc.stdout, cap, out_sink, out_trunc)
+        target=_drain_bounded,
+        args=(proc.stdout, cap, out_sink, out_trunc),
+        daemon=True,
     )
     t_err = threading.Thread(
-        target=_drain_bounded, args=(proc.stderr, cap, err_sink, err_trunc)
+        target=_drain_bounded,
+        args=(proc.stderr, cap, err_sink, err_trunc),
+        daemon=True,
     )
     t_out.start()
     t_err.start()
     try:
         proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
-        proc.kill()
+        # A5: mata o GRUPO inteiro (filho + grandchildren). Sem killpg, um
+        # grandchild forkado herda os pipes e os mantém abertos após kill do
+        # filho direto → drain threads travam.
+        _killpg_safe(proc)
         proc.wait()
-        # Drena os pipes pra liberar as threads antes de propagar.
-        t_out.join()
-        t_err.join()
+        # Drena os pipes pra liberar as threads antes de propagar. Bounded —
+        # se o grupo morreu, EOF chega imediato; o timeout é só rede de
+        # segurança (threads são daemon de qualquer forma).
+        t_out.join(timeout=_JOIN_TIMEOUT_S)
+        t_err.join(timeout=_JOIN_TIMEOUT_S)
         raise
-    t_out.join()
-    t_err.join()
+    t_out.join(timeout=_JOIN_TIMEOUT_S)
+    t_err.join(timeout=_JOIN_TIMEOUT_S)
 
     stdout = b"".join(out_sink).decode("utf-8", errors="replace")
     stderr = b"".join(err_sink).decode("utf-8", errors="replace")
     truncated = out_trunc[0] or err_trunc[0]
     return proc.returncode, stdout, stderr, truncated
+
+
+def _killpg_safe(proc: "subprocess.Popen[bytes]") -> None:
+    """A5: mata o process-group do subprocess via SIGKILL, com fallbacks.
+
+    ``start_new_session=True`` torna ``proc`` líder do grupo, então
+    ``os.getpgid(proc.pid) == proc.pid``. ``os.killpg`` propaga o sinal a TODOS
+    os processos do grupo — incluindo grandchildren forkados que herdaram os
+    pipes. Fallbacks defensivos: se ``getpgid``/``killpg`` não existirem
+    (Windows) ou o processo já morreu (``ProcessLookupError``), cai pro
+    ``proc.kill()`` direto.
+    """
+    try:
+        pgid = os.getpgid(proc.pid)
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, AttributeError, OSError):
+        # Grupo já morto, sem permissão, ou plataforma sem killpg → fallback
+        # pro kill do filho direto (melhor que nada).
+        try:
+            proc.kill()
+        except OSError:
+            pass
 
 
 def run_sandbox(
