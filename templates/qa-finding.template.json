@@ -1,10 +1,10 @@
 {
   "_template_description": "qa-finding.json — um achado individual do QA loop (Phase 3/4). Emitido por engine/qa/emit.py e validado por validators/validate_qa_finding.py. JSON puro não permite comentários inline; chaves '_*' são guias para o agent/host e devem ser removidas no output final (o validator as tolera, mas o artefato canônico não as carrega).",
   "_template_rules": [
-    "id no padrão estável do run (ver engine/qa/run_id.py); fingerprint = sha256 da forma canônica {vector, target, normalized-description}",
+    "id no padrão estável do run (ver engine/qa/run_id.py); fingerprint = sha256 da forma canônica {type, name, normalized-description, sorted-provenance-set} (Decisão 25, ver docs/schemas/qa-finding.md). O synthesizer recalcula na Phase 4 — o valor do draft é placeholder",
     "vector ∈ spec-vs-spec | coverage | chaos | validator-claim",
     "severity ∈ critical | high | medium | low | info",
-    "vector=validator-claim exige evidence.sandbox_result preenchido (dict com exit_code/stdout/stderr/duration_s) antes do Phase 4 — null só vale em draft",
+    "vector=validator-claim: evidence.sandbox_result é null no draft — o engine hidrata na Phase 3 (dict com exit_code/stdout/stderr/duration_s). Phase 4 espera o dict preenchido; null é válido só enquanto o finding é draft",
     "proposed_evolution.actionable=true quando há fix concreto; senão false + summary explicando por quê",
     "scope.files lista os paths tocados pelo achado (vazio quando o achado é cross-cutting)"
   ],
