@@ -22,6 +22,18 @@ class QAFindingValidationError(ValueError):
 
 _VALID_SEVERITY = {"critical", "high", "medium", "low", "info"}
 _CORE_VECTORS = {"spec-vs-spec", "coverage", "chaos", "validator-claim"}
+# A9 (review pr27 r2): vetores DERIVADOS pelo engine na Phase 3/4 — não vêm de
+# um auditor LLM, mas de findings_from_sandbox_results (breach/timeout) e do
+# caminho de validator irresolvível (A4/A7). Hoje o engine nunca chama
+# validate_qa_finding nesses derivados (validate_qa_report só exige os 4 core
+# como subset), então a omissão é inócua. Adicionamos pra future-proofing: se
+# alguém wirear validate_qa_finding nos derivados, eles não serão rejeitados.
+# Additive only — não remove nem altera o enum core.
+_ENGINE_VECTORS = {
+    "sandbox-breach",
+    "sandbox-timeout",
+    "validator-claim-unresolvable",
+}
 _FINGERPRINT_RE = re.compile(r"[0-9a-f]{64}")
 _ISO_UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$")
 # Case-insensitive: IDs gerados a partir de run_id (ISO 8601) carregam
@@ -89,9 +101,14 @@ def validate_qa_finding(
         )
 
     vector = data["vector"]
-    valid_vectors = _CORE_VECTORS | (known_extension_vectors or set())
+    valid_vectors = (
+        _CORE_VECTORS | _ENGINE_VECTORS | (known_extension_vectors or set())
+    )
     if vector not in valid_vectors:
-        msg = f"vector={vector!r} inválido. Core: {sorted(_CORE_VECTORS)}."
+        msg = (
+            f"vector={vector!r} inválido. Core: {sorted(_CORE_VECTORS)}. "
+            f"Engine-derived: {sorted(_ENGINE_VECTORS)}."
+        )
         if known_extension_vectors:
             msg += f" Extensions registrados: {sorted(known_extension_vectors)}."
         raise QAFindingValidationError(msg)
