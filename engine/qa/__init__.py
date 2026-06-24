@@ -119,11 +119,16 @@ class _UnresolvableValidatorClaim:
 
     ``fingerprint`` é o do draft original validator-claim, usado por A8 pra
     suprimir esse draft (dedup: 1 finding por issue).
+
+    ``fixture_path`` (WR-01, review pr27 r3) é o ``evidence.fixture_path``
+    COMPLETO do draft, usado por A8 como chave de supressão inequívoca — dois
+    fixtures com o mesmo basename em dirs distintos não se canibalizam.
     """
 
     fixture_name: str
     error: str
     fingerprint: str | None = None
+    fixture_path: str | None = None
 
 
 @dataclass
@@ -133,12 +138,19 @@ class _ReconstructResult:
     ``fixtures`` são os executáveis reconstruídos (validator_path resolvido
     DENTRO dos roots). ``unresolvable_out_of_roots`` carrega os validator-claim
     rejeitados por escape de roots, pra surfaçar como finding determinístico.
+
+    ``fixture_path_by_name`` (WR-01, review pr27 r3) mapeia ``Fixture.name``
+    (stem) → ``evidence.fixture_path`` completo do draft que o originou. Como o
+    sandbox-results.json só carrega ``fixture_name`` (stem), esse mapa permite
+    o caller recuperar o path íntegro de um fixture in-roots-missing pra a
+    chave de supressão A8 ser inequívoca.
     """
 
     fixtures: list[Fixture] = field(default_factory=list)
     unresolvable_out_of_roots: list[_UnresolvableValidatorClaim] = field(
         default_factory=list
     )
+    fixture_path_by_name: dict[str, str] = field(default_factory=dict)
 
 
 def run_qa(
@@ -602,16 +614,33 @@ def run_qa(
         # validator-claim do auditor + o derivado validator-claim-unresolvable
         # descreveriam o MESMO issue com 2 findings (vetores diferentes → sem
         # dedup por fingerprint). Suprimimos o draft original pra reportar
-        # exatamente 1 finding por issue. Casamento por fixture_name (basename
-        # do fixture_path do draft ↔ fixture_name do stub).
-        unresolvable_names = {
-            getattr(r, "fixture_name", None)
-            for r in stubs
-            if getattr(r, "status", None) == "error"
-            and getattr(r, "fixture_name", None) in vc_fixture_names
+        # exatamente 1 finding por issue.
+        #
+        # WR-01 (review pr27 r3): a chave de supressão é o fixture_path COMPLETO,
+        # não o basename. Dois validator-claim fixtures em dirs distintos com o
+        # mesmo basename não podem se canibalizar. O stub só carrega fixture_name
+        # (stem), então recuperamos o path íntegro: out-of-roots via
+        # _UnresolvableValidatorClaim.fixture_path, in-roots-missing via o mapa
+        # stem→path do reconstruct.
+        out_of_roots_path_by_name = {
+            u.fixture_name: u.fixture_path
+            for u in out_of_roots
+            if u.fixture_path
         }
+        unresolvable_paths: set[str | None] = set()
+        for r in stubs:
+            if getattr(r, "status", None) != "error":
+                continue
+            stem = getattr(r, "fixture_name", None)
+            if stem not in vc_fixture_names:
+                continue
+            full_path = out_of_roots_path_by_name.get(
+                stem
+            ) or reconstructed.fixture_path_by_name.get(stem)
+            if full_path:
+                unresolvable_paths.add(full_path)
         all_findings = _suppress_superseded_validator_claims(
-            all_findings, unresolvable_names
+            all_findings, unresolvable_paths
         )
 
         # F-4: hidrata evidence.sandbox_result nos drafts validator-claim a
@@ -910,6 +939,7 @@ def _reconstruct_fixtures_from_findings(
     """
     fixtures: list[Fixture] = []
     unresolvable: list[_UnresolvableValidatorClaim] = []
+    fixture_path_by_name: dict[str, str] = {}
     seen_names: set[str] = set()
     allowed_roots = _allowed_validator_roots(project_root)
     for f in findings:
@@ -1000,6 +1030,8 @@ def _reconstruct_fixtures_from_findings(
                         if isinstance(f.get("fingerprint"), str)
                         else None
                     ),
+                    # WR-01: path íntegro pra chave de supressão inequívoca.
+                    fixture_path=fixture_path,
                 )
             )
             continue
@@ -1025,14 +1057,19 @@ def _reconstruct_fixtures_from_findings(
                 extra_args=extra_args,
             )
         )
+        # WR-01: registra stem → fixture_path completo pra o caller recuperar
+        # o path íntegro de um fixture in-roots-missing na chave de supressão.
+        fixture_path_by_name[name] = fixture_path
     return _ReconstructResult(
-        fixtures=fixtures, unresolvable_out_of_roots=unresolvable
+        fixtures=fixtures,
+        unresolvable_out_of_roots=unresolvable,
+        fixture_path_by_name=fixture_path_by_name,
     )
 
 
 def _suppress_superseded_validator_claims(
     findings: list[dict[str, Any]],
-    unresolvable_fixture_names: set[str | None],
+    unresolvable_fixture_paths: set[str | None],
 ) -> list[dict[str, Any]]:
     """A8 (review pr27 r2): remove o draft ``validator-claim`` ORIGINAL quando
     um finding ``validator-claim-unresolvable`` o substitui pra a mesma fixture.
@@ -1046,19 +1083,27 @@ def _suppress_superseded_validator_claims(
     representa o estado real: o claim não pôde ser verificado.
 
     Casamento conservador: só suprime um draft ``validator-claim`` cujo
-    ``Path(evidence.fixture_path).stem`` está em ``unresolvable_fixture_names``.
-    Drafts de fixtures resolvidas (que rodaram e podem ter findings legítimos)
-    permanecem intocados. Não muta o input — retorna lista nova.
+    ``evidence.fixture_path`` COMPLETO está em ``unresolvable_fixture_paths``.
+
+    WR-01 (review pr27 r3): o casamento usa o ``fixture_path`` íntegro, não o
+    basename (``Path(...).stem``). Dois validator-claim fixtures em diretórios
+    distintos podem compartilhar o mesmo basename (ex.:
+    ``dir-a/validator-claim-foo.yaml`` e ``dir-b/validator-claim-foo.yaml``).
+    Se a supressão casasse por stem, declarar UM deles irresolvível suprimiria
+    AMBOS os drafts — perda de sinal real do claim legítimo. Casar pelo path
+    completo torna a chave inequívoca. Drafts de fixtures resolvidas (que
+    rodaram e podem ter findings legítimos) permanecem intocados. Não muta o
+    input — retorna lista nova.
 
     Args:
         findings: lista consolidada (drafts + derivados).
-        unresolvable_fixture_names: nomes de fixtures cujo validator-claim virou
-            irresolvível (do set de stubs status=error ∩ validator-claim).
+        unresolvable_fixture_paths: ``fixture_path`` completos de fixtures cujo
+            validator-claim virou irresolvível (in-roots-missing ∪ out-of-roots).
 
     Returns:
         Lista nova sem os drafts ``validator-claim`` superseded.
     """
-    if not unresolvable_fixture_names:
+    if not unresolvable_fixture_paths:
         return list(findings)
     out: list[dict[str, Any]] = []
     for f in findings:
@@ -1067,11 +1112,13 @@ def _suppress_superseded_validator_claims(
             continue
         ev = f.get("evidence")
         fixture_path = ev.get("fixture_path") if isinstance(ev, dict) else None
-        if isinstance(fixture_path, str) and fixture_path:
-            name = Path(fixture_path).stem
-            if name in unresolvable_fixture_names:
-                # Superseded pelo validator-claim-unresolvable derivado — dedup.
-                continue
+        if (
+            isinstance(fixture_path, str)
+            and fixture_path
+            and fixture_path in unresolvable_fixture_paths
+        ):
+            # Superseded pelo validator-claim-unresolvable derivado — dedup.
+            continue
         out.append(f)
     return out
 
