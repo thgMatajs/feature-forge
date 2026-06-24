@@ -2,7 +2,8 @@
 
 Mandamento #2: verde antes de "pronto".
 
-> **Counts por lane (snapshot release 1.5.0, baseline em main):** rapid 1863 / integration 204 / e2e 30.
+> **Counts por lane (snapshot release 1.6.0, baseline em main):** rapid 2003 / integration 233 / e2e 31.
+> **Snapshot release 1.5.0 (anterior):** rapid 1863 / integration 204 / e2e 30.
 > **Snapshot release 1.4.0 (anterior):** rapid 1569 / integration 162 / e2e 30.
 > Fonte canônica: `docs/design/08-session-handoff.md` (atualizada a cada wave).
 > Re-confirme com `.venv/bin/pytest -m 'not integration and not e2e' -q | tail -1`.
