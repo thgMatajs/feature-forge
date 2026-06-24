@@ -133,6 +133,26 @@ Novo validator em `validators/` exige:
   - `tests/integration/test_cc_gate_end_to_end.py` (marker `integration`,
     skip per-language quando tool nativa missing — usa `@pytest.mark.skipif`).
 
+- `check_secrets` (v1.2-dev+, R1.1) — gate multi-tool de segurança,
+  per-stage split: `gitleaks` no per-task hook de `forge implement`
+  (regex-fast), `trufflehog --only-verified` na cascade de `forge verify`
+  (verificação ativa). Binário (detectou = fail) — sem threshold numérico.
+  Override-justify via `SECRETS-OVERRIDE: <file>:<line> kind=<token-type> —
+  <razão>` no commit body; bypass emergencial via `NO_SECRETS_GATE=1` logado
+  em `.claude/state/secrets-gate-bypass.jsonl`. Composto inteiro da infra
+  Phase 0 (`dispatch_native_tool` / `apply_overrides` / `check_tool_available`
+  / `git_staged_files` / `read_commit_body` / `result_*`).
+  Tests em:
+  - `tests/validators/test_check_secrets_skeleton.py` (SecretFinding + ignore-paths)
+  - `tests/validators/test_check_secrets_parsers.py` (gitleaks + trufflehog parsers)
+  - `tests/validators/test_check_secrets_dispatch.py` (stage selection + cmd_builders)
+  - `tests/validators/test_check_secrets.py` (validate entry + override + render snapshot)
+  - `tests/engine/test_verify_secrets_position.py` (cascade position após CC)
+  - `tests/engine/test_implement_secrets_gate.py` (per-task hook + bypass)
+  - `tests/engine/test_doctor_secrets_tools.py` (categoria `secrets-tools`)
+  - `tests/integration/test_secrets_gate_end_to_end.py` (marker `integration`,
+    smoke gitleaks/trufflehog reais com `@pytest.mark.skipif` quando ausentes).
+
 ## Gates de "pronto"
 
 Você só pode reportar trabalho "concluído" se TODOS:
