@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,6 +53,15 @@ from engine._sandbox.env import build_safe_env
 # Tunable se portarmos pra plataforma com spawn mais lento (Windows +
 # bundled Python).
 _MIN_REMAINING_S_FOR_SPAWN = 0.05
+
+
+# A2 (review pr27): ceiling de captura por stream (stdout/stderr). Um validator
+# hostil emitindo GBs estouraria a memória do processo pai (×N fixtures) →
+# OOM/DoS. O timeout existente limita TEMPO mas não VOLUME. Capamos cada stream
+# em 1 MiB — suficiente pra qualquer output legítimo de validator (findings +
+# 3-caminhos), com marker ``truncated`` quando estoura. Tunable se um validator
+# legítimo precisar de mais (improvável — output é diagnóstico, não dados).
+_OUTPUT_CAP_BYTES = 1024 * 1024  # 1 MiB
 
 
 _CHDIR_GUARD = """\
@@ -184,6 +194,10 @@ class SandboxResult:
     stderr: str = ""
     duration_s: float = 0.0
     error: str = ""
+    truncated: bool = False
+    """A2 (review pr27): ``True`` quando stdout OU stderr excedeu
+    ``_OUTPUT_CAP_BYTES`` e foi truncado. Sinaliza ao synthesis/audit que a
+    captura está incompleta (validator emitiu volume suspeito — possível DoS)."""
 
 
 def _assert_inside_sandbox(
@@ -376,6 +390,87 @@ def _scrub_extra_args(extra_args: list[str] | None) -> list[str]:
     return scrubbed
 
 
+def _drain_bounded(stream: Any, cap: int, sink: list[bytes], flag: list[bool]) -> None:
+    """A2: lê ``stream`` até EOF mas só RETÉM os primeiros ``cap`` bytes.
+
+    Continua drenando após o cap (descartando) pra que o subprocess não bloqueie
+    num pipe cheio — só não acumula na memória. ``flag[0]`` vira ``True`` assim
+    que o total visto ultrapassa ``cap`` (truncamento ocorreu).
+    """
+    seen = 0
+    while True:
+        chunk = stream.read(65536)
+        if not chunk:
+            break
+        if seen < cap:
+            sink.append(chunk[: cap - seen])
+        seen += len(chunk)
+        if seen > cap:
+            flag[0] = True
+
+
+def _run_bounded(
+    cmd: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    timeout: float,
+    cap: int = _OUTPUT_CAP_BYTES,
+) -> tuple[int, str, str, bool]:
+    """A2 (review pr27): roda subprocess capturando stdout/stderr capeados.
+
+    Substitui ``subprocess.run(capture_output=True)`` (captura ilimitada → OOM
+    sob validator hostil). Usa ``Popen`` + threads drenando cada pipe com
+    retenção limitada a ``cap`` bytes por stream. O timeout é preservado via
+    ``proc.wait(timeout)``; em estouro, mata o processo e propaga
+    ``TimeoutExpired`` (mesma semântica que ``subprocess.run`` expunha).
+
+    Returns:
+        ``(returncode, stdout, stderr, truncated)`` — strings decodificadas em
+        UTF-8 com ``errors="replace"``; ``truncated`` é ``True`` se algum stream
+        excedeu o cap.
+
+    Raises:
+        subprocess.TimeoutExpired: se o processo não terminar dentro de
+            ``timeout`` (após kill + reap).
+    """
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(cwd),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    out_sink: list[bytes] = []
+    err_sink: list[bytes] = []
+    out_trunc = [False]
+    err_trunc = [False]
+    t_out = threading.Thread(
+        target=_drain_bounded, args=(proc.stdout, cap, out_sink, out_trunc)
+    )
+    t_err = threading.Thread(
+        target=_drain_bounded, args=(proc.stderr, cap, err_sink, err_trunc)
+    )
+    t_out.start()
+    t_err.start()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        # Drena os pipes pra liberar as threads antes de propagar.
+        t_out.join()
+        t_err.join()
+        raise
+    t_out.join()
+    t_err.join()
+
+    stdout = b"".join(out_sink).decode("utf-8", errors="replace")
+    stderr = b"".join(err_sink).decode("utf-8", errors="replace")
+    truncated = out_trunc[0] or err_trunc[0]
+    return proc.returncode, stdout, stderr, truncated
+
+
 def run_sandbox(
     run_dir: Path,
     fixtures: list[Fixture],
@@ -531,23 +626,24 @@ def run_sandbox(
 
         t0 = time.monotonic()
         try:
-            proc = subprocess.run(
+            # A2 (review pr27): captura capeada (1 MiB/stream) via Popen +
+            # drenagem bounded, em vez de subprocess.run(capture_output=True)
+            # que acumula stdout/stderr ilimitado → OOM sob validator hostil.
+            returncode, stdout, stderr, truncated = _run_bounded(
                 cmd,
                 cwd=sandbox_cwd,
-                capture_output=True,
-                text=True,
-                timeout=remaining,
                 env=env,
-                check=False,
+                timeout=remaining,
             )
             results.append(
                 SandboxResult(
                     fixture=fixture,
                     status="ok",
-                    exit_code=proc.returncode,
-                    stdout=proc.stdout,
-                    stderr=proc.stderr,
+                    exit_code=returncode,
+                    stdout=stdout,
+                    stderr=stderr,
                     duration_s=time.monotonic() - t0,
+                    truncated=truncated,
                 )
             )
         except subprocess.TimeoutExpired:

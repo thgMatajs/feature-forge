@@ -1233,3 +1233,80 @@ def test_run_sandbox_allows_validator_inside_allowed_roots(
     r = results[0]
     assert r.status == "ok", f"status={r.status} error={r.error!r}"
     assert "ran-ok" in r.stdout
+
+
+# ---------------------------------------------------------------------------
+# A2 (review pr27) — output cap (DoS / OOM)
+#
+# subprocess capturava stdout/stderr ilimitado; um validator hostil emitindo
+# GBs → OOM (×N fixtures). Cap por stream com marker truncated.
+# ---------------------------------------------------------------------------
+
+
+def test_run_sandbox_truncates_oversized_stdout(tmp_path: Path) -> None:
+    """Validator emitindo > ceiling de stdout é truncado e flagueado, não OOM."""
+    from engine.qa.sandbox import _OUTPUT_CAP_BYTES
+
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    # Emite ~3× o ceiling em stdout.
+    flood = _OUTPUT_CAP_BYTES * 3
+    validator = _write_validator(
+        validators_dir,
+        "flood.py",
+        f"""
+        import sys
+        # Escreve em chunks pra não estourar memória do próprio validator.
+        chunk = "A" * 65536
+        written = 0
+        while written < {flood}:
+            sys.stdout.write(chunk)
+            written += len(chunk)
+        sys.stdout.flush()
+        sys.exit(0)
+        """,
+    )
+    inp = _input_file(sandbox_fixtures, "fx.json")
+
+    fixture = Fixture(name="fx", input_path=inp, validator_path=validator)
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=15.0, per_validator_s=10.0
+    )
+
+    r = results[0]
+    assert r.status == "ok", f"status={r.status} error={r.error!r}"
+    # Captura limitada ao ceiling (com margem pro marker textual).
+    assert len(r.stdout.encode("utf-8")) <= _OUTPUT_CAP_BYTES + 256, (
+        f"stdout não foi capeado: {len(r.stdout.encode('utf-8'))} bytes"
+    )
+    assert r.truncated is True, "flag truncated não foi setada"
+
+
+def test_run_sandbox_does_not_flag_truncated_under_ceiling(tmp_path: Path) -> None:
+    """Output pequeno → truncated=False (não falso-positivo)."""
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    validator = _write_validator(
+        validators_dir,
+        "small.py",
+        """
+        import sys
+        print("tiny output")
+        sys.exit(0)
+        """,
+    )
+    inp = _input_file(sandbox_fixtures, "fx.json")
+
+    fixture = Fixture(name="fx", input_path=inp, validator_path=validator)
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=5.0, per_validator_s=2.0
+    )
+
+    r = results[0]
+    assert r.status == "ok"
+    assert "tiny output" in r.stdout
+    assert r.truncated is False

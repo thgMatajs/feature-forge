@@ -867,6 +867,8 @@ def _write_sandbox_results(
             "stderr": r.stderr,
             "duration_s": r.duration_s,
             "error": r.error,
+            # A2 (review pr27): marca captura truncada (DoS sinal).
+            "truncated": r.truncated,
         }
         for r in results
     ]
