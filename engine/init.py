@@ -196,6 +196,20 @@ def _clear_checkpoint(project_root: Path) -> None:
     _clear_checkpoint_io(_checkpoint_path(project_root))
 
 
+def _resume_option_labels() -> dict[str, str]:
+    """Labels do prompt de resume — honestas pós pilot R1 (P-11).
+
+    ``resume`` CONTINUA do step salvo (reaproveita o progresso); ``discard``
+    recomeça limpo; ``abort`` sai sem mexer. Extraído pra função testável
+    (o ``stable_intent_id`` do resume é derivado destas labels).
+    """
+    return {
+        "resume": "continuar de onde o init parou (reaproveita o progresso salvo)",
+        "discard": "descartar o checkpoint e recomeçar do zero",
+        "abort": "sair sem mexer em nada",
+    }
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
@@ -623,6 +637,156 @@ def _load_preset(name: str) -> dict[str, Any]:
 
 def _index_cards(canonical: list[CardManifest]) -> dict[str, CardManifest]:
     return {c.name: c for c in canonical}
+
+
+def _close_provider_deps(
+    selected_card_names: list[str],
+    card_index: dict[str, CardManifest],
+) -> list[str]:
+    """Fecha deps de provider de 1 nível antes do resolver (pilot R1, P-09).
+
+    Pra cada card selecionado, se algum label em `requires` não é provido por
+    nenhum card já selecionado, procura no catálogo canônico um card que o
+    provê e o inclui. Conservador: 1 nível (o provider incluído pode trazer
+    seus próprios requires — esses caem no resolver, que reporta DEP-MISSING
+    real se ainda faltar; daí o gate de recuperação do WS-B-3). NÃO inventa
+    cards — só puxa do catálogo existente. Determinístico: ordem de inclusão
+    alfabética por nome do provider.
+
+    Latentes (android-platform/ios-platform/...) NÃO são fechados aqui — são
+    user_provided_capabilities passados ao resolver.
+    """
+    closed = list(selected_card_names)
+    selected_set = set(closed)
+    # provider index: label -> sorted card names que o provêem (catálogo todo).
+    label_providers: dict[str, list[str]] = {}
+    for name, card in card_index.items():
+        for label in (card.provides or []):
+            label_providers.setdefault(label, []).append(name)
+    for plist in label_providers.values():
+        plist.sort()
+    # Labels já cobertos pelos cards selecionados.
+    covered: set[str] = set()
+    for name in closed:
+        card = card_index.get(name)
+        if card:
+            covered.update(card.provides or [])
+    for name in list(closed):
+        card = card_index.get(name)
+        if not card:
+            continue
+        for need in (card.requires or []):
+            if need in covered:
+                continue
+            providers = label_providers.get(need, [])
+            if not providers:
+                continue  # nenhum card canônico provê → resolver reporta DEP-MISSING
+            provider = providers[0]
+            if provider not in selected_set:
+                closed.append(provider)
+                selected_set.add(provider)
+                covered.update(card_index[provider].provides or [])
+    return closed
+
+
+def _resolver_error_gate(
+    errors: list[str],
+    *,
+    project_root: Path,
+) -> str:
+    """Gate de resolver-errors — PAUSA pra escolha (exit 2), não aborta (P-10).
+
+    Retorna a escolha 'a'|'b'|'c'. Na primeira entrada, ask_three_paths emite
+    o intent + levanta PausedForInputError (cli.main → exit 2); na re-entrada
+    consome a response. Mantém exatamente 3 caminhos (disciplina §1).
+    """
+    paths = [
+        {
+            "label": "voltar e re-selecionar o backend",
+            "motive": (
+                "alguns cards ficaram sem dependência satisfeita — re-rodar o "
+                "backend selection pode incluir o provider faltante"
+            ),
+        },
+        {
+            "label": "abortar e investigar os cards canônicos",
+            "motive": (
+                "pode ser um card.yaml com requires sem provider no catálogo "
+                "(bug de card)"
+            ),
+        },
+        {
+            "label": "seguir só com os cards resolvíveis",
+            "motive": (
+                "descarta os cards problemáticos e instala o subconjunto que "
+                "resolve (best-effort)"
+            ),
+        },
+    ]
+    # WR-02: o detalhe multi-linha dos erros NÃO vai embutido no gate_name —
+    # senão vira um blob como "pergunta" no AskUserQuestion, o MESMO
+    # anti-padrão que P-04 removeu do handler brownfield acima. Imprime os
+    # erros via renderer como CONTEXTO antes do prompt; o gate_name fica curto
+    # e estável ("RESOLVER-ERRORS").
+    renderer.write("")
+    renderer.write("Erros do resolver:")
+    for e in errors[:5]:
+        renderer.write(f"  · {e}")
+    renderer.write("")
+    return ui_question.ask_three_paths("RESOLVER-ERRORS", paths)
+
+
+def _drop_unresolvable_cards(
+    selected_cards: list[CardManifest],
+    errors: list[str],
+) -> list[CardManifest]:
+    """Remove do conjunto os cards citados nos erros do resolver (best-effort).
+
+    M2: parse ANCORADO aos prefixos estáveis das mensagens do resolver
+    (``engine/cards/resolver.py``), em vez de varrer qualquer texto entre
+    colchetes (que casaria listas não relacionadas se o wording mudasse).
+    Só processamos linhas que começam com um marcador conhecido, e dentro
+    delas extraímos os ofensores nas posições estruturais conhecidas:
+
+    - ``DEP-MISSING: card '<name>' requires …``        → <name>
+    - ``CONFLICT-NAME: card '<name>' declares … '<x>'…``→ <name> (e <x>)
+    - ``CONFLICT-SINGULAR: … provided by multiple cards: [<list>]`` → lista
+    - ``CONFLICT-LABEL: card '<name>' … also provided by: [<list>]``
+      → <name> + lista
+
+    Determinístico, preserva a ordem original. NÃO é resolução completa —
+    só uma poda do subconjunto problemático pra um re-resolve no caminho "c"
+    do gate.
+    """
+    import re
+
+    # Marcadores conhecidos: só linhas com um destes prefixos são parseadas.
+    _KNOWN_PREFIXES = (
+        "DEP-MISSING:",
+        "CONFLICT-NAME:",
+        "CONFLICT-SINGULAR:",
+        "CONFLICT-LABEL:",
+    )
+    _card_name_re = re.compile(r"card '([^']+)'")
+    _bracket_list_re = re.compile(r"\[([^\]]*)\]")
+
+    flagged: set[str] = set()
+    for err in errors:
+        stripped = err.strip()
+        if not stripped.startswith(_KNOWN_PREFIXES):
+            continue  # wording desconhecido — não arrisca poda incorreta
+        # Nome do card ofensor (posição ``card '<name>'`` — primeiro match).
+        for match in _card_name_re.finditer(stripped):
+            flagged.add(match.group(1))
+        # Listas de providers em colisão SÓ existem nos marcadores de
+        # conflito singular/label — ancoradas a esses prefixos.
+        if stripped.startswith(("CONFLICT-SINGULAR:", "CONFLICT-LABEL:")):
+            for match in _bracket_list_re.finditer(stripped):
+                for token in match.group(1).split(","):
+                    name = token.strip().strip("'\"")
+                    if name:
+                        flagged.add(name)
+    return [c for c in selected_cards if c.name not in flagged]
 
 
 # ── Hooks install (Step 13) ──────────────────────────────────────────────────
@@ -1264,7 +1428,9 @@ def _run_pipeline(project_root: Path) -> int:
         )
     )
     renderer.write("")
-    renderer.write(mentor_calmo.greeting())
+    # P-07: o init é pipeline determinístico — abertura estável (não a
+    # variação aleatória de greeting(), reservada a contextos conversacionais).
+    renderer.write(mentor_calmo.greeting_stable())
     renderer.write(
         "Vou conhecer este projeto antes de te perguntar qualquer coisa."
     )
@@ -1308,68 +1474,122 @@ def _run_pipeline(project_root: Path) -> int:
         )
         return fail_with_tag(ERR_ABORTED)
 
+    # WS-A-2 (P-11): pontos de retomada derivados do checkpoint. Quando o
+    # resume é honrado (escolha humana 'resume' OU loop mecânico do host com
+    # checkpoint além do preset), o pipeline PULA os steps já completos em vez
+    # de recomeçar do zero — honrando a promessa "auto-resumable" da Decisão
+    # 27. Escopo conservador R1: cobrir o caminho linear até backend-selection
+    # (onde o piloto trava). Steps após backend caem no pipeline normal.
+    _STEPS_PAST_PRESET = {
+        "step-5-backend-selection",
+        "step-6-resolve",
+        "step-7-snapshot",
+        "step-7-5-orphan-signals",
+    }
+    _resume_step: str | None = None
+    _resume_preset: str | None = None
+
     existing_checkpoint = _load_checkpoint(project_root)
     if existing_checkpoint:
-        renderer.write(
-            renderer.colored(
-                f"Encontrei um checkpoint anterior (step={existing_checkpoint.get('step')}) "
-                f"em {_checkpoint_path(project_root)}.",
-                "yellow",
-            )
-        )
-        # Decision 27 — sempre 3 caminhos em gate violation legítimo. Resume
-        # completo entra plenamente em Phase 5+; por enquanto resume = restart
-        # mantendo o checkpoint pra audit, discard apaga, abort sai sem tocar.
+        # Gate do resume (pilot R1, P-01; generalizado em R4, P-15): durante o
+        # loop mecânico do host existe uma ``forge-response.json`` pendente que
+        # pertence a uma pergunta DOWNSTREAM (preset, backend, ...). Emitir o
+        # prompt de resume aqui injetaria um intent cujo id NÃO casa com essa
+        # response → IntentMismatchError (deadlock do piloto MeoBonsai). Só
+        # emitimos o resume em re-entrada HUMANA genuína. O pipeline fresh
+        # consome a response via o consumed-log (idempotência §4 do schema
+        # intent-protocol). Aditivo a Decisão 27.
         #
-        # DRIFT-1 W2.T3b — persist intent-id da pergunta de resume ANTES de
-        # invocar ``ui_question.ask``. Mantemos o resto do payload do
-        # checkpoint anterior intacto (preset, selected_card_names,
-        # backend_cells) — só atualizamos o campo intent_id. Re-invocacao
-        # apos exit 2 consome o response correspondente sem re-perguntar.
-        _resume_options = {
-            "resume": "começar do zero mantendo o checkpoint como audit",
-            "discard": "apagar o checkpoint e começar limpo",
-            "abort": "sair sem mexer em nada",
-        }
-        _saved_cells = existing_checkpoint.get("backend-cells")
-        _save_checkpoint(
-            _InitCheckpoint(
-                step=str(existing_checkpoint.get("step") or "step-1-greeting"),
-                at=_utc_now_iso(),
-                project_root=str(project_root),
-                preset=existing_checkpoint.get("preset"),
-                selected_card_names=list(
-                    existing_checkpoint.get("selected-card-names") or []
-                ),
-                backend_cells=(
-                    _saved_cells if isinstance(_saved_cells, dict) else None
-                ),
-                intent_id=ui_question.stable_intent_id(
-                    "ask",
-                    "Resume de init pendente?",
-                    _resume_options,
-                    extra={
-                        "default": "discard",
-                        "min-selected": None,
-                        "validator-hint": None,
-                    },
-                ),
-            )
-        )
-        resume_choice = ui_question.ask(
+        # R4: o gate agora usa o helper compartilhado ``host_is_replaying``
+        # (§4.1 do schema) em vez de ``_response_path().exists()`` cru. Ganho
+        # de precisão: quando a ÚNICA response no disco é pra o próprio intent
+        # de resume (o usuário acabou de responder o resume), o gate NÃO
+        # suprime — o pipeline consome essa resposta em vez de pular cego.
+        from engine.ui import intent_state  # noqa: PLC0415
+
+        _resume_options = _resume_option_labels()
+        _resume_intent_id = ui_question.stable_intent_id(
+            "ask",
             "Resume de init pendente?",
             _resume_options,
-            default="discard",
+            extra={
+                "default": "discard",
+                "min-selected": None,
+                "validator-hint": None,
+            },
         )
-        if resume_choice == "discard":
-            _clear_checkpoint(project_root)
-        elif resume_choice == "abort":
+        _host_loop_in_progress = intent_state.host_is_replaying(
+            project_root, _resume_intent_id
+        )
+
+        if _host_loop_in_progress:
             renderer.write(
-                "Ok, abortado. O checkpoint segue intacto pra inspeção manual."
+                renderer.colored(
+                    f"Checkpoint anterior detectado (step={existing_checkpoint.get('step')}); "
+                    "há response pendente — sigo o pipeline sem reabrir o prompt de resume.",
+                    "dim_grey",
+                )
             )
-            return fail_with_tag(ERR_ABORTED)
-        # resume → segue sem apagar o checkpoint; o pipeline regrava no
-        # final via _clear_checkpoint quando completar com sucesso.
+            # Loop mecânico: continua do step salvo (não re-pergunta o que já
+            # foi confirmado num ciclo anterior do mesmo init).
+            _resume_step = str(existing_checkpoint.get("step") or "step-1-greeting")
+            _resume_preset = existing_checkpoint.get("preset")
+        else:
+            renderer.write(
+                renderer.colored(
+                    f"Encontrei um checkpoint anterior (step={existing_checkpoint.get('step')}) "
+                    f"em {_checkpoint_path(project_root)}.",
+                    "yellow",
+                )
+            )
+            # Decision 27 — sempre 3 caminhos em gate violation legítimo.
+            # DRIFT-1 W2.T3b — persist intent-id da pergunta de resume ANTES
+            # de invocar ``ui_question.ask``. Mantemos o resto do payload do
+            # checkpoint anterior intacto (preset, selected_card_names,
+            # backend_cells) — só atualizamos o campo intent_id. Re-invocacao
+            # apos exit 2 consome o response correspondente sem re-perguntar.
+            # R4: reusa ``_resume_options`` / ``_resume_intent_id`` derivados
+            # acima pro gate (DRY — não re-deriva o stable id).
+            _saved_cells = existing_checkpoint.get("backend-cells")
+            _save_checkpoint(
+                _InitCheckpoint(
+                    step=str(existing_checkpoint.get("step") or "step-1-greeting"),
+                    at=_utc_now_iso(),
+                    project_root=str(project_root),
+                    preset=existing_checkpoint.get("preset"),
+                    selected_card_names=list(
+                        existing_checkpoint.get("selected-card-names") or []
+                    ),
+                    backend_cells=(
+                        _saved_cells if isinstance(_saved_cells, dict) else None
+                    ),
+                    intent_id=_resume_intent_id,
+                )
+            )
+            resume_choice = ui_question.ask(
+                "Resume de init pendente?",
+                _resume_options,
+                default="discard",
+            )
+            if resume_choice == "discard":
+                _clear_checkpoint(project_root)
+            elif resume_choice == "abort":
+                renderer.write(
+                    "Ok, abortado. O checkpoint segue intacto pra inspeção manual."
+                )
+                return fail_with_tag(ERR_ABORTED)
+            elif resume_choice == "resume":
+                # WS-A-2 (P-11): resume — continua do step salvo reaproveitando
+                # o PRESET salvo (pula só a confirmação do Step 4). O backend
+                # (Step 5) é re-confirmado a partir desse preset; os
+                # selected_card_names salvos NÃO são reaproveitados pra avançar
+                # — só foram regravados acima pra manter o checkpoint de audit
+                # íntegro. Escopo R1 "conservador": resume volta à seleção de
+                # backend. O pipeline limpa o checkpoint ao completar.
+                _resume_step = str(
+                    existing_checkpoint.get("step") or "step-1-greeting"
+                )
+                _resume_preset = existing_checkpoint.get("preset")
 
     # ── Step 2 — Discovery (cinematic) ───────────────────────────────────────
     checkpoint.step = "step-2-discovery"
@@ -1377,7 +1597,10 @@ def _run_pipeline(project_root: Path) -> int:
     _save_checkpoint(checkpoint)
 
     renderer.write("")
-    renderer.write("[0:01] Scanning repo + cards canônicos…")
+    renderer.write(
+        "[1/7] Lendo o repositório + cards canônicos "
+        "(pode levar ~30s em monorepos grandes)…"
+    )
 
     canonical_dir = cards_canonical_dir()
     if not canonical_dir.is_dir():
@@ -1454,23 +1677,38 @@ def _run_pipeline(project_root: Path) -> int:
     renderer.write(renderer.box("Resumo da detecção", summary_lines, width=78))
 
     # ── Step 4 — Preset confirmation ─────────────────────────────────────────
-    renderer.write("")
-    choice = ui_question.ask(
-        "Confirmar preset kmp-mobile?",
-        {
-            "sim": f"confirmar {PRESET_NAME} (recomendado se signals casaram)",
-            "outro": "escolher outro preset (não disponível no v1 — só kmp-mobile)",
-            "abortar": "sair do init agora",
-        },
-        default="sim",
+    # WS-A-2 (P-11): em resume além do preset (checkpoint em step-5+), pula a
+    # confirmação e reaproveita o preset salvo. Discovery (Step 2) re-roda
+    # sempre — é idempotente e produz os canonical_cards que o pipeline usa.
+    _resuming_past_preset = (
+        _resume_step in _STEPS_PAST_PRESET and _resume_preset is not None
     )
-    if choice == "abortar":
-        renderer.write("ok, parado.")
-        return 0
-    if choice == "outro":
-        raise InitError(
-            "no v1 só existe o preset kmp-mobile. Os outros chegam no Phase 6."
+    if _resuming_past_preset:
+        renderer.write("")
+        renderer.write(
+            renderer.colored(
+                f"Resume: preset {_resume_preset} já confirmado num ciclo "
+                "anterior — re-confirmo o backend a partir dele (a seleção "
+                "de cards é refeita aqui, não reaproveitada do checkpoint).",
+                "dim_grey",
+            )
         )
+    else:
+        renderer.write("")
+        # P-08: removida a opção morta 'outro' — só existe o preset kmp-mobile,
+        # então 'outro' sempre levantava InitError e vazava '(não disponível no
+        # v1)' no menu (regressão F3 do v1.2). Menu fica sim/abortar.
+        choice = ui_question.ask(
+            "Confirmar preset kmp-mobile?",
+            {
+                "sim": f"confirmar {PRESET_NAME} (recomendado se signals casaram)",
+                "abortar": "sair do init agora",
+            },
+            default="sim",
+        )
+        if choice == "abortar":
+            renderer.write("ok, parado.")
+            return 0
 
     checkpoint.preset = PRESET_NAME
     checkpoint.step = "step-5-backend-selection"
@@ -1503,7 +1741,7 @@ def _run_pipeline(project_root: Path) -> int:
     )
 
     renderer.write("")
-    renderer.write("[1:00] Backend — preciso da sua escolha")
+    renderer.write("[5/7] Backend — preciso da sua escolha")
 
     backend_cells: dict[str, Any] = {}
     if has_signals:
@@ -1536,6 +1774,13 @@ def _run_pipeline(project_root: Path) -> int:
         if name not in selected_card_names:
             selected_card_names.append(name)
 
+    # P-09: dep-closure de provider de 1 nível antes do resolver. Quando um
+    # card detectado (ex.: firestore-security-rules) requer um label que a
+    # detecção não puxou (persistence-server), incluímos o card canônico que
+    # o provê — evitando um DEP-MISSING que abortaria o init. Deps genuinamente
+    # órfãs (sem provider no catálogo) caem no gate de recuperação do resolver.
+    selected_card_names = _close_provider_deps(selected_card_names, card_index)
+
     checkpoint.selected_card_names = selected_card_names
     checkpoint.backend_cells = backend_cells
     checkpoint.step = "step-6-resolve"
@@ -1566,29 +1811,45 @@ def _run_pipeline(project_root: Path) -> int:
     renderer.write("Resolvendo cards (deps + conflicts + topo-sort)…")
     res = resolve(selected_cards, user_provided_capabilities=LATENT_CAPS)
     if res.errors:
-        renderer.write(
-            mentor_calmo.three_paths_block(
-                "RESOLVER-ERRORS",
-                what_failed=f"resolver encontrou {len(res.errors)} erro(s) ao casar cards",
-                where=", ".join(c.name for c in selected_cards),
-                why=res.errors[:5],
-                paths=[
-                    {
-                        "label": "voltar e ajustar a configuração de backend (composer/bundle)",
-                        "motive": "alguns cards conflitam com a stack proposta — bundle/composer não cobriram resolução",
-                    },
-                    {
-                        "label": "personalizar (modo manual)",
-                        "motive": "remover cards problemáticos um a um",
-                    },
-                    {
-                        "label": "abortar e investigar os cards canônicos",
-                        "motive": "pode ser um bug do card.yaml",
-                    },
-                ],
-            )
+        # P-10: o gate de resolver-errors PAUSA (exit 2) pra o usuário escolher
+        # recuperação, em vez de abortar (exit 1). Antes era three_paths_block
+        # cosmético + fail_with_tag — o 3-caminhos não aceitava escolha.
+        choice = _resolver_error_gate(
+            res.errors,
+            project_root=project_root,
         )
-        return fail_with_tag(ERR_ABORTED)
+        if choice == "a":
+            # Voltar ao backend selection — escopo R1: instrui o re-run limpo
+            # (o loop estruturado fica pra rodada futura, se necessário).
+            renderer.write(
+                "Re-rode `forge init` após ajustar — o backend será "
+                "re-perguntado."
+            )
+            return fail_with_tag(ERR_ABORTED)
+        if choice == "b":
+            return fail_with_tag(ERR_ABORTED)
+        # choice == "c": filtra os cards citados em DEP-MISSING/CONFLICT e
+        # re-resolve o subconjunto. Se o subconjunto resolve, segue; senão aborta.
+        resolvable = _drop_unresolvable_cards(selected_cards, res.errors)
+        # M3: se a filtragem removeu TODOS os cards, não re-resolvemos lista
+        # vazia (resolve([]) instalaria zero cards silenciosamente). Aborta
+        # com mensagem clara.
+        if not resolvable:
+            renderer.write(
+                renderer.colored(
+                    "Nada resta resolvível — abortado.", "yellow"
+                )
+            )
+            return fail_with_tag(ERR_ABORTED)
+        res = resolve(resolvable, user_provided_capabilities=LATENT_CAPS)
+        if res.errors:
+            renderer.write(
+                renderer.colored(
+                    "Subconjunto ainda não resolve — abortado.", "yellow"
+                )
+            )
+            return fail_with_tag(ERR_ABORTED)
+        selected_cards = resolvable
 
     if res.warnings:
         for w in res.warnings:
@@ -2360,11 +2621,12 @@ def _handle_backend_multi_axis_brownfield(
       5. Processa resposta:
          - "a" (confirm) → aplica composer_result direto, retorna result
            com ``choice="confirm"`` + ``selected_card_names``.
-         - "b" (adjust) → DEFERRED a W7.2 (multi-select per cell). Por
-           enquanto retorna ``choice="adjust"`` + selected vazio pra
-           caller decidir o fallback.
-         - "c" (scratch) → DEFERRED a W7.2 (greenfield-style picker).
-           Retorna ``choice="scratch"`` + selected vazio.
+         - "b" (adjust) / "c" (scratch) → DEFERRED a W7.2 (multi-select per
+           cell / picker greenfield). WR-03 (Path A): em vez de retornar um
+           set vazio (conjunto degradado silencioso), redireciona pra
+           "confirmar como-is" — retorna ``choice="confirm"`` com a MESMA
+           seleção do composer que "a" produziria + avisa o usuário (via
+           renderer) que o ajuste/scratch ainda não está disponível.
 
     Args:
         project_root: raiz do projeto sob análise (composer + signals).
@@ -2372,9 +2634,9 @@ def _handle_backend_multi_axis_brownfield(
 
     Returns:
         Dict com keys:
-          - ``choice``: "confirm" | "adjust" | "scratch"
-          - ``selected_card_names``: list[str] (vazia em adjust/scratch
-            até W7.2 implementar os paths)
+          - ``choice``: "confirm" (sempre, em R1 — b/c redirecionam pra
+            confirmar como-is até W7.2 implementar adjust/scratch; WR-03)
+          - ``selected_card_names``: list[str] (seleção do composer)
           - ``composer_result``: dict aninhado retornado pelo composer
             (passa adiante pro caller fazer downstream do label).
 
@@ -2393,38 +2655,44 @@ def _handle_backend_multi_axis_brownfield(
 
     # Three-paths block — labels carregam motive textual pro host renderizar
     # o bloco canônico de discipline §1.
+    # P-02 / Mandamento 5: os motives de b/c não vazam roadmap interno
+    # ("[W7.2 …]"). Esses caminhos ainda não estão disponíveis nesta versão;
+    # o motive honesto orienta o usuário a confirmar como-is por ora. A
+    # implementação real (multi-select per-cell / picker greenfield) está
+    # anotada como gap deferido em docs/design/04-pending.md.
     paths = [
         {
             "label": "Confirmar detection como-is",
             "motive": (
                 "Aceita a tabela detectada acima e segue com esses cards "
-                "pro Step 6 (resolve)."
+                "pro resolve. Caminho recomendado."
             ),
         },
         {
             "label": "Ajustar células divergentes",
             "motive": (
-                "Você escolhe per-cell o card vencedor (útil quando há "
-                "Conflito ou quando a uniformidade não bate com a stack "
-                "real do projeto). [W7.2 implementa o multi-select.]"
+                "Escolher card por célula ainda não está disponível nesta "
+                "versão — por ora, confirme como-is e ajuste depois com "
+                "`forge reconfigure`."
             ),
         },
         {
-            "label": "Começar do zero (custom-from-scratch)",
+            "label": "Começar do zero (custom)",
             "motive": (
-                "Ignora a detection e cai no greenfield-style picker. "
-                "[W7.2 implementa o fluxo greenfield.]"
+                "O fluxo greenfield-style ainda não está disponível nesta "
+                "versão — por ora, confirme como-is."
             ),
         },
     ]
 
-    # Render mentor-calmo body + tabela. ``ask_three_paths`` carrega
-    # ``paths-detail`` no payload, mas a tabela detectada precisa estar
-    # visível ANTES do host renderizar as 3 opções — entra no gate_name
-    # como prefix textual (host concatena com o block de paths).
-    gate_name = "init-brownfield-detection\n\nDetection composta:\n" + table
-
-    choice_key = ui_question.ask_three_paths(gate_name, paths)
+    # P-04: a tabela (20+ linhas) ia embutida no gate_name → virava um blob
+    # gigante como "pergunta" no AskUserQuestion. Agora imprime via renderer
+    # como CONTEXTO antes do prompt; o gate_name fica curto e estável.
+    renderer.write("")
+    renderer.write("Detecção composta (axis × plataforma):")
+    renderer.write(table)
+    renderer.write("")
+    choice_key = ui_question.ask_three_paths("init-brownfield-detection", paths)
 
     if choice_key == "a":
         return {
@@ -2432,19 +2700,26 @@ def _handle_backend_multi_axis_brownfield(
             "selected_card_names": _collect_confirm_selection(composer_result),
             "composer_result": composer_result,
         }
-    if choice_key == "b":
-        # W7.2 implementa o multi-select per cell. W7.1 retorna o sinal
-        # pro caller decidir fallback até lá — não silencia, mas também
-        # não trava o init (deviation tracked no commit body).
-        return {
-            "choice": "adjust",
-            "selected_card_names": [],
-            "composer_result": composer_result,
-        }
-    # choice_key == "c"
+
+    # WR-03 (Path A): os caminhos "b" (ajustar células) e "c" (começar do
+    # zero) ainda não estão disponíveis nesta versão (deferred a W7.2). Antes
+    # eles retornavam `selected_card_names: []`, o que produzia um conjunto
+    # degradado SILENCIOSAMENTE no caller (dropava a detecção sem avisar) —
+    # uma opção que mente sobre o que faz. Agora redireciona pra "confirmar
+    # como-is": retorna a MESMA seleção que "a" produziria + avisa o usuário.
+    # O motive já orienta isso ("por ora, confirme como-is"); aqui o
+    # comportamento real passa a casar com o que o label promete.
+    label = "Ajustar células" if choice_key == "b" else "Começar do zero"
+    renderer.write(
+        renderer.colored(
+            f"'{label}' ainda não está disponível nesta versão — segui com a "
+            "detecção como-is. Ajuste depois com `forge reconfigure`.",
+            "yellow",
+        )
+    )
     return {
-        "choice": "scratch",
-        "selected_card_names": [],
+        "choice": "confirm",
+        "selected_card_names": _collect_confirm_selection(composer_result),
         "composer_result": composer_result,
     }
 

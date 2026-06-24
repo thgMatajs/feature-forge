@@ -207,11 +207,17 @@ def test_brownfield_handler_emits_three_paths_intent_with_detection_table(
     firebase_auth = _load_real_card("firebase-auth")
     active_cards = [firebase_auth]
 
-    with pytest.raises(PausedForInputError):
-        _handle_backend_multi_axis_brownfield(
-            project_root=tmp_path,
-            active_cards=active_cards,
-        )
+    import contextlib
+    import io
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        with pytest.raises(PausedForInputError):
+            _handle_backend_multi_axis_brownfield(
+                project_root=tmp_path,
+                active_cards=active_cards,
+            )
+    rendered = buf.getvalue()
 
     pending = intent_state.read_pending(tmp_path)
     assert pending is not None, "handler must emit forge-pending.json on first call"
@@ -235,16 +241,14 @@ def test_brownfield_handler_emits_three_paths_intent_with_detection_table(
     assert "ajust" in labels_lower or "adjust" in labels_lower
     assert "zero" in labels_lower or "scratch" in labels_lower
 
-    # The table goes into the question body (or motive[0]) — searching
-    # the whole pending payload is the most resilient assertion: we
-    # don't pin to a particular field name, only to the fact that the
-    # detected card surfaces somewhere visible.
-    serialized = json.dumps(pending, ensure_ascii=False)
-    assert "firebase-auth" in serialized, (
+    # P-04: a tabela detectada agora vai como CONTEXTO via renderer (stdout),
+    # NÃO embutida no payload do intent. O card detectado deve surgir na
+    # saída renderizada (visível ao auditor antes das 3 opções).
+    assert "firebase-auth" in rendered, (
         "detected card 'firebase-auth' must appear in the rendered table "
-        f"so the user can confirm/adjust; pending payload: {serialized[:400]}"
+        f"so the user can confirm/adjust; rendered output: {rendered[:400]}"
     )
-    assert "auth" in serialized, "axis label 'auth' must appear in the table"
+    assert "auth" in rendered, "axis label 'auth' must appear in the table"
 
 
 @pytest.mark.integration
@@ -423,24 +427,31 @@ fun newClient() = HttpClient()
     ktor_card = _load_real_card("ktor-client")
     active_cards = [retrofit_card, ktor_card]
 
-    with pytest.raises(PausedForInputError):
-        _handle_backend_multi_axis_brownfield(
-            project_root=tmp_path,
-            active_cards=active_cards,
-        )
+    import contextlib
+    import io
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        with pytest.raises(PausedForInputError):
+            _handle_backend_multi_axis_brownfield(
+                project_root=tmp_path,
+                active_cards=active_cards,
+            )
+    rendered = buf.getvalue()
 
     pending = intent_state.read_pending(tmp_path)
     assert pending is not None
 
-    # Both candidates must appear so the user can disambiguate.
-    serialized = json.dumps(pending, ensure_ascii=False)
-    assert "retrofit-client" in serialized, (
+    # P-04: a tabela (com os candidatos do Conflict) agora é renderizada como
+    # CONTEXTO (stdout), não no payload do intent. Ambos candidates devem
+    # aparecer na saída renderizada pro auditor desambiguar.
+    assert "retrofit-client" in rendered, (
         "Conflict cell must expose both candidates; "
-        f"retrofit-client absent from pending: {serialized[:500]}"
+        f"retrofit-client absent from rendered table: {rendered[:500]}"
     )
-    assert "ktor-client" in serialized, (
+    assert "ktor-client" in rendered, (
         "Conflict cell must expose both candidates; "
-        f"ktor-client absent from pending: {serialized[:500]}"
+        f"ktor-client absent from rendered table: {rendered[:500]}"
     )
 
 
@@ -448,3 +459,385 @@ fun newClient() = HttpClient()
 # documentation of the W5 surface the handler consumes — touching that
 # surface in a future refactor will land in this file's diff.
 _ = (Cell, Conflict)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Pilot R1 (P-03, P-09, P-10, P-04, P-02)
+# ════════════════════════════════════════════════════════════════════════════
+
+from engine.cards.loader import load_all_cards  # noqa: E402
+from engine.detection.composer import compose_backend_axes  # noqa: E402
+from engine.init import _normalize_cards_for_composer  # noqa: E402
+from engine.utils.paths import cards_canonical_dir  # noqa: E402
+
+
+def _cell_card_ids(cell) -> set[str]:
+    """Extrai os card_ids de um Cell ou de um Conflict.candidates."""
+    if isinstance(cell, Cell):
+        return {cell.card_id}
+    if isinstance(cell, Conflict):
+        return {c.card_id for c in cell.candidates}
+    return set()
+
+
+# ── WS-B-1: cards por-plataforma não conflitam (P-03) ───────────────────────
+
+
+def _force_all_cards_match(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Força score acima do threshold pra TODO card, isolando a partição
+    por-plataforma do acaso dos signals.
+
+    Cada card canônico declara seu próprio ``detection.threshold`` (ex.:
+    0.6) que vence o kwarg ``threshold`` do composer — então um tmp_path
+    vazio jamais "casaria". Patcheamos ``_eval_detection_signals`` (usado
+    pelo composer) pra devolver score=1.0 → todos os cards entram como
+    candidatos nas suas plataformas declaradas; o que sobra a testar é
+    PURAMENTE a partição (axis, platform).
+    """
+    import engine.detection.composer as _composer
+
+    monkeypatch.setattr(
+        _composer, "_eval_detection_signals", lambda root, det: (1.0, ["forced"])
+    )
+
+
+@pytest.mark.integration
+def test_kmp_per_platform_ui_cards_do_not_conflict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """compose-screens (Android) + swiftui-screens (iOS) são complementares
+    por-plataforma, NÃO conflito. Após declararem identity.platforms, o
+    composer não os coloca no mesmo (ui, platform) → zero Conflict no eixo
+    ui (idem navigation com nav3 × swiftui-navigation)."""
+    _force_all_cards_match(monkeypatch)
+    cards = load_all_cards(cards_canonical_dir())
+    by_name = {c.name: c for c in cards}
+    subset = [
+        by_name["compose-screens"],
+        by_name["swiftui-screens"],
+        by_name["nav3"],
+        by_name["swiftui-navigation"],
+    ]
+    normalized = _normalize_cards_for_composer(subset)
+    result = compose_backend_axes(tmp_path, normalized, threshold=0.0)
+    for axis in ("ui", "navigation"):
+        for platform, cell in result.get(axis, {}).items():
+            assert not isinstance(cell, Conflict), (
+                f"({axis}, {platform}) é Conflict — partição por-plataforma "
+                f"quebrada (P-03)"
+            )
+
+
+@pytest.mark.integration
+def test_per_platform_cards_partition_to_own_platform(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """compose-screens só aparece em (ui, android); swiftui-screens só em
+    (ui, ios). O mesmo set não pode repetir nas 3 linhas."""
+    _force_all_cards_match(monkeypatch)
+    cards = load_all_cards(cards_canonical_dir())
+    by_name = {c.name: c for c in cards}
+    normalized = _normalize_cards_for_composer(
+        [by_name["compose-screens"], by_name["swiftui-screens"]]
+    )
+    result = compose_backend_axes(tmp_path, normalized, threshold=0.0)
+    ui = result.get("ui", {})
+    # compose-screens (android) NÃO deve estar em (ui, ios).
+    assert "compose-screens" not in _cell_card_ids(ui.get("ios"))
+    # swiftui-screens (ios) NÃO deve estar em (ui, android).
+    assert "swiftui-screens" not in _cell_card_ids(ui.get("android"))
+
+
+# ── WS-B-2: dep-closure de provider antes do resolver (P-09) ────────────────
+
+
+@pytest.mark.integration
+def test_security_rule_detection_pulls_persistence_provider(tmp_path: Path) -> None:
+    """firestore-security-rules selecionado sem o provider → o init deve
+    incluir firestore-persistence (provê persistence-server) antes do
+    resolver, tornando o conjunto resolvível (P-09)."""
+    from engine.init import _close_provider_deps
+
+    cards = load_all_cards(cards_canonical_dir())
+    card_index = {c.name: c for c in cards}
+    selected = ["firestore-security-rules"]
+    closed = _close_provider_deps(selected, card_index)
+    assert "firestore-persistence" in closed, (
+        "dep-closure não puxou o provider de persistence-server (P-09)"
+    )
+
+
+@pytest.mark.integration
+def test_closed_set_resolves_without_dep_missing(tmp_path: Path) -> None:
+    """O conjunto fechado por _close_provider_deps resolve sem DEP-MISSING."""
+    from engine.cards.resolver import resolve
+    from engine.init import LATENT_CAPS, _close_provider_deps
+
+    cards = load_all_cards(cards_canonical_dir())
+    card_index = {c.name: c for c in cards}
+    closed = _close_provider_deps(["firestore-security-rules"], card_index)
+    res = resolve(
+        [card_index[n] for n in closed if n in card_index],
+        user_provided_capabilities=LATENT_CAPS,
+    )
+    assert not any("DEP-MISSING" in e for e in res.errors), (
+        f"resolver ainda reporta DEP-MISSING: {res.errors}"
+    )
+
+
+# ── WS-B-3: gate RESOLVER-ERRORS pausa (exit 2) em vez de abortar (P-10) ────
+
+
+@pytest.mark.integration
+def test_resolver_error_gate_pauses_not_aborts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Quando o resolver retorna errors, o gate deve PAUSAR (exit 2, emite
+    intent ask_three_paths) em vez de abortar (exit 1) — P-10. Sem response
+    pendente, a primeira entrada emite o intent e levanta PausedForInputError."""
+    from engine.init import _resolver_error_gate
+
+    monkeypatch.setenv("FORGE_FORCE_INTENT_MODE", "1")
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(PausedForInputError):
+        _resolver_error_gate(
+            ["DEP-MISSING: card 'x' requires 'y' but no active card provides it."],
+            selected_names=["x"],
+            project_root=tmp_path,
+        )
+
+
+@pytest.mark.integration
+def test_resolver_error_gate_question_short_errors_to_stdout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WR-02: o gate RESOLVER-ERRORS NÃO embute o detalhe multi-linha dos
+    erros no campo `question` do intent (mesmo anti-padrão que P-04 removeu
+    do handler brownfield). O `question` fica curto (só o gate_name estável)
+    e o detalhe dos erros chega ao stdout como CONTEXTO antes do prompt."""
+    from engine.init import _resolver_error_gate
+
+    monkeypatch.setenv("FORGE_FORCE_INTENT_MODE", "1")
+    monkeypatch.chdir(tmp_path)
+
+    errors = [
+        "DEP-MISSING: card 'alpha' requires 'persistence' but no active "
+        "card provides it.",
+        "CONFLICT-SINGULAR: ['beta', 'gamma'] both provide 'http-client'.",
+    ]
+
+    import contextlib
+    import io
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        with pytest.raises(PausedForInputError):
+            _resolver_error_gate(
+                errors,
+                selected_names=["alpha", "beta", "gamma"],
+                project_root=tmp_path,
+            )
+    rendered = buf.getvalue()
+
+    pending = intent_state.read_pending(tmp_path)
+    assert pending is not None
+    question = pending.get("question", "")
+
+    # Gate-name curto e estável: só "RESOLVER-ERRORS", sem o detalhe dos erros.
+    assert "RESOLVER-ERRORS" in question, (
+        f"gate_name esperado não aparece no question: {question!r}"
+    )
+    assert "DEP-MISSING" not in question, (
+        f"detalhe do erro ainda embutido no question (anti-padrão P-04): {question!r}"
+    )
+    assert "CONFLICT-SINGULAR" not in question, (
+        f"detalhe do erro ainda embutido no question: {question!r}"
+    )
+    assert "\n" not in question, (
+        f"question multi-linha — detalhe do erro vazou pro campo question: {question!r}"
+    )
+
+    # O detalhe dos erros chega ao usuário via stdout (CONTEXTO), como P-04 faz.
+    assert "DEP-MISSING" in rendered, (
+        f"detalhe do erro não foi impresso como contexto no stdout: {rendered[:400]}"
+    )
+    assert "alpha" in rendered, (
+        f"card problemático não aparece no contexto impresso: {rendered[:400]}"
+    )
+
+
+def test_drop_unresolvable_parses_card_names() -> None:
+    """_drop_unresolvable_cards remove os cards citados em DEP-MISSING/CONFLICT."""
+    from engine.init import _drop_unresolvable_cards
+
+    class _Stub:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    cards = [_Stub("alpha"), _Stub("beta"), _Stub("gamma")]
+    errors = [
+        "DEP-MISSING: card 'beta' requires 'z' but no active card provides it.",
+    ]
+    kept = _drop_unresolvable_cards(cards, errors)
+    kept_names = {c.name for c in kept}
+    assert kept_names == {"alpha", "gamma"}, kept_names
+
+
+# ── WS-B-4: tabela de detecção vira contexto, question curto (P-04) ─────────
+
+
+@pytest.mark.integration
+def test_detection_table_not_embedded_in_question(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tabela de detecção NÃO deve estar no gate_name/question do intent
+    ask_three_paths — apenas um gate_name curto (P-04)."""
+    from engine.init import _handle_backend_multi_axis_brownfield
+
+    _scaffold_project(tmp_path)
+    _build_uniform_firebase_project(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    firebase_auth = _load_real_card("firebase-auth")
+
+    with pytest.raises(PausedForInputError):
+        _handle_backend_multi_axis_brownfield(
+            project_root=tmp_path,
+            active_cards=[firebase_auth],
+        )
+
+    pending = intent_state.read_pending(tmp_path)
+    assert pending is not None
+    question = pending.get("question", "")
+    # O gate_name curto não pode carregar a tabela: nem o card detectado, nem
+    # "(todas plataformas)", nem múltiplas linhas. Só "init-brownfield-detection".
+    assert "firebase-auth" not in question, (
+        f"tabela ainda embutida no question: {question!r}"
+    )
+    assert "todas plataformas" not in question, (
+        f"tabela ainda embutida no question: {question!r}"
+    )
+    assert "Detection composta" not in question, (
+        f"prefixo da tabela ainda no question: {question!r}"
+    )
+    assert "init-brownfield-detection" in question, (
+        f"gate_name esperado não aparece no question: {question!r}"
+    )
+
+
+# ── WS-C-1: paths b/c sem texto dev "[W7.2 …]" (P-02 / Mandamento 5) ─────────
+
+
+@pytest.mark.integration
+def test_brownfield_paths_no_dev_text_leak(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """As 3 labels/motives do gate brownfield NÃO podem conter 'W7.2' nem
+    colchetes de roadmap interno (Mandamento 5 / P-02)."""
+    from engine.init import _handle_backend_multi_axis_brownfield
+
+    _scaffold_project(tmp_path)
+    _build_uniform_firebase_project(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    firebase_auth = _load_real_card("firebase-auth")
+
+    with pytest.raises(PausedForInputError):
+        _handle_backend_multi_axis_brownfield(
+            project_root=tmp_path,
+            active_cards=[firebase_auth],
+        )
+
+    pending = intent_state.read_pending(tmp_path)
+    assert pending is not None
+    paths_detail = pending.get("paths-detail") or []
+    blob = " ".join(
+        p.get("label", "") + " " + p.get("motive", "") for p in paths_detail
+    )
+    assert "W7.2" not in blob, f"leak de roadmap interno nas labels (P-02): {blob!r}"
+    assert "[" not in blob and "]" not in blob, (
+        f"texto dev entre colchetes nas labels: {blob!r}"
+    )
+
+
+@pytest.mark.integration
+def test_brownfield_confirm_path_produces_valid_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Path 'a' (confirmar como-is) retorna choice=confirm com seleção do
+    composer (path funcional após WS-B)."""
+    from engine.init import _handle_backend_multi_axis_brownfield
+
+    _scaffold_project(tmp_path)
+    _build_uniform_firebase_project(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    firebase_auth = _load_real_card("firebase-auth")
+    active_cards = [firebase_auth]
+
+    with pytest.raises(PausedForInputError):
+        _handle_backend_multi_axis_brownfield(
+            project_root=tmp_path, active_cards=active_cards
+        )
+    pending = intent_state.read_pending(tmp_path)
+    assert pending is not None
+    _write_response(tmp_path, pending["intent-id"], "a")
+
+    result = _handle_backend_multi_axis_brownfield(
+        project_root=tmp_path, active_cards=active_cards
+    )
+    assert result["choice"] == "confirm"
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("response_value", ["b", "c"])
+def test_brownfield_paths_bc_no_silent_degraded_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, response_value: str
+) -> None:
+    """WR-03: selecionar b ('Ajustar células') ou c ('Começar do zero') —
+    paths phantom ainda não disponíveis nesta versão — NÃO pode produzir um
+    conjunto degradado silenciosamente (selected vazio). O fix (Path A)
+    redireciona pra 'confirmar como-is': retorna a MESMA seleção do composer
+    que 'a' produziria, e avisa o usuário (via stdout) que o ajuste per-cell
+    ainda não está disponível — o motive não mente mais."""
+    from engine.init import _handle_backend_multi_axis_brownfield
+
+    _scaffold_project(tmp_path)
+    _build_uniform_firebase_project(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    firebase_auth = _load_real_card("firebase-auth")
+    active_cards = [firebase_auth]
+
+    with pytest.raises(PausedForInputError):
+        _handle_backend_multi_axis_brownfield(
+            project_root=tmp_path, active_cards=active_cards
+        )
+    pending = intent_state.read_pending(tmp_path)
+    assert pending is not None
+    _write_response(tmp_path, pending["intent-id"], response_value)
+
+    import contextlib
+    import io
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        result = _handle_backend_multi_axis_brownfield(
+            project_root=tmp_path, active_cards=active_cards
+        )
+    rendered = buf.getvalue()
+
+    # O conjunto NÃO degrada silenciosamente: a seleção é a MESMA que "a"
+    # (confirmar como-is) produziria — firebase-auth detectado pelo composer.
+    selected = result.get("selected_card_names") or []
+    assert "firebase-auth" in selected, (
+        f"path {response_value!r} produziu conjunto degradado silencioso "
+        f"(selected vazio/incompleto); selected={selected!r}"
+    )
+
+    # E o usuário foi avisado de que o ajuste/scratch ainda não está disponível
+    # — o redirect é explícito, não silencioso.
+    assert "disponível" in rendered.lower(), (
+        f"path {response_value!r} não avisou que o ajuste não está disponível "
+        f"— degradação silenciosa; stdout: {rendered[:400]}"
+    )

@@ -18,6 +18,7 @@ identity:
   category:     navigation
   maturity:     beta
   maintainer:   feature-forge-core
+  platforms:    [android]
   created-at:   2026-05-29
   last-updated: 2026-05-29
   license:      MIT

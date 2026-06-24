@@ -40,6 +40,7 @@ from engine.memory.l1 import (
     L1State,
     acquire_phase_lock,
     append_history,
+    current_phase_lock,
     current_subtype,
     list_active_features,
     read_elicitation,
@@ -760,6 +761,26 @@ def _initialize_status(slug: str, project_root: Path) -> L1State:
     return state
 
 
+def _finalize_planned(slug: str, project_root: Path, state: L1State) -> None:
+    """Close out a completed plan: release the phase-lock, then mark planned.
+
+    P-17: ``release_phase_lock`` removes the authoritative ``.phase-lock``
+    sentinel AND reconciles the status.json mirror — without it the sentinel
+    survived as a stale ``"planning"`` lock and blocked ``forge implement``.
+
+    Order matters: ``release_phase_lock`` overwrites ``last_action_kind`` to
+    ``"phase-lock-released"``, so we release FIRST, re-read, then persist the
+    ``planned`` / ``plan-completed`` state on top. The final write is the one
+    that wins.
+    """
+    release_phase_lock(slug, project_root)
+    final_state = read_l1_status(slug, project_root) or state
+    final_state.status = "planned"
+    final_state.last_action_kind = "plan-completed"
+    final_state.phase_lock = None  # idempotent — already None after release
+    write_l1_status(final_state, project_root)
+
+
 def _continue_or_pause(slug: str, wave_label: str) -> str:
     """Block on user input — accepts only `continuar` or `pausar`."""
     return question.ask(
@@ -1254,13 +1275,35 @@ def _handle_active_slug_collision(
     """
     status = state.status
     suggestion = _suffix_slug(slug, project_root)
+    _options = {
+        "retomar": f"Retomar '{slug}' de onde parou (auto-resume)",
+        "nova": f"Criar nova com sufixo — '{suggestion}'",
+        "abortar": "Abortar (escolher outro slug manualmente)",
+    }
+    _question = (
+        f"Já existe uma feature ativa '{slug}' (status={status}). O que fazer?"
+    )
+    # Gate de re-entrada (P-15, mesma classe de P-01): durante o loop mecânico
+    # do host existe uma response downstream pendente. Emitir este guard aqui
+    # injetaria um intent cujo id NÃO casa com essa response →
+    # IntentMismatchError (o deadlock do piloto MeoBonsai). Sob replay,
+    # retornamos o slug existente (= caminho "retomar") sem prompt — o pipeline
+    # segue até o prompt downstream dono da response. Em re-entrada HUMANA
+    # (sem response in-flight) o guard aparece normalmente (3-caminhos
+    # preservado: proteger feature alheia). Ver §4.1 do intent-protocol.
+    from engine.ui import intent_state  # noqa: PLC0415
+
+    _guard_id = question.stable_intent_id(
+        "ask",
+        _question,
+        _options,
+        extra={"default": "retomar", "min-selected": None, "validator-hint": None},
+    )
+    if intent_state.host_is_replaying(project_root, _guard_id):
+        return slug
     choice = question.ask(
-        f"Já existe uma feature ativa '{slug}' (status={status}). O que fazer?",
-        {
-            "retomar": f"Retomar '{slug}' de onde parou (auto-resume)",
-            "nova": f"Criar nova com sufixo — '{suggestion}'",
-            "abortar": "Abortar (escolher outro slug manualmente)",
-        },
+        _question,
+        _options,
         default="retomar",
         project_root=project_root,
     )
@@ -1302,6 +1345,30 @@ def _handle_done_feature_branch(
         # with normal flow, which will re-check state).
         return parent_slug
 
+    _menu_options = {
+        "1": "Retomar (re-plan inteiro — descarta artefatos, recomeça)",
+        "2": "Começar feature nova (saio agora — invoque com slug novo)",
+        "3": "Estender (novo slug derivado herda contexto da pai — Gap 9)",
+        "4": "Abortar",
+    }
+    # Gate de re-entrada (P-15, mesma classe de G1/G2): sob loop mecânico do
+    # host, este menu emitiria um intent que colide com a response downstream
+    # → IntentMismatchError. Sob replay retornamos parent_slug (= caminho
+    # "retomar") sem prompt; o pipeline alcança o prompt downstream dono da
+    # response. O ``ask`` deste guard NÃO passa default → effective_default=None,
+    # então o stable_intent_id usa default=None pra casar o id real emitido.
+    # Re-entrada humana mantém os 4 caminhos. Ver §4.1 do intent-protocol.
+    from engine.ui import intent_state  # noqa: PLC0415
+
+    _guard_id = question.stable_intent_id(
+        "ask",
+        "O que você quer?",
+        _menu_options,
+        extra={"default": None, "min-selected": None, "validator-hint": None},
+    )
+    if intent_state.host_is_replaying(project_root, _guard_id):
+        return parent_slug
+
     renderer.write("")
     renderer.write(
         renderer.bold(
@@ -1312,12 +1379,7 @@ def _handle_done_feature_branch(
     renderer.write("Quatro caminhos:")
     choice = question.ask(
         "O que você quer?",
-        {
-            "1": "Retomar (re-plan inteiro — descarta artefatos, recomeça)",
-            "2": "Começar feature nova (saio agora — invoque com slug novo)",
-            "3": "Estender (novo slug derivado herda contexto da pai — Gap 9)",
-            "4": "Abortar",
-        },
+        _menu_options,
         allow_pause=True,
     )
 
@@ -1865,8 +1927,9 @@ def run(argv: list[str]) -> int:
     # default ("product") seeds correctly for greenfield features.
     state = _initialize_status(slug, project_root)
     if not acquire_phase_lock(slug, project_root, "planning"):
-        current = read_l1_status(slug, project_root)
-        held = current.phase_lock if current else "?"
+        # P-17: read the holder sentinel-first so the message names the real
+        # owner (the status.json mirror can be a stale None).
+        held = current_phase_lock(slug, project_root) or "?"
         sys.stderr.write(
             f"forge plan: '{slug}' phase-locked by '{held}'. "
             "Run `forge undo` to release, or wait for the other command to finish.\n"
@@ -2004,12 +2067,8 @@ def run(argv: list[str]) -> int:
         _persist_deferred(slug, project_root, "user-pause")
         raise
 
-    # All waves consumed. Mark planned and close out.
-    final_state = read_l1_status(slug, project_root) or state
-    final_state.status = "planned"
-    final_state.last_action_kind = "plan-completed"
-    final_state.phase_lock = None
-    write_l1_status(final_state, project_root)
+    # All waves consumed. Release the phase-lock sentinel, then mark planned.
+    _finalize_planned(slug, project_root, state)
     append_history(slug, project_root, {"event": "plan-completed"})
 
     if subtype == "product":

@@ -181,6 +181,26 @@ def _utc_now_iso_reconfigure() -> str:
     return _utc_now_iso_shared()
 
 
+def _apply_confirm_intent_id() -> str:
+    """intent-id do apply-confirm terminal ("Aplicar essas mudanças?").
+
+    Derivado uma vez e reusado no gate de replay do draft-resume (P-18) e no
+    checkpoint do apply-confirm. Espelha exatamente a assinatura do
+    ``question.confirm`` terminal — qualquer divergência aqui quebraria o
+    pareamento response↔prompt do loop canônico.
+    """
+    return question.stable_intent_id(
+        "confirm",
+        "Aplicar essas mudanças?",
+        {"s": "sim", "n": "não"},
+        extra={
+            "default": "n",
+            "min-selected": None,
+            "validator-hint": None,
+        },
+    )
+
+
 # ── Entry point ──────────────────────────────────────────────────────────────
 
 
@@ -220,87 +240,135 @@ def run(argv: list[str]) -> int:
         renderer.write(renderer.colored(f"config inválido: {exc}", "red"))
         return fail_with_tag(ERR_CONFIG_INVALID)
 
+    # P-18: id do apply-confirm terminal, derivado uma vez e reusado no
+    # gate de replay (abaixo) + no checkpoint do apply-confirm (L384). DRY,
+    # espelha o pattern do _draft_confirm_id.
+    _apply_confirm_id = _apply_confirm_intent_id()
+
+    # P-18: quando o draft-resume guard adota o draft sob replay, decide se o
+    # pipeline deve PULAR o category-menu e ir direto ao apply. Default False
+    # (re-entrada humana + replay de navegação downstream seguem o fluxo
+    # normal pelo category-menu).
+    _skip_to_apply = False
+
     draft_path = claude_dir(project_root) / _DRAFT_NAME
     draft = _load_draft(draft_path)
     if draft is not None:
-        # DRIFT-1 W2.T3b — save checkpoint ANTES do draft-confirm prompt.
-        # Outcome C — per-subcommand dataclass, no engine.qa.checkpoint import.
-        _save_reconfigure_checkpoint(
-            _ReconfigureCheckpoint(
-                step="step-draft-confirm",
-                at=_utc_now_iso_reconfigure(),
-                project_root=str(project_root),
-                intent_id=question.stable_intent_id(
-                    "confirm",
-                    "Detectei um draft de reconfigure não aplicado. Retomar?",
-                    {"s": "sim", "n": "não"},
-                    extra={
-                        "default": "s",
-                        "min-selected": None,
-                        "validator-hint": None,
-                    },
-                ),
-                menu_path=["draft-confirm"],
-            )
-        )
-        if question.confirm(
+        # DRIFT-1 W2.T3b — intent-id do draft-confirm, derivado uma vez e
+        # reusado no checkpoint + no gate de replay (DRY; P-15).
+        _draft_confirm_id = question.stable_intent_id(
+            "confirm",
             "Detectei um draft de reconfigure não aplicado. Retomar?",
-            default=True,
-        ):
+            {"s": "sim", "n": "não"},
+            extra={
+                "default": "s",
+                "min-selected": None,
+                "validator-hint": None,
+            },
+        )
+        # Gate de re-entrada (P-15, mesma classe de G1/G2/G3): sob loop mecânico
+        # do host existe uma response downstream pendente (ex.: category-menu).
+        # Emitir o draft-confirm aqui injetaria um intent que colide com essa
+        # response → IntentMismatchError. Sob replay adotamos o draft (= caminho
+        # "sim"/retomar) sem perguntar — preserva trabalho, coerente com o
+        # contrato auto-resumable da Decisão 27 e com o default True do confirm.
+        # Re-entrada humana mantém o confirm. Ver §4.1 do intent-protocol.
+        from engine.ui import intent_state  # noqa: PLC0415
+
+        if intent_state.host_is_replaying(project_root, _draft_confirm_id):
             working = draft
+            # P-18: simétrico ao R4 — o draft-resume guard já sabe "estou em
+            # replay". Falta rotear pro prompt DONO da response in-flight.
+            # Quando a response em-voo é a do apply-confirm terminal,
+            # ``host_is_replaying(root, _apply_confirm_id)`` retorna False
+            # (caso 3 da semântica: a resposta do próprio prompt está
+            # chegando). Logo: estamos em replay E a response é do
+            # apply-confirm → pular o category-menu e ir direto ao apply, pra
+            # que ``question.confirm`` ALCANCE e CONSUMA essa response
+            # (aplicando a mutação). Sem isso o category-menu emite um intent
+            # divergente que colide com a response → IntentMismatchError, o
+            # apply-confirm nunca consome, mutação não aplicada (deadlock P-18).
+            if not intent_state.host_is_replaying(
+                project_root, _apply_confirm_id
+            ):
+                _skip_to_apply = True
         else:
-            draft_path.unlink(missing_ok=True)
-            working = deepcopy(current)
+            # DRIFT-1 W2.T3b — save checkpoint ANTES do draft-confirm prompt.
+            # Outcome C — per-subcommand dataclass, no engine.qa.checkpoint import.
+            _save_reconfigure_checkpoint(
+                _ReconfigureCheckpoint(
+                    step="step-draft-confirm",
+                    at=_utc_now_iso_reconfigure(),
+                    project_root=str(project_root),
+                    intent_id=_draft_confirm_id,
+                    menu_path=["draft-confirm"],
+                )
+            )
+            if question.confirm(
+                "Detectei um draft de reconfigure não aplicado. Retomar?",
+                default=True,
+            ):
+                working = draft
+            else:
+                draft_path.unlink(missing_ok=True)
+                working = deepcopy(current)
     else:
         working = deepcopy(current)
 
     _show_snapshot(current)
 
-    # DRIFT-1 W2.T3b — save checkpoint ANTES do category-menu prompt.
-    _save_reconfigure_checkpoint(
-        _ReconfigureCheckpoint(
-            step="step-category-menu",
-            at=_utc_now_iso_reconfigure(),
-            project_root=str(project_root),
-            intent_id=None,  # intent-id derived inside _choose_categories
-            menu_path=["category-menu"],
-        )
-    )
-    categories = _choose_categories()
-    if not categories:
-        renderer.write("Nada selecionado — saindo sem mudar nada.")
-        # DRIFT-1 W2.T3b — clean completion clears the intent-resume checkpoint.
-        _clear_reconfigure_checkpoint(project_root)
-        return 0
-
-    try:
-        for cat in categories:
-            handler = _CATEGORY_HANDLERS.get(cat)
-            if handler is None:
-                continue
-            # DRIFT-1 W2.T3b — breadcrumb update ANTES de cada category dispatch.
-            # O handler internamente faz seus proprios prompts via question.*;
-            # intent-id de cada um deriva da assinatura do prompt. O save aqui
-            # registra qual categoria estava em curso pra forensics + para
-            # eventual logic de resume por categoria no futuro.
-            _save_reconfigure_checkpoint(
-                _ReconfigureCheckpoint(
-                    step=f"step-category:{cat}",
-                    at=_utc_now_iso_reconfigure(),
-                    project_root=str(project_root),
-                    intent_id=None,
-                    menu_path=[cat],
-                )
+    # P-18: sob replay com a response do apply-confirm em-voo, o draft já foi
+    # adotado (`working = draft`) e o pipeline pula o category-menu — o intent
+    # do menu colidiria com a response do apply terminal. O bloco de apply
+    # abaixo (diff + apply-confirm + write) consome a response e persiste a
+    # mutação. Re-entrada humana e replay de navegação downstream NÃO entram
+    # aqui (`_skip_to_apply` é False) e seguem o fluxo normal pelo menu.
+    if not _skip_to_apply:
+        # DRIFT-1 W2.T3b — save checkpoint ANTES do category-menu prompt.
+        _save_reconfigure_checkpoint(
+            _ReconfigureCheckpoint(
+                step="step-category-menu",
+                at=_utc_now_iso_reconfigure(),
+                project_root=str(project_root),
+                intent_id=None,  # intent-id derived inside _choose_categories
+                menu_path=["category-menu"],
             )
-            handler(project_root, current, working)
-            _save_draft(draft_path, working)
-    except question.PromptAbortedError:
-        _save_draft(draft_path, working)
-        renderer.write(
-            "Pausei. Draft salvo em .claude/.reconfigure-draft.yaml — "
-            "rode `forge reconfigure` de novo pra retomar."
         )
-        return 130
+        categories = _choose_categories()
+        if not categories:
+            renderer.write("Nada selecionado — saindo sem mudar nada.")
+            # DRIFT-1 W2.T3b — clean completion clears the intent-resume checkpoint.
+            _clear_reconfigure_checkpoint(project_root)
+            return 0
+
+        try:
+            for cat in categories:
+                handler = _CATEGORY_HANDLERS.get(cat)
+                if handler is None:
+                    continue
+                # DRIFT-1 W2.T3b — breadcrumb update ANTES de cada category dispatch.
+                # O handler internamente faz seus proprios prompts via question.*;
+                # intent-id de cada um deriva da assinatura do prompt. O save aqui
+                # registra qual categoria estava em curso pra forensics + para
+                # eventual logic de resume por categoria no futuro.
+                _save_reconfigure_checkpoint(
+                    _ReconfigureCheckpoint(
+                        step=f"step-category:{cat}",
+                        at=_utc_now_iso_reconfigure(),
+                        project_root=str(project_root),
+                        intent_id=None,
+                        menu_path=[cat],
+                    )
+                )
+                handler(project_root, current, working)
+                _save_draft(draft_path, working)
+        except question.PromptAbortedError:
+            _save_draft(draft_path, working)
+            renderer.write(
+                "Pausei. Draft salvo em .claude/.reconfigure-draft.yaml — "
+                "rode `forge reconfigure` de novo pra retomar."
+            )
+            return 130
 
     if working == current:
         renderer.write("Nenhuma mudança detectada — saindo sem escrever nada.")
@@ -323,18 +391,54 @@ def run(argv: list[str]) -> int:
         for m in _load_active_manifests(cards_dir(project_root))
         if m.name in active_names_post
     ]
-    try:
-        grant_decision: GrantDecision = evaluate_sensitive_grants(
-            active_manifests_post, working
+    if _skip_to_apply:
+        # P-18: sob replay com a response do apply-confirm em-voo, NÃO podemos
+        # emitir um prompt de grant fresco — ele colidiria com a response
+        # terminal in-flight (IntentMismatchError, a MESMA classe de deadlock
+        # que P-18 fechou no category-menu). O draft adotado já reflete as
+        # decisões de grant tomadas no ciclo anterior (pré-pause): grants
+        # persistidos em `working.qa.sensitive-env-grants`, cards denied já
+        # removidos de `cards.active`. Logo: pulamos a avaliação (que prompta)
+        # e tratamos como no-op. Defensivo — se sobrar alguma var sensitive
+        # NÃO-granted no draft, avisamos no stderr (sem promptar) em vez de
+        # silenciar; isso seria estado inconsistente de um ciclo anterior.
+        already_granted = {
+            v
+            for v in (working.get("qa") or {}).get("sensitive-env-grants", [])
+            if isinstance(v, str)
+        }
+        pending = sorted(
+            {
+                var
+                for m in active_manifests_post
+                for var in m.sensitive_env_needs
+                if var not in already_granted
+            }
         )
-    except UserAbortError as exc:
-        renderer.write(
-            mentor_calmo.pause_message(
-                resume_command=f"forge reconfigure  # após reconciliar grants — {exc}"
+        if pending:
+            print(
+                "⚠ replay de apply-confirm com var(s) sensitive ainda não "
+                f"autorizada(s) no draft: {', '.join(pending)}. Não reabro o "
+                "prompt de grant durante o replay (evita colisão de intent). "
+                "Reconcilie via `forge reconfigure → qa` após aplicar.",
+                file=sys.stderr,
             )
+        grant_decision = GrantDecision(
+            granted=(), denied_cards=(), new_grants_to_persist=()
         )
-        _save_draft(draft_path, working)
-        return 0  # aborta reconfigure sem persistir state parcial
+    else:
+        try:
+            grant_decision = evaluate_sensitive_grants(
+                active_manifests_post, working
+            )
+        except UserAbortError as exc:
+            renderer.write(
+                mentor_calmo.pause_message(
+                    resume_command=f"forge reconfigure  # após reconciliar grants — {exc}"
+                )
+            )
+            _save_draft(draft_path, working)
+            return 0  # aborta reconfigure sem persistir state parcial
 
     if grant_decision.new_grants_to_persist:
         qa_cfg = working.setdefault("qa", {})
@@ -366,16 +470,9 @@ def run(argv: list[str]) -> int:
             step="step-apply-confirm",
             at=_utc_now_iso_reconfigure(),
             project_root=str(project_root),
-            intent_id=question.stable_intent_id(
-                "confirm",
-                "Aplicar essas mudanças?",
-                {"s": "sim", "n": "não"},
-                extra={
-                    "default": "n",
-                    "min-selected": None,
-                    "validator-hint": None,
-                },
-            ),
+            # P-18: reusa o id derivado no topo de ``run`` (DRY com o gate de
+            # replay do draft-resume). Mesma assinatura de prompt.
+            intent_id=_apply_confirm_id,
             menu_path=["apply-confirm"],
         )
     )

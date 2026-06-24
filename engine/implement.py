@@ -41,6 +41,7 @@ from engine.memory.l1 import (
     L1State,
     append_history,
     blocking_deps,
+    current_phase_lock,
     is_blocked,
     phase_lock_held,
     read_l1_status,
@@ -1339,8 +1340,9 @@ def run(argv: list[str]) -> int:
     lock_id = task.task_id
     with phase_lock_held(slug, project_root, lock_id) as acquired:
         if not acquired:
-            current = read_l1_status(slug, project_root)
-            held = current.phase_lock if current else "?"
+            # P-17: read the holder sentinel-first so the message names the
+            # real owner (the status.json mirror can be a stale None).
+            held = current_phase_lock(slug, project_root) or "?"
             sys.stderr.write(
                 f"forge implement: '{slug}' phase-locked by '{held}'. "
                 "Run `forge undo` to release, or wait.\n"

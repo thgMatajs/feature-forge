@@ -7,6 +7,67 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed (code-review remediation PR #26)
+- A1: `check-no-suppress` (`cards/compose-screens/validators/check-no-suppress.py`) `_strip_noise` trata char literals (`'...'`) ANTES do ramo de string. Um char literal com aspas duplas (ex.: `val q = '"'`) fazia o scanner entrar em modo string e engolir um `@Suppress` real posterior na mesma linha — falso negativo que deixava um silenciamento real passar o hard gate. Char literals são neutralizados respeitando escapes.
+- A2: `check-no-suppress` `scan_file` falha FECHADO em arquivo `.kt` ilegível em escopo Compose — emite aviso no stderr e devolve falha sintética em vez de `[]` (que tratava o arquivo não-auditável como limpo / fail-open).
+- A3: `forge init` (`engine/init.py`) corrige o comentário e as mensagens do resume — não afirmam mais reaproveitar `selected_card_names`. Resume re-confirma o backend A PARTIR do preset salvo (pula só a confirmação do Step 4); a seleção de cards é refeita no Step 5. Os card-names salvos só são regravados pra integridade do checkpoint de audit. Comportamento do prompt inalterado (honest-wording, escopo R1 conservador).
+- M1: ambos os validators do card `compose-screens` (`check-no-suppress.py`, `check-screen-layout.py`) substituem `rglob("*.kt")` por uma varredura `scandir` manual que pula `build`/`.gradle`/`node_modules`/`.git`/dot-dirs e NÃO desce em dirs symlinkados — evita varrer gerados e loop/hang em árvores grandes.
+- M2: `_drop_unresolvable_cards` (`engine/init.py`) parseia ofensores ANCORADO aos prefixos estáveis do resolver (`DEP-MISSING`/`CONFLICT-NAME`/`CONFLICT-SINGULAR`/`CONFLICT-LABEL`) em vez de varrer qualquer `[...]` no texto. Listas entre colchetes só são parseadas sob os marcadores de conflito; wording desconhecido não poda cards por engano.
+- M3: `forge init` guarda o re-resolve do caminho de recuperação "c" — se a poda esvazia o conjunto, aborta com "Nada resta resolvível — abortado." em vez de rodar `resolve([])` (instalação silenciosa de zero cards).
+- M4: `forge reconfigure` (`engine/reconfigure.py`) não reabre o prompt de grant sob `_skip_to_apply` (replay com response de apply-confirm em-voo). Antes, `evaluate_sensitive_grants` rodava incondicionalmente e podia emitir um 3-caminhos fresco pra uma var sensitive não-granted no draft adotado — colidindo com a response terminal in-flight (`IntentMismatchError`, mesma classe de deadlock que P-18 fechou). Sob replay, a avaliação de grants é pulada (no-op); var sensitive pendente vira aviso no stderr, sem prompt.
+- M5: `read_response` (`engine/ui/intent_state.py`) guarda root não-dict ANTES de `_check_schema_version` — um `forge-response.json` corrompido (lista/escalar) levantava `AttributeError` cru, violando o contrato "nunca vaza traceback bruto". Agora levanta `IntentMismatchError` preservando o arquivo.
+- M6: `intent-id` é output não-confiável do host. `read_response` levanta `IntentMismatchError` (arquivo preservado) e `host_is_replaying` retorna `False` quando o id não é string — evita `TypeError` cru em `written_id in log` quando o valor é lista/dict unhashable.
+- B1: `read_pending` (`engine/ui/intent_state.py`) levanta `JsonIOError` em root não-dict, simétrico ao contrato dict da response.
+- B2: remove o param morto `selected_names` de `_resolver_error_gate` (`engine/init.py`) e o arg computado-e-descartado no call site.
+- B3: `scan_dir` (`check-screen-layout.py`) protege `directory.iterdir()` com try/except — dir inacessível é pulado com aviso em vez de estourar traceback.
+
+### Fixed (pilot R6 — blockers AI-first)
+- P-17: phase-lock liberado no plan-complete via `release_phase_lock` (helper `_finalize_planned` em `engine/plan.py`) — `forge implement` não bate mais o `ERR_LOCKED` stale `by 'None'`. O bug era fonte-de-verdade dupla: plan-complete zerava o mirror em `status.json` mas deixava o sentinel `.phase-lock` em disco; `current_phase_lock` (sentinel-first) reportava o holder stale e `acquire_phase_lock` do `implement` batia `FileExistsError`. A ordem do fix libera o sentinel PRIMEIRO e grava `status=planned` DEPOIS (idempotente).
+- P-17: mensagem de erro de phase-lock mostra o holder REAL via `current_phase_lock` (sentinel-first) em `engine/implement.py` e `engine/plan.py` — em vez de ler `read_l1_status(...).phase_lock` (mirror potencialmente desatualizado) que imprimia `by 'None'`.
+- P-19: `forge qa` Phase 0 popula `snapshot/` — `snapshot_artefacts` (`engine/qa/ingest.py`) recursa em diretórios de scope. Antes, `scope.paths` de feature era um DIRETÓRIO; `os.link`/`copy2` falhavam (IsADirectoryError engolido pelo `except OSError`) e o snapshot ficava vazio. Agora, quando `src` é diretório, recursa nos arquivos (`rglob`) preservando o layout relativo; arquivo regular mantém o comportamento. Cascata hardlink→copy2 extraída em `_copy_one` (DRY intra-módulo).
+- P-20: `conductor-handoff.json` carrega `snapshot`/`config_snapshot`/`auditors` (4 core) conforme contrato do `agents/qa-conductor.md`. Antes o handoff só tinha `scope`/`run_id`/`root`/`config`. `auditors` lista os 4 core canônicos (`spec-vs-spec`, `coverage`, `chaos`, `validator-claim`) filtrando `extensions_disabled`; `config_snapshot` congela a section `qa:` da workflow-config; `snapshot` lista paths relativos à raiz da run.
+- P-18: `forge reconfigure` aplica mutações via loop canônico AI-first — `host_is_replaying` estendido ao apply path via `_skip_to_apply` (`engine/reconfigure.py`). Antes, no loop AI-first o draft-resume guard interceptava a response do apply-confirm em-voo, re-navegava pelo category-menu e o apply-confirm nunca consumia sua response → mismatch (exit 1), mutação não aplicada. Agora, sob replay com response de apply-confirm pendente, o pipeline alcança o apply-confirm e consome a response (aplica a mutação) sem o category-menu intervir; re-entrada HUMANA genuína (sem response in-flight) continua mostrando o draft-resume guard (gate de navegação R4 intacto).
+- WR-04 (review R6): `forge undo` `_abort_feature` (`engine/undo.py`) libera o sentinel `.phase-lock` via `release_phase_lock` — mesma classe latente do P-17, exposta pelo `current_phase_lock` sentinel-first. Antes setava só `phase_lock=None` no mirror e deixava o sentinel em disco; pós P-17 isso reportaria holder stale. Agrava porque a própria mensagem de erro do P-17 prescreve `forge undo` como recovery — o workaround prescrito não liberava o lock por esse vetor.
+- WR-01/02/03 (review R6 — robustez do validator novo): `check-no-suppress` (`cards/compose-screens/validators/check-no-suppress.py`) ficou string-aware no `_strip_noise`: neutraliza string literais ANTES de cortar comentário de linha (WR-01 — `//` dentro de string não trunca mais a linha e deixa `@Suppress` real passar); rastreia raw-string `"""` multi-linha (WR-02 — `@Suppress` em raw-string deixa de bloquear commit legítimo); e fecha block comments aninhados via contador de profundidade em vez do primeiro `*/` (WR-03 — `/* /* */ */` não trata mais `@Suppress` aninhado como código vivo).
+
+### Added (pilot R6 — validators reais do card compose-screens)
+- P-24: validators REAIS do card `compose-screens` — eram stubs Phase 5 `return 0` declarados `severity: error` ("validator mente sobre cobertura"). `check-no-suppress` bloqueia `@Suppress`/`@file:Suppress` em código Compose (string-aware: ignora ocorrências em comentário de linha, KDoc, string literal e raw-string; escopo = source sets Compose UI, exclui test source sets). `check-screen-layout` exige o par `{Screen}Screen.kt` + `{Screen}Content.kt` no mesmo diretório de tela sob escopo Compose (`{Screen}Components.kt`/`{Screen}Mappers.kt` opcionais). Ambos seguem o contrato de invocação canônico (`--project-root` + tolerância a `--scope`/`--id`, `cwd=project_root`, exit 0 limpo / exit 1 + `arquivo:linha` em stderr).
+
+### Validated (re-piloto MeoBonsai 3/3 — pilot R6)
+- P-17/P-18/P-19 validados no sandbox MeoBonsai via loop canônico AI-first, sem workaround de engine: phase-lock liberado no plan-complete (`forge implement` destravado), `forge reconfigure` aplica a mutação via replay, `forge qa` Phase 0 popula o snapshot.
+
+### Fixed (pilot R1 — unblock init AI-first)
+- P-01: gate do prompt de resume durante o loop mecânico do host (fim do deadlock IntentMismatchError).
+- P-11: resume real continua do step do checkpoint + labels honestas.
+- P-03: cards UI/nav declaram `identity.platforms` — fim do CONFLITO falso de pareamento KMP.
+- P-09: dep-closure de provider antes do resolver — fim do DEP-MISSING em firestore-security-rules.
+- P-10: gate RESOLVER-ERRORS pausa (exit 2) pra escolha em vez de abortar.
+- P-04: tabela de detecção como contexto, campo `question` curto.
+- P-02: remove texto dev "[W7.2 …]" das labels brownfield; W7.2 anotado em 04-pending.
+- P-05: `forge <subcmd> --help --json` emite JSON ou erro explícito.
+- P-07: abertura do init determinística (`greeting_stable`).
+- P-08: remove opção morta `outro` do prompt de preset.
+- P-12: rótulo de passo + nota de duração em vez de relógio interno.
+- WR-02 (review R1): gate `RESOLVER-ERRORS` deixa de embutir o detalhe multi-linha dos erros no campo `question` do intent — imprime os erros como contexto via renderer e mantém o `question` curto, consistente com o padrão que P-04 estabeleceu no mesmo módulo.
+- WR-03 (review R1): paths brownfield "b" (ajustar células) / "c" (começar do zero), ainda não disponíveis nesta versão, deixam de produzir um conjunto degradado silencioso (`selected` vazio) — redirecionam pra "confirmar como-is" com a mesma seleção do composer + aviso explícito ao usuário, em vez de mentir sobre o que fazem.
+
+### Added (pilot R1)
+- `identity.platforms` documentado em `docs/schemas/card.md` (campo aditivo opcional).
+- Marker stdout `<FORGE_INTENT>` documentado em `docs/schemas/intent-protocol.md`.
+
+### Changed (pilot R1)
+- README: reconciliação de stats (22 validators + 3 helpers, 29 cards, tests 1863/204/30).
+
+### Added (pilot R4 — generaliza re-entry guard gating)
+- `host_is_replaying(project_root, guard_intent_id)` em `engine/ui/intent_state.py`: gate compartilhado que suprime guards de re-entrada durante o loop mecânico do host (P-15). Compõe `_response_path` + `_read_intent_log` — `True` quando há `forge-response.json` in-flight pra um prompt downstream (id ≠ guard E não-consumido). Documentado em `docs/schemas/intent-protocol.md` §4.1.
+
+### Fixed (pilot R4)
+- P-15: `forge plan` / `forge reconfigure` / `forge init` não deadlockam mais (`IntentMismatchError`, exit 1) quando um guard de re-entrada colide com a response de um prompt downstream durante o loop AI-first. Generaliza o fix de P-01 (que gateava só o resume do `init`) num mecanismo compartilhado cobrindo a classe inteira: colisão de slug (`_handle_active_slug_collision`) — o bug PRIMÁRIO do comando central —, menu de feature-done (`_handle_done_feature_branch`) e draft-confirm do `reconfigure`.
+
+### Changed (pilot R4)
+- Gate de resume do `init` agora usa `host_is_replaying` em vez de `_response_path().exists()` cru (DRY com P-01; precisão melhorada — não suprime quando a única response no disco é pra o próprio prompt de resume).
+- README: tests 1885/215/31 (pilot R4 — +12 unit/refinement + 1 e2e do loop canônico; integration medido em 215, reconciliando o drift do baseline 204).
+
 ## [1.5.0] - 2026-06-19
 
 ### Added

@@ -103,8 +103,21 @@ PHRASES_PROGRESS_IMPLEMENT: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 
 def greeting() -> str:
-    """Neutral session opener. Never starts with 'olá!' or exclamation."""
+    """Neutral session opener. Never starts with 'olá!' or exclamation.
+
+    Variação intencional pra contextos conversacionais; fluxos
+    determinísticos (como `forge init`) usam `greeting_stable()` (P-07).
+    """
     return _get_rng().choice(PHRASES_GREETING)
+
+
+def greeting_stable() -> str:
+    """Abertura determinística — usada por fluxos não-conversacionais (init).
+
+    greeting() varia de propósito pra contextos conversacionais; o init é
+    um pipeline determinístico e opta por uma abertura estável (P-07).
+    """
+    return PHRASES_GREETING[0]
 
 
 def acknowledgment() -> str:

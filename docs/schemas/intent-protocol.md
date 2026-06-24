@@ -43,6 +43,45 @@ observes a partial file.
 
 ---
 
+## Canal stdout — marker `<FORGE_INTENT>` (host claude_code)
+
+O host **primário** (Claude Code, `CLAUDECODE=1`) NÃO lê `forge-pending.json`.
+O `ClaudeCodeAdapter` (`engine/host/adapters/claude_code.py`) anuncia o pending
+por um marker auto-fechado de uma linha em **stdout**, e deliberadamente **não
+escreve `forge-pending.json`** (seria peso morto — o host já viu o marker):
+
+    <FORGE_INTENT kind="ask" intent-id="…" question="…" options="…" default="…" allow-pause="true" />
+
+| Atributo | Sempre? | Significado |
+|---|---|---|
+| `kind` | sim | `ask` \| `ask_text` \| `ask_multi` \| `confirm` \| `ask_three_paths` |
+| `intent-id` | sim | mesmo `stable_intent_id` do canal file-based (determinístico) |
+| `question` | sim | texto da pergunta |
+| `options` | sim | JSON-encoded `{key: label}` (vazio `{}` em `ask_text`) |
+| `default` | sim | valor default, ou a string literal `"null"` quando ausente |
+| `allow-pause` | sim | `"true"` \| `"false"` |
+| `validator-hint` | não | presente só quando setado (ex.: `email`) |
+| `min-selected` | não | presente só em `ask_multi` com mínimo |
+| `paths-detail` | não | JSON-encoded list[dict] — só em `ask_three_paths` |
+
+Valores são XML-attribute-quoted (`xml.sax.saxutils.quoteattr`); `options` e
+`paths-detail` são JSON dentro do atributo. O marker é parseável com
+`ElementTree.fromstring` (externo) + `json.loads` (payloads aninhados).
+
+### Diferença entre canais
+
+| Canal | Pending | Response | Re-entrada |
+|---|---|---|---|
+| **claude_code** (`CLAUDECODE=1`) | marker stdout `<FORGE_INTENT>` — sem `forge-pending.json` | `forge-response.json` (host escreve) | idêntica ao file-based |
+| **intent-file** (`FORGE_FORCE_INTENT_MODE=1`) | `forge-pending.json` em disco | `forge-response.json` | idêntica |
+
+A **response side é idêntica** nos dois canais: o host escreve
+`forge-response.json` com o mesmo `intent-id`, o engine re-invocado consome via
+`read_response` (consumed-log §4 garante idempotência). O marker stdout É a
+notificação de pending — substitui o arquivo, não o complementa.
+
+---
+
 ## Pending file — `forge-pending.json`
 
 Emitted by the engine when `question.ask*` is called and no matching
@@ -390,6 +429,69 @@ checkpoint do próprio comando (ex.: `.claude/.init-checkpoint.yaml`).
 `intent-id` já no consumed-log, trata como stale-leftover de pergunta
 anterior e varre o arquivo em vez de levantar `RaceDetectedError`.
 Race genuíno — `intent-id` diferente E não no log — ainda levanta.
+
+---
+
+## §4.1 Gating de guards de re-entrada (host replay)
+
+Mecanismo NOVO e complementar ao §4 (consumed-log). Introduzido no round 4
+do piloto MeoBonsai (P-15), generalizando o gate local de P-01.
+
+### O que é um guard de re-entrada
+
+Um **guard de re-entrada** é um prompt que um handler emite
+CONDICIONALMENTE no seu topo, baseado em ESTADO PRÉ-EXISTENTE (não no
+checkpoint do próprio prompt em-voo):
+
+- `init` — "Resume de init pendente?" (existe checkpoint salvo).
+- `plan` — "Já existe uma feature ativa 'X' (status=…)" colisão de slug
+  (`_handle_active_slug_collision`); e o menu de feature-done
+  (`_handle_done_feature_branch`, "O que você quer?").
+- `reconfigure` — "Detectei um draft de reconfigure não aplicado. Retomar?"
+  (existe `.claude/.reconfigure-draft.yaml`).
+
+### Por que o consumed-log (§4) NÃO cobre
+
+O consumed-log resolve a idempotência de prompts **já vistos** (o
+`intent-id` foi consumido num ciclo anterior → re-entrada retorna o valor
+cacheado). Mas o intent de um guard de re-entrada é **NOVO a cada
+re-entrada** — ele nunca foi consumido, então o log nunca tem entrada pra
+ele. Durante o loop mecânico do host (responder + re-invocar argv idêntico),
+o handler re-executa do topo, o guard emite seu intent NOVO, e esse intent
+colide com a `forge-response.json` que o host já escreveu pra um prompt
+**downstream** → `IntentMismatchError` (§4 cenário 4) → exit 1. Deadlock.
+
+### `host_is_replaying(project_root, guard_intent_id)`
+
+Helper compartilhado em `engine/ui/intent_state.py` que o guard consulta
+ANTES de emitir. Retorna `True` quando há `forge-response.json` no disco
+cujo `intent-id` ≠ `guard_intent_id` E esse `intent-id` ainda NÃO está no
+consumed-log — isto é, uma response **in-flight pra um prompt downstream**.
+Cinco casos:
+
+| Estado on-disk | Retorno | Por quê |
+|---|---|---|
+| Sem `forge-response.json` | `False` | re-entrada humana genuína — mostra o guard |
+| Response malformada / leitura transitória | `False` | não dá pra provar replay — degrada pro caminho humano |
+| `intent-id` == `guard_intent_id` | `False` | a resposta do PRÓPRIO guard está chegando — consome normal |
+| `intent-id` ≠ guard MAS já no consumed-log | `False` | stale-leftover, não in-flight (§4 cenário 3) |
+| `intent-id` ≠ guard E NÃO no log | `True` | response in-flight downstream — **suprime o guard** |
+
+### Regra dos guards
+
+- **Replay mecânico (`True`)** → o guard se cala e segue o caminho
+  "retomar": `init`/`plan`-colisão retornam o slug existente,
+  `plan`-done-feature retorna o `parent_slug`, `reconfigure` adota o draft.
+  O pipeline avança até o prompt downstream dono da response.
+- **Re-entrada humana (`False`)** → o guard aparece normalmente (3/4
+  caminhos preservados — proteger feature alheia, confirmar draft, etc.).
+
+Aditivo à Decisão 27 (pause vs abort): nenhum state é apagado pelo gating,
+nenhum caminho de pause vira abort. O guard apenas evita um prompt espúrio
+que o `SKILL.md` não documenta no meio do handshake mecânico.
+
+Refs: P-15 (`docs/reports/pilot-meobonsai-2026-06-19/report.md`), P-01
+(gate original do `init`).
 
 ---
 

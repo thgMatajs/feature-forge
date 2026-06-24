@@ -45,6 +45,7 @@ from engine.ui.exit_codes import (
     EXIT_CANCELLED,
     EXIT_PAUSED,
     ERR_PROJECT_NOT_FOUND,
+    ERR_USAGE,
     fail_with_tag,
 )
 from engine.ui.question import (
@@ -376,6 +377,23 @@ def _main_dispatch(cmd: str, rest: list[str], argv: list[str]) -> int:
     if cmd in ("-v", "--version"):
         from engine import __version__
         sys.stdout.write(f"forge {__version__}\n")
+        return 0
+
+    # P-05 (pilot R1): `forge <subcmd> --help --json` emite o manifest do
+    # subcomando (slice de _COMMAND_META), NÃO a prosa do handler — que
+    # ignorava --json silenciosamente. Interceptado ANTES do bootstrap-check
+    # e do dispatch (é meta-query read-only; Decisão 32, meta-flags opt-in).
+    # Subcomando sem meta → erro explícito em stderr, nunca silêncio.
+    if ("--help" in rest or "-h" in rest) and "--json" in rest:
+        meta = _COMMAND_META.get(cmd)
+        if meta is None:
+            sys.stderr.write(
+                f"forge {cmd}: --help --json não disponível "
+                "(sem manifest pra este comando).\n"
+            )
+            return fail_with_tag(ERR_USAGE)
+        manifest = {"name": cmd, **meta}
+        sys.stdout.write(json.dumps(manifest, indent=2, default=str) + "\n")
         return 0
 
     # Task 9.5 (graph-ia-evolution AC-11) — bootstrap-state check antes do

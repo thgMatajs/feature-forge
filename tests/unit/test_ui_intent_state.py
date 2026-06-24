@@ -821,3 +821,55 @@ def test_append_intent_log_flushes_after_write(tmp_project_root, monkeypatch):
     assert min(flush_indices) < min(close_indices), (
         f"flush must precede close (durability contract); events={log_events!r}"
     )
+
+
+# --- host_is_replaying (P-15: gate compartilhado de guards de re-entrada) ---
+
+
+def test_host_is_replaying_false_when_no_response(tmp_path):
+    """Sem forge-response.json no disco → não há loop mecânico → False
+    (re-entrada humana genuína; o guard deve aparecer)."""
+    assert intent_state.host_is_replaying(tmp_path, "guard-abc") is False
+
+
+def test_host_is_replaying_true_when_downstream_response_pending(tmp_path):
+    """Response no disco pra um intent downstream (id ≠ guard) e NÃO no log
+    → loop mecânico → True (guard deve ser suprimido). Reproduz P-15."""
+    intent_state.write_response(
+        tmp_path,
+        {"schema-version": 1, "intent-id": "downstream-xyz", "value": "sim"},
+    )
+    assert intent_state.host_is_replaying(tmp_path, "guard-abc") is True
+
+
+def test_host_is_replaying_false_when_response_is_for_the_guard(tmp_path):
+    """Response no disco É pra o próprio guard (id == guard) → a resposta do
+    guard está chegando; NÃO suprimir (o guard consome normalmente)."""
+    intent_state.write_response(
+        tmp_path,
+        {"schema-version": 1, "intent-id": "guard-abc", "value": "retomar"},
+    )
+    assert intent_state.host_is_replaying(tmp_path, "guard-abc") is False
+
+
+def test_host_is_replaying_false_when_response_is_stale_consumed(tmp_path):
+    """Response no disco com id ≠ guard MAS já consumida (no log) →
+    stale-leftover, não in-flight → False (mesma lógica do guard
+    stale-consumido de read_response)."""
+    intent_state.seed_consumed_log(
+        tmp_path, intent_id="downstream-xyz", response={"value": "sim"}
+    )
+    intent_state.write_response(
+        tmp_path,
+        {"schema-version": 1, "intent-id": "downstream-xyz", "value": "sim"},
+    )
+    assert intent_state.host_is_replaying(tmp_path, "guard-abc") is False
+
+
+def test_host_is_replaying_false_on_malformed_response(tmp_path):
+    """Response malformado no disco → não dá pra provar replay → False
+    (degrada pro caminho humano: o guard aparece em vez de sumir cego)."""
+    path = intent_state._response_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{ not json", encoding="utf-8")
+    assert intent_state.host_is_replaying(tmp_path, "guard-abc") is False

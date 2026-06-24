@@ -292,6 +292,12 @@ def snapshot_artefacts(
     dentro de ``snapshot_dir``. Path absoluto fora do project_root (caso
     raro — scope custom) vira ``snapshot_dir / src.name`` (achatado).
 
+    Diretorios em ``scope.paths`` sao recursados (``rglob("*")``) — pra
+    scope=feature o path resolvido e o diretorio da feature, entao a run
+    conserva feature-spec.yaml, bdd.json, tasks/TASK-*.yaml etc. com o
+    layout nested intacto (P-19). Arquivos regulares mantem o
+    comportamento de copia direta.
+
     Paths inexistentes sao silenciosamente puladas — Phase 0 nao quebra
     porque um path em scope.paths nao foi achado (Phase 2/3 auditores
     reportam isso se for relevante).
@@ -311,36 +317,55 @@ def snapshot_artefacts(
     copied: list[Path] = []
     project_root_resolved = project_root.resolve()
 
-    for src in scope.paths:
-        src_path = Path(src)
-        if not src_path.exists():
-            continue
+    def _rel_for(file_path: Path) -> Path:
+        """Path relativo a project_root pra preservar layout no snapshot.
 
-        # Determina path relativo pra preservar layout dentro do snapshot.
+        Path absoluto fora do project_root (caso raro — Scope custom)
+        achata pro nome do arquivo.
+        """
         try:
-            rel = src_path.resolve().relative_to(project_root_resolved)
+            return file_path.resolve().relative_to(project_root_resolved)
         except ValueError:
-            # Path absoluto fora do project_root — achata pro nome do
-            # arquivo. Caso raro mas defensivo (Scope custom pode
-            # carregar paths absolutos de fora).
-            rel = Path(src_path.name)
+            return Path(file_path.name)
 
-        dest = snapshot_dir / rel
+    def _copy_one(src_file: Path) -> None:
+        """Copia UM arquivo regular pro snapshot via hardlink→copy2.
+
+        DRY (Mandamento #3): a mesma cascata serve o ramo arquivo e o ramo
+        diretorio. Best-effort: falha de I/O (disco cheio, permissao) e
+        silenciada pra nao explodir Phase 0.
+        """
+        dest = snapshot_dir / _rel_for(src_file)
         dest.parent.mkdir(parents=True, exist_ok=True)
-
         try:
-            os.link(src_path, dest)
+            os.link(src_file, dest)
         except (OSError, NotImplementedError):
             # Fallback: copy2 preserva metadata (mtime, permissions).
             # OSError cobre cross-device link (EXDEV), permission errors,
             # FS sem suporte. NotImplementedError em platforms exoticas.
             try:
-                shutil.copy2(src_path, dest)
+                shutil.copy2(src_file, dest)
             except OSError:
                 # Disk full / perm error mid-copy — silenciamos pra nao
                 # explodir Phase 0; snapshot e best-effort.
-                continue
-
+                return
         copied.append(dest)
+
+    for src in scope.paths:
+        src_path = Path(src)
+        if not src_path.exists():
+            continue
+
+        if src_path.is_dir():
+            # scope.paths de feature e um DIRETORIO (P-19). Recursa nos
+            # arquivos preservando layout relativo. Ordenado pra snapshot
+            # deterministico cross-machine.
+            for f in sorted(src_path.rglob("*")):
+                if not f.is_file():
+                    continue
+                _copy_one(f)
+        else:
+            # Arquivo regular — comportamento inalterado.
+            _copy_one(src_path)
 
     return copied

@@ -105,3 +105,11 @@ def test_abort_warning_includes_slug():
     msg = mentor_calmo.abort_warning("my-feature")
     assert "my-feature" in msg
     assert "aborted" in msg
+
+
+def test_init_greeting_is_stable_across_runs():
+    """A abertura do init deve ser determinística (mesma frase entre runs) —
+    P-07. greeting() genérico segue variando (não testado aqui)."""
+    from engine.persona.mentor_calmo import greeting_stable
+
+    assert greeting_stable() == greeting_stable()

@@ -2,7 +2,7 @@
 
 A standalone CLI skill that orchestrates end-to-end planning + implementation of mobile features across Android, iOS, KMP, and Web. Backend-agnostic (Firebase, REST, GraphQL, local-only).
 
-> **State:** 1.5.0 cortado · campanha pré-piloto completa em main · 2026-06-19 · rapid 1863 / integration 204 / e2e 30 passed (W-DEBT dívida residual: PHANTOM-STATES removido + CARDS-DISCONNECT + ABORTED-DEADEND + PLACEHOLDER-VERIFY + SCHEMA/STALE guards + readiness non-product + FORGE_HOME driver doctor + cleanup; W3 token economy: output-mode + read-commands `--json` + `--help --json` manifesto + workflow router, Revisita Decisão 10; W2 protocol robustness; camada de interação AI-first Wave 1: driver `SKILL.md`/`AGENTS.md` + front-door ticket/frase + grounded-challenge Phase 2.5 + readiness enforce + CASING-BUG fix; remediação cross-AI review PR #17; install.sh curl one-liner + forge upgrade + bash 3.2 portável; Wave 3 bug-fix sprint; Wave 2 host-aware execution; graph-ia-evolution ✅ shipped; PR #16 master review fix-pack Wave A+B+C aplicado integralmente) · 22 validators · 14 comandos · 29 cards · 4 bundles · 6 parsers (kotlin/swift/typescript + java/xml/objc) · driver `skills/feature-forge/SKILL.md` + `templates/AGENTS.md.template` · ~400 arquivos · ~52.5K LOC
+> **State:** 1.5.0 cortado · campanha pré-piloto completa em main · 2026-06-19 · rapid 1915 / integration 216 / e2e 31 passed (W-DEBT dívida residual: PHANTOM-STATES removido + CARDS-DISCONNECT + ABORTED-DEADEND + PLACEHOLDER-VERIFY + SCHEMA/STALE guards + readiness non-product + FORGE_HOME driver doctor + cleanup; W3 token economy: output-mode + read-commands `--json` + `--help --json` manifesto + workflow router, Revisita Decisão 10; W2 protocol robustness; camada de interação AI-first Wave 1: driver `SKILL.md`/`AGENTS.md` + front-door ticket/frase + grounded-challenge Phase 2.5 + readiness enforce + CASING-BUG fix; remediação cross-AI review PR #17; install.sh curl one-liner + forge upgrade + bash 3.2 portável; Wave 3 bug-fix sprint; Wave 2 host-aware execution; graph-ia-evolution ✅ shipped; PR #16 master review fix-pack Wave A+B+C aplicado integralmente) · 22 validators · 14 comandos · 29 cards · 4 bundles · 6 parsers (kotlin/swift/typescript + java/xml/objc) · driver `skills/feature-forge/SKILL.md` + `templates/AGENTS.md.template` · ~400 arquivos · ~52.5K LOC
 
 ## What it is
 
@@ -11,7 +11,7 @@ Skill CLI-first com 14 comandos canônicos (zero flags — toda parametrização
 1. **`forge init`** — bootstrap em qualquer projeto KMP/mobile (greenfield ou brownfield). Step 11.5 escaneia o codebase atrás de duplicações já existentes (6 categorias de finding).
 2. **`forge plan {feature-slug}`** — 5 waves (intake/PRD → screen+contracts → tech-spec → tasks → readiness) com 16 templates. Subtypes: product / refactor / bugfix / spike / chore (cada um com waves específicas). No bugfix o pipeline detecta o ticket (ex: IN-37234), pula o PRD e exige um regression test que falha primeiro antes da correção; refactor entra com contrato no-behavior-change.
 3. **`forge implement {feature-slug}`** — execução task-by-task com gates de scope + atomic commits
-4. **`forge verify`** — cascade de 20 validators com 3-caminhos discipline (inclui `check_no_behavior_change` para refactor, `check_cyclomatic_complexity` multi-language, `check_secrets` multi-tool security gate, e `validate_extension_feature` cross-cutting pra Gap 9 extensions). Cascade fail-fast: para no primeiro erro duro; os gates fortes (complexity, secrets) aceitam override-justify auditável no commit body e bypass de emergência logado em `.claude/state/`.
+4. **`forge verify`** — cascade de 22 validators com 3-caminhos discipline (inclui `check_no_behavior_change` para refactor, `check_cyclomatic_complexity` multi-language, `check_secrets` multi-tool security gate, e `validate_extension_feature` cross-cutting pra Gap 9 extensions). Cascade fail-fast: para no primeiro erro duro; os gates fortes (complexity, secrets) aceitam override-justify auditável no commit body e bypass de emergência logado em `.claude/state/`.
 5. **`forge doctor`** — health check em 17 categorias (inclui reuse-intelligence findings agregados + `cc-gate-tools` + `secrets-tools` + `FORGE_HOME driver`)
 6. **`forge reconfigure`** — single entrypoint pra TODA mutação post-init (cards, paths, conventions, graph rebuild que re-queue reuse proposals)
 7. **`forge qa`** — gate adversarial multi-agente (red-team). 4 attack vectors × 4 scope targets em sandbox isolado. Verdict informativo (BLOCK/FLAG/PASS), findings → `forge evolve`.
@@ -102,7 +102,7 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 
 6 layers (ver `docs/design/00-vision.md` pra detalhe):
 
-1. **Cards** — unidades atômicas de composição (22 cards canônicos v1.2 + overlay local em `.claude/cards/local/`)
+1. **Cards** — unidades atômicas de composição (29 cards canônicos + overlay local em `.claude/cards/local/`)
 2. **Templates** — esqueletos dos 18 artefatos por feature (16 produto + bugfix-intake + refactor-intake)
 3. **Memory** — L1 per-feature (WIP) + L2 project (committed) + L3 read-only (auto-memory)
 4. **Graph** — SQLite com 17 queries canônicas (Q1–Q10 estruturais, Q11 reusable-helpers, Q12–Q17 reuse-intelligence: duplicates within/cross-module, KMP-migration, near-duplicates, redundant-platform, TS-helpers)
@@ -119,10 +119,10 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 | Templates canônicos | 18 (16 produto + feature-intake-bugfix + feature-intake-refactor) |
 | Cards canônicos | 29 (8 stack + 5 Firebase + firebase-crashlytics + 4 REST + retrofit-client + room-database + sqldelight + datastore-prefs + shared-preferences-prefs com `legacy-marker` + firebase-analytics + posthog-analytics + fcm + onesignal + firebase-remote-config + posthog-flags); overlay local em `.claude/cards/local/<name>/` desde Gap 5 (2026-06-02). Phase B DET-6 acresceu 6 cards de analytics/notifications/flags + sqldelight (axis persistence/kmp) + rename `crashlytics → firebase-crashlytics`. |
 | Preset | kmp-mobile (8 stack cards + 4 bundles: firebase-full + rest-with-firebase-telemetry + local-only + custom-from-scratch sentinela) — substitui o bloco `backend-candidates` monolítico desde Phase B DET-6 |
-| Validators Python | 25 + 3 helpers (`_gate_infra`, `_diff`, `_common`) — inclui `check_cyclomatic_complexity` (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon), `check_secrets` (gitleaks + trufflehog), `check_no_behavior_change` (refactor), `validate_extension_feature` (extends-feature cross-cutting), `validate_presets` (Phase B DET-6 — bundle YAML schema) |
+| Validators Python | 22 + 3 helpers (`_gate_infra`, `_diff`, `_common`) — inclui `check_cyclomatic_complexity` (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon), `check_secrets` (gitleaks + trufflehog), `check_no_behavior_change` (refactor), `validate_extension_feature` (extends-feature cross-cutting), `validate_presets` (Phase B DET-6 — bundle YAML schema) |
 | Hooks | 9 + 1 reuse incremental (`post-edit-detect-duplications.sh`) |
 | Graph parsers | 6 (Kotlin / Swift / TypeScript + Java / XML / Objective-C — Java/XML/ObjC novos em v1.3.0 graph-ia-evolution). Body extraction (`symbols.body`) cobre brace-delimited bodies (5 linguagens; XML é NULL). |
-| Tests | rapid **1797 passed** / integration **190 passed** / e2e **30 passed** na série de waves AI-first (unreleased/branch `feat/w-debt`: Wave 1 + W2 + W3 + W-DEBT empilhados; 0 falhas). Histórico: 1794/183/30 pós-fix-verify W-DEBT r1; 1779/180/30 pós-W3; 1611/168/30 em 1.4.0 pilot-ready; 1619 collected pós PR #16 fix-pack. Baseline histórico em CHANGELOG.md. |
+| Tests | rapid **1915 passed** / integration **216 passed** / e2e **31 passed** (pilot R6 — blockers AI-first P-17/18/19/20/24 + review holístico WR-01..04; suíte full 2162 passed / 18 skipped). Histórico: 1885/215/31 em pilot R4; 1863/204/30 em 1.5.0; 1797/190/30 na série AI-first; 1611/168/30 em 1.4.0 pilot-ready. Baseline histórico em CHANGELOG.md. |
 | LOC total | ~52.500 |
 | Engine LOC | ~33.500 (Python; engine/ apenas — validators/ adicional ~7.300) |
 | Files total | ~400 |
@@ -193,7 +193,7 @@ explicitamente.
   presets/kmp-mobile/                   canonical preset v1
   validators/                           22 validators + 3 helpers (inclui check_cyclomatic_complexity + check_secrets + check_unfilled_placeholders + validate_extension_feature)
   hooks/                                9 hooks + reuse incremental script
-  tests/                                rapid 1863 / integration 204 / e2e 30 (unit + integration + e2e)
+  tests/                                rapid 1915 / integration 216 / e2e 31 (unit + integration + e2e)
 
 [per project install via `forge init`]
 {project}/.claude/forge/                sub-namespace forge (v1.3+)
@@ -295,10 +295,10 @@ Start here:
 Documentados em `docs/design/08-session-handoff.md § Conhecidos limites v1` + `CHANGELOG.md § Conhecidos limites v1.1`:
 
 **v1.0 herdados:**
-- **`forge implement` é stub manual** — Apply Mode automatizado é Phase 6
+- **`forge plan` e `forge implement` são fluxos AI-first dirigidos pelo host** (modelo Claude-Code-fronted, confirmado no piloto MeoBonsai D4/D5): o engine emite intents (exit 2 + marker `<FORGE_INTENT>`) e o host fecha o loop — via `AskUserQuestion` no Claude Code, ou pelo intent-file fallback (opencode/CI). `forge implement` executa task-by-task com gates de scope + atomic commits sob esse loop; não é stub manual nem narração de template. A camada de interação (`skills/feature-forge/SKILL.md` + `templates/AGENTS.md.template`) ensina o host a dirigir o intent loop.
 - **`forge init` Cena 7 (Jira/ticketing)** não prompted — use `forge reconfigure` pós-init
 - **3 kinds de `apply_proposal_to_l2`** ainda em fall-through (retrospective kinds — reduzido de 9 para 3 com os 6 reuse-intelligence kinds implementados)
-- **LLM/sub-agent hookup real** — `plan.py`/`implement.py` narram fluxo + renderizam templates; integração Anthropic API é Phase 6
+- **Sub-agent hookup via host, não via SDK** — `plan.py`/`implement.py` emitem intents e dispatcham conductors pelo host agêntico (Claude Code / opencode); não há integração direta com a Anthropic API por design (Decisão 22 — zero runtime deps em outras skills; o comportamento é do host, o engine só emite texto/intent).
 - **Tree-sitter / AST real** — regex parsers v1 por design
 
 **v1.1 novos:**

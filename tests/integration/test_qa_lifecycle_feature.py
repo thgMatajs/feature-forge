@@ -123,6 +123,54 @@ def test_qa_feature_scope_end_to_end_pass_verdict(tmp_path: Path) -> None:
     assert not proposed.exists(), "PASS verdict não deveria emitir entries"
 
 
+def test_conductor_handoff_carries_contract_fields(tmp_path: Path) -> None:
+    """P-20: conductor-handoff carrega snapshot/config_snapshot/auditors.
+
+    Contrato em `agents/qa-conductor.md` (~L47-57): o handoff produzido por
+    Phase 0 deve expor os `snapshot/` paths, o `config_snapshot` (qa: section
+    congelada) e a lista de auditors (4 core + N extension). Antes o handoff
+    só tinha scope/run_id/root/config.
+    """
+    from engine.qa import run_qa
+
+    slug = "feature-handoff-pilot"
+    proj = _make_feature_project(tmp_path, slug)
+    # Adiciona um task yaml pra o snapshot ter conteúdo (depende de B1).
+    (
+        proj
+        / "docs"
+        / "feature-implementation-workflow"
+        / "features"
+        / slug
+        / "tasks"
+        / "TASK-0001.yaml"
+    ).write_text("id: TASK-0001\n", encoding="utf-8")
+    workflow_config = {"qa": {"enabled": True}}
+
+    exit1 = run_qa(slug, project_root=proj, workflow_config=workflow_config)
+    assert exit1 == 0
+
+    qa_root = proj / ".planning" / "qa" / slug
+    run_dirs = list(qa_root.iterdir())
+    assert len(run_dirs) == 1
+    handoff = run_dirs[0] / "conductor-handoff.json"
+    assert handoff.is_file()
+    data = json.loads(handoff.read_text(encoding="utf-8"))
+
+    # snapshot — lista de paths relativos, populada (depende de B1).
+    assert "snapshot" in data and isinstance(data["snapshot"], list)
+    assert len(data["snapshot"]) >= 1, "snapshot deve estar populado (P-19+P-20)"
+
+    # config_snapshot — qa: section congelada no momento da run.
+    assert "config_snapshot" in data
+    assert data["config_snapshot"] == {"enabled": True}
+
+    # auditors — 4 core + extensões não-desabilitadas.
+    assert "auditors" in data
+    core = {"spec-vs-spec", "coverage", "chaos", "validator-claim"}
+    assert core.issubset(set(data["auditors"]))
+
+
 def test_synthesis_emit_block_verdict_with_critical_finding(tmp_path: Path) -> None:
     """Testa synthesis+emit em isolamento com 1 finding critical → BLOCK + exit 8.
 

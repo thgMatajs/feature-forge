@@ -236,3 +236,127 @@ def test_resume_from_checkpoint(
     assert (state_dir / "forge-response.json").exists(), (
         "response file must survive happy-path consume (CR-002)"
     )
+
+
+# ── P-15: gating de guards de re-entrada do plan (host_is_replaying) ─────────
+
+
+def _pin_intent_file_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Força host=intent-file via escape-hatch env (mesma forma do init test)."""
+    monkeypatch.setenv("FORGE_FORCE_INTENT_MODE", "1")
+    from engine.host import detect as _host_detect
+
+    _host_detect._clear_cache()
+
+
+def _seed_l1(project_root: Path, *, slug: str, status: str) -> None:
+    """Semeia uma L1 status.json mínima no status pedido."""
+    from engine.memory.l1 import L1State, write_l1_status
+
+    write_l1_status(
+        L1State(
+            feature_slug=slug,
+            status=status,
+            last_action_at="2026-06-19T00:00:00Z",
+            last_action_kind="seed",
+        ),
+        project_root,
+    )
+
+
+def _seed_planning_l1(project_root: Path, *, slug: str) -> None:
+    _seed_l1(project_root, slug=slug, status="planning")
+
+
+def _seed_done_l1(project_root: Path, *, slug: str) -> None:
+    _seed_l1(project_root, slug=slug, status="done")
+
+
+def test_active_collision_suppressed_during_host_replay(
+    tmp_forge_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P-15: L1 já existe em status=planning (criada na 1ª invocação) e há
+    forge-response.json pendente pra um prompt downstream. _handle_active_slug_
+    collision NÃO deve emitir o guard de colisão — caso contrário o id do guard
+    colide com a response downstream → IntentMismatchError (deadlock do piloto)."""
+    monkeypatch.chdir(tmp_forge_project)
+    _pin_intent_file_host(monkeypatch)
+    _seed_planning_l1(tmp_forge_project, slug="meobonsai-login")
+    from engine.ui import intent_state
+    from engine.memory.l1 import read_l1_status
+    from engine.plan import _handle_active_slug_collision
+
+    intent_state.write_response(
+        tmp_forge_project,
+        {
+            "schema-version": 1,
+            "intent-id": "subtype-prompt-downstream",
+            "value": "product",
+        },
+    )
+    state = read_l1_status("meobonsai-login", tmp_forge_project)
+    # Sob replay, o guard retorna o slug existente (retomar) sem emitir intent.
+    result = _handle_active_slug_collision(
+        "meobonsai-login", state, tmp_forge_project
+    )
+    assert result == "meobonsai-login", (
+        "guard de colisão vazou durante loop mecânico — P-15 não corrigido"
+    )
+
+
+def test_active_collision_shown_on_genuine_human_reentry(
+    tmp_forge_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-entrada humana: L1 em planning, SEM response pendente → o guard de
+    colisão DEVE emitir (3-caminhos preservado: proteger feature alheia)."""
+    monkeypatch.chdir(tmp_forge_project)
+    _pin_intent_file_host(monkeypatch)
+    _seed_planning_l1(tmp_forge_project, slug="meobonsai-login")
+    from engine.memory.l1 import read_l1_status
+    from engine.plan import _handle_active_slug_collision
+    from engine.ui.question import PausedForInputError
+
+    state = read_l1_status("meobonsai-login", tmp_forge_project)
+    with pytest.raises(PausedForInputError) as exc:
+        _handle_active_slug_collision("meobonsai-login", state, tmp_forge_project)
+    # O pending emitido é o guard de colisão (3-caminhos preservado).
+    assert "Já existe uma feature ativa" in (exc.value.intent or {}).get(
+        "question", ""
+    )
+
+
+def test_done_feature_branch_suppressed_during_host_replay(
+    tmp_forge_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mesma classe de P-15: L1 em status=done + response downstream pendente
+    → _handle_done_feature_branch NÃO emite o menu (retorna parent_slug)."""
+    monkeypatch.chdir(tmp_forge_project)
+    _pin_intent_file_host(monkeypatch)
+    _seed_done_l1(tmp_forge_project, slug="meobonsai-login")
+    from engine.ui import intent_state
+    from engine.plan import _handle_done_feature_branch
+
+    intent_state.write_response(
+        tmp_forge_project,
+        {"schema-version": 1, "intent-id": "downstream-after-done", "value": "x"},
+    )
+    result = _handle_done_feature_branch("meobonsai-login", tmp_forge_project)
+    assert result == "meobonsai-login", (
+        "guard done-feature vazou durante loop mecânico"
+    )
+
+
+def test_done_feature_branch_shown_on_genuine_human_reentry(
+    tmp_forge_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-entrada humana: L1 em done, SEM response pendente → menu 4-caminhos
+    DEVE emitir (comportamento preservado)."""
+    monkeypatch.chdir(tmp_forge_project)
+    _pin_intent_file_host(monkeypatch)
+    _seed_done_l1(tmp_forge_project, slug="meobonsai-login")
+    from engine.plan import _handle_done_feature_branch
+    from engine.ui.question import PausedForInputError
+
+    with pytest.raises(PausedForInputError) as exc:
+        _handle_done_feature_branch("meobonsai-login", tmp_forge_project)
+    assert "O que você quer?" in (exc.value.intent or {}).get("question", "")
