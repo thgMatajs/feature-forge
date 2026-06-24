@@ -1117,6 +1117,22 @@ def _write_sandbox_results(
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp, target)
+        # A10 (review pr27 r2): fsync do diretório pai APÓS o rename. O fsync do
+        # arquivo (acima) durabiliza o conteúdo, mas a ENTRADA do rename no
+        # diretório só é garantida em disco após fsync do dir. Sem isso, um
+        # crash logo após o os.replace poderia perder o rename (o resume não
+        # encontraria sandbox-results.json e re-rodaria — ou pior, veria o
+        # arquivo antigo). Best-effort: plataformas sem fsync de dir (Windows)
+        # levantam OSError, que swallowamos — o fsync do arquivo já cobre o
+        # caso comum.
+        try:
+            dir_fd = os.open(str(target.parent), os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError:
+            pass
     finally:
         if tmp.exists():
             try:

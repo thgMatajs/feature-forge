@@ -321,6 +321,44 @@ def test_resume_no_executable_fixtures_synthesizes_directly(
 
 
 # ---------------------------------------------------------------------------
+# A10 (review pr27 r2): write atômico fsynca o diretório pai após o rename
+# ---------------------------------------------------------------------------
+
+
+def test_write_sandbox_results_roundtrips_after_dir_fsync(tmp_path: Path) -> None:
+    """A10: o write atômico agora fsynca o diretório pai após os.replace (pra
+    durabilizar a entrada do rename). O caminho deve continuar produzindo um
+    sandbox-results.json íntegro e legível (a hardening de durabilidade não
+    quebra o roundtrip)."""
+    from engine.qa import _reattach_run_tree, _write_sandbox_results
+    from engine.qa.sandbox import Fixture, SandboxResult
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    run_tree = _reattach_run_tree(run_dir, None)  # type: ignore[arg-type]
+
+    fx = Fixture(
+        name="fx-a",
+        input_path=run_tree.fixtures_dir / "fx-a" / "x.kt",
+        validator_path=tmp_path / "validators" / "v.py",
+    )
+    results = [
+        SandboxResult(fixture=fx, status="ok", exit_code=0, stdout="hi", duration_s=0.1)
+    ]
+    _write_sandbox_results(run_tree, results)
+
+    target = run_dir / "sandbox-results.json"
+    assert target.is_file()
+    loaded = json.loads(target.read_text(encoding="utf-8"))
+    assert isinstance(loaded, list) and len(loaded) == 1
+    assert loaded[0]["fixture_name"] == "fx-a"
+    assert loaded[0]["status"] == "ok"
+    assert loaded[0]["exit_code"] == 0
+    # O tmp não deve sobrar.
+    assert not (run_dir / "sandbox-results.json.tmp").exists()
+
+
+# ---------------------------------------------------------------------------
 # A7 (review pr27 r2): validator_path fora dos roots → finding, não false-clean
 # ---------------------------------------------------------------------------
 
