@@ -270,37 +270,66 @@ def _hardened_env(
     return env
 
 
+# Allowlist canônico de flags que a fixture (gerada por LLM) pode threadar
+# pro validator. APENAS estes — o engine é o único dono de ``--project-root``.
+# Validators scoped (ex.: ``validate_task_contract.py``) exigem ``--scope`` +
+# ``--id``; nada além disso tem caso de uso legítimo numa fixture validator-claim.
+_ALLOWED_EXTRA_FLAGS: frozenset[str] = frozenset({"--scope", "--id"})
+
+
 def _scrub_extra_args(extra_args: list[str] | None) -> list[str]:
-    """Item 4 (R8): remove qualquer ``--project-root`` injetado em extra_args.
+    """Item 4 (R8) + C1 (review pr27): ALLOWLIST de extra_args da fixture.
 
-    HARDENING (Decisão 30): o engine é o único dono do ``--project-root`` —
-    ele sempre aponta pro mini-tree dentro do sandbox. ``extra_args`` vêm de
-    uma fixture gerada por LLM; permitir que reescrevam ``--project-root``
-    deixaria a fixture apontar o root pra fora do sandbox (ex.: ``/etc``).
-    Removemos o flag E o seu valor, qualquer que seja a forma:
+    HARDENING (Decisão 30 — sandbox escape): o engine é o único dono do
+    ``--project-root`` — ele sempre aponta pro mini-tree dentro do sandbox.
+    ``extra_args`` vêm de uma fixture gerada por LLM; um denylist de
+    ``--project-root`` literal era insuficiente porque os validators forge
+    usam argparse e, com abreviação honrada (``allow_abbrev``), ``--p``,
+    ``--proj``, ``--project``, ``--project-roo`` (e formas ``=``) TODOS setam
+    ``project_root`` e, como ÚLTIMA ocorrência, OVERRIDE o root do engine
+    (last-wins) — escape total pra ``/etc`` etc.
 
-      - ``--project-root /etc`` (flag + valor em 2 tokens)
-      - ``--project-root=/etc`` (forma ``=``, 1 token)
+    A defesa correta é allow-known, drop-rest: passamos SOMENTE os flags
+    conhecidos-seguros (``--scope``, ``--id``) com seus valores; QUALQUER
+    outro token — flag desconhecida, prefixo ``--p…``/``--project…``, ou
+    bare value cujo flag dono foi dropado — é descartado. Não enumeramos
+    grafias ruins; só reconhecemos as boas.
 
-    Os demais args (``--scope feature``, ``--id foo``) passam intactos.
+    Formas aceitas pra um flag allowed ``F``:
+      - ``F valor`` (2 tokens) → ambos passam.
+      - ``F=valor`` (1 token)  → passa inteiro.
+
+    A defense-in-depth complementar (``allow_abbrev=False`` no argparser
+    compartilhado, ``validators/_common.py``) garante que mesmo um flag que
+    escapasse este filtro não seja interpretado como abreviação.
+
     Retorna lista nova — não muta o input.
     """
     if not extra_args:
         return []
     scrubbed: list[str] = []
-    skip_next = False
+    expect_value_for: str | None = None
     for tok in extra_args:
-        if skip_next:
-            # Token anterior era ``--project-root`` (forma 2-token) → este é
-            # o valor injetado; descarta.
-            skip_next = False
+        if expect_value_for is not None:
+            # Token anterior foi um flag allowed em forma de espaço → este é
+            # o seu valor. Passa e zera o estado.
+            scrubbed.append(tok)
+            expect_value_for = None
             continue
-        if tok == "--project-root":
-            skip_next = True  # descarta o próximo token (o valor)
+        if tok in _ALLOWED_EXTRA_FLAGS:
+            # Flag allowed forma-espaço: passa e espera o próximo token (valor).
+            scrubbed.append(tok)
+            expect_value_for = tok
             continue
-        if tok.startswith("--project-root="):
-            continue  # forma ``=`` — descarta o token inteiro
-        scrubbed.append(tok)
+        if tok.startswith("--"):
+            head = tok.split("=", 1)[0]
+            if head in _ALLOWED_EXTRA_FLAGS and "=" in tok:
+                # Flag allowed forma ``=valor``: passa o token inteiro.
+                scrubbed.append(tok)
+            # Qualquer outro flag ``--…`` (inclusive abreviações de
+            # --project-root e flags desconhecidas) é dropado.
+            continue
+        # Bare value sem flag dono allowed precedente → órfão, dropa.
     return scrubbed
 
 

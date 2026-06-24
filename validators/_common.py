@@ -146,7 +146,12 @@ def log(msg: str) -> None:
 
 def build_argparser(description: str) -> argparse.ArgumentParser:
     """Return the canonical argparser shared by every validator."""
-    p = argparse.ArgumentParser(description=description)
+    # allow_abbrev=False (defense-in-depth, review pr27 C1): sem isso, argparse
+    # honra abreviações (--p, --proj, --project, --project-roo) como
+    # --project-root. Um vetor que escapasse o allowlist do sandbox poderia
+    # re-setar project_root via abreviação (last-wins) e escapar o sandbox
+    # (Decisão 30). Desligar abreviação project-wide fecha a classe inteira.
+    p = argparse.ArgumentParser(description=description, allow_abbrev=False)
     p.add_argument(
         "--project-root",
         type=Path,

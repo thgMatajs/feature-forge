@@ -997,3 +997,159 @@ def test_extra_args_none_preserves_legacy_command(tmp_path: Path) -> None:
     # Apenas --project-root <tree>, sem extras.
     assert "'--project-root'" in argv
     assert "'--scope'" not in argv
+
+
+# ---------------------------------------------------------------------------
+# C1/C2 (review pr27) — sandbox escape via argparse abbreviation (Decisão 30)
+#
+# Validators forge usam argparse; com allow_abbrev=True (default histórico),
+# --p / --proj / --project / --project-roo (e formas =valor) TODOS setam
+# project_root e, como ÚLTIMA ocorrência após o --project-root <sandbox> que o
+# engine controla, OVERRIDE o root (last-wins). Uma fixture LLM com
+# invocation_args ['--p','/etc'] rodaria o validator REAL contra /etc → escape
+# total. O scrub vira ALLOWLIST (passa só --scope/--id + valores, dropa o resto)
+# e o argparser compartilhado ganha allow_abbrev=False (defense-in-depth).
+#
+# Asserção FORTE (C2): o root EFETIVO visto pelo validator == mini-tree, não
+# mera ausência de substring "/etc" no argv.
+# ---------------------------------------------------------------------------
+
+
+# Matriz de spellings abreviados de --project-root, cada um em forma de espaço
+# (2 tokens) E forma "=" (1 token). allow_abbrev=True honraria todos.
+_ABBREV_SPELLINGS = ["--p", "--proj", "--project", "--project-roo"]
+
+
+def _abbrev_cases() -> list[list[str]]:
+    cases: list[list[str]] = []
+    for flag in _ABBREV_SPELLINGS:
+        cases.append([flag, "/etc"])  # forma espaço (2 tokens)
+        cases.append([f"{flag}=/etc"])  # forma "=" (1 token)
+    return cases
+
+
+@pytest.mark.parametrize("hostile_args", _abbrev_cases())
+def test_extra_args_abbreviation_cannot_override_project_root(
+    tmp_path: Path, hostile_args: list[str]
+) -> None:
+    """SEGURANÇA C1/C2: abreviação de --project-root via extra_args é dropada.
+
+    O scrub é allowlist: só --scope/--id + valores passam. Qualquer prefixo
+    --p…/--project… (espaço OU "=") é dropado. O root efetivo continua o
+    mini-tree dentro do sandbox — nunca /etc.
+    """
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    validator = _write_validator(
+        validators_dir, "argv_echo.py", _ARGV_ECHO_VALIDATOR
+    )
+    mini_tree = sandbox_fixtures / "vc-abbrev"
+    f = mini_tree / "src" / "Clean.kt"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("// clean\n", encoding="utf-8")
+
+    fixture = Fixture(
+        name="vc-abbrev",
+        input_path=f,
+        validator_path=validator,
+        tree_rel_path="src/Clean.kt",
+        extra_args=hostile_args,
+    )
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=5.0, per_validator_s=2.0
+    )
+
+    r = results[0]
+    assert r.status == "ok", f"status={r.status} stderr={r.stderr!r}"
+    # Asserção FORTE: o ROOT EFETIVO visto pelo validator é o mini-tree.
+    assert f"EFFECTIVE_ROOT={mini_tree.resolve()}" in r.stdout, (
+        f"abreviação {hostile_args!r} conseguiu override; stdout={r.stdout!r}"
+    )
+    # Defense-in-depth: /etc nunca chega como argv.
+    argv = r.stdout.split("ARGV=", 1)[1].splitlines()[0]
+    assert "/etc" not in argv, (
+        f"abreviação {hostile_args!r} vazou pro argv: {argv!r}"
+    )
+
+
+def test_extra_args_last_wins_override_neutralized(tmp_path: Path) -> None:
+    """SEGURANÇA C1: last-wins clássico (--project-root literal repetido)
+    é neutralizado — o root efetivo continua o mini-tree."""
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    validator = _write_validator(
+        validators_dir, "argv_echo.py", _ARGV_ECHO_VALIDATOR
+    )
+    mini_tree = sandbox_fixtures / "vc-lastwins"
+    f = mini_tree / "src" / "Clean.kt"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("// clean\n", encoding="utf-8")
+
+    fixture = Fixture(
+        name="vc-lastwins",
+        input_path=f,
+        validator_path=validator,
+        tree_rel_path="src/Clean.kt",
+        # Last-wins: o argparse default ficaria com o ÚLTIMO --project-root.
+        extra_args=["--scope", "feature", "--project-root=/etc"],
+    )
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=5.0, per_validator_s=2.0
+    )
+
+    r = results[0]
+    assert r.status == "ok", f"status={r.status} stderr={r.stderr!r}"
+    assert f"EFFECTIVE_ROOT={mini_tree.resolve()}" in r.stdout, (
+        f"last-wins conseguiu override; stdout={r.stdout!r}"
+    )
+    # O --scope legítimo sobrevive ao allowlist.
+    assert "SCOPE=feature" in r.stdout
+
+
+def test_extra_args_allowlist_drops_unknown_flags(tmp_path: Path) -> None:
+    """C1: o scrub é allowlist — flags fora de {--scope,--id} são dropadas
+    junto com seus valores; --scope/--id legítimos sobrevivem."""
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    validator = _write_validator(
+        validators_dir, "argv_echo.py", _ARGV_ECHO_VALIDATOR
+    )
+    mini_tree = sandbox_fixtures / "vc-allowlist"
+    f = mini_tree / "src" / "Clean.kt"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("// clean\n", encoding="utf-8")
+
+    fixture = Fixture(
+        name="vc-allowlist",
+        input_path=f,
+        validator_path=validator,
+        tree_rel_path="src/Clean.kt",
+        # Mistura: --scope/--id legítimos + flag desconhecida + bare value órfão.
+        extra_args=[
+            "--scope",
+            "feature",
+            "--evil-flag",
+            "payload",
+            "--id=foo",
+            "orphan-bare-value",
+        ],
+    )
+    results = run_sandbox(
+        run_dir, [fixture], budget_total_s=5.0, per_validator_s=2.0
+    )
+
+    r = results[0]
+    assert r.status == "ok", f"status={r.status} stderr={r.stderr!r}"
+    argv = r.stdout.split("ARGV=", 1)[1].splitlines()[0]
+    assert "'--evil-flag'" not in argv, f"flag desconhecida vazou: {argv!r}"
+    assert "'payload'" not in argv, f"valor de flag dropada vazou: {argv!r}"
+    assert "'orphan-bare-value'" not in argv, f"bare value órfão vazou: {argv!r}"
+    # --scope (forma espaço) e --id (forma "=") sobrevivem.
+    assert "SCOPE=feature" in r.stdout
+    assert "ID=foo" in r.stdout
