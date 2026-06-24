@@ -391,18 +391,54 @@ def run(argv: list[str]) -> int:
         for m in _load_active_manifests(cards_dir(project_root))
         if m.name in active_names_post
     ]
-    try:
-        grant_decision: GrantDecision = evaluate_sensitive_grants(
-            active_manifests_post, working
+    if _skip_to_apply:
+        # P-18: sob replay com a response do apply-confirm em-voo, NÃO podemos
+        # emitir um prompt de grant fresco — ele colidiria com a response
+        # terminal in-flight (IntentMismatchError, a MESMA classe de deadlock
+        # que P-18 fechou no category-menu). O draft adotado já reflete as
+        # decisões de grant tomadas no ciclo anterior (pré-pause): grants
+        # persistidos em `working.qa.sensitive-env-grants`, cards denied já
+        # removidos de `cards.active`. Logo: pulamos a avaliação (que prompta)
+        # e tratamos como no-op. Defensivo — se sobrar alguma var sensitive
+        # NÃO-granted no draft, avisamos no stderr (sem promptar) em vez de
+        # silenciar; isso seria estado inconsistente de um ciclo anterior.
+        already_granted = {
+            v
+            for v in (working.get("qa") or {}).get("sensitive-env-grants", [])
+            if isinstance(v, str)
+        }
+        pending = sorted(
+            {
+                var
+                for m in active_manifests_post
+                for var in m.sensitive_env_needs
+                if var not in already_granted
+            }
         )
-    except UserAbortError as exc:
-        renderer.write(
-            mentor_calmo.pause_message(
-                resume_command=f"forge reconfigure  # após reconciliar grants — {exc}"
+        if pending:
+            print(
+                "⚠ replay de apply-confirm com var(s) sensitive ainda não "
+                f"autorizada(s) no draft: {', '.join(pending)}. Não reabro o "
+                "prompt de grant durante o replay (evita colisão de intent). "
+                "Reconcilie via `forge reconfigure → qa` após aplicar.",
+                file=sys.stderr,
             )
+        grant_decision = GrantDecision(
+            granted=(), denied_cards=(), new_grants_to_persist=()
         )
-        _save_draft(draft_path, working)
-        return 0  # aborta reconfigure sem persistir state parcial
+    else:
+        try:
+            grant_decision = evaluate_sensitive_grants(
+                active_manifests_post, working
+            )
+        except UserAbortError as exc:
+            renderer.write(
+                mentor_calmo.pause_message(
+                    resume_command=f"forge reconfigure  # após reconciliar grants — {exc}"
+                )
+            )
+            _save_draft(draft_path, working)
+            return 0  # aborta reconfigure sem persistir state parcial
 
     if grant_decision.new_grants_to_persist:
         qa_cfg = working.setdefault("qa", {})
