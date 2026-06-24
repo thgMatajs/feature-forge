@@ -37,10 +37,17 @@ Severity
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
-from typing import NamedTuple
+from typing import Iterator, NamedTuple
+
+# Dirs ignorados na varredura: gerados, VCS, deps. Evita falsos positivos em
+# código não-fonte e gasto de tempo em árvores grandes (M1).
+EXCLUDED_DIR_NAMES = frozenset(
+    {"build", ".gradle", "node_modules", ".git", ".idea"}
+)
 
 # Escopo Compose por segmentos de path. Scripts de card são subprocess
 # isolados (sem módulo compartilhado), então a constante é local — espelha
@@ -136,6 +143,23 @@ def _strip_noise(line: str, *, state: _ScanState) -> tuple[str, _ScanState]:
             block_depth += 1
             i += 2
             continue
+        if line[i] == "'":
+            # Char literal Kotlin: `'x'`, `'\''`, `'\n'`, `'"'`. Consome até o
+            # `'` de fecho respeitando escapes. Um `"` DENTRO do char literal
+            # NÃO pode fazer o scanner entrar em modo string e engolir um
+            # `@Suppress` posterior (A1). Emite placeholder neutro.
+            j = i + 1
+            while j < n:
+                if line[j] == "\\":
+                    j += 2
+                    continue
+                if line[j] == "'":
+                    j += 1
+                    break
+                j += 1
+            out.append("''")  # placeholder neutro (não casa SUPPRESS_RE)
+            i = j
+            continue
         if line[i] == '"':
             # String de aspas simples: consome até o fecho (respeita escapes),
             # neutralizando o conteúdo. `//` aqui dentro NÃO trunca (WR-01).
@@ -159,11 +183,23 @@ def _strip_noise(line: str, *, state: _ScanState) -> tuple[str, _ScanState]:
 
 
 def scan_file(path: Path) -> list[str]:
-    """Retorna failures `arquivo:linha: <trecho>` para cada @Suppress real."""
+    """Retorna failures `arquivo:linha: <trecho>` para cada @Suppress real.
+
+    Fail-CLOSED (A2): se um arquivo em escopo não puder ser lido, NÃO o
+    tratamos como limpo — emitimos aviso no stderr e devolvemos uma falha
+    sintética, de modo que o gate bloqueie em vez de deixar passar um arquivo
+    que não conseguimos auditar.
+    """
     try:
         text = path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        return []
+    except OSError as exc:
+        print(
+            f"[compose-screens/check-no-suppress] não consegui ler {path} "
+            f"({exc.__class__.__name__}: {exc}). Trato como falha — não dá pra "
+            "auditar @Suppress num arquivo ilegível.",
+            file=sys.stderr,
+        )
+        return [f"{path}:0: <arquivo ilegível — gate falha fechado>"]
 
     failures: list[str] = []
     state = _ScanState()
@@ -172,6 +208,36 @@ def scan_file(path: Path) -> list[str]:
         if SUPPRESS_RE.search(cleaned):
             failures.append(f"{path}:{lineno}: {raw.strip()}")
     return failures
+
+
+def iter_kt_files(root: Path) -> Iterator[Path]:
+    """Itera arquivos `.kt` sob `root`, pulando dirs gerados/VCS/deps e SEM
+    descer em dirs symlinkados (M1 — evita loop/hang e varredura de build/).
+
+    Replica `root.rglob("*.kt")` para fontes reais, mas com poda explícita.
+    """
+    stack: list[Path] = [root]
+    while stack:
+        current = stack.pop()
+        try:
+            entries = list(os.scandir(current))
+        except OSError:
+            continue  # dir ilegível: pula (arquivos individuais são fail-closed)
+        for entry in entries:
+            name = entry.name
+            try:
+                is_dir = entry.is_dir(follow_symlinks=False)
+            except OSError:
+                continue
+            if is_dir:
+                if name in EXCLUDED_DIR_NAMES or name.startswith("."):
+                    continue
+                if entry.is_symlink():
+                    continue  # não desce em symlink de dir
+                stack.append(Path(entry.path))
+                continue
+            if name.endswith(".kt"):
+                yield Path(entry.path)
 
 
 def main() -> int:
@@ -186,7 +252,7 @@ def main() -> int:
     root = Path(args.project_root).resolve()
 
     failures: list[str] = []
-    for kt in root.rglob("*.kt"):
+    for kt in iter_kt_files(root):
         if not in_compose_scope(kt):
             continue
         failures.extend(scan_file(kt))
