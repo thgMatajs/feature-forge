@@ -118,6 +118,16 @@ def validator_within_allowed_roots(
     fora do root e é rejeitado. Roots inexistentes são resolvidos via
     ``strict=False`` (não falham); a comparação é puramente lexical pós-resolve.
 
+    A11 (review pr27 r2) — resíduo ACEITO com rationale (out-of-threat-model):
+    se um ``allowed_root`` é ELE PRÓPRIO um symlink (ex.: ``project/validators``
+    → ``/etc``), ``root.resolve()`` segue o symlink e ``/etc/*.py`` passaria a
+    allowlist. Isso NÃO é um vetor de input do LLM: o LLM só controla
+    ``evidence.validator_path`` (a fixture), nunca consegue escrever/repontar os
+    allowed roots — exige comprometimento prévio do filesystem/deployment
+    (trust boundary diferente). NÃO rejeitamos roots symlinkados de propósito:
+    quebraria checkouts legítimos via symlink (worktrees, /var → /private/var
+    no macOS, etc.). Documentado em docs/design/04-pending.md como risco aceito.
+
     Returns:
         ``True`` se o path resolvido cai dentro de algum root allowed,
         ``False`` caso contrário (rejeição — sem execução).

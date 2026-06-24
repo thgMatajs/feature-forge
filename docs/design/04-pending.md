@@ -58,6 +58,10 @@ auditor) e um REFRAMED como decisão de design (chaos não roda no sandbox).
 
 Nenhum gap remanescente do R7 fora dos fechados no R8 e da decisão de design acima. Os itens de CONTRATO/SCHEMA relacionados continuam rastreados em **P-22** (resolver implícito de `validator_path` no `qa-conductor.md`).
 
+### Risco residual aceito (review pr27 round-2 — A11)
+
+- **A11 (allowed_root symlinkado segue pra fora da allowlist) — ACEITO, out-of-threat-model.** Se um `allowed_root` do sandbox (`project/validators/` ou `FORGE_HOME/validators/`) for ELE PRÓPRIO um symlink pra ex. `/etc`, `root.resolve()` em `validator_within_allowed_roots` (`engine/qa/sandbox.py`) segue o symlink e `/etc/*.py` passaria a allowlist. NÃO é vetor de input do LLM: a fixture só controla `evidence.validator_path`, nunca consegue escrever/repontar os allowed roots — exige comprometimento prévio do filesystem/deployment (trust boundary diferente). Rejeitar roots symlinkados quebraria checkouts legítimos via symlink (worktrees, `/var → /private/var` no macOS). Documentado no docstring de `validator_within_allowed_roots`. Reabrível como gap SE forge passar a rodar em ambiente multi-tenant onde os roots não são confiáveis.
+
 ## Pilot R6 — blockers AI-first (2026-06-19)
 
 ### Fechados nesta wave (pilot R6)
