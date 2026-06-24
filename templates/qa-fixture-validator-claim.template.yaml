@@ -9,9 +9,17 @@
 #
 # O auditor preenche: (a) tree_rel_path — onde o arquivo mora no mini-tree;
 # (b) file_content — o conteúdo que o validator deveria pegar; (c) a claim.
+#
+# ESTE DESCRITOR É HUMANO-LEGÍVEL APENAS. O engine NÃO lê este YAML pra
+# reconstruir o fixture — ele reconstrói a partir de
+# `evidence.{fixture_path, validator_path, tree_rel_path}` do FINDING e executa
+# o arquivo MATERIALIZADO em `fixtures/<fixture_id>/<tree_rel_path>`. Os campos
+# `file_content` e `expected_exit_code` abaixo são documentação pro revisor
+# humano, NÃO são lidos pelo engine — materialize o arquivo real no mini-tree
+# pra que a claim valha.
 
 fixture_id: "{{fixture_id}}"
-target_validator: "{{validator_path}}"  # validators/<name>.py do contract
+validator_path: "{{validator_path}}"  # validators/<name>.py do contract
 
 # Path relativo do arquivo dentro do mini-tree. A extensão reflete o que o
 # validator escaneia (ex.: src/main/kotlin/Offending.kt, tasks/TASK-0001.yaml).
