@@ -1,31 +1,31 @@
 """End-to-end integration tests for the secrets-gate (check_secrets, R1.1).
 
-Cada teste exercita um dos cenários do spec §5 — cascade position, fail-fast
-skip (Decision 23), per-task block, override-permit, bypass via env, e dois
-smoke tests com tools reais (gitleaks / trufflehog) guardados por
-``@pytest.mark.skipif`` pra suite seguir verde sem as ferramentas nativas.
+Cobre só o que os unit tests com mock NÃO cobrem: o wiring git real
+(``git_staged_files`` → ``_dispatch_for_stage`` → parse → override →
+result_fail/pass) num repo git de verdade, mais dois smoke tests com as
+tools reais (gitleaks / trufflehog) guardados por ``@pytest.mark.skipif``
+pra suite seguir verde sem as ferramentas nativas.
 
-Os cenários determinísticos (sem tool real) mockam o dispatch da infra Phase 0
-(``dispatch_native_tool``) injetando o output JSON canônico das fixtures —
-assim a pipeline inteira do validator (parse → ignore-paths → override →
-result_fail/pass + render) roda end-to-end sem depender de gitleaks/trufflehog
-estarem no PATH. Os smoke tests cobrem a integração com a tool real.
+Cenários redundantes com os unit tests do engine (cascade position →
+``test_secrets_position_after_cc``; fail-fast skip →
+``test_secrets_fail_fast_respected``; bypass JSONL →
+``test_run_secrets_gate_bypassed_by_env_var``) foram removidos — eram dups
+verbatim de net-negative manutenção.
 
-Mapa de cenários (spec §5 integration table):
-    1. cascade_position            — check_secrets sit AFTER
-       check_cyclomatic_complexity no cascade default.
-    2. failfast_skips_secrets      — validator anterior falha sob fail_fast
-       → secrets gate marcado ``skipped`` e nunca invocado.
-    3. per_task_fail_blocks        — gitleaks finding sem override →
-       status=fail + 3-paths block + handoff aborta antes do commit.
-    4. per_task_override_permits   — SECRETS-OVERRIDE matching no commit body
-       → finding silenced, gate passa, handoff continua.
-    5. no_secrets_gate_bypass      — NO_SECRETS_GATE=1 → gate pulado, entry
-       JSONL escrito em .claude/forge/state/secrets-gate-bypass.jsonl.
-    6. smoke_gitleaks_real         — gitleaks de verdade detecta o fixture.
-    7. smoke_trufflehog_real       — trufflehog --only-verified NÃO confirma
-       token FAKE → pass legítimo (não dá pra testar verified=true em CI sem
-       leak real — documentado no docstring).
+Os dois cenários determinísticos mockam apenas o dispatch da tool nativa
+(``_dispatch_for_stage``) injetando o output JSON canônico das fixtures —
+o resto da pipeline (staged files reais → parse → override → result + render)
+roda end-to-end sem depender de gitleaks/trufflehog no PATH.
+
+Mapa de cenários:
+    1. per_task_fail_blocks        — gitleaks finding sem override →
+       status=fail + 3-paths block; o .kt staged real flui pro what-failed.
+    2. per_task_override_permits   — SECRETS-OVERRIDE matching no commit body
+       → finding silenced, gate passa limpo (status=pass).
+    3. smoke_gitleaks_real         — gitleaks de verdade detecta o AKIA do
+       fixture → fail determinístico (skip-guarded).
+    4. smoke_trufflehog_real       — trufflehog --only-verified NÃO confirma
+       token FAKE → pass legítimo (caminho negativo; skip-guarded).
 """
 
 from __future__ import annotations
@@ -115,64 +115,7 @@ def _gitleaks_json_for(rel_path: str, line: int, kind: str = "aws-access-key") -
     )
 
 
-# ── Scenario 1: cascade position ─────────────────────────────────────────────
-
-
-def test_verify_cascade_position(tmp_path: Path) -> None:
-    """check_secrets é listado APÓS check_cyclomatic_complexity no cascade."""
-    from engine import verify
-
-    specs = verify._default_validator_specs(tmp_path)
-    names = [s.name for s in specs]
-    assert "check_secrets" in names, (
-        "secrets gate deve estar registrado no cascade default"
-    )
-    assert "check_cyclomatic_complexity" in names, (
-        "esperado check_cyclomatic_complexity ancorando o cascade"
-    )
-    assert (
-        names.index("check_secrets")
-        == names.index("check_cyclomatic_complexity") + 1
-    ), f"secrets gate deve seguir o CC gate; ordem obtida {names}"
-
-
-# ── Scenario 2: fail-fast skip (Decision 23) ─────────────────────────────────
-
-
-def test_cascade_failfast_skips_secrets_when_earlier_fails(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """fail_fast=True + fail anterior ⇒ secrets gate result.status == 'skipped'."""
-    from engine import verify
-
-    captured: list[str] = []
-
-    def fake_invoke(spec, root, **kwargs):
-        captured.append(spec.name)
-        if spec.name == "check_cyclomatic_complexity":
-            return verify._ValidatorResult(
-                name=spec.name, status="fail", duration_ms=1
-            )
-        return verify._ValidatorResult(
-            name=spec.name, status="pass", duration_ms=1
-        )
-
-    monkeypatch.setattr(verify, "_invoke_validator", fake_invoke)
-    specs = verify._default_validator_specs(tmp_path)
-    results = verify._run_cascade(
-        specs, fail_fast=True, project_root=tmp_path, interactive=False
-    )
-    secrets = next(r for r in results if r.name == "check_secrets")
-    assert secrets.status == "skipped", (
-        f"secrets gate deve ser skipped após fail anterior no fail-fast; "
-        f"obtido {secrets.status}"
-    )
-    assert "check_secrets" not in captured, (
-        "fail-fast não pode sequer invocar o secrets gate após fail anterior"
-    )
-
-
-# ── Scenario 3: per-task fail blocks commit (gitleaks finding) ───────────────
+# ── Scenario: per-task fail blocks commit (gitleaks finding) ─────────────────
 
 
 def test_per_task_fail_blocks_commit(tmp_path: Path, monkeypatch) -> None:
@@ -221,14 +164,14 @@ def test_per_task_fail_blocks_commit(tmp_path: Path, monkeypatch) -> None:
     )
 
 
-# ── Scenario 4: override-justify permits commit ──────────────────────────────
+# ── Scenario: override-justify permits commit ────────────────────────────────
 
 
 def test_per_task_override_permits_commit(tmp_path: Path, monkeypatch) -> None:
     """SECRETS-OVERRIDE matching no commit body silencia o finding → pass.
 
-    Mesmo setup do cenário 3, mas COMMIT_EDITMSG carrega o override exato
-    ``(file, line, kind)`` — o finding vira silenced e o gate passa.
+    Mesmo setup do cenário per-task fail, mas COMMIT_EDITMSG carrega o override
+    exato ``(file, line, kind)`` — o finding vira silenced e o gate passa.
     """
     _git_init(tmp_path)
     _setup_workflow_config(tmp_path)
@@ -265,33 +208,7 @@ def test_per_task_override_permits_commit(tmp_path: Path, monkeypatch) -> None:
     )
 
 
-# ── Scenario 5: NO_SECRETS_GATE bypass (per-task hook) ───────────────────────
-
-
-def test_no_secrets_gate_bypass_logs_entry(tmp_path: Path, monkeypatch) -> None:
-    """NO_SECRETS_GATE=1 pula o gate e escreve entry JSONL de auditoria."""
-    import json
-
-    from engine import implement
-
-    monkeypatch.setenv("NO_SECRETS_GATE", "1")
-    result = implement._run_secrets_gate(tmp_path)
-
-    assert result["status"] == "warn"
-    assert result["blocking"] is False
-    assert "bypassed" in result["message"]
-
-    log_path = tmp_path / ".claude" / "forge" / "state" / "secrets-gate-bypass.jsonl"
-    assert log_path.is_file(), "bypass deve escrever trilha de auditoria JSONL"
-    lines = [ln for ln in log_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
-    assert len(lines) == 1, f"esperado 1 entry de bypass; got {len(lines)}"
-    entry = json.loads(lines[0])
-    assert "at" in entry and "reason" in entry, (
-        f"entry de bypass deve ter 'at' + 'reason'; got {entry}"
-    )
-
-
-# ── Scenario 6: smoke gitleaks real (skip when missing) ──────────────────────
+# ── Scenario: smoke gitleaks real (skip when missing) ────────────────────────
 
 
 @pytest.mark.skipif(
@@ -323,7 +240,7 @@ def test_smoke_gitleaks_real_detects_fixture(tmp_path: Path) -> None:
         )
 
 
-# ── Scenario 7: smoke trufflehog real (skip when missing) ────────────────────
+# ── Scenario: smoke trufflehog real (skip when missing) ──────────────────────
 
 
 @pytest.mark.skipif(
