@@ -15,7 +15,10 @@ from pathlib import Path
 
 from datetime import datetime, timezone
 
+import pytest
+
 from engine.qa import (
+    _atomic_write_text,
     _compute_duration_s,
     _finalize_qa_report,
     _normalize_iso_z,
@@ -248,6 +251,90 @@ def test_compute_duration_s_offset_without_z_intact() -> None:
     started = "2026-06-19T09:00:00+00:00"
     finished = datetime(2026, 6, 19, 9, 0, 45, tzinfo=timezone.utc)
     assert _compute_duration_s(started, finished) == 45.0
+
+
+# ---------------------------------------------------------------------------
+# PC-1 — qa-report.json write atômico (helper compartilhado + no torn file)
+# ---------------------------------------------------------------------------
+
+
+def test_atomic_write_text_roundtrips(tmp_path: Path) -> None:
+    """PC-1: o helper escreve o conteúdo íntegro e não deixa resíduo .tmp."""
+    target = tmp_path / "out.json"
+    payload = json.dumps({"hello": "ção", "n": 1}, ensure_ascii=False)
+    _atomic_write_text(target, payload)
+
+    assert target.is_file()
+    assert json.loads(target.read_text(encoding="utf-8")) == {"hello": "ção", "n": 1}
+    assert not (tmp_path / "out.json.tmp").exists()
+
+
+def test_atomic_write_text_failure_leaves_no_partial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PC-1: uma falha no meio do write (os.replace) não deixa o destino
+    corrompido nem o tmp órfão — o original é preservado/ausente, nunca
+    half-written."""
+    import engine.qa as qa_mod
+
+    target = tmp_path / "out.json"
+    target.write_text('{"original": true}', encoding="utf-8")
+
+    def _boom(*_args, **_kwargs):
+        raise OSError("simulated mid-write failure")
+
+    monkeypatch.setattr(qa_mod.os, "replace", _boom)
+
+    with pytest.raises(OSError):
+        _atomic_write_text(target, '{"new": "incompleto"}')
+
+    # Destino preservado (nunca half-written).
+    assert json.loads(target.read_text(encoding="utf-8")) == {"original": True}
+    # tmp não sobra.
+    assert not (tmp_path / "out.json.tmp").exists()
+
+
+def test_phase0_skeleton_uses_atomic_write(tmp_path: Path) -> None:
+    """PC-1: Phase 0 escreve qa-report.json atomicamente — round-trips e sem
+    .tmp residual."""
+    scope = Scope(type="feature", target="atomic-skel", paths=())
+    tree = create_run_tree(scope, project_root=tmp_path)
+    cfg = QAConfig()
+    _write_qa_report_skeleton(scope, tree, cfg)
+
+    report_path = tree.root / "qa-report.json"
+    assert report_path.is_file()
+    assert json.loads(report_path.read_text(encoding="utf-8"))["verdict"] == "pending"
+    assert not (tree.root / "qa-report.json.tmp").exists()
+
+
+def test_finalize_qa_report_atomic_no_partial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PC-1: se o finalize falha no os.replace, o skeleton anterior é
+    preservado (verdict=pending) — nunca um qa-report.json torn."""
+    import engine.qa as qa_mod
+
+    scope = Scope(type="feature", target="atomic-fin", paths=())
+    tree = create_run_tree(scope, project_root=tmp_path)
+    cfg = QAConfig()
+    _write_qa_report_skeleton(scope, tree, cfg)
+
+    report_path = tree.root / "qa-report.json"
+
+    def _boom(*_args, **_kwargs):
+        raise OSError("simulated mid-write failure")
+
+    monkeypatch.setattr(qa_mod.os, "replace", _boom)
+
+    result = synthesize([])
+    with pytest.raises(OSError):
+        _finalize_qa_report(tree, result)
+
+    # Skeleton preservado — não half-written.
+    preserved = json.loads(report_path.read_text(encoding="utf-8"))
+    assert preserved["verdict"] == "pending"
+    assert not (tree.root / "qa-report.json.tmp").exists()
 
 
 def test_finalize_qa_report_tolerates_missing_skeleton(tmp_path: Path) -> None:

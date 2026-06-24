@@ -712,6 +712,62 @@ def _reattach_run_tree(run_dir: Path, _checkpoint: Checkpoint) -> RunTree:
     )
 
 
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Escreve ``content`` em ``path`` de forma ATÔMICA (tmp + fsync + replace).
+
+    PC-1 (review pr27): centraliza o padrão de write durável que o
+    ``_write_sandbox_results`` já aplicava (A3/A10) pra reusá-lo nas escritas
+    de ``qa-report.json`` (Phase 0 skeleton + Phase 4 finalize), que antes
+    usavam ``write_text`` pelado — um crash no meio do flush deixava o
+    output PRINCIPAL da run torn/parcial.
+
+    Mecânica (Mandamento 3 — DRY, fonte única):
+      1. escreve num tmp irmão (``{path}.tmp``);
+      2. ``flush`` + ``os.fsync`` do arquivo (durabiliza o conteúdo);
+      3. ``os.replace`` (fronteira atômica — POSIX e Windows same-fs);
+      4. ``os.fsync`` do diretório pai (durabiliza a ENTRADA do rename;
+         best-effort — plataformas sem fsync de dir levantam OSError, que
+         engolimos, pois o fsync do arquivo já cobre o caso comum).
+
+    O ``finally`` limpa o tmp se o ``os.replace`` não chegou a renomeá-lo —
+    nunca deixa resíduo ``.tmp``. ``OSError`` (ex.: disco cheio) PROPAGA:
+    melhor falhar alto do que persistir um half-write silencioso.
+
+    Args:
+        path: destino final.
+        content: texto já serializado a persistir.
+
+    Raises:
+        OSError: se a escrita/replace falhar (disco cheio, perm). O caller
+            decide o handling — não silenciamos.
+    """
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        with tmp.open("w", encoding="utf-8") as fh:
+            fh.write(content)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+        # fsync do diretório pai APÓS o rename — durabiliza a entrada do
+        # rename em POSIX. Best-effort: Windows / filesystems exóticos sem
+        # fsync de dir levantam OSError, que engolimos (o fsync do arquivo
+        # acima já cobre o caso comum).
+        try:
+            dir_fd = os.open(str(path.parent), os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError:
+            pass
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
 def _write_qa_report_skeleton(
     scope: Scope, run_tree: RunTree, cfg: QAConfig
 ) -> None:
@@ -759,9 +815,11 @@ def _write_qa_report_skeleton(
         },
         "findings": [],
     }
-    (run_tree.root / "qa-report.json").write_text(
+    # PC-1 (review pr27): write atômico — qa-report.json é o output PRINCIPAL
+    # da run; um torn write deixava a run inconsistente.
+    _atomic_write_text(
+        run_tree.root / "qa-report.json",
         json.dumps(report, indent=2, ensure_ascii=False),
-        encoding="utf-8",
     )
 
 
@@ -862,9 +920,11 @@ def _finalize_qa_report(
         },
         "findings": list(result.findings),
     }
-    report_path.write_text(
+    # PC-1 (review pr27): write atômico — finalize sobrescreve o output
+    # PRINCIPAL; um torn write no finalize perderia verdict/findings.
+    _atomic_write_text(
+        report_path,
         json.dumps(report, indent=2, ensure_ascii=False),
-        encoding="utf-8",
     )
 
 
@@ -1152,40 +1212,17 @@ def _write_sandbox_results(
         }
         for r in results
     ]
-    # A3 (review pr27): write ATÔMICO (tmp + os.replace + fsync). O plain
-    # write_text anterior podia deixar um arquivo torn/parcial se o processo
-    # morresse no meio do flush — o resume então replay-aria lixo verbatim.
-    # os.replace é atômico em POSIX e Windows pra rename same-filesystem.
+    # A3/A10 (review pr27): write ATÔMICO (tmp + fsync + os.replace + dir
+    # fsync). O plain write_text anterior podia deixar um arquivo torn/parcial
+    # se o processo morresse no meio do flush — o resume então replay-aria
+    # lixo verbatim. PC-1 (review pr27): a mecânica vive em _atomic_write_text
+    # (fonte única — Mandamento 3); aqui só serializamos e delegamos. Sem
+    # mudança de comportamento (mesmo tmp suffix, mesma durabilidade).
     target = run_tree.root / "sandbox-results.json"
-    tmp = target.with_suffix(target.suffix + ".tmp")
-    try:
-        with tmp.open("w", encoding="utf-8") as fh:
-            json.dump(payload, fh, indent=2, ensure_ascii=False)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, target)
-        # A10 (review pr27 r2): fsync do diretório pai APÓS o rename. O fsync do
-        # arquivo (acima) durabiliza o conteúdo, mas a ENTRADA do rename no
-        # diretório só é garantida em disco após fsync do dir. Sem isso, um
-        # crash logo após o os.replace poderia perder o rename (o resume não
-        # encontraria sandbox-results.json e re-rodaria — ou pior, veria o
-        # arquivo antigo). Best-effort: plataformas sem fsync de dir (Windows)
-        # levantam OSError, que swallowamos — o fsync do arquivo já cobre o
-        # caso comum.
-        try:
-            dir_fd = os.open(str(target.parent), os.O_RDONLY)
-            try:
-                os.fsync(dir_fd)
-            finally:
-                os.close(dir_fd)
-        except OSError:
-            pass
-    finally:
-        if tmp.exists():
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
+    _atomic_write_text(
+        target,
+        json.dumps(payload, indent=2, ensure_ascii=False),
+    )
 
 
 def _mask_var_name(name: str) -> str:
