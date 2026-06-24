@@ -209,3 +209,65 @@ def test_stale_sandbox_results_rerun_when_checkpoint_below_phase_3(
     names = {r.get("fixture_name") for r in results}
     assert "STALE-GHOST" not in names, "engine confiou no sandbox-results stale"
     assert "validator-claim-foo" in names, "engine não re-rodou o sandbox"
+
+
+@pytest.mark.integration
+def test_unresolvable_validator_claim_surfaces_finding_not_clean(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A4 (review pr27): validator-claim com validator irresolvível →
+    finding surfaced (não false-clean) + warning em stderr.
+
+    O validator declarado mora num root allowed (project/validators/) mas o
+    arquivo NÃO existe → run_sandbox devolve status=error. Antes isso era
+    dropado → report 'clean' pro vetor 'validator que mente'. Agora deriva
+    um finding medium e avisa em stderr.
+    """
+    slug = "unresolvable-feature"
+    proj = _make_feature_project(tmp_path, slug)
+    workflow_config = {"qa": {"enabled": True}}
+
+    # project/validators/ existe (root allowed pela A1), mas o validator
+    # declarado (ghost.py) NÃO existe → status=error em run_sandbox.
+    (proj / "validators").mkdir(parents=True)
+
+    scope = resolve_scope(slug, project_root=proj)
+    rt = create_run_tree(scope, project_root=proj)
+
+    # Mini-tree materializado (input precisa resolver dentro do sandbox).
+    mini_tree = rt.fixtures_dir / "validator-claim-ghost" / "src"
+    mini_tree.mkdir(parents=True)
+    (mini_tree / "Offending.kt").write_text("// x\n", encoding="utf-8")
+
+    draft = _validator_claim_executable_draft(
+        fixture_path="fixtures/validator-claim-ghost.yaml",
+        validator_path="validators/ghost.py",  # dentro do root allowed, inexistente
+        tree_rel_path="src/Offending.kt",
+    )
+    (rt.findings_dir / "validator-claim.json").write_text(
+        json.dumps({"findings": [draft]}), encoding="utf-8"
+    )
+
+    from engine.qa import _write_qa_report_skeleton
+
+    _write_qa_report_skeleton(scope, rt, QAConfig())
+    write_checkpoint(
+        rt.root,
+        run_id=rt.run_id,
+        scope_type=scope.type,
+        scope_target=scope.target,
+        last_phase_completed=0,
+        findings_partial_count=1,
+    )
+
+    run_qa(slug, project_root=proj, workflow_config=workflow_config)
+
+    final = json.loads((rt.root / "qa-report.json").read_text(encoding="utf-8"))
+    vectors = {f.get("vector") for f in final["findings"]}
+    assert "validator-claim-unresolvable" in vectors, (
+        f"validator irresolvível não foi surfaced — false-clean; "
+        f"vetores={vectors}"
+    )
+    # Não settla clean (há finding) e stderr avisa.
+    captured = capsys.readouterr()
+    assert "irresolvível" in captured.err

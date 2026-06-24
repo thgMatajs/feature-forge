@@ -133,6 +133,7 @@ def findings_from_sandbox_results(
     results: list[Any],
     *,
     run_id: str | None = None,
+    validator_claim_fixtures: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Converte SandboxResult/SandboxResultStub problematicos em findings.
 
@@ -142,9 +143,15 @@ def findings_from_sandbox_results(
       - ``status == "timeout"`` -> finding severity=medium,
         vector=sandbox-timeout.
 
-    Status ``ok`` / ``skipped-budget`` / ``error`` nao geram findings
-    automaticos (``error`` pode ser bug do validator nao do sandbox —
-    deixar pro auditor LLM julgar).
+    A4 (review pr27): ``status == "error"`` num fixture VALIDATOR-CLAIM
+    (``fixture_name`` em ``validator_claim_fixtures``) -> finding
+    severity=medium, vector=validator-claim-unresolvable. Antes isso era
+    DROPADO; pro vetor "validator que mente", um validator irresolvível
+    (project nem FORGE_HOME) significava NO evidence + NO sinal → false-clean.
+    Agora é surfaced. ``error`` de fixtures fora desse set continua dropado
+    (pode ser bug do validator, não do sandbox — deixa pro auditor LLM julgar).
+
+    Status ``ok`` / ``skipped-budget`` nao geram findings automaticos.
 
     Os findings sao deterministicos: fingerprint canonical-form (Decisao
     25) garante que re-runs com mesmo breach/timeout dedupam corretamente
@@ -177,13 +184,41 @@ def findings_from_sandbox_results(
             fixture_name = "unknown-fixture"
 
         status = getattr(r, "status", "ok")
-        if status not in ("sandbox-breach", "timeout"):
+        # A4: ``error`` só vira finding pra fixture validator-claim conhecido.
+        vc_set = validator_claim_fixtures or set()
+        is_unresolvable_vc = status == "error" and fixture_name in vc_set
+        if status not in ("sandbox-breach", "timeout") and not is_unresolvable_vc:
             continue
 
         seq += 1
         suffix = f"{seq:04d}"
 
-        if status == "sandbox-breach":
+        if is_unresolvable_vc:
+            severity = "medium"
+            vector = "validator-claim-unresolvable"
+            title = (
+                f"validator irresolvível em fixture '{fixture_name}' — "
+                f"claim não verificável"
+            )
+            description = (
+                f"O validator do claim '{fixture_name}' não pôde ser resolvido "
+                f"(nem em project/validators/ nem em FORGE_HOME/validators/), "
+                f"então o sandbox não conseguiu verificar se o validator de fato "
+                f"detecta o contra-exemplo. Erro: "
+                f"{getattr(r, 'error', '') or 'sem mensagem'}"
+            )
+            auditor_reasoning = (
+                "Validator-claim com validator irresolvível NÃO pode ser "
+                "settlado como clean: a ausência de evidência não é evidência "
+                "de ausência. Medium porque o claim fica não-verificável (pode "
+                "ser path errado no descritor OU validator realmente ausente) — "
+                "user decide via forge evolve."
+            )
+            evolution_summary = (
+                f"resolver o validator_path do claim '{fixture_name}' "
+                f"(corrigir descritor ou confirmar validator ausente)"
+            )
+        elif status == "sandbox-breach":
             severity = "critical"
             vector = "sandbox-breach"
             title = f"sandbox breach detectado em fixture '{fixture_name}'"
@@ -224,7 +259,12 @@ def findings_from_sandbox_results(
         if run_id:
             finding_id = f"qa-{run_id}-{suffix}"
         else:
-            finding_id = f"sandbox-{vector.split('-')[1]}-{fixture_name}-{suffix}"
+            # Fallback ID legível: usa o sufixo do vector (breach/timeout) ou o
+            # vector inteiro pro novo validator-claim-unresolvable.
+            vector_tag = (
+                vector.split("-", 1)[1] if vector.startswith("sandbox-") else vector
+            )
+            finding_id = f"sandbox-{vector_tag}-{fixture_name}-{suffix}"
 
         sandbox_result_evidence: dict[str, Any] = {
             "status": status,

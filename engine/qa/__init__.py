@@ -457,6 +457,13 @@ def run_qa(
         # findings derivados antes do synthesize pra que dedup + verdict
         # logic considerem os problemas de isolamento como first-class
         # findings (breach -> critical -> BLOCK).
+        # A4 (review pr27): todo fixture reconstruído é validator-claim
+        # (_reconstruct_fixtures_from_findings filtra por vetor). Esse set
+        # permite que findings_from_sandbox_results derive um finding pro
+        # caso "validator irresolvível" (status=error) em vez de droppar
+        # silenciosamente → false-clean pro vetor "validator que mente".
+        vc_fixture_names = {fx.name for fx in fixtures}
+
         stubs: list[SandboxResultStub] = []
         if sandbox_results_file.exists():
             try:
@@ -465,9 +472,22 @@ def run_qa(
                     raw if isinstance(raw, list) else raw.get("results", [])
                 )
                 derived = findings_from_sandbox_results(
-                    stubs, run_id=run_tree.run_id
+                    stubs,
+                    run_id=run_tree.run_id,
+                    validator_claim_fixtures=vc_fixture_names,
                 )
                 all_findings.extend(derived)
+                # A4: warning explícito em stderr pra cada validator-claim com
+                # validator irresolvível — visibilidade além do finding no report.
+                for s in stubs:
+                    if s.status == "error" and s.fixture_name in vc_fixture_names:
+                        print(
+                            f"⚠ validator-claim '{s.fixture_name}': validator "
+                            f"irresolvível — claim não verificável "
+                            f"({s.error or 'sem detalhe'}). Surfaced como finding "
+                            f"medium (não settla clean).",
+                            file=sys.stderr,
+                        )
             except (json.JSONDecodeError, OSError) as exc:
                 print(
                     f"⚠ sandbox-results.json malformado ({exc}). "

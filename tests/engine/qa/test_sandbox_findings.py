@@ -101,6 +101,53 @@ def test_synthesis_ignores_ok_and_skipped_results() -> None:
     assert findings == []
 
 
+# ---------------------------------------------------------------------------
+# A4 (review pr27) — validator-claim com validator irresolvível → finding
+# (anti silent false-clean)
+# ---------------------------------------------------------------------------
+
+
+def test_synthesis_error_on_validator_claim_derives_finding() -> None:
+    """status=error num fixture validator-claim → finding (não silent drop).
+
+    Quando o validator de um claim não resolve (project nem FORGE_HOME),
+    run_sandbox devolve status=error. Antes isso era DROPADO → false-clean
+    pro vetor 'validator que mente'. Agora deriva um finding surfaced.
+    """
+    stub = SandboxResultStub(
+        fixture_name="validator-claim-foo",
+        status="error",
+        error="validator_path não é arquivo: validators/ghost.py",
+    )
+    findings = findings_from_sandbox_results(
+        [stub],
+        validator_claim_fixtures={"validator-claim-foo"},
+    )
+    assert len(findings) == 1
+    f = findings[0]
+    assert f["vector"] == "validator-claim-unresolvable"
+    assert f["severity"] in ("low", "medium")
+    assert "irresolv" in f["title"].lower() or "irresolv" in f["description"].lower()
+    assert f["evidence"]["sandbox_result"]["status"] == "error"
+    assert len(f["fingerprint"]) == 64
+
+
+def test_synthesis_error_without_validator_claim_set_still_dropped() -> None:
+    """status=error sem o fixture estar no set validator-claim → drop (compat).
+
+    Mantém o comportamento legado: error de fixture não-validator-claim pode
+    ser bug do validator, não do sandbox — deixa pro auditor LLM julgar.
+    """
+    stub = SandboxResultStub(fixture_name="other", status="error", error="boom")
+    findings = findings_from_sandbox_results([stub])
+    assert findings == []
+    # Mesmo passando o set, um fixture FORA dele continua dropado.
+    findings2 = findings_from_sandbox_results(
+        [stub], validator_claim_fixtures={"validator-claim-foo"}
+    )
+    assert findings2 == []
+
+
 def test_synthesis_finding_uses_run_id_when_provided() -> None:
     """ID canonico: qa-<run_id>-NNNN quando run_id fornecido."""
     stub = SandboxResultStub(fixture_name="x", status="timeout")
