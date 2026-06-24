@@ -1072,7 +1072,19 @@ def _reconstruct_fixtures_from_findings(
                     validator = forge_candidate
                 else:
                     # Nem projeto nem FORGE_HOME têm o validator — preserva o
-                    # comportamento atual (resolve sob project_root).
+                    # comportamento atual (resolve sob project_root, sandbox
+                    # vira status=error e A4 surfaça validator-claim-unresolvable
+                    # downstream). PC-3 (review pr27): warning mentor-calmo
+                    # nomeando os paths tentados, pra debuggability na hora do
+                    # reconstruct (o finding A4 chega só depois do sandbox).
+                    print(
+                        f"⚠ validator-claim '{name}': validator_path "
+                        f"'{validator_path}' não resolve nem no projeto "
+                        f"({project_candidate}) nem no FORGE_HOME "
+                        f"({forge_candidate}). Claim não verificável — surfaçado "
+                        f"como finding downstream (A4).",
+                        file=sys.stderr,
+                    )
                     validator = project_candidate
 
         # A1 (review pr27): allowlist de roots. validator_path vem de uma

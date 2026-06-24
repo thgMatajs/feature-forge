@@ -152,6 +152,34 @@ def test_validator_path_unresolvable_keeps_relative_under_project(
     assert fixtures[0].validator_path == project_root / "validators" / "ghost.py"
 
 
+def test_validator_path_unresolvable_warns_with_tried_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    """PC-3 (review pr27): quando o validator_path relativo não resolve nem no
+    projeto nem no FORGE_HOME, um warning mentor-calmo em stderr nomeia os
+    paths tentados (debuggability na hora do reconstruct). Não muda a
+    resolução nem o finding A4 downstream."""
+    forge_home = tmp_path / "forge_home"
+    (forge_home / "validators").mkdir(parents=True)
+    monkeypatch.setenv("FORGE_HOME", str(forge_home))
+
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    run_tree = _run_tree(tmp_path / "run")
+
+    capsys.readouterr()  # limpa buffer
+    findings = [_vc_finding(validator_path="validators/ghost.py")]
+    _reconstruct_fixtures_from_findings(
+        findings, run_tree, project_root=project_root
+    )
+
+    err = capsys.readouterr().err
+    assert "validators/ghost.py" in err
+    # Nomeia os dois candidatos tentados (projeto + FORGE_HOME).
+    assert str(project_root / "validators" / "ghost.py") in err
+    assert str(forge_home / "validators" / "ghost.py") in err
+
+
 # ---------------------------------------------------------------------------
 # A1 (review pr27) — validator_path allowlist (anti arbitrary code execution)
 #
