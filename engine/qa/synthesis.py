@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -398,6 +399,15 @@ def hydrate_validator_claim_evidence(
         if name in ambiguous:
             # WR-04: fixture_name ambíguo → não hidrata (conservador, sem
             # cross-contaminação). Permanece None (draft-válido).
+            # B3 (review pr27): loga o skip pra traceability — sem isso o
+            # finding fica sem sandbox_result e o operador não sabe por quê.
+            print(
+                f"⚠ hydrate validator-claim: fixture_name '{name}' ambíguo "
+                f"(2+ stubs colidem no basename) — sandbox_result NÃO hidratado "
+                f"pra evitar cross-contaminação (WR-04). Draft permanece sem "
+                f"evidence de sandbox.",
+                file=sys.stderr,
+            )
             out.append(f)
             continue
         stub = by_name.get(name)

@@ -355,3 +355,48 @@ def test_run_qa_malformed_sandbox_results_warns_and_continues(
     # (run_qa cria run_id novo cada chamada), confiamos no teste
     # unitario test_run_qa_reads_sandbox_results_when_present + a
     # logica try/except no codigo.
+
+
+def test_run_qa_scalar_json_root_sandbox_results_does_not_crash(
+    tmp_path: Path,
+) -> None:
+    """B2 (review pr27): sandbox-results.json com raiz JSON ESCALAR (não
+    list nem dict) não derruba run_qa com AttributeError.
+
+    raw.get num int/str levantaria AttributeError NÃO capturado pelo except
+    (que só pega JSONDecodeError/OSError). O guard isinstance(raw, dict)
+    fecha o caso — escalar vira [] (sem stubs) e a run segue.
+    """
+    import json as _json
+
+    from engine.qa import _write_qa_report_skeleton, run_qa
+    from engine.qa.checkpoint import write_checkpoint
+    from engine.qa.ingest import QAConfig, create_run_tree
+    from engine.qa.scope import resolve_scope
+
+    slug = "scalar-root"
+    proj = _make_feature_project(tmp_path, slug)
+    workflow_config = {"qa": {"enabled": True}}
+
+    scope = resolve_scope(slug, project_root=proj)
+    rt = create_run_tree(scope, project_root=proj)
+
+    (rt.findings_dir / "auditor.json").write_text(
+        _json.dumps({"findings": []}), encoding="utf-8"
+    )
+    # Raiz escalar (JSON válido, mas nem list nem dict).
+    (rt.root / "sandbox-results.json").write_text("42", encoding="utf-8")
+
+    _write_qa_report_skeleton(scope, rt, QAConfig())
+    write_checkpoint(
+        rt.root,
+        run_id=rt.run_id,
+        scope_type=scope.type,
+        scope_target=scope.target,
+        last_phase_completed=3,
+        findings_partial_count=0,
+    )
+
+    # Não deve raise (antes do B2: AttributeError em raw.get).
+    rc = run_qa(slug, project_root=proj, workflow_config=workflow_config)
+    assert rc in (0, 1)

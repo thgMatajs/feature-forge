@@ -468,8 +468,13 @@ def run_qa(
         if sandbox_results_file.exists():
             try:
                 raw = json.loads(sandbox_results_file.read_text(encoding="utf-8"))
+                # B2 (review pr27): raw pode ser qualquer JSON válido (list,
+                # dict, ou escalar). raw.get num escalar levantaria
+                # AttributeError NÃO capturado abaixo. Guarda os 3 casos.
                 stubs = hydrate_sandbox_results(
-                    raw if isinstance(raw, list) else raw.get("results", [])
+                    raw
+                    if isinstance(raw, list)
+                    else (raw.get("results", []) if isinstance(raw, dict) else [])
                 )
                 derived = findings_from_sandbox_results(
                     stubs,

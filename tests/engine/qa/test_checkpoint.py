@@ -287,6 +287,21 @@ def test_find_resumable_filters_by_scope_type(tmp_path: Path) -> None:
     assert result.name == "r-feature"
 
 
+def test_find_resumable_none_scope_type_does_not_exclude_typed(
+    tmp_path: Path,
+) -> None:
+    """B1 (review pr27): scope_type=None NÃO exclui reports typed.
+
+    Sem guardar isinstance(scope_type, str), um scope_type None faria
+    'feature' != None → True → excluiria TODO report typed. Defense-in-depth:
+    com None, o filtro de tipo é leniente e o candidato permanece resumível.
+    """
+    _seed_run(tmp_path, "auth", "r-feature", scope_type="feature")
+    result = find_resumable_run(tmp_path, None, "auth")  # type: ignore[arg-type]
+    assert result is not None
+    assert result.name == "r-feature"
+
+
 def test_find_resumable_lenient_when_type_absent(tmp_path: Path) -> None:
     """WR-01: qa-report sem run.scope.type (schema legado/migrado) NÃO é
     excluído — só excluímos quando o tipo está presente E diverge. Backward-

@@ -290,7 +290,16 @@ def find_resumable_run(
             report_scope = run_block.get("scope")
             if isinstance(report_scope, dict):
                 report_type = report_scope.get("type")
-                if isinstance(report_type, str) and report_type != scope_type:
+                # B1 (review pr27): guarda AMBOS os lados. Sem o
+                # ``isinstance(scope_type, str)``, um ``scope_type`` None
+                # (caller que não passou tipo) faria ``report_type != None``
+                # → True pra todo report typed, excluindo TODOS os candidatos
+                # (defense-in-depth; latente hoje pois callers passam str).
+                if (
+                    isinstance(scope_type, str)
+                    and isinstance(report_type, str)
+                    and report_type != scope_type
+                ):
                     continue
         candidates.append(entry)
 
