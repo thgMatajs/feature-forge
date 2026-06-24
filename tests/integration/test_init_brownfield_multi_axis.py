@@ -602,7 +602,6 @@ def test_resolver_error_gate_pauses_not_aborts(
     with pytest.raises(PausedForInputError):
         _resolver_error_gate(
             ["DEP-MISSING: card 'x' requires 'y' but no active card provides it."],
-            selected_names=["x"],
             project_root=tmp_path,
         )
 
@@ -634,7 +633,6 @@ def test_resolver_error_gate_question_short_errors_to_stdout(
         with pytest.raises(PausedForInputError):
             _resolver_error_gate(
                 errors,
-                selected_names=["alpha", "beta", "gamma"],
                 project_root=tmp_path,
             )
     rendered = buf.getvalue()

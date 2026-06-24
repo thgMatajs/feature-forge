@@ -64,6 +64,7 @@ Milestone: campanha de piloto — unblock do ciclo AI-first (resume de `init`/`p
 - M6: `intent-id` é output não-confiável do host. `read_response` levanta `IntentMismatchError` (arquivo preservado) e `host_is_replaying` retorna `False` quando o id não é string — evita `TypeError` cru em `written_id in log` quando o valor é lista/dict unhashable.
 - B1: `read_pending` (`engine/ui/intent_state.py`) levanta `JsonIOError` em root não-dict, simétrico ao contrato dict da response.
 - B2: remove o param morto `selected_names` de `_resolver_error_gate` (`engine/init.py`) e o arg computado-e-descartado no call site.
+- B2 (follow-up): a remoção do `selected_names` no B2 deixou passar 2 call sites em `tests/integration/test_init_brownfield_multi_axis.py` que ainda passavam o kwarg — `main` ficou RED na lane de integração com `TypeError: ... unexpected keyword argument 'selected_names'`. Os dois calls (`test_resolver_error_gate_pauses_not_aborts`, `test_resolver_error_gate_question_short_errors_to_stdout`) agora alinham à assinatura atual `(errors, *, project_root)`. Release fecha a regressão.
 - B3: `scan_dir` (`check-screen-layout.py`) protege `directory.iterdir()` com try/except — dir inacessível é pulado com aviso em vez de estourar traceback.
 
 ### Fixed (pilot R8 — qa flow polish)
