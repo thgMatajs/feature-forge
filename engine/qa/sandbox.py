@@ -507,9 +507,26 @@ def _run_bounded(
     t_out.join(timeout=_JOIN_TIMEOUT_S)
     t_err.join(timeout=_JOIN_TIMEOUT_S)
 
+    # WR-02 (review pr27 r3): no caminho NORMAL (exit-code, sem timeout do
+    # processo), um grandchild benigno que herdou os pipes pode mantê-los
+    # abertos depois que o filho direto saiu com código 0. Nesse caso o
+    # ``.join(timeout)`` da drain thread ESTOURA e a captura é parcial — antes
+    # isso era devolvido com ``truncated=False`` (apresentado como completo).
+    # Marca ``truncated=True`` quando uma thread não terminou no caminho normal,
+    # pra a saída parcial nunca ser tratada como íntegra. Não toca o caminho de
+    # timeout (acima), que propaga ``TimeoutExpired`` e vira status=timeout.
+    drain_incomplete = t_out.is_alive() or t_err.is_alive()
+    if drain_incomplete:
+        print(
+            "⚠ sandbox: drain thread não finalizou dentro de "
+            f"{_JOIN_TIMEOUT_S}s no caminho normal (grandchild segurando o "
+            "pipe?) — captura marcada truncated.",
+            file=sys.stderr,
+        )
+
     stdout = b"".join(out_sink).decode("utf-8", errors="replace")
     stderr = b"".join(err_sink).decode("utf-8", errors="replace")
-    truncated = out_trunc[0] or err_trunc[0]
+    truncated = out_trunc[0] or err_trunc[0] or drain_incomplete
     return proc.returncode, stdout, stderr, truncated
 
 

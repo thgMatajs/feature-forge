@@ -1379,3 +1379,99 @@ def test_forking_validator_does_not_hang_on_timeout(tmp_path: Path) -> None:
     )
     assert len(results) == 1
     assert results[0].status == "timeout"
+
+
+# ---------------------------------------------------------------------------
+# WR-02 (review pr27 r3): drain join estoura no caminho NORMAL → truncated
+# ---------------------------------------------------------------------------
+
+
+def test_normal_path_drain_join_timeout_marks_truncated(tmp_path: Path) -> None:
+    """WR-02: no caminho normal (exit-code 0, SEM timeout do processo), se uma
+    drain thread não termina dentro do ``_JOIN_TIMEOUT_S`` porque um grandchild
+    benigno herdou e segura o write-end do pipe, o result DEVE vir com
+    ``truncated=True`` — captura parcial nunca é apresentada como íntegra.
+
+    Comportamento (behavioral, determinístico):
+
+    - O validator forka um grandchild que herda stdout e dorme ~3s (acima do
+      join-timeout de 2.0s), depois o pai (filho direto) sai com código 0
+      imediatamente.
+    - ``proc.wait(timeout=...)`` retorna normalmente (sem ``TimeoutExpired``):
+      caminho normal, NÃO o de timeout. Nenhum killpg é disparado aqui.
+    - A drain thread de stdout continua bloqueada no pipe que o grandchild
+      mantém aberto → ``t_out.join(timeout=2.0)`` estoura → ``t_out.is_alive()``
+      → ``drain_incomplete`` True → ``truncated`` True.
+
+    Pré-fix: ``truncated = out_trunc[0] or err_trunc[0]`` (sem o termo
+    ``drain_incomplete``) → este result vinha ``truncated=False``, apresentando
+    a captura parcial como completa. Remover ``or drain_incomplete`` da
+    implementação faz este teste falhar.
+    """
+    import time as _time
+
+    run_dir = tmp_path / "run"
+    validators_dir = tmp_path / "validators"
+    sandbox_fixtures = run_dir / "fixtures"
+
+    # Pai sai com exit-code 0 de imediato (caminho normal). O grandchild herda
+    # stdout e segura o pipe dormindo 3s — acima do join-timeout (2.0s) das
+    # drain threads. No caminho normal NÃO há killpg, então a drain thread de
+    # stdout fica viva quando o ``.join(timeout)`` estoura.
+    validator = _write_validator(
+        validators_dir,
+        "normal_exit_grandchild.py",
+        """
+        import os
+        import sys
+        import time
+
+        pid = os.fork()
+        if pid == 0:
+            # Grandchild: segura SÓ o stdout herdado aberto por 4s (> join-
+            # timeout). Fecha stderr de imediato pra que a drain thread de
+            # stderr termine na hora — só a de stdout estoura o join.
+            os.close(2)
+            time.sleep(4)
+            os._exit(0)
+        # Pai (filho direto) sai com 0 IMEDIATAMENTE — caminho normal, sem
+        # timeout do processo. Fecha o próprio stdout pra que o único write-end
+        # remanescente seja o do grandchild (caso contrário o pai sair já daria
+        # EOF cedo demais).
+        sys.exit(0)
+        """,
+    )
+    inp = _input_file(sandbox_fixtures, "fx-normal-grandchild.json")
+
+    fixture = Fixture(
+        name="fx-normal-grandchild", input_path=inp, validator_path=validator
+    )
+
+    started = _time.monotonic()
+    results = run_sandbox(
+        # per_validator generoso: o pai sai na hora, então o timeout do
+        # processo NUNCA dispara — o que exercita é o join-timeout das threads.
+        run_dir,
+        [fixture],
+        budget_total_s=30.0,
+        per_validator_s=20.0,
+    )
+    elapsed = _time.monotonic() - started
+
+    assert len(results) == 1
+    r = results[0]
+    # Caminho normal: o processo saiu sozinho com 0, não timeout.
+    assert r.status == "ok"
+    assert r.exit_code == 0
+    # O join-timeout estourou (~2.0s) porque o grandchild segurou o pipe; a run
+    # não esperou os 4s inteiros do grandchild (daemon thread + join bounded).
+    assert elapsed < 3.5, (
+        f"run esperou {elapsed:.1f}s — join não estava bounded no caminho "
+        f"normal (esperado ~2.0s do _JOIN_TIMEOUT_S)"
+    )
+    # Núcleo do WR-02: captura parcial marcada truncated. Falha se o termo
+    # ``or drain_incomplete`` for removido da implementação.
+    assert r.truncated is True, (
+        "WR-02: drain join estourou no caminho normal mas truncated veio False "
+        "— captura parcial apresentada como íntegra"
+    )
