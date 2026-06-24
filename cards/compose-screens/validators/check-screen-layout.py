@@ -46,14 +46,22 @@ Severity
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
+from typing import Iterator
 
 # Escopo Compose por segmentos de path. Scripts de card são subprocess
 # isolados (sem módulo compartilhado), então a constante é local — espelha
 # check-no-suppress.py do mesmo card.
 COMPOSE_PATH_SEGMENTS = ("/androidApp/", "/composeApp/src/")
+
+# Dirs ignorados na varredura: gerados, VCS, deps. Espelha check-no-suppress.py
+# do mesmo card (subprocess isolado, sem módulo compartilhado) (M1).
+EXCLUDED_DIR_NAMES = frozenset(
+    {"build", ".gradle", "node_modules", ".git", ".idea"}
+)
 
 SCREEN_RE = re.compile(r"^(?P<screen>[A-Z][A-Za-z0-9]*)Screen\.kt$")
 CONTENT_RE = re.compile(r"^(?P<screen>[A-Z][A-Za-z0-9]*)Content\.kt$")
@@ -65,11 +73,49 @@ def in_compose_scope(path: Path) -> bool:
     return any(seg in p for seg in COMPOSE_PATH_SEGMENTS)
 
 
+def iter_kt_files(root: Path) -> Iterator[Path]:
+    """Itera arquivos `.kt` sob `root`, pulando dirs gerados/VCS/deps e SEM
+    descer em dirs symlinkados (M1 — evita varredura de build/ e loop/hang).
+    """
+    stack: list[Path] = [root]
+    while stack:
+        current = stack.pop()
+        try:
+            entries = list(os.scandir(current))
+        except OSError:
+            continue
+        for entry in entries:
+            name = entry.name
+            try:
+                is_dir = entry.is_dir(follow_symlinks=False)
+            except OSError:
+                continue
+            if is_dir:
+                if name in EXCLUDED_DIR_NAMES or name.startswith("."):
+                    continue
+                if entry.is_symlink():
+                    continue
+                stack.append(Path(entry.path))
+                continue
+            if name.endswith(".kt"):
+                yield Path(entry.path)
+
+
 def scan_dir(directory: Path) -> list[str]:
     """Retorna failures de pareamento {Screen}Screen.kt ↔ {Screen}Content.kt."""
     screens: set[str] = set()
     contents: set[str] = set()
-    for f in directory.iterdir():
+    try:
+        entries = list(directory.iterdir())
+    except OSError as exc:
+        # B3: dir inacessível (permissão/IO) — pula em vez de estourar.
+        print(
+            f"[compose-screens/check-screen-layout] não consegui listar "
+            f"{directory} ({exc.__class__.__name__}: {exc}) — pulando.",
+            file=sys.stderr,
+        )
+        return []
+    for f in entries:
         if not f.is_file():
             continue
         m = SCREEN_RE.match(f.name)
@@ -100,7 +146,7 @@ def main() -> int:
     root = Path(args.project_root).resolve()
 
     # Dirs candidatos: parents de arquivos .kt sob escopo Compose.
-    candidate_dirs = {kt.parent for kt in root.rglob("*.kt") if in_compose_scope(kt)}
+    candidate_dirs = {kt.parent for kt in iter_kt_files(root) if in_compose_scope(kt)}
 
     failures: list[str] = []
     for d in sorted(candidate_dirs):

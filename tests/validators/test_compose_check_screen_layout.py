@@ -106,6 +106,38 @@ def test_non_compose_dir_ignored(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
+# ── traversal hardening (M1 / B3) ────────────────────────────────────────────
+
+
+def test_build_dir_screen_ignored(tmp_path: Path) -> None:
+    """M1: um `{Screen}Screen.kt` gerado sob `build/` não vira dir candidato —
+    não pode falhar o gate por par incompleto.
+    """
+    base = tmp_path / "androidApp/feature/home/build/generated"
+    _touch(base / "GenScreen.kt")
+    result = _run(tmp_path)
+    assert result.returncode == 0, result.stderr
+
+
+def test_symlinked_dir_not_descended(tmp_path: Path) -> None:
+    """M1: dirs symlinkados em escopo não devem ser descidos. O alvo (fora de
+    escopo) tem um par quebrado; se descido via symlink viraria candidato em
+    escopo e falharia. Como NÃO desce, passa.
+    """
+    import os
+
+    target = tmp_path / "external/screens"
+    _touch(target / "OrphanScreen.kt")  # sem Content → par quebrado se varrido
+    link = tmp_path / "androidApp/feature/home/link"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.symlink(target, link, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        return
+    result = _run(tmp_path)
+    assert result.returncode == 0, result.stderr
+
+
 # ── invocation contract ──────────────────────────────────────────────────────
 
 
