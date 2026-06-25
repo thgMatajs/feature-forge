@@ -30,7 +30,7 @@ prompt criado tem **um lugar pré-definido**, sem improviso.
 │    Versionado no git do projeto (com exceções).            │
 ├─────────────────────────────────────────────────────────────┤
 │ 3. FEATURE PACKAGES                                         │
-│    {project}/docs/feature-implementation-workflow/          │
+│    {project}/docs/forge-specs/          │
 │    O que `forge plan` e `forge implement` produzem.        │
 │    Versionado no git do projeto.                           │
 └─────────────────────────────────────────────────────────────┘
@@ -415,12 +415,12 @@ memory/L1/**/!archived/**
 
 ---
 
-## 3. Feature packages — `{project}/docs/feature-implementation-workflow/`
+## 3. Feature packages — `{project}/docs/forge-specs/`
 
 What `forge plan` and `forge implement` produce per feature:
 
 ```
-{project}/docs/feature-implementation-workflow/
+{project}/docs/forge-specs/
 ├── README.md                              workflow overview — copied on init
 ├── operating-policy.md                    rules of the road — copied
 ├── runtime-assets.md                      what runtime needs — copied
@@ -558,7 +558,7 @@ Everything in `~/.local/share/feature-forge/` except `.bak`, `tests/_tmp/`,
 .claude/forge-version-lock.yaml
 .git/hooks/                                 git-managed; shims only
 .github/workflows/feature-forge-*.yml       if CI used
-docs/feature-implementation-workflow/        complete tree
+docs/forge-specs/        complete tree
 ```
 
 ### ❌ Never commit (per project)
@@ -690,7 +690,7 @@ Every card follows this pattern. New cards copy this structure.
 For reference, what `forge plan` produces for a feature called `lembrete-rega`:
 
 ```
-docs/feature-implementation-workflow/features/lembrete-rega/
+docs/forge-specs/features/lembrete-rega/
 ├── feature-intake.md
 ├── feature-prd.md
 ├── screen-analysis.md

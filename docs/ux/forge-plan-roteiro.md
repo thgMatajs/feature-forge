@@ -1048,7 +1048,7 @@ If `ticketing.post-back.on-readiness-ready == true` and
          • Persistência: Firestore + outbox queue
          • Push: local (AlarmManager + UNUserNotification)
          • Open questions: 0 blocking · 1 deferred (FCM)
-         • Link: docs/feature-implementation-workflow/features/lembrete-rega/
+         • Link: docs/forge-specs/features/lembrete-rega/
        
        Postar? [Y / editar / pular]
        
@@ -1068,7 +1068,7 @@ detail is noise).
 ```
 [3:38] 📝 Salvo:
        
-       docs/feature-implementation-workflow/features/lembrete-rega/
+       docs/forge-specs/features/lembrete-rega/
          16 docs · 7 tasks · readiness=ready
        
        .claude/memory/L1/lembrete-rega/

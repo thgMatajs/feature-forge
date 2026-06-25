@@ -91,7 +91,7 @@ cards:
 # ── PATHS — where things live in THIS project ─────────────────────────────
 paths:
   # internal to feature-forge state
-  features-package-root: docs/feature-implementation-workflow/features
+  features-package-root: docs/forge-specs/features
   inventory-root:        .claude/inventory
   memory-root:           .claude/memory
   graph-path:            .claude/graph.db

@@ -174,7 +174,7 @@ polui o histórico do git com dados que mudam a cada `forge implement`.
 **Se eu apagar:** Perde o estado das features em andamento. Dá pra
 recomeçar com `forge plan {slug}`, mas o histórico daquela feature se
 perde. **Importante:** os artefatos das features (intake, PRD, specs,
-task contracts) ficam em `docs/feature-implementation-workflow/`, não
+task contracts) ficam em `docs/forge-specs/`, não
 aqui — esses estão versionados e seguros.
 
 ---
@@ -194,7 +194,7 @@ para `done` — o forge comprime o diretório L1 da feature em um arquivo
 `.summary.yaml` e o move para `archived/`.
 
 **Se eu apagar:** Perde o sumário, mas os artefatos completos da feature
-(em `docs/feature-implementation-workflow/`) continuam intactos e
+(em `docs/forge-specs/`) continuam intactos e
 versionados. O `forge graph` perde as queries de reuso relacionadas a
 essa feature — um rebuild do grafo não recupera o que foi apagado.
 

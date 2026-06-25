@@ -71,7 +71,7 @@ the full scope — no subdirectories, no sibling artifacts.
 
 > **What is NOT L1.** The following directories belong to the **feature
 > package**, not to memory L1, and live under
-> `docs/feature-implementation-workflow/features/{slug}/` per
+> `docs/forge-specs/features/{slug}/` per
 > `docs/design/05-filesystem-layout.md`:
 >
 > - `findings/` — FNDs raised during planning / implementation
@@ -429,7 +429,7 @@ never carry `blocked-on-external` and parse without modification.
 | `chore` | Stub in v1.0 — conductor surfaces 3-caminhos and asks user how to proceed | n/a (stub) | n/a (stub) |
 
 When `subtype != "product"`, feature artifacts live under
-`docs/feature-implementation-workflow/non-product/{slug}/` instead of
+`docs/forge-specs/non-product/{slug}/` instead of
 `features/{slug}/` — see `docs/design/05-filesystem-layout.md`. This
 applies to `refactor`, `bugfix`, and the (stubbed) `spike`/`chore` —
 all share the non-product subtree so the product feature folder stays

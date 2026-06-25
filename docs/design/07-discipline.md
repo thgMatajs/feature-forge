@@ -985,7 +985,7 @@ pegado isso antes?"
 
 ### Filesystem layout
 
-`docs/feature-implementation-workflow/non-product/{slug}/` paralelo a
+`docs/forge-specs/non-product/{slug}/` paralelo a
 `features/{slug}/`. Mesmo `.claude/memory/L1/{slug}/` para `L1`. Sub-tree
 de status, history, dispatch-log, verify-log idênticos. Bugfix usa o
 mesmo `non-product/{slug}/` que refactor — decisão deliberada: bugfix
@@ -1356,7 +1356,7 @@ derivado é convencionalmente `{parent}-{suffix-descritivo}` (ex.:
 sugere `{parent}-extension` como default na Cena 1, user customiza pra
 descritivo real.
 
-`docs/feature-implementation-workflow/features/{parent-slug}-{suffix}/`
+`docs/forge-specs/features/{parent-slug}-{suffix}/`
 paralelo a qualquer outra product feature. Sub-tree de status, history,
 dispatch-log, verify-log idêntico ao product padrão.
 

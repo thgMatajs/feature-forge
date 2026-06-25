@@ -312,7 +312,7 @@ Documentados em `docs/design/08-session-handoff.md § Conhecidos limites v1` + `
 
 ## Origin
 
-Extraído de `MeoBonsai/.agents/skills/feature-implementation-workflow/` em maio 2026 e generalizado pra portabilidade cross-project. Ver `INFLUENCES.md` pra atribuições.
+Extraído de `MeoBonsai/.agents/skills/forge-specs/` em maio 2026 e generalizado pra portabilidade cross-project. Ver `INFLUENCES.md` pra atribuições.
 
 ## License
 

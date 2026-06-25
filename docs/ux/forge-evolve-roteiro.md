@@ -719,7 +719,7 @@ e delegar o refactor real para `forge plan refactor-{slug}` (Gap 2 flow).
 > a
 
   ✓ feature-intake.md gerado em
-    docs/feature-implementation-workflow/non-product/
+    docs/forge-specs/non-product/
       refactor-modifier-on-focus-blur/feature-intake.md
   ✓ L1 status.json criado com subtype=refactor
   ✓ Próximo: forge plan refactor-modifier-on-focus-blur

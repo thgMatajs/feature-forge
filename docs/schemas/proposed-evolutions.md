@@ -221,7 +221,7 @@ All six share these conventions:
 
 - `source.trigger = "init-scan"` (or `"reconfigure"` during a rebuild).
 - `proposed-change.operation = "refactor-plan"` — apply writes a feature-intake
-  stub at `docs/feature-implementation-workflow/non-product/refactor-{slug}/`
+  stub at `docs/forge-specs/non-product/refactor-{slug}/`
   using `templates/feature-intake-refactor.template.md` and writes the L1
   `status.json` with `subtype=refactor`.
 - `proposed-change.payload` carries the full detection payload (category,

@@ -1360,7 +1360,7 @@ internos (no caso de A4).
       `spike + chore` ficam como stub via 3-caminhos discipline §1 (caminhos
       legítimos: treat as product / wait v1.1+ / abort) — sem improviso.
 - [x] **Filesystem-layout extension:**
-      `docs/feature-implementation-workflow/non-product/{slug}/` paralelo a
+      `docs/forge-specs/non-product/{slug}/` paralelo a
       `features/{slug}/`. Tabela em `docs/design/05-filesystem-layout.md §3`
       mostra quais artefatos existem por subtipo. Não entra na
       similarity-graph automática (conductor §Phase 1 skipa Q1 quando

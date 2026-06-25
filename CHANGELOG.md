@@ -16,6 +16,11 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Changed
 
+- Renomeado o path de artefatos de feature `docs/feature-implementation-workflow`
+  → `docs/forge-specs` (clean break, sem alias). Consolidados os 11 literais
+  hardcoded numa fonte única `paths.FEATURE_WORKFLOW_DIRNAME`. `docs/superpowers/specs/`
+  (specs do forge) NÃO muda.
+
 - CLAUDE.md + `.claude/rules/**` enxugados pra Tier-0 lean + índice mem (Fase 0 dogfood, T6). O núcleo injetado sempre-on — Mandamento 0 (regra absoluta + whitelist de ferramentas + override do usuário), os 6 mandamentos e o fluxo único do orquestrador — permanece verbatim em `CLAUDE.md`; o resto (workflow por verbo, superpowers map, anatomia, comandos, graph howto, não-procrastinação) virou ponteiro `mem find` por tema. As 13 rules de `.claude/rules/` foram reduzidas a cabeçalho + ponteiro + invariante de enforcement que um hook lê (ex.: o ritual "Revisita decisão N" em `decisions.md`; os 5 títulos de smoke em `SMOKE-CHECKLIST.md`) — nenhuma apagada. O detalhe migrou pro acervo mem (recuperável via `.claude/bin/mem find "<tema>"`), comprovadamente coberto antes do enxugue. Canônicos `docs/design/*` preservados intactos. Os hooks (`session-start-orientation`, `pre-tool-use-load-bearing`, `pre-commit-feature-forge`) não leem texto de rule pra enforçar — a whitelist load-bearing e o hard-block de decisões vivem nos próprios `.sh` —, então o enxugue não afrouxa nenhum gate.
 
   ADR-note (sem revisita formal — consistente com decisões locked):

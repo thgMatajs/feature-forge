@@ -705,7 +705,7 @@ roda retrospectiva.
 ```
 [3:25] 📝 Salvo:
        
-       docs/feature-implementation-workflow/features/lembrete-rega/
+       docs/forge-specs/features/lembrete-rega/
          retrospective.md · proposed-evolutions.yaml
          7 evidence files · status: done
        
