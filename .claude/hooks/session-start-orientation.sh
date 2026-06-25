@@ -32,26 +32,42 @@ if [[ -x "$MEM_BIN" ]]; then
     # Passo 1: id da última `mem session` (score-ordered; a mais recente
     # decai menos → maior score → topo de `-k 1`). `[]` quando não há
     # sessão → SID vazio → cai no fallback. Stderr do mem é descartado.
-    SID=$("$MEM_BIN" --json find "" --type session -k 1 2>/dev/null \
-        | python3 -c "
-import json, sys
+    #
+    # Timeout portátil (L-001): `timeout` não é built-in no macOS. Como
+    # python3 já é dep dura do projeto, usamos subprocess.run(timeout=5)
+    # pra bound ambas as chamadas ao mem. Se o teto estourar (ou o mem
+    # retornar erro), retornamos string vazia → cai no fallback do arquivo.
+    SID=$(python3 - "$MEM_BIN" <<'PYEOF' 2>/dev/null
+import json, subprocess, sys
+mem_bin = sys.argv[1]
 try:
-    data = json.load(sys.stdin)
-    print(data[0]['id'] if data else '')
+    r = subprocess.run(
+        [mem_bin, "--json", "find", "", "--type", "session", "-k", "1"],
+        capture_output=True, text=True, timeout=5
+    )
+    data = json.loads(r.stdout) if r.returncode == 0 else []
+    print(data[0]["id"] if data else "")
 except Exception:
-    print('')
-" 2>/dev/null || echo "")
+    print("")
+PYEOF
+)
     # Passo 2: corpo do handoff curado (.body). `get` registra access — é
     # uma leitura real, comportamento esperado (igual à skill mem-resume).
     if [[ -n "$SID" ]]; then
-        MEM_BODY=$("$MEM_BIN" --json get "$SID" 2>/dev/null \
-            | python3 -c "
-import json, sys
+        MEM_BODY=$(python3 - "$MEM_BIN" "$SID" <<'PYEOF' 2>/dev/null
+import json, subprocess, sys
+mem_bin, sid = sys.argv[1], sys.argv[2]
 try:
-    print(json.load(sys.stdin).get('body', '').strip())
+    r = subprocess.run(
+        [mem_bin, "--json", "get", sid],
+        capture_output=True, text=True, timeout=5
+    )
+    body = json.loads(r.stdout).get("body", "").strip() if r.returncode == 0 else ""
+    print(body)
 except Exception:
-    print('')
-" 2>/dev/null || echo "")
+    print("")
+PYEOF
+)
     fi
 fi
 
