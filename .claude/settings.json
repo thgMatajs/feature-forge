@@ -4,7 +4,20 @@
       {
         "matcher": "",
         "hooks": [
-          { "type": "command", "command": ".claude/hooks/session-start-orientation.sh" }
+          {
+            "type": "command",
+            "command": ".claude/hooks/session-start-orientation.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/bin/mem hook session-start",
+            "timeout": 10
+          }
         ]
       }
     ],
@@ -12,7 +25,10 @@
       {
         "matcher": "Edit|Write|NotebookEdit",
         "hooks": [
-          { "type": "command", "command": ".claude/hooks/pre-tool-use-load-bearing.sh" }
+          {
+            "type": "command",
+            "command": ".claude/hooks/pre-tool-use-load-bearing.sh"
+          }
         ]
       }
     ],
@@ -20,7 +36,44 @@
       {
         "matcher": "Edit|Write|NotebookEdit",
         "hooks": [
-          { "type": "command", "command": ".claude/hooks/post-edit-doc-drift.sh" }
+          {
+            "type": "command",
+            "command": ".claude/hooks/post-edit-doc-drift.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/bin/mem hook post-tool",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/bin/mem hook stop",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/bin/mem hook prompt",
+            "timeout": 10
+          }
         ]
       }
     ]
