@@ -1,139 +1,27 @@
 # Subagent Workflow
 
-Como despachar bem. Mandamento 0 diz QUE despacha; este doc diz COMO.
+Como despachar bem. Mandamento 0 diz QUE despacha; este doc apontava COMO.
+Enxugado pro ponteiro — o detalhe (qual subagent_type por trabalho, dispatch
+paralelo, context-pack obrigatório, anti-padrões, loop review-fix, loop
+pós-plano, trust-but-verify, e o handling de exit 2 do forge) vive no `mem`.
 
-## Qual subagent_type pra quê
+## Invariante always-on
 
-| Trabalho | Subagent recomendado | Por quê |
-|---|---|---|
-| Implementação Python (engine, validators) | `gsd-executor` | atomic commits, disciplina de deviation handling |
-| Code review pós-impl | `gsd-code-reviewer` | produz REVIEW.md estruturado com severity |
-| Aplicar fixes do review | `gsd-code-fixer` | aplica findings de REVIEW.md com commits atômicos |
-| Debug profundo | `gsd-debugger` | scientific method + persistência cross-checkpoint |
-| Busca/explore codebase | `Explore` | read-only rápido, protege contexto do orchestrator |
-| Pesquisa multi-step | `general-purpose` | catch-all sem disciplina específica |
-| Edição de docs (sync, handoff, README) | `gsd-doc-writer` ou `general-purpose` | gsd-doc-writer se houver doc_assignment block; senão general |
-| Plano de feature/refactor | `gsd-planner` (via skill writing-plans) | writing-plans skill é o caminho canônico — não dispatch direto |
-| Auditar plano pós writing-plans | `gsd-code-reviewer` | prompt em `.claude/rules/plan-auditor.md`; produz `PLAN-REVIEW.md` com 12 checks classificados |
+- Todo dispatch leva context-pack: TAREFA + ARQUIVOS PERMITIDOS + ARQUIVOS
+  PARA LER + CRITÉRIO DE SUCESSO TESTÁVEL + ANTI-PADRÕES + VOZ + COMMIT.
+- Dispatch paralelo só quando tarefas são independentes (sem shared state,
+  sem ordem, sem editar o mesmo arquivo).
+- Subagente que recebe exit 2 do forge reporta o pending; NÃO fecha o loop
+  sozinho (responsabilidade do orquestrador/host).
 
-## Despacho em paralelo
-
-Quando faz sentido (tarefas independentes, sem shared state):
-
-- "Atualizar 3 validators que não dependem entre si" → 3 `Agent` calls em UMA
-  mensagem
-- "Rules independentes (12 arquivos)" → batches de 3-4 em paralelo
-- "Hooks .sh independentes (4 arquivos)" → 4 paralelos OK
-
-Não faz sentido em:
-
-- Feature X depende de refactor Y → sequencial
-- Edição do mesmo arquivo → sequencial (overwrites)
-- Quando subagent2 precisa do diff produzido por subagent1
-
-Padrão: dispatch paralelo APENAS quando o orchestrator pode reconciliar os
-diffs sem conflito.
-
-## Pacote de contexto (recap do orchestrator-persona.md)
-
-Sempre anexe ao prompt do `Agent`:
-
-- TAREFA (1-3 frases, ação concreta + critério de sucesso)
-- ARQUIVOS PERMITIDOS PARA EDIT/WRITE (lista explícita)
-- ARQUIVOS PARA LER ANTES (CLAUDE.md + rule específico + design doc relevante)
-- CRITÉRIO DE SUCESSO TESTÁVEL (pytest path / validator nome)
-- ANTI-PADRÕES (não-refator, não-doc-sync se separada, não-load-bearing)
-- VOZ mentor calmo se gera artefato
-- COMMIT atômico ao final
-
-Sem context-pack, subagent improvisa. Improvisação quebra escopo.
-
-## Anti-padrões
-
-- **Dispatch sem context-pack** — subagent inventa interpretação.
-- **Dispatch encadeado quando podia ser paralelo** — desperdício de tempo.
-- **Dispatch paralelo quando há ordem** — gera conflito de merge.
-- **Re-dispatch sem ler diff anterior** — perde o progresso/contexto do
-  subagent original.
-- **"Pequeno demais, faço inline"** — VEDADO. Mandamento 0 não tem exceção.
-- **Despachar sem critério de sucesso** — subagent acha que "rodou" é
-  suficiente.
-
-## Loop de review-fix
-
-Protocolo canônico após implementação:
-
-1. `Agent[gsd-code-reviewer]` com prompt:
-   - "Revisa diff de <commit-range>. Foco: <pontos específicos da tarefa>.
-     Produz REVIEW.md em `.planning/<phase>/REVIEW.md` com findings classificados."
-2. Recebe REVIEW.md → você (orchestrator) lê findings
-3. Decisão:
-   - **Nenhum finding** → aceita, segue pra verification
-   - **Findings high/critical** → `Agent[gsd-code-fixer]` dispatch fix
-   - **Push-back ao reviewer** (raro, quando reviewer interpretou errado) →
-     re-dispatch com info nova
-4. Após fix-dispatch: re-review SE mudanças substanciais; senão segue
-5. Verification SEMPRE rola depois (mesmo sem findings)
-
-## Loop pós-plano (plan-auditor)
-
-Para o loop de auditoria pré-execution-handoff, ver
-`.claude/rules/plan-auditor.md` §Re-audit. Diferenças chave do loop
-pós-impl acima:
-- Fixer atua no PLANO (não no código)
-- Cap de 3 rodadas
-- Rodada 4 → verdict `ESCALATE` pro orquestrador apresentar 3-caminhos
-  ao user
-
-## Trust-but-verify
-
-Antes de aceitar diff do subagent como "feito":
+## Detalhe (recupere por tema)
 
 ```bash
-git diff --stat HEAD~1..HEAD                                # escopo
-git diff HEAD~1..HEAD -- <load-bearing-path>                # leitura full se aplicável
-git log -1 --stat                                           # mensagem + arquivos
+.claude/bin/mem find "qual subagent_type gsd-executor reviewer fixer debugger"
+.claude/bin/mem find "dispatch paralelo tarefas independentes sem shared state"
+.claude/bin/mem find "sempre anexe context-pack anti-padrões de dispatch"
+.claude/bin/mem find "loop review-fix REVIEW.md plan-auditor trust-but-verify"
+.claude/bin/mem find "exit 2 do forge é contrato pending response intent protocol"
 ```
 
-Se desvio (subagent tocou arquivo fora da whitelist do context-pack):
-
-1. Dispatch revert: `Agent[gsd-executor]` com prompt "reverta mudanças em
-   <arquivo> mantendo as de <outros>"
-2. Re-dispatch task original com whitelist mais explícita
-
-## Overhead reconhecido
-
-Sim, despachar pra typo gera overhead (Agent dispatch + context-pack +
-review = ~30-60 segundos pra uma mudança de 1 caractere). É deliberado.
-
-A regra absoluta vale a fricção pra zerar a classe inteira de "side-effect
-acidental do orchestrator" — onde o orchestrator pensa que está fazendo
-algo trivial mas acaba mexendo em algo load-bearing.
-
-Se a fricção começar a empatar produtividade, anote em
-`docs/design/04-pending.md` como gap pra revisitar Mandamento 0 em
-versão futura. Mas não burle por conta própria.
-
-## Quando subagent invoca `forge`
-
-Phase A DRIFT-1 (v1.2-dev, 2026-06-10) introduziu exit code 2
-(paused-for-input) no contract de `forge`. Se subagent invoca `forge`
-e recebe exit 2:
-
-- É **contrato, não erro**. Engine emitiu pending JSON em
-  `.claude/state/forge-pending.json` e aguarda response em
-  `.claude/state/forge-response.json`.
-- Subagent SOZINHO **NÃO** deve ler pending + escrever response. Esse
-  loop é responsabilidade do orquestrador (Claude Code host nativo OR
-  `engine.ui.tty_bridge` em fallback TTY). Subagent fechar o loop
-  unilateralmente viola disciplina de escopo e pode pular gates que
-  o host real aplicaria (e.g., 3-caminhos canônico em `ask_three_paths`).
-- Subagent reporta exit 2 + path do pending no output report. O
-  orquestrador (humano OR Claude Code top-level) decide o handling.
-
-Exit 130 (UserCancelledError / KeyboardInterrupt) é terminal: subagent
-trata como abort do usuário e reporta normalmente.
-
-Schema dos state files: `docs/schemas/intent-protocol.md`. Contrato
-canônico de exit codes: `docs/design/06-command-surface.md §Exit codes`.
-Spec: `docs/superpowers/specs/drift-1-intent-protocol.md` §4 + §6.
+Use `.claude/bin/mem get <id>` pra o corpo acionável.

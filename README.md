@@ -107,7 +107,7 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 3. **Memory** — L1 per-feature (WIP) + L2 project (committed) + L3 read-only (auto-memory)
 4. **Graph** — SQLite com 17 queries canônicas (Q1–Q10 estruturais, Q11 reusable-helpers, Q12–Q17 reuse-intelligence: duplicates within/cross-module, KMP-migration, near-duplicates, redundant-platform, TS-helpers)
 5. **Inventory** — DS components + i18n + conventions extraídos do projeto
-6. **Engine Python** — Bash dispatcher + 14 commands + foundation + state + integrations + reuse-intelligence pipeline (parsers, body-hash, gradle modules/deps, detection, apply) + host-aware execution layer (`engine/host/` — 4 adapters: claude_code / opencode-fallback / tty / intent_file)
+6. **Engine Python** — Bash dispatcher + 14 commands + foundation + state + integrations (`engine/integrations/` — mem boundary: fronteira shell pro `mem` vendorizado) + reuse-intelligence pipeline (parsers, body-hash, gradle modules/deps, detection, apply) + host-aware execution layer (`engine/host/` — 4 adapters: claude_code / opencode-fallback / tty / intent_file)
 
 ## Stats
 
@@ -122,10 +122,10 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 | Validators Python | 22 + 3 helpers (`_gate_infra`, `_diff`, `_common`) — inclui `check_cyclomatic_complexity` (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon), `check_secrets` (gitleaks + trufflehog), `check_no_behavior_change` (refactor), `validate_extension_feature` (extends-feature cross-cutting), `validate_presets` (Phase B DET-6 — bundle YAML schema) |
 | Hooks | 9 + 1 reuse incremental (`post-edit-detect-duplications.sh`) |
 | Graph parsers | 6 (Kotlin / Swift / TypeScript + Java / XML / Objective-C — Java/XML/ObjC novos em v1.3.0 graph-ia-evolution). Body extraction (`symbols.body`) cobre brace-delimited bodies (5 linguagens; XML é NULL). |
-| Tests | rapid **2012 passed** / integration **233 passed** / e2e **31 passed** (1.6.1 — qa-pilot remediation + doctor schema-version fix). Histórico: 2003/233/31 em 1.6.0 (release de piloto); 1946/222/31 em pilot R8; 1937/222/31 em pilot R7; 1915/216/31 em pilot R6; 1885/215/31 em pilot R4; 1863/204/30 em 1.5.0; 1797/190/30 na série AI-first; 1611/168/30 em 1.4.0 pilot-ready. Baseline histórico em CHANGELOG.md. |
-| LOC total | ~52.500 |
-| Engine LOC | ~33.500 (Python; engine/ apenas — validators/ adicional ~7.300) |
-| Files total | ~400 |
+| Tests | rapid **2020 passed** (11 skipped) / integration **233 passed** / e2e **31 passed** (Fase 0 mem dogfood — rapid +8 vs 1.6.1, inclui `test_mem_call` da fronteira shell). Histórico: 2012/233/31 em 1.6.1 (qa-pilot remediation + doctor schema-version fix); 2003/233/31 em 1.6.0 (release de piloto); 1946/222/31 em pilot R8; 1937/222/31 em pilot R7; 1915/216/31 em pilot R6; 1885/215/31 em pilot R4; 1863/204/30 em 1.5.0; 1797/190/30 na série AI-first; 1611/168/30 em 1.4.0 pilot-ready. Baseline histórico em CHANGELOG.md. |
+| LOC total | ~52.500 (Python) |
+| Engine LOC | ~42.500 (Python; engine/ apenas — validators/ adicional ~7.700). O asset `engine/assets/mem/mem` (2.363 linhas, shell) é vendorizado/pinado e fica FORA da contagem de LOC Python do engine. |
+| Files total | ~404 (inclui `engine/integrations/mem.py`, `engine/integrations/__init__.py`, `engine/assets/mem/mem`, `engine/assets/mem/VERSION`) |
 | Decisões locked | 27 + 7 direcionais (Fase 3.5) |
 | Subtypes feature | 5 (product / refactor / bugfix / spike / chore) |
 | Reuse finding categories | 6 (consolidate-within / promote-to-shared / redundant-platform / near-duplicate / kmp-migration / consolidate-ts) |
@@ -177,9 +177,11 @@ explicitamente.
 ~/.local/share/feature-forge/           canonical install (XDG default; $XDG_DATA_HOME)
   bin/forge                             Bash dispatcher
   scripts/install.sh                    curl one-liner installer (bash 3.2)
-  engine/                               Python engine (~33.500 LOC)
+  engine/                               Python engine (~42.500 LOC; asset mem vendorizado fora da contagem)
     host/                               host-aware execution — 4 adapters:
                                           claude_code / opencode-fallback / tty / intent_file
+    integrations/                       mem boundary — fronteira shell pro mem vendorizado
+    assets/mem/                         mem vendorizado (binário pinado + VERSION) — fora da LOC Python
     graph/                              parsers (Kotlin/Swift/TS/Java/XML/ObjC) + builder +
                                         gradle_modules + gradle_deps +
                                         _body_text + duplicates + reuse_apply +
