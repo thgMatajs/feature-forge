@@ -18,14 +18,14 @@ from typing import Iterable
 
 from engine.memory.distiller import DistillationProposal
 from engine.memory.l1 import L1State, write_l1_status
-from engine.utils.paths import forge_home
+from engine.utils.paths import FEATURE_WORKFLOW_DIRNAME, forge_home
 from engine.utils.slug import kebabify as _kebabify
 from engine.utils.template_render import render_template
 
 # Relative location inside the project for the refactor track. Mirrors what
 # ``docs/design/05-filesystem-layout.md`` describes as the "non-product
 # feature track".
-_NON_PRODUCT_DIR = "docs/feature-implementation-workflow/non-product"
+_NON_PRODUCT_DIR = f"docs/{FEATURE_WORKFLOW_DIRNAME}/non-product"
 _INTAKE_TEMPLATE = "templates/feature-intake-refactor.template.md"
 
 # Maps internal category → human-readable migration plan paragraph that goes

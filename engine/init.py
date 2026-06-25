@@ -80,6 +80,7 @@ from engine.ui.exit_codes import (
     fail_with_tag,
 )
 from engine.utils.paths import (
+    FEATURE_WORKFLOW_DIRNAME,
     cards_canonical_dir,
     cards_dir,
     claude_dir,
@@ -3247,7 +3248,7 @@ def _summarize_backend_cells(
 def _build_paths(project_root: Path, conv_inv: Any) -> dict[str, Any]:
     """Best-effort path inference. Greenfield gets sensible defaults."""
     paths: dict[str, Any] = {
-        "features-package-root": "docs/feature-implementation-workflow/features",
+        "features-package-root": f"docs/{FEATURE_WORKFLOW_DIRNAME}/features",
         "inventory-root": ".claude/inventory",
         "memory-root": ".claude/memory",
         "graph-path": ".claude/graph.db",

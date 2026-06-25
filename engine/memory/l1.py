@@ -22,7 +22,7 @@ from typing import Any, Iterator, Optional
 
 from engine.memory import MemoryError
 from engine.utils.iso import utc_now_iso
-from engine.utils.paths import ensure_dir, memory_dir, memory_l1_path
+from engine.utils.paths import ensure_dir, feature_workflow_root, memory_dir, memory_l1_path
 from engine.utils.yaml_io import read_yaml, read_yaml_or_default, write_yaml
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -718,7 +718,7 @@ def _feature_tasks_dir(feature_slug: str, project_root: Path) -> Optional[Path]:
     "no tasks emitted yet" — same semantics as empty list).
     """
     subtype = current_subtype(feature_slug, project_root)
-    base = project_root / "docs" / "feature-implementation-workflow"
+    base = feature_workflow_root(project_root)
     parent = base / ("non-product" if subtype != "product" else "features")
     candidate = parent / feature_slug / "tasks"
     if candidate.is_dir():

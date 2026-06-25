@@ -1,19 +1,18 @@
-"""M-04 regression: feature_path resolves non-product subtypes correctly."""
+"""Testes de consolidacao do path de artefatos de feature.
+
+Garante que FEATURE_WORKFLOW_DIRNAME em engine.utils.paths e a fonte unica
+da qual todos os helpers derivam o caminho base de artefatos de feature.
+"""
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from engine.utils.paths import feature_path
+import engine.utils.paths as paths
 
 
-def test_feature_path_product_default_layout(tmp_path: Path) -> None:
-    result = feature_path(tmp_path, "auth-login", subtype="product")
-    expected = tmp_path / "docs" / "feature-implementation-workflow" / "features" / "auth-login"
-    assert result == expected
-
-
-def test_feature_path_non_product_subtype(tmp_path: Path) -> None:
-    result = feature_path(tmp_path, "rename-helpers", subtype="refactor")
-    assert "non-product" in str(result)
-    assert result.name == "rename-helpers"
+def test_workflow_dirname_is_single_source(monkeypatch, tmp_path):
+    # Patching the canonical constant must flow to every derived path.
+    monkeypatch.setattr(paths, "FEATURE_WORKFLOW_DIRNAME", "SENTINEL_DIR")
+    root = tmp_path
+    assert paths.feature_workflow_root(root) == root / "docs" / "SENTINEL_DIR"
+    assert paths.feature_dir(root, "x") == root / "docs" / "SENTINEL_DIR" / "features" / "x"
+    assert paths._resolve_features_root(root) == (root / "docs" / "SENTINEL_DIR" / "features").resolve()

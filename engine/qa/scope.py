@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from engine.utils.paths import feature_workflow_root
+
 
 ScopeType = Literal["feature", "screen", "task", "paranoid"]
 
@@ -163,7 +165,7 @@ def resolve_scope(
 
 
 def _features_root(root: Path) -> Path:
-    return root / "docs" / "feature-implementation-workflow" / "features"
+    return feature_workflow_root(root) / "features"
 
 
 _TERMINAL_STATES = frozenset({"aborted", "archived"})

@@ -148,9 +148,14 @@ def hooks_dir(project_root: Path) -> Path:
     return claude_dir(project_root) / "hooks"
 
 
+# Fonte unica do dirname dos artefatos de feature. Alterar este valor
+# e suficiente para renomear o diretorio em todo o codebase.
+FEATURE_WORKFLOW_DIRNAME = "feature-implementation-workflow"
+
+
 def feature_workflow_root(project_root: Path) -> Path:
-    """Default feature-implementation-workflow root in the project."""
-    return project_root / "docs" / "feature-implementation-workflow"
+    """Default feature artifacts root in the project."""
+    return project_root / "docs" / FEATURE_WORKFLOW_DIRNAME
 
 
 def feature_dir(project_root: Path, feature_slug: str) -> Path:
@@ -200,7 +205,7 @@ def _resolve_features_root(project_root: Path, *, subtype: str = "product") -> P
         return custom_root
 
     # Default per docs/design/05-filesystem-layout.md.
-    base = project_root / "docs" / "feature-implementation-workflow"
+    base = feature_workflow_root(project_root)
     if subtype != "product":
         return (base / "non-product").resolve()
     return (base / "features").resolve()
@@ -224,9 +229,7 @@ def feature_path(project_root: Path, slug: str, *, subtype: str = "product") -> 
     """
     root = _resolve_features_root(project_root, subtype=subtype)
     if subtype == "product":
-        default = (
-            project_root / "docs" / "feature-implementation-workflow" / "features"
-        ).resolve()
+        default = (feature_workflow_root(project_root) / "features").resolve()
         if root == default:
             return feature_dir(project_root, slug)
     return root / slug
