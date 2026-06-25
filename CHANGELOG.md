@@ -7,6 +7,10 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- mem vendorizado em `.claude/bin/mem` (asset pinado v0.8.1) + scaffold `.claude/memory/` + skills do mem (`mem-resume`/`mem-consolidate`/`mem-report`) — substrato de memória do dogfood da Fase 0. O `mem init` também adicionou `.claude/memory/mem.db*` ao `.gitignore` (índice SQLite derivado, não versionado) e criou um bloco rule-índice delimitado em `AGENTS.md` na raiz. Nenhuma migração de conhecimento aqui — só o substrato vazio (`mem stats` → `total: 0`); a curadoria Tier-0/Tier-1 vem nas tasks seguintes.
+
 ### Changed
 
 - Design spec da substituição da camada de memória-de-conhecimento pelo `mem` (CLI vendorizada via shell) — `docs/superpowers/specs/2026-06-25-mem-integration-design.md`. O forge deixará de manter L1-distilável/L2/L3 caseiros em `engine/memory/`; o `mem` (vendorizado em `.claude/bin/mem`, pinado por versão, invocado por subprocess — mesmo padrão de `dispatch_native_tool` pra detekt/gradle) passa a ser o dono único de learnings, decisões, episodes, sessões e convenções curadas. O code graph (`graph.db`) e o L1 state-machine de lifecycle permanecem no forge (este migra de `.claude/memory/L1/` → `.claude/forge/state/`, deixando `.claude/memory/` 100% do mem). O spec também detalha o rename clean-break `docs/feature-implementation-workflow/` → `docs/forge-specs/` (sem back-compat; resolve colisão de namespace — NÃO confundir com `docs/superpowers/specs/`, que é spec do próprio forge).

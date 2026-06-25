@@ -69,3 +69,4 @@ dist/
 
 # Design outputs (generated artifacts)
 docs/design/outputs/
+.claude/memory/mem.db*

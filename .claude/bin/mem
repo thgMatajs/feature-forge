@@ -1,0 +1,2363 @@
+#!/usr/bin/env python3
+"""mem — project memory for code agents. Single-file, stdlib-only. See AGENTS.md / PLAN.md."""
+from __future__ import annotations
+
+import argparse
+import datetime
+import fnmatch
+import hashlib
+import json
+import math
+import os
+import platform
+import re
+import secrets
+import shutil
+import sqlite3
+import subprocess
+import sys
+import time
+from dataclasses import asdict, dataclass, replace
+from pathlib import Path
+from typing import Any
+
+__version__ = "0.8.1"
+
+
+# ---- ulid ----
+_CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+_TIME_LEN = 10   # 48 bits → 10 base32 chars
+_RAND_LEN = 16   # 80 bits → 16 base32 chars
+_last_ms = 0
+_last_rand = 0
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def _b32(value: int, length: int) -> str:
+    chars = []
+    for _ in range(length):
+        chars.append(_CROCKFORD[value & 0x1F])
+        value >>= 5
+    return "".join(reversed(chars))
+
+
+def new_ulid() -> str:
+    """Time-ordered 26-char ULID. Monotonic within the same millisecond."""
+    global _last_ms, _last_rand
+    ms = _now_ms()
+    if ms == _last_ms:
+        _last_rand += 1
+        rand = _last_rand
+    else:
+        _last_ms = ms
+        rand = int.from_bytes(secrets.token_bytes(10), "big")
+        _last_rand = rand
+    return _b32(ms, _TIME_LEN) + _b32(rand & ((1 << 80) - 1), _RAND_LEN)
+
+
+def ulid_time_ms(ulid: str) -> int:
+    value = 0
+    for ch in ulid[:_TIME_LEN]:
+        value = (value << 5) | _CROCKFORD.index(ch)
+    return value
+
+
+# ---- constants ----
+MEMORY_SUBDIR = (".claude", "memory")
+
+
+# ---- paths ----
+class MemError(Exception):
+    def __init__(self, message: str, exit_code: int = 1) -> None:
+        super().__init__(message)
+        self.exit_code = exit_code
+
+
+def find_project_root(start: Path) -> Path:
+    start = start.resolve()
+    for path in (start, *start.parents):
+        if (path / ".git").exists() or (path / ".claude").exists():
+            return path
+    raise MemError(f"no project root (.git/.claude) found above {start}", exit_code=1)
+
+
+def memory_dir(root: Path) -> Path:
+    return root.joinpath(*MEMORY_SUBDIR)
+
+
+def db_path(root: Path) -> Path:
+    return memory_dir(root) / "mem.db"
+
+
+def author_id() -> str:
+    try:
+        out = subprocess.run(["git", "config", "user.email"],
+                             capture_output=True, text=True, timeout=5)
+        email = out.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        email = ""
+    return _sanitize_author(email) if email else "unknown"
+
+
+def _sanitize_author(email: str) -> str:
+    return re.sub(r"[^a-z0-9._-]", "_", email.lower().replace("@", "_at_"))
+
+
+def author_jsonl(root: Path, author: str) -> Path:
+    return memory_dir(root) / f"{_sanitize_author(author)}.jsonl"
+
+
+# ---- model ----
+VALID_TYPES = frozenset({"feedback", "reference", "episode", "decision", "session"})
+VALID_STATUS = frozenset({"active", "archived", "superseded"})
+
+
+@dataclass(frozen=True)
+class Memory:
+    id: str
+    type: str
+    title: str
+    body: str
+    importance: int
+    status: str
+    superseded_by: str | None
+    author: str
+    source: str | None
+    git_meta: str | None
+    tags: tuple[str, ...]
+    created_at: str
+    updated_at: str
+
+    def to_jsonl(self) -> str:
+        d = asdict(self)
+        d["tags"] = list(self.tags)
+        return json.dumps(d, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+    @classmethod
+    def from_jsonl(cls, line: str) -> "Memory":
+        d = json.loads(line)
+        d["tags"] = tuple(d.get("tags") or ())
+        return cls(**d)
+
+
+@dataclass(frozen=True)
+class Trigger:
+    id: str
+    event: str
+    path_glob: str
+    tags: tuple[str, ...]
+    budget: int
+    enabled: bool
+    author: str
+    created_at: str
+
+    def to_jsonl(self) -> str:
+        return json.dumps({"id": self.id, "event": self.event, "path_glob": self.path_glob,
+                           "tags": list(self.tags), "budget": self.budget,
+                           "enabled": self.enabled, "author": self.author,
+                           "created_at": self.created_at}, ensure_ascii=False, sort_keys=True)
+
+    @classmethod
+    def from_jsonl(cls, line: str) -> "Trigger":
+        d = json.loads(line)
+        return cls(id=d["id"], event=d["event"], path_glob=d["path_glob"],
+                   tags=tuple(d.get("tags", [])), budget=int(d.get("budget", 300)),
+                   enabled=bool(d.get("enabled", True)), author=d.get("author", ""),
+                   created_at=d["created_at"])
+
+
+def triggers_path(root: Path) -> Path:
+    return memory_dir(root) / "triggers.jsonl"
+
+
+def _append_trigger(root: Path, t: Trigger) -> None:
+    path = triggers_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = (t.to_jsonl() + "\n").encode("utf-8")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    try:
+        os.write(fd, data)
+    finally:
+        os.close(fd)
+
+
+def _load_triggers(root: Path, *, enabled_only: bool = True) -> list[Trigger]:
+    path = triggers_path(root)
+    if not path.exists():
+        return []
+    latest: dict[str, Trigger] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        t = Trigger.from_jsonl(line)
+        latest[t.id] = t  # last-write-wins (event-sourced)
+    out = [t for t in latest.values() if (t.enabled or not enabled_only)]
+    out.sort(key=lambda t: (t.created_at, t.id))
+    return out
+
+
+# ---- jsonl store ----
+def append_memory(root: Path, mem: Memory) -> None:
+    path = author_jsonl(root, mem.author)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = (mem.to_jsonl() + "\n").encode("utf-8")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    try:
+        os.write(fd, data)  # single write of a complete line → atomic append
+    finally:
+        os.close(fd)
+
+
+def read_all(root: Path) -> list[Memory]:
+    """All snapshots as a raw event stream, in deterministic read order
+    (filenames sorted, then line order). No id collapse — see current_memories."""
+    mdir = memory_dir(root)
+    if not mdir.exists():
+        return []
+    out: list[Memory] = []
+    for jsonl in sorted(mdir.glob("*.jsonl")):
+        if jsonl.name == "triggers.jsonl":
+            continue
+        for lineno, line in enumerate(jsonl.read_text(encoding="utf-8").splitlines(), start=1):
+            if not line.strip():
+                continue
+            try:
+                out.append(Memory.from_jsonl(line))
+            except (json.JSONDecodeError, KeyError, TypeError):
+                snippet = line[:60]
+                print(f"mem: skipped {jsonl}:{lineno}: {snippet}", file=sys.stderr)
+    return out
+
+
+def current_memories(root: Path) -> list[Memory]:
+    """Latest snapshot per id (last-write-wins in read order), sorted by id."""
+    latest: dict[str, Memory] = {}
+    for m in read_all(root):
+        latest[m.id] = m
+    return sorted(latest.values(), key=lambda m: m.id)
+
+
+# ---- secrets ----
+_SECRET_PATTERNS = [
+    ("github-token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b")),
+    ("aws-access-key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+    ("private-key", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----")),
+    ("bearer-token", re.compile(r"\bBearer\s+[A-Za-z0-9._\-]{12,}")),
+    ("password-assign", re.compile(r"(?i)\b(?:password|passwd|secret|api[_-]?key)\s*[=:]\s*\S{6,}")),
+]
+
+
+def scan_secrets(text: str) -> list[str]:
+    return [label for label, pat in _SECRET_PATTERNS if pat.search(text)]
+
+
+def assert_no_secrets(text: str) -> None:
+    hits = scan_secrets(text)
+    if hits:
+        raise MemError(f"refusing to store: possible secret(s) detected ({', '.join(hits)})",
+                       exit_code=1)
+
+
+# ---- index ----
+SCHEMA_VERSION = 4
+
+_SCHEMA = """
+CREATE TABLE schema_version (version INTEGER NOT NULL);
+CREATE TABLE memories (
+    id TEXT PRIMARY KEY, type TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL,
+    importance INTEGER NOT NULL, status TEXT NOT NULL, superseded_by TEXT,
+    author TEXT NOT NULL, source TEXT, git_meta TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE VIRTUAL TABLE memories_fts USING fts5(
+    title, body, tags, mem_id UNINDEXED, tokenize='unicode61 remove_diacritics 2'
+);
+CREATE TABLE tags (memory_id TEXT NOT NULL, tag TEXT NOT NULL, PRIMARY KEY (memory_id, tag));
+CREATE TABLE access_log (memory_id TEXT NOT NULL, accessed_at TEXT NOT NULL, session TEXT);
+CREATE TABLE inbox (
+    id TEXT PRIMARY KEY, type TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL,
+    importance INTEGER NOT NULL DEFAULT 3, tags TEXT NOT NULL DEFAULT '',
+    source TEXT, origin TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+    promoted_id TEXT, created_at TEXT NOT NULL, resolved_at TEXT
+);
+CREATE TABLE trigger_stats (
+    trigger_id TEXT PRIMARY KEY, hits INTEGER NOT NULL DEFAULT 0,
+    useful_hits INTEGER NOT NULL DEFAULT 0, last_fired_at TEXT, cooldown_until TEXT
+);
+CREATE TABLE injection_log (
+    memory_id TEXT NOT NULL, trigger_id TEXT NOT NULL, session TEXT NOT NULL,
+    fired_at TEXT NOT NULL, credited INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE checkpoint (
+    id INTEGER PRIMARY KEY CHECK (id = 1),  -- singleton per db (per project root / worktree)
+    session_id TEXT NOT NULL, branch TEXT, head TEXT, last_prompt TEXT,
+    status TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+"""
+
+_LOCAL_TABLES = ("access_log", "inbox", "trigger_stats", "injection_log", "checkpoint")
+
+
+def connect(path: Path) -> sqlite3.Connection:
+    con = sqlite3.connect(path)
+    con.execute("PRAGMA journal_mode=WAL")
+    con.execute("PRAGMA busy_timeout=5000")
+    con.execute("PRAGMA foreign_keys=ON")
+    return con
+
+
+def _index_memory(con: sqlite3.Connection, m: Memory) -> None:
+    con.execute(
+        "INSERT INTO memories VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (m.id, m.type, m.title, m.body, m.importance, m.status, m.superseded_by,
+         m.author, m.source, m.git_meta, m.created_at, m.updated_at),
+    )
+    con.execute("INSERT INTO memories_fts (title, body, tags, mem_id) VALUES (?,?,?,?)",
+                (m.title, m.body, " ".join(m.tags), m.id))
+    for tag in m.tags:
+        con.execute("INSERT OR IGNORE INTO tags VALUES (?,?)", (m.id, tag))
+
+
+def _read_local_state(path: Path) -> dict[str, list[tuple[object, ...]]]:
+    """Read local-only rows (access_log, inbox) from an existing db so rebuild can preserve
+    them. Fail-open: returns {} on a missing/corrupt db; skips tables absent in older schemas."""
+    out: dict[str, list[tuple[object, ...]]] = {}
+    if not path.exists():
+        return out
+    try:
+        con = sqlite3.connect(path)
+    except sqlite3.DatabaseError:
+        return out
+    try:
+        for table in _LOCAL_TABLES:
+            try:
+                out[table] = con.execute(f"SELECT * FROM {table}").fetchall()
+            except sqlite3.DatabaseError:
+                continue
+    finally:
+        con.close()
+    return out
+
+
+def rebuild(root: Path) -> Path:
+    target = db_path(root)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    preserved = _read_local_state(target)  # read OLD db's local-only rows before replacing it
+    tmp = target.with_suffix(".db.tmp")
+    if tmp.exists():
+        tmp.unlink()
+    con = sqlite3.connect(tmp)
+    try:
+        con.execute("PRAGMA journal_mode=DELETE")
+        con.execute("PRAGMA synchronous=OFF")
+        con.executescript(_SCHEMA)
+        con.execute("INSERT INTO schema_version VALUES (?)", (SCHEMA_VERSION,))
+        for m in current_memories(root):  # collapsed (last-write-wins) + sorted by id → deterministic
+            _index_memory(con, m)
+        for table, rows in preserved.items():
+            for row in rows:
+                placeholders = ",".join("?" * len(row))
+                con.execute(f"INSERT INTO {table} VALUES ({placeholders})", row)
+        con.commit()
+        con.execute("VACUUM")
+        con.commit()
+    finally:
+        con.close()
+    os.replace(tmp, target)  # atomic
+    return target
+
+
+def _db_schema_version(path: Path) -> int | None:
+    try:
+        con = sqlite3.connect(path)
+        try:
+            row = con.execute("SELECT version FROM schema_version").fetchone()
+            return int(row[0]) if row else None
+        finally:
+            con.close()
+    except sqlite3.DatabaseError:
+        return None
+
+
+def ensure_db(root: Path) -> sqlite3.Connection:
+    path = db_path(root)
+    if not path.exists() or _db_schema_version(path) != SCHEMA_VERSION:
+        rebuild(root)
+    return connect(path)
+
+
+def cmd_rebuild(args: argparse.Namespace) -> int:
+    root = find_project_root(Path.cwd())
+    path = rebuild(root)
+    print(f"rebuilt {path}")
+    return 0
+
+
+# ---- scoring ----
+def lambda_decay(importance: int) -> float:
+    return 0.16 * (1 - importance * 0.8 / 5)
+
+
+def standing_score(importance: int, days_since_access: float, recall_count: int) -> float:
+    """Query-independent residual score: importance × recency-decay × reinforcement.
+    Single source of truth for decay/reinforcement, reused by find/evolve/stats."""
+    recency = math.exp(-lambda_decay(importance) * days_since_access)
+    reinforcement = 1 + 0.2 * math.log(1 + recall_count)
+    return (importance / 5.0) * recency * reinforcement
+
+
+def score(bm25_norm: float, importance: int, days_since_access: float,
+          recall_count: int, tag_overlap: float) -> float:
+    tags = 1 + 0.15 * tag_overlap
+    return bm25_norm * standing_score(importance, days_since_access, recall_count) * tags
+
+
+# ---- commands: core ----
+_STOPWORDS = frozenset({"the", "a", "an", "and", "or", "of", "to", "in", "for",
+                        "com", "de", "da", "do", "no", "na", "que"})
+
+
+def _now_iso() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _parse_iso(value: str) -> datetime.datetime:
+    # Try Z-suffix first (DB-stored format), then millisecond+Z form used by real transcripts,
+    # then offset form (+HH:MM) used by git log and some transcripts.
+    try:
+        return datetime.datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=datetime.timezone.utc)
+    except ValueError:
+        pass
+    try:
+        return datetime.datetime.strptime(
+            value.replace("Z", "+0000"), "%Y-%m-%dT%H:%M:%S.%f%z")
+    except ValueError:
+        pass
+    return datetime.datetime.strptime(value, "%Y-%m-%dT%H:%M:%S%z")
+
+
+def _reindex_memory(con: sqlite3.Connection, m: Memory) -> None:
+    con.execute("DELETE FROM memories WHERE id=?", (m.id,))
+    con.execute("DELETE FROM memories_fts WHERE mem_id=?", (m.id,))
+    con.execute("DELETE FROM tags WHERE memory_id=?", (m.id,))
+    _index_memory(con, m)
+
+
+def _store_memory(root: Path, mem: Memory) -> None:
+    append_memory(root, mem)
+    con = ensure_db(root)
+    try:
+        _reindex_memory(con, mem)
+        con.commit()
+    finally:
+        con.close()
+
+
+def _tokens(text: str, minlen: int = 3) -> list[str]:
+    return [w for w in re.findall(r"[a-z0-9]+", text.lower())
+            if len(w) >= minlen and w not in _STOPWORDS]
+
+
+def _suggest_tags(title: str, limit: int = 3) -> tuple[str, ...]:
+    seen: list[str] = []
+    for w in _tokens(title):
+        if w not in seen:
+            seen.append(w)
+    return tuple(seen[:limit])
+
+
+def _near_duplicate(root: Path, title: str) -> str | None:
+    new = set(_tokens(title))
+    if not new:
+        return None
+    best_id, best = None, 0.0
+    for m in current_memories(root):
+        other = set(_tokens(m.title))
+        if not other:
+            continue
+        jaccard = len(new & other) / len(new | other)
+        if jaccard > best:
+            best, best_id = jaccard, m.id
+    return best_id if best >= 0.8 else None
+
+
+def cmd_add(args: argparse.Namespace) -> int:
+    if not (1 <= args.importance <= 5):
+        raise MemError("--importance must be between 1 and 5")
+    if not args.title.strip() or not args.body.strip():
+        raise MemError("both --title and body are required")
+    assert_no_secrets(args.title + "\n" + args.body)
+    root = find_project_root(Path.cwd())
+    warnings: list[str] = []
+    dup = _near_duplicate(root, args.title)
+    if dup:
+        warnings.append(f"possible duplicate of {dup}")
+    if args.tags:
+        tags = tuple(t.strip() for t in args.tags.split(",") if t.strip())
+    else:
+        tags = _suggest_tags(args.title)
+        if tags:
+            warnings.append(f"suggested tags: {','.join(tags)}")
+    now = _now_iso()
+    mem = Memory(id=new_ulid(), type=args.type, title=args.title.strip(),
+                 body=args.body.strip(), importance=args.importance, status="active",
+                 superseded_by=None, author=author_id(), source=args.source,
+                 git_meta=None, tags=tags, created_at=now, updated_at=now)
+    _store_memory(root, mem)
+    if args.json:
+        print(json.dumps({"id": mem.id, "warnings": warnings}, ensure_ascii=False))
+    else:
+        print(mem.id)
+        for w in warnings:
+            print(f"warning: {w}", file=sys.stderr)
+    return 0
+
+
+# ---- commands: find ----
+_DURATION_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days", "w": "weeks"}
+
+
+def _parse_duration(spec: str) -> datetime.timedelta:
+    match = re.fullmatch(r"(\d+)([smhdw])", spec.strip())
+    if not match:
+        raise MemError(f"invalid --since duration {spec!r}; use e.g. 30m, 24h, 7d, 2w")
+    return datetime.timedelta(**{_DURATION_UNITS[match.group(2)]: int(match.group(1))})
+
+
+def _query_tokens(query: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]+", query.lower()) if len(w) >= 2}
+
+
+def _fts_query(query: str) -> str:
+    toks = re.findall(r"[A-Za-z0-9]+", query)
+    return " OR ".join(toks) if toks else '""'
+
+
+def _recall_stats(con: sqlite3.Connection, mem_id: str, created_at: str,
+                  now: datetime.datetime | None = None) -> tuple[float, int]:
+    if now is None:
+        now = datetime.datetime.now(datetime.timezone.utc)
+    rows = con.execute("SELECT accessed_at FROM access_log WHERE memory_id=?", (mem_id,)).fetchall()
+    count = len(rows)
+    last = max((r[0] for r in rows), default=created_at)
+    delta = now - _parse_iso(last)
+    return max(delta.total_seconds() / 86400.0, 0.0), count
+
+
+def _fts_score(
+    con: sqlite3.Connection,
+    fts_query: str,
+    overlap_tokens: set[str],
+    *,
+    where_extra: str = "",
+    params_extra: tuple[object, ...] = (),
+) -> list[tuple[float, str, str, str, str, str, str, int]]:
+    """Run FTS search and return scored rows, sorted by (score desc, id asc).
+
+    Returns a list of (score, mem_id, type, title, body, author, created_at, importance).
+    bm25 scores are min-max normalised across the candidate set; a single candidate
+    (or a set with zero span) receives norm=1.0.  overlap_tokens is used for tag overlap.
+    """
+    sql = (
+        "SELECT f.mem_id, bm25(memories_fts) AS b, m.type, m.title, m.body, m.author, "
+        "m.created_at, m.importance FROM memories_fts f "
+        "JOIN memories m ON m.id = f.mem_id "
+        f"WHERE memories_fts MATCH ?{(' AND ' + where_extra) if where_extra else ''}"
+    )
+    params: tuple[object, ...] = (_fts_query(fts_query),) + params_extra
+    raw: list[tuple[str, float, str, str, str, str, str, int]] = []
+    for mem_id, b, mtype, title, body, author, created_at, importance in con.execute(sql, params):
+        raw.append((mem_id, float(b), mtype, title, body, author, created_at, int(importance)))
+    if not raw:
+        return []
+
+    # min-max normalise bm25 across the candidate set; bm25() is negative → negate first
+    rels = [-r[1] for r in raw]
+    lo, hi = min(rels), max(rels)
+    span = hi - lo
+
+    scored: list[tuple[float, str, str, str, str, str, str, int]] = []
+    for (mem_id, _b, mtype, title, body, author, created_at, importance), rel in zip(raw, rels):
+        norm = (rel - lo) / span if span > 0 else 1.0
+        mtags = {tg for (tg,) in con.execute("SELECT tag FROM tags WHERE memory_id=?", (mem_id,))}
+        overlap = len(overlap_tokens & mtags) / len(overlap_tokens) if overlap_tokens else 0.0
+        days, recall = _recall_stats(con, mem_id, created_at)
+        s = score(norm, importance, days, recall, overlap)
+        scored.append((s, mem_id, mtype, title, body, author, created_at, importance))
+    scored.sort(key=lambda x: (-x[0], x[1]))  # score desc, id asc → deterministic
+    return scored
+
+
+def cmd_find(args: argparse.Namespace) -> int:
+    root = find_project_root(Path.cwd())
+    con = ensure_db(root)
+    try:
+        qtokens = _query_tokens(args.query)
+        fts_tokens = re.findall(r"[A-Za-z0-9]+", args.query)
+        if fts_tokens:
+            where_parts: list[str] = []
+            params_extra: list[object] = []
+            if not args.all:
+                where_parts.append("m.status = 'active'")
+            if args.type:
+                where_parts.append("m.type = ?")
+                params_extra.append(args.type)
+            else:
+                where_parts.append("m.type != 'session'")
+            if args.since:
+                cutoff = (datetime.datetime.now(datetime.timezone.utc)
+                          - _parse_duration(args.since)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                where_parts.append("m.created_at >= ?")
+                params_extra.append(cutoff)
+            rows = _fts_score(
+                con, args.query, qtokens,
+                where_extra=" AND ".join(where_parts),
+                params_extra=tuple(params_extra),
+            )
+            scored_find = [(s, mem_id, mtype, title, author)
+                           for s, mem_id, mtype, title, _body, author, _ca, _imp in rows]
+        else:
+            sql = ("SELECT m.id, 0.0 AS b, m.type, m.title, m.author, "
+                   "m.created_at, m.importance FROM memories m WHERE 1=1")
+            params_list: list[object] = []
+            if not args.all:
+                sql += " AND m.status = 'active'"
+            if args.type:
+                sql += " AND m.type = ?"
+                params_list.append(args.type)
+            else:
+                sql += " AND m.type != 'session'"
+            if args.since:
+                cutoff = (datetime.datetime.now(datetime.timezone.utc)
+                          - _parse_duration(args.since)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                sql += " AND m.created_at >= ?"
+                params_list.append(cutoff)
+            raw_nofts: list[tuple[str, float, str, str, str, str, int]] = []
+            for mem_id, b, mtype, title, author, created_at, importance in con.execute(
+                    sql, params_list):
+                raw_nofts.append(
+                    (mem_id, float(b), mtype, title, author, created_at, int(importance)))
+            nofts_scored = []
+            for mem_id, _b, mtype, title, author, created_at, importance in raw_nofts:
+                days, recall = _recall_stats(con, mem_id, created_at)
+                s = score(1.0, importance, days, recall, 0.0)
+                nofts_scored.append((s, mem_id, mtype, title, author))
+            nofts_scored.sort(key=lambda x: (-x[0], x[1]))
+            scored_find = nofts_scored
+        top = scored_find[: args.k]
+    finally:
+        con.close()
+    if args.json:
+        print(json.dumps([{"id": i, "score": round(s, 4), "type": t, "title": ti, "author": a}
+                          for s, i, t, ti, a in top], ensure_ascii=False))
+    else:
+        for s, i, t, ti, a in top:
+            print(f"{i} · {s:.3f} · {t} · {ti} · [{a}]")
+    return 0
+
+
+_GET_COLS = ["id", "type", "title", "body", "importance", "status", "superseded_by",
+             "author", "source", "git_meta", "created_at", "updated_at"]
+
+
+def _credit_injection(con: sqlite3.Connection, memory_id: str) -> None:
+    try:
+        cutoff = (datetime.datetime.now(datetime.timezone.utc)
+                  - datetime.timedelta(hours=_USEFUL_WINDOW_HOURS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        row = con.execute(
+            "SELECT rowid, trigger_id FROM injection_log "
+            "WHERE memory_id=? AND credited=0 AND fired_at>=? "
+            "ORDER BY fired_at DESC LIMIT 1", (memory_id, cutoff)).fetchone()
+        if row is None:
+            return
+        con.execute("UPDATE injection_log SET credited=1 WHERE rowid=?", (row[0],))
+        con.execute("UPDATE trigger_stats SET useful_hits=useful_hits+1 WHERE trigger_id=?",
+                    (row[1],))
+        con.commit()
+    except sqlite3.DatabaseError:
+        return  # crediting must never break get
+
+
+def cmd_get(args: argparse.Namespace) -> int:
+    root = find_project_root(Path.cwd())
+    con = ensure_db(root)
+    try:
+        row = con.execute(f"SELECT {','.join(_GET_COLS)} FROM memories WHERE id=?",
+                          (args.id,)).fetchone()
+        if row is None:
+            raise MemError(f"memory {args.id} not found", exit_code=2)
+        con.execute("INSERT INTO access_log VALUES (?,?,?)",
+                    (args.id, _now_iso(), os.environ.get("MEM_SESSION", "")))
+        con.commit()
+        _credit_injection(con, args.id)
+        tags = [t for (t,) in con.execute("SELECT tag FROM tags WHERE memory_id=?", (args.id,))]
+    finally:
+        con.close()
+    record = dict(zip(_GET_COLS, row))
+    record["tags"] = tags
+    if args.json:
+        print(json.dumps(record, ensure_ascii=False))
+    else:
+        print(f"# {record['title']}  ({record['type']}, importance {record['importance']})")
+        print(f"id: {record['id']}  author: {record['author']}  tags: {','.join(tags)}")
+        print()
+        print(record["body"])
+    return 0
+
+
+def cmd_stats(args: argparse.Namespace) -> int:
+    root = find_project_root(Path.cwd())
+    con = ensure_db(root)
+    try:
+        by_type = dict(con.execute("SELECT type, COUNT(*) FROM memories GROUP BY type").fetchall())
+        by_status = dict(con.execute(
+            "SELECT status, COUNT(*) FROM memories GROUP BY status").fetchall())
+        total = con.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+        top = con.execute("SELECT memory_id, COUNT(*) c FROM access_log "
+                          "GROUP BY memory_id ORDER BY c DESC, memory_id ASC LIMIT 5").fetchall()
+        stale = len(_archive_candidates(con, args.min_score, args.max_age_days))
+        live = max(0, by_status.get("active", 0) - stale)  # stale ⊆ active; guard documents 0≤live
+        ibox = dict(con.execute("SELECT status, COUNT(*) FROM inbox GROUP BY status").fetchall())
+    finally:
+        con.close()
+    inbox_pending = ibox.get("pending", 0)
+    inbox_promoted = ibox.get("promoted", 0)
+    inbox_rejected = ibox.get("rejected", 0)
+    data = {"total": total, "by_type": by_type, "by_status": by_status,
+            "live": live, "stale": stale,
+            "inbox_pending": inbox_pending, "inbox_promoted": inbox_promoted,
+            "inbox_rejected": inbox_rejected,
+            "top_accessed": [{"id": i, "count": c} for i, c in top]}
+    if args.json:
+        print(json.dumps(data, ensure_ascii=False))
+    else:
+        print(f"total: {total}")
+        print("by type:   " + ", ".join(f"{k}={v}" for k, v in sorted(by_type.items())))
+        print("by status: " + ", ".join(f"{k}={v}" for k, v in sorted(by_status.items())))
+        print(f"vitality:  live={live}, stale={stale}")
+        print(f"inbox: pending={inbox_pending}, accepted={inbox_promoted}/"
+              f"{inbox_promoted + inbox_rejected}")
+    return 0
+
+
+def cmd_supersede(args: argparse.Namespace) -> int:
+    root = find_project_root(Path.cwd())
+    by_id = {m.id: m for m in current_memories(root)}
+    old = by_id.get(args.old_id)
+    new = by_id.get(args.new_id)
+    if old is None:
+        raise MemError(f"old memory {args.old_id} not found", exit_code=2)
+    if new is None:
+        raise MemError(f"new memory {args.new_id} not found", exit_code=2)
+    actor = author_id()
+    if old.author != actor:
+        raise MemError(f"cannot supersede memory owned by {old.author!r} (you are {actor!r}); "
+                       "cross-author supersede is not supported in F0")
+    updated = replace(old, status="superseded", superseded_by=new.id, updated_at=_now_iso())
+    append_memory(root, updated)
+    con = ensure_db(root)
+    try:
+        _reindex_memory(con, updated)
+        con.commit()
+    finally:
+        con.close()
+    if args.json:
+        print(json.dumps({"superseded": old.id, "by": new.id}, ensure_ascii=False))
+    else:
+        print(f"{old.id} superseded by {new.id}")
+    return 0
+
+
+# ---- commands: evolve ----
+DEFAULT_MIN_SCORE = 0.10
+DEFAULT_MAX_AGE_DAYS = 30.0
+
+
+def _archive_candidates(con: sqlite3.Connection, min_score: float,
+                        max_age_days: float) -> list[tuple[str, float, str, str, float]]:
+    """Active memories with standing < min_score AND no access for >= max_age_days.
+    Sorted by standing asc, id asc → deterministic."""
+    rows = con.execute(
+        "SELECT id, type, title, importance, created_at FROM memories "
+        "WHERE status = 'active'").fetchall()
+    now = datetime.datetime.now(datetime.timezone.utc)  # one snapshot → deterministic standings
+    out: list[tuple[str, float, str, str, float]] = []
+    for mem_id, mtype, title, importance, created_at in rows:
+        days, recall = _recall_stats(con, mem_id, created_at, now=now)
+        standing = standing_score(int(importance), days, recall)
+        if standing < min_score and days >= max_age_days:
+            out.append((mem_id, standing, mtype, title, days))
+    out.sort(key=lambda r: (r[1], r[0]))
+    return out
+
+
+def _dup_clusters(root: Path, threshold: float = 0.8) -> list[list[str]]:
+    """Connected components of active memories whose title-token Jaccard >= threshold.
+    Mirrors add's _near_duplicate metric. Deterministic ordering."""
+    actives = [m for m in current_memories(root) if m.status == "active"]
+    toksets = {m.id: set(_tokens(m.title)) for m in actives}
+    parent: dict[str, str] = {m.id: m.id for m in actives}
+
+    def find(x: str) -> str:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    ids = [m.id for m in actives]
+    for idx, a in enumerate(ids):
+        sa = toksets[a]
+        if not sa:
+            continue
+        for b in ids[idx + 1:]:
+            sb = toksets[b]
+            if not sb:
+                continue
+            jaccard = len(sa & sb) / len(sa | sb)
+            if jaccard >= threshold:
+                parent[find(a)] = find(b)
+    groups: dict[str, list[str]] = {}
+    for i in ids:
+        groups.setdefault(find(i), []).append(i)
+    clusters = [sorted(g) for g in groups.values() if len(g) >= 2]
+    clusters.sort(key=lambda g: g[0])
+    return clusters
+
+
+def _apply_archive(root: Path, con: sqlite3.Connection,
+                   candidate_ids: list[str]) -> tuple[int, list[str]]:
+    """Archive own-author candidates (append snapshot + reindex). Returns
+    (archived_count, skipped_ids_owned_by_others). Never writes another author's JSONL (R10)."""
+    actor = author_id()
+    by_id = {m.id: m for m in current_memories(root)}
+    archived = 0
+    skipped: list[str] = []
+    for mem_id in candidate_ids:
+        m = by_id.get(mem_id)
+        if m is None:
+            continue
+        if m.author != actor:
+            skipped.append(mem_id)
+            continue
+        updated = replace(m, status="archived", updated_at=_now_iso())
+        append_memory(root, updated)
+        _reindex_memory(con, updated)
+        archived += 1
+    con.commit()
+    return archived, skipped
+
+
+def _trigger_proposals(root: Path, *, min_cluster: int = 3) -> list[tuple[tuple[str, ...], int]]:
+    """Return tag clusters from active feedback/episode memories not covered by any enabled trigger.
+
+    Each entry is ((tag,), count) sorted by (-count, tag) for determinism.
+    Read-only: never writes triggers.jsonl (R12).
+    """
+    covered = {tg for t in _load_triggers(root, enabled_only=True) for tg in t.tags}
+    counts: dict[str, int] = {}
+    for m in current_memories(root):
+        if m.status != "active" or m.type not in ("feedback", "episode"):
+            continue
+        for tag in set(m.tags):
+            counts[tag] = counts.get(tag, 0) + 1
+    props: list[tuple[tuple[str, ...], int]] = [
+        ((tag,), n) for tag, n in counts.items()
+        if n >= min_cluster and tag not in covered
+    ]
+    props.sort(key=lambda x: (-x[1], x[0][0]))
+    return props
+
+
+def cmd_evolve(args: argparse.Namespace) -> int:
+    root = find_project_root(Path.cwd())
+    con = ensure_db(root)
+    try:
+        archive = _archive_candidates(con, args.min_score, args.max_age_days)
+        inbox = con.execute(
+            "SELECT id, type, title, origin FROM inbox WHERE status = 'pending' "
+            "ORDER BY created_at ASC, id ASC").fetchall()
+        applied = 0
+        skipped: list[str] = []
+        if args.apply or args.yes:
+            applied, skipped = _apply_archive(root, con, [c[0] for c in archive])
+    finally:
+        con.close()
+    clusters = _dup_clusters(root)
+    proposals = _trigger_proposals(root)
+    if args.json:
+        print(json.dumps({
+            "archive": [{"id": i, "standing": round(s, 4), "type": t,
+                         "title": ti, "days_since_access": round(d, 1)}
+                        for i, s, t, ti, d in archive],
+            "dup_clusters": clusters,
+            "inbox": [{"id": i, "type": t, "title": ti, "origin": o}
+                      for i, t, ti, o in inbox],
+            "applied": applied,
+            "skipped": skipped,
+            "proposals": [{"tags": list(tags), "count": n} for tags, n in proposals],
+        }, ensure_ascii=False))
+        return 0
+    print(f"ARCHIVE ({len(archive)}):")
+    for i, s, t, ti, d in archive:
+        print(f"  {i} · {s:.3f} · {t} · {ti} · {d:.0f}d since access")
+    print(f"DUP ({len(clusters)}):")
+    for cluster in clusters:
+        print("  " + " ~ ".join(cluster))
+    print(f"INBOX ({len(inbox)}):")
+    for i, t, ti, o in inbox:
+        print(f"  {i} · {t} · {ti} · {o}")
+    if proposals:
+        print("trigger proposals (author via `mem trigger add --glob <glob> --tags ...`):")
+        for tags, n in proposals:
+            print(f"  tags [{','.join(tags)}] — {n} memories; consider a post-edit trigger")
+    if args.apply or args.yes:
+        print(f"applied: archived {applied}")
+        for sk in skipped:
+            print(f"  skipped {sk} (owned by another author)")
+    return 0
+
+
+# ---- commands: inbox ----
+INBOX_TYPES = frozenset({"feedback", "reference", "episode", "decision"})
+
+
+def _inbox_store(root: Path, *, mtype: str, title: str, body: str, importance: int,
+                 tags: str, origin: str, source: str | None = None) -> str:
+    assert_no_secrets(title + "\n" + body)  # never persist a secret, even locally (R6)
+    cid = new_ulid()
+    now = _now_iso()
+    con = ensure_db(root)
+    try:
+        con.execute(
+            "INSERT INTO inbox (id,type,title,body,importance,tags,source,origin,"
+            "status,promoted_id,created_at,resolved_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (cid, mtype, title.strip(), body.strip(), importance,
+             tags, source, origin, "pending", None, now, None))
+        con.commit()
+    finally:
+        con.close()
+    return cid
+
+
+def _inbox_add(args: argparse.Namespace) -> int:
+    if not (1 <= args.importance <= 5):
+        raise MemError("--importance must be between 1 and 5")
+    if not args.title.strip() or not args.body.strip():
+        raise MemError("both --title and body are required")
+    tags = " ".join(t.strip() for t in args.tags.split(",") if t.strip())
+    cid = _inbox_store(find_project_root(Path.cwd()), mtype=args.type, title=args.title,
+                       body=args.body, importance=args.importance, tags=tags,
+                       origin=args.origin, source=args.source)
+    if args.json:
+        print(json.dumps({"id": cid, "status": "pending"}, ensure_ascii=False))
+    else:
+        print(cid)
+    return 0
+
+
+def _inbox_list(args: argparse.Namespace) -> int:
+    root = find_project_root(Path.cwd())
+    con = ensure_db(root)
+    sql = ("SELECT id, type, title, origin, status, created_at FROM inbox "
+           + ("" if args.all else "WHERE status = 'pending' ")
+           + "ORDER BY created_at ASC, id ASC")
+    try:
+        rows = con.execute(sql).fetchall()
+    finally:
+        con.close()
+    if args.json:
+        print(json.dumps([{"id": i, "type": t, "title": ti, "origin": o, "status": s,
+                           "created_at": c} for i, t, ti, o, s, c in rows], ensure_ascii=False))
+        return 0
+    now = datetime.datetime.now(datetime.timezone.utc)
+    for i, t, ti, o, s, c in rows:
+        days = max((now - _parse_iso(c)).total_seconds() / 86400.0, 0.0)
+        print(f"{i} · {t} · {ti} · {o} · {days:.0f}d")
+    return 0
+
+
+def _inbox_promote(args: argparse.Namespace) -> int:
+    root = find_project_root(Path.cwd())
+    con = ensure_db(root)
+    try:
+        row = con.execute(
+            "SELECT type, title, body, importance, tags, source FROM inbox "
+            "WHERE id = ? AND status = 'pending'", (args.id,)).fetchone()
+        if row is None:
+            raise MemError(f"inbox candidate {args.id} not found or already resolved", exit_code=2)
+        ctype, title, body, importance, tags_str, source = row
+        assert_no_secrets(title + "\n" + body)  # final barrier before JSONL (R6)
+        dup = _near_duplicate(root, title)
+        tags = tuple(t for t in tags_str.split(" ") if t)
+        prov = f"inbox:{args.id}" if not source else f"{source} inbox:{args.id}"
+        now = _now_iso()
+        mem = Memory(id=new_ulid(), type=ctype, title=title, body=body,
+                     importance=int(importance), status="active", superseded_by=None,
+                     author=author_id(), source=prov, git_meta=None, tags=tags,
+                     created_at=now, updated_at=now)
+        append_memory(root, mem)        # JSONL append (atomic, R11)
+        _reindex_memory(con, mem)       # index into the open db
+        con.execute("UPDATE inbox SET status='promoted', promoted_id=?, resolved_at=? WHERE id=?",
+                    (mem.id, now, args.id))
+        con.commit()
+    finally:
+        con.close()
+    if args.json:
+        print(json.dumps({"added": mem.id, "from_inbox": args.id}, ensure_ascii=False))
+    else:
+        print(f"added {mem.id} (from inbox {args.id})")
+        if dup:
+            print(f"warning: possible duplicate of {dup}", file=sys.stderr)
+    return 0
+
+
+def _inbox_reject(args: argparse.Namespace) -> int:
+    root = find_project_root(Path.cwd())
+    con = ensure_db(root)
+    try:
+        cur = con.execute(
+            "UPDATE inbox SET status='rejected', resolved_at=? WHERE id=? AND status='pending'",
+            (_now_iso(), args.id))
+        if cur.rowcount == 0:
+            raise MemError(f"inbox candidate {args.id} not found or already resolved", exit_code=2)
+        con.commit()
+    finally:
+        con.close()
+    if args.json:
+        print(json.dumps({"rejected": args.id}, ensure_ascii=False))
+    else:
+        print(f"rejected {args.id}")
+    return 0
+
+
+def cmd_inbox(args: argparse.Namespace) -> int:
+    if args.inbox_action == "add":
+        return _inbox_add(args)
+    if args.inbox_action == "list":
+        return _inbox_list(args)
+    if args.inbox_action == "promote":
+        return _inbox_promote(args)
+    if args.inbox_action == "reject":
+        return _inbox_reject(args)
+    raise MemError(f"unknown inbox action {args.inbox_action!r}")  # parser should prevent this
+
+
+# ---- commands: hook (Claude Code adapters; fail-open, R5) ----
+_CORRECTION_RE = re.compile(
+    r"(?i)\b(?:n[ãa]o\s+era\s+isso|refaz|refa[çc]a|errado|"
+    r"redo|wrong|not\s+(?:that|what)|that'?s\s+not)\b")
+
+
+def _read_hook_stdin() -> dict[str, object]:
+    try:
+        data = json.load(sys.stdin)
+    except (ValueError, OSError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _hook_prompt(args: argparse.Namespace) -> int:
+    payload = _read_hook_stdin()
+    raw_prompt = payload.get("prompt")
+    prompt = str(raw_prompt) if raw_prompt else ""
+    raw_cwd = payload.get("cwd")
+    root = find_project_root(Path(str(raw_cwd)) if raw_cwd else Path.cwd())
+    session = str(payload.get("session_id") or "")
+    # Session-continuity: keep the checkpoint live (the safety net against hard kills).
+    if session:
+        _checkpoint_write(root, session_id=session, last_prompt=prompt, status="open")
+    # Existing: queue user-correction signals to the inbox.
+    if _CORRECTION_RE.search(prompt):
+        _inbox_store(root, mtype="feedback", title="user correction signal",
+                     body=prompt.strip()[:500], importance=3, tags="correction",
+                     origin="correction-signal")
+    return 0  # no stdout: UserPromptSubmit stdout is injected as context
+
+
+_STOP_NUDGE = ("Significant (possibly uncommitted) work happened this session and no durable "
+               "handoff was saved. If there is knowledge worth keeping for the next session, "
+               "record it with `mem session \"<objetivo; o que mudou; pendências>\"` "
+               "or run the mem-consolidate skill (it delegates to a subagent; "
+               "never invents memories).")
+
+
+def _session_start(payload: dict[str, object]) -> str | None:
+    tpath = payload.get("transcript_path")
+    if not tpath:
+        return None
+    try:
+        with open(str(tpath), encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                ts = json.loads(line).get("timestamp")
+                if isinstance(ts, str):
+                    return ts
+    except (OSError, ValueError):
+        return None
+    return None
+
+
+def _session_is_significant(root: Path, start: str) -> bool:
+    # Significant = a commit landed after the session started (durable work worth a curated
+    # `mem session`). WIP continuity across interruptions is handled separately by the
+    # checkpoint (written by the prompt/post-tool hooks), not by this nudge gate.
+    # Compare at the Python level: git --since overflows for far-future dates (git ≥ 2.50).
+    try:
+        start_dt = _parse_iso(start)
+    except ValueError:
+        return False
+    latest = _run_git(["log", "-1", "--format=%aI"], root)
+    if not latest:
+        return False
+    try:
+        commit_dt = _parse_iso(latest.strip())
+    except ValueError:
+        return False
+    return commit_dt > start_dt
+
+
+def _session_already_captured(root: Path, start_dt: datetime.datetime) -> bool:
+    con = ensure_db(root)
+    try:
+        for sql in ("SELECT created_at FROM memories WHERE type='session'",
+                    "SELECT created_at FROM inbox WHERE origin='haiku'"):
+            for (created,) in con.execute(sql).fetchall():
+                try:
+                    if _parse_iso(created) > start_dt:
+                        return True
+                except ValueError:
+                    continue
+    finally:
+        con.close()
+    return False
+
+
+# ---- session-continuity checkpoint (local, deterministic, never committed) ----
+# A cheap per-root snapshot kept live by the prompt/post-tool hooks. status='open' that
+# survives into a NEW session is the interruption signal (a clean Stop marks it 'closed').
+_CHECKPOINT_WINDOW_HOURS = 168  # 7d — don't resurrect a stale ghost
+
+
+def _checkpoint_read(con: sqlite3.Connection) -> dict[str, str] | None:
+    try:
+        row = con.execute(
+            "SELECT session_id, branch, head, last_prompt, status, updated_at "
+            "FROM checkpoint WHERE id=1").fetchone()
+    except sqlite3.DatabaseError:
+        return None
+    if not row:
+        return None
+    keys = ("session_id", "branch", "head", "last_prompt", "status", "updated_at")
+    return {k: (v if v is not None else "") for k, v in zip(keys, row)}
+
+
+def _checkpoint_write(root: Path, *, session_id: str,
+                      last_prompt: str | None, status: str) -> None:
+    """Upsert the singleton checkpoint. last_prompt=None preserves the existing prompt
+    (post-tool refresh keeps head/updated_at fresh without losing the objective)."""
+    branch = _run_git(["rev-parse", "--abbrev-ref", "HEAD"], root) or ""
+    head = _run_git(["rev-parse", "--short", "HEAD"], root) or ""
+    # The checkpoint's last_prompt is re-injected into the next session's context by the
+    # resume block, so redact it if it carries a possible secret (the prompt is the only
+    # free-text field here; everything else is git-derived).
+    if last_prompt is not None and scan_secrets(last_prompt):
+        last_prompt = "[redacted: prompt continha possível segredo]"
+    con = ensure_db(root)
+    try:
+        prompt = last_prompt
+        if prompt is None:
+            prompt = (_checkpoint_read(con) or {}).get("last_prompt", "")
+        con.execute("DELETE FROM checkpoint WHERE id=1")
+        con.execute(
+            "INSERT INTO checkpoint "
+            "(id, session_id, branch, head, last_prompt, status, updated_at) "
+            "VALUES (1,?,?,?,?,?,?)",
+            (session_id, branch, head, (prompt or "")[:280], status, _now_iso()))
+        con.commit()
+    finally:
+        con.close()
+
+
+def _checkpoint_close(root: Path, session_id: str) -> None:
+    """Mark the checkpoint closed — but only if it still belongs to this session
+    (don't clobber a checkpoint another session has since opened)."""
+    con = ensure_db(root)
+    try:
+        con.execute("UPDATE checkpoint SET status='closed', updated_at=? "
+                    "WHERE id=1 AND session_id=?", (_now_iso(), session_id))
+        con.commit()
+    finally:
+        con.close()
+
+
+def cmd_checkpoint(args: argparse.Namespace) -> int:
+    """Read-only view of the session-continuity checkpoint (consumed by the mem-resume skill)."""
+    root = find_project_root(Path.cwd())
+    con = ensure_db(root)
+    try:
+        cp = _checkpoint_read(con)
+    finally:
+        con.close()
+    if args.json:
+        print(json.dumps(cp or {}, ensure_ascii=False))
+    elif not cp:
+        print("no checkpoint")
+    else:
+        for key in ("session_id", "branch", "head", "status", "updated_at", "last_prompt"):
+            print(f"{key}: {cp.get(key, '')}")
+    return 0
+
+
+def _hook_stop(args: argparse.Namespace) -> int:
+    payload = _read_hook_stdin()
+    if payload.get("stop_hook_active"):
+        return 0  # already nudged this stop cycle (anti-loop guard)
+    raw_cwd = payload.get("cwd")
+    root = find_project_root(Path(str(raw_cwd)) if raw_cwd else Path.cwd())
+    # Session-continuity: a clean Stop closes the checkpoint (no false resume next session).
+    # Do this BEFORE the transcript-dependent guards below: closing only needs the session id,
+    # and a missing/unreadable transcript must not leave a dangling 'open' (false-positive resume).
+    session = str(payload.get("session_id") or "")
+    if session:
+        _checkpoint_close(root, session)
+    start = _session_start(payload)
+    if start is None:
+        return 0  # can't determine the session window → no significance nudge
+    try:
+        start_dt = _parse_iso(start)
+    except ValueError:
+        return 0
+    if not _session_is_significant(root, start):
+        return 0
+    if _session_already_captured(root, start_dt):
+        return 0
+    print(json.dumps({
+        "decision": "block",
+        "reason": _STOP_NUDGE,
+        "hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": _STOP_NUDGE},
+    }, ensure_ascii=False))
+    return 0
+
+
+def _humanize_age(age_h: float) -> str:
+    mins = age_h * 60
+    if mins < 2:
+        return "agora há pouco"
+    if age_h < 1:
+        return f"há ~{round(mins)} min"
+    if age_h < 48:
+        return f"há ~{round(age_h)}h"
+    return f"há ~{round(age_h / 24)} dia(s)"
+
+
+def _resume_block(con: sqlite3.Connection, root: Path, current_session: str) -> str | None:
+    """Session-continuity read side: if the prior session was interrupted (checkpoint still 'open',
+    belongs to a different session, and is recent), surface a deterministic resume block.
+    A clean exit would have marked the checkpoint 'closed', so this never false-fires."""
+    cp = _checkpoint_read(con)
+    if not cp or cp.get("status") != "open":
+        return None
+    if cp.get("session_id") and cp.get("session_id") == current_session:
+        return None  # same session re-emitting SessionStart → not an interruption
+    try:
+        age_h = (datetime.datetime.now(datetime.timezone.utc)
+                 - _parse_iso(cp["updated_at"])).total_seconds() / 3600.0
+    except (ValueError, KeyError, TypeError):
+        return None
+    if age_h > _CHECKPOINT_WINDOW_HOURS:
+        return None  # stale ghost → don't resurrect
+    branch = cp.get("branch") or _run_git(["rev-parse", "--abbrev-ref", "HEAD"], root) or "?"
+    status_raw = _run_git(["status", "--porcelain"], root) or ""
+    nfiles = len([ln for ln in status_raw.splitlines() if ln.strip()])
+    head = _run_git(["rev-parse", "--short", "HEAD"], root) or cp.get("head") or "?"
+    last = " ".join((cp.get("last_prompt") or "").split())[:200] or "(sem prompt registrado)"
+    when = _humanize_age(age_h)
+    return (f"⚠️ Sua sessão anterior (branch {branch}) terminou sem fechar — provavelmente "
+            f"interrompida {when}. O contexto abaixo já está carregado (não precisa buscar):\n"
+            f"  • Você estava em: \"{last}\"\n"
+            f"  • Não-commitado: {nfiles} arquivo(s) · head: {head}\n"
+            "  Para uma reconstrução narrada (objetivo/progresso/próximos passos), "
+            "rode /mem-resume.")
+
+
+def _hook_session_start(args: argparse.Namespace) -> int:
+    payload = _read_hook_stdin()
+    raw_cwd = payload.get("cwd")
+    root = find_project_root(Path(str(raw_cwd)) if raw_cwd else Path.cwd())
+    current_session = str(payload.get("session_id") or "")
+    con = ensure_db(root)
+    try:
+        resume = _resume_block(con, root, current_session)
+        rows = _brief_select(con, 800)
+    finally:
+        con.close()
+    parts: list[str] = []
+    if resume:
+        parts.append(resume)
+    if rows:
+        parts.append("Project memory (high-value index):\n"
+                     + "\n".join(f"- {i} · {t} · {ln}" for i, t, ln in rows))
+    if not parts:
+        return 0
+    text = "\n\n".join(parts)
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
+                                             "additionalContext": text}}, ensure_ascii=False))
+    return 0
+
+
+def _hook_post_tool(args: argparse.Namespace) -> int:
+    payload = _read_hook_stdin()
+    tool_input = payload.get("tool_input") or {}
+    path = tool_input.get("file_path") if isinstance(tool_input, dict) else None
+    if not path:
+        return 0
+    raw_cwd = payload.get("cwd")
+    root = find_project_root(Path(str(raw_cwd)) if raw_cwd else Path.cwd())
+    session = str(payload.get("session_id") or "")
+    # Session-continuity: refresh the checkpoint so it stays alive even across edit-only stretches.
+    if session:
+        _checkpoint_write(root, session_id=session, last_prompt=None, status="open")
+    con = ensure_db(root)
+    try:
+        rows = _fire_select(con, root, "post-edit", str(path), session, _HOOK_SESSION_BUDGET)
+    finally:
+        con.close()
+    if not rows:
+        return 0
+    text = "Relevant project memory:\n" + "\n".join(f"- {i} · {t} · {ln}" for i, t, ln in rows)
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse",
+                                             "additionalContext": text}}, ensure_ascii=False))
+    return 0
+
+
+def cmd_hook(args: argparse.Namespace) -> int:
+    try:
+        if args.hook_action == "prompt":
+            return _hook_prompt(args)
+        if args.hook_action == "stop":
+            return _hook_stop(args)
+        if args.hook_action == "session-start":
+            return _hook_session_start(args)
+        if args.hook_action == "post-tool":
+            return _hook_post_tool(args)
+        return 0
+    except Exception:
+        if getattr(args, "debug", False):
+            raise
+        return 0  # R5: a hook never breaks the user's shell
+
+
+# ---- commands: compact ----
+def _collapse_current(events: list[Memory]) -> dict[str, Memory]:
+    """Latest snapshot per id, in read order (last-write-wins)."""
+    latest: dict[str, Memory] = {}
+    for m in events:
+        latest[m.id] = m
+    return latest
+
+
+def cmd_compact(args: argparse.Namespace) -> int:
+    root = find_project_root(Path.cwd())
+    author = author_id()
+    path = author_jsonl(root, author)
+    if not path.exists():
+        if args.json:
+            print(json.dumps({"author": author, "dropped": 0, "before": 0, "after": 0}))
+        else:
+            print("nothing to compact")
+        return 0
+    raw = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    events = [Memory.from_jsonl(ln) for ln in raw]
+    current = _collapse_current(events)
+    archived_ids = {mid for mid, m in current.items() if m.status == "archived"}
+    kept = [ln for ln, m in zip(raw, events) if m.id not in archived_ids]
+    lines_dropped = len(raw) - len(kept)
+    ids_dropped = len(archived_ids)
+    if lines_dropped:
+        tmp = path.with_suffix(".jsonl.tmp")
+        if tmp.exists():
+            tmp.unlink()  # clear any stale temp from a prior interrupted run (mirrors rebuild)
+        data = ("\n".join(kept) + ("\n" if kept else "")).encode("utf-8")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+        try:
+            os.write(fd, data)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(tmp, path)  # atomic
+        rebuild(root)
+    if args.json:
+        print(json.dumps({"author": author, "dropped": ids_dropped,
+                          "before": len(raw), "after": len(kept)}))
+    elif lines_dropped:
+        print(f"dropped {ids_dropped} archived; {path.name} {len(raw)}→{len(kept)} lines")
+    else:
+        print("nothing to compact")
+    return 0
+
+
+# ---- commands: doctor ----
+def _gh_json(gh_args: list[str], timeout: int = 10) -> str | None:
+    try:
+        out = subprocess.run(["gh", *gh_args], capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout if out.returncode == 0 else None
+
+
+def _latest_release_tag() -> str | None:
+    out = _gh_json(["api", f"repos/{UPSTREAM_REPO}/releases/latest", "--jq", ".tag_name"])
+    return out.strip() if out else None
+
+
+def _release_script(ref: str) -> bytes | None:
+    out = _gh_json(["api", f"repos/{UPSTREAM_REPO}/contents/mem?ref={ref}",
+                    "-H", "Accept: application/vnd.github.raw"])
+    return out.encode("utf-8") if out is not None else None
+
+
+def cmd_update(args: argparse.Namespace) -> int:
+    root = find_project_root(Path.cwd())
+    dest = root / ".claude" / "bin" / "mem"
+    if not dest.exists():
+        raise MemError(f"no vendored copy at {dest}; run `mem vendor` first")
+    tag = args.ref or _latest_release_tag()
+    if not tag:
+        raise MemError("could not resolve a release tag (gh offline?)", exit_code=1)
+    if args.check:
+        up_to_date = tag.lstrip("v") == __version__
+        if args.json:
+            print(json.dumps({"local": __version__, "latest": tag, "up_to_date": up_to_date}))
+        else:
+            state = "up-to-date" if up_to_date else "update available"
+            print(f"local={__version__} latest={tag} ({state})")
+        return 0
+    # R13: refuse to clobber a hand-modified vendored copy
+    expected = _release_script(f"v{__version__}")
+    current = hashlib.sha256(dest.read_bytes()).hexdigest()
+    if expected is not None and hashlib.sha256(expected).hexdigest() != current:
+        raise MemError("vendored copy was modified by hand; refusing to clobber. "
+                       "Reconcile changes upstream (R9), then re-run.", exit_code=1)
+    new_script = _release_script(tag)
+    if new_script is None:
+        raise MemError(f"could not fetch mem@{tag} from {UPSTREAM_REPO}", exit_code=1)
+    tmp = dest.parent / (dest.name + ".tmp")
+    tmp.write_bytes(new_script)
+    os.chmod(tmp, 0o755)
+    os.replace(tmp, dest)  # atomic; new version runs on the NEXT invocation
+    print(f"updated vendored mem to {tag} (runs on next invocation)")
+    return 0
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    checks: list[tuple[str, str, str]] = []
+    root: Path | None
+    try:
+        root = find_project_root(Path.cwd())
+        checks.append(("project-root", "ok", str(root)))
+    except MemError as exc:
+        root = None
+        checks.append(("project-root", "fail", str(exc)))
+    checks.append(("author", "ok", author_id()))
+    if root is not None:
+        path = db_path(root)
+        if not path.exists():
+            checks.append(("schema", "ok", "not yet built (index created on first write)"))
+        else:
+            ver = _db_schema_version(path)
+            if ver == SCHEMA_VERSION:
+                checks.append(("schema", "ok", f"db={ver} code={SCHEMA_VERSION}"))
+            elif ver is None:
+                checks.append(("schema", "error", "corrupt; run `mem rebuild`"))
+            else:
+                checks.append(("schema", "stale", f"db={ver} code={SCHEMA_VERSION}; run `mem rebuild`"))
+    latest = _latest_release_tag()
+    if latest is None:
+        checks.append(("version", "skip", "gh unavailable"))
+    else:
+        status = "ok" if latest.lstrip("v") == __version__ else "drift"
+        checks.append(("version", status, f"local={__version__} latest={latest}"))
+    if args.json:
+        print(json.dumps([{"check": c, "status": s, "detail": d} for c, s, d in checks],
+                         ensure_ascii=False))
+    else:
+        for c, s, d in checks:
+            print(f"[{s}] {c}: {d}")
+    return 0
+
+
+# ---- commands: session ----
+def _run_git(args: list[str], root: Path, timeout: int = 5) -> str | None:
+    try:
+        out = subprocess.run(["git", *args], cwd=root, capture_output=True,
+                             text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout.strip() if out.returncode == 0 else None
+
+
+def _git_meta_snapshot(root: Path) -> str | None:
+    head = _run_git(["rev-parse", "--short", "HEAD"], root)
+    if head is None:
+        return None
+    branch = _run_git(["rev-parse", "--abbrev-ref", "HEAD"], root) or ""
+    commits_raw = _run_git(["log", "-5", "--format=%h %s"], root) or ""
+    commits = [ln for ln in commits_raw.splitlines() if ln.strip()][:5]
+    status_raw = _run_git(["status", "--porcelain"], root) or ""
+    files = [ln[3:] for ln in status_raw.splitlines() if len(ln) > 3][:20]
+    data = {"branch": branch, "head": head, "commits": commits, "files": files}
+    return json.dumps(data, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+
+def cmd_session(args: argparse.Namespace) -> int:
+    summary = args.summary.strip()
+    if not summary:
+        raise MemError("session summary is required")
+    if not (1 <= args.importance <= 5):
+        raise MemError("--importance must be between 1 and 5")
+    assert_no_secrets(summary)
+    root = find_project_root(Path.cwd())
+    title = next((ln.strip() for ln in summary.splitlines() if ln.strip()), summary)[:80]
+    warnings: list[str] = []
+    git_meta = _git_meta_snapshot(root)
+    if git_meta is None:
+        warnings.append("git metadata unavailable (not a git repo or git missing)")
+    dup = _near_duplicate(root, title)
+    if dup:
+        warnings.append(f"possible duplicate of {dup}")
+    if args.tags:
+        tags = tuple(t.strip() for t in args.tags.split(",") if t.strip())
+    else:
+        tags = _suggest_tags(title)
+        if tags:
+            warnings.append(f"suggested tags: {','.join(tags)}")
+    now = _now_iso()
+    mem = Memory(id=new_ulid(), type="session", title=title, body=summary,
+                 importance=args.importance, status="active", superseded_by=None,
+                 author=author_id(), source=args.source, git_meta=git_meta,
+                 tags=tags, created_at=now, updated_at=now)
+    _store_memory(root, mem)
+    if args.json:
+        print(json.dumps({"id": mem.id, "warnings": warnings}, ensure_ascii=False))
+    else:
+        print(mem.id)
+        for w in warnings:
+            print(f"warning: {w}", file=sys.stderr)
+    return 0
+
+
+# ---- commands: issue ----
+# NOTE: this template MUST stay in sync with .github/ISSUE_TEMPLATE/bug.md (the
+# canonical GitHub form). Two copies is a known, accepted trade-off: the CLI builds
+# the body offline/deterministically (R4) and cannot read the .github file at runtime.
+_ISSUE_KINDS = ("bug", "feature", "rough-edge")
+_ISSUE_TEMPLATE = """\
+## O que aconteceu
+
+{body}
+
+## Comportamento esperado
+
+<!-- (preencha) o que você esperava que o mem fizesse -->
+
+## Como reproduzir
+
+<!-- (preencha) passos mínimos para reproduzir -->
+
+## Ambiente
+
+{environment}
+"""
+
+
+def _issue_environment(root: Path | None) -> str:
+    """Deterministic, stdlib-only environment block (no network, no LLM — R4)."""
+    py = sys.version.split()[0]
+    plat = platform.platform()
+    lines = [
+        f"- mem: {__version__}",
+        f"- Python: {py}",
+        f"- OS: {plat}",
+    ]
+    if root is not None:
+        remote = _run_git(["config", "--get", "remote.origin.url"], root)
+        consumer = remote.strip() if remote else root.name
+        lines.append(f"- Repo: {consumer}")
+        branch = _run_git(["rev-parse", "--abbrev-ref", "HEAD"], root)
+        head = _run_git(["rev-parse", "--short", "HEAD"], root)
+        if branch and head:
+            lines.append(f"- Branch: {branch} @ {head}")
+    return "\n".join(lines)
+
+
+def _build_issue_body(user_body: str, root: Path | None) -> str:
+    body = user_body.strip() or "<!-- (preencha) descreva o que aconteceu -->"
+    return _ISSUE_TEMPLATE.format(body=body, environment=_issue_environment(root))
+
+
+def _create_gh_issue(title: str, body: str) -> str | None:
+    """Create the issue via gh; returns the URL, or None if gh is unavailable/offline."""
+    return _gh_json(["issue", "create", "-R", UPSTREAM_REPO,
+                     "--title", title, "--body", body])
+
+
+def cmd_issue(args: argparse.Namespace) -> int:
+    title = args.title.strip()
+    if not title:
+        raise MemError("--title is required")
+    # R6: secret filter on everything we might send out, before composing the body.
+    assert_no_secrets(title + "\n" + (args.body or ""))
+    try:
+        root: Path | None = find_project_root(Path.cwd())
+    except MemError:
+        root = None  # issue reporting must work even outside a mem project
+    body = _build_issue_body(args.body or "", root)
+    if args.dry_run:
+        if args.json:
+            print(json.dumps({"title": title, "body": body, "kind": args.kind},
+                             ensure_ascii=False))
+        else:
+            print(f"title: {title}")
+            print(f"kind: {args.kind}")
+            print("body:")
+            print(body)
+        return 0
+    url = _create_gh_issue(title, body)
+    if url is None:
+        # graceful: gh missing/offline — hand the ready-made report to the user (R5 spirit)
+        if args.json:
+            print(json.dumps({"title": title, "body": body, "kind": args.kind, "url": None},
+                             ensure_ascii=False))
+        else:
+            print("gh unavailable (offline or not installed); create the issue manually at "
+                  f"https://github.com/{UPSTREAM_REPO}/issues/new", file=sys.stderr)
+            print(f"title: {title}")
+            print("body:")
+            print(body)
+        return 0
+    url = url.strip()
+    if args.json:
+        print(json.dumps({"url": url, "kind": args.kind}, ensure_ascii=False))
+    else:
+        print(url)
+    return 0
+
+
+# ---- commands: dist ----
+UPSTREAM_REPO = "inRadar/mem"
+MEM_BLOCK_START = "<!-- >>> mem >>> -->"
+MEM_BLOCK_END = "<!-- <<< mem <<< -->"
+RESUME_SKILL = """---
+name: mem-resume
+description: Resume interrupted or prior work. Reads the local session checkpoint first (deterministic), then optionally narrates the previous session via a subagent. Use when starting work, asked "where were we", or after an interrupted session.
+---
+
+# Resuming work with `mem`
+
+The SessionStart hook already injects a deterministic resume banner when the prior session
+was interrupted (its checkpoint was left `open`). That banner carries the branch, last prompt,
+uncommitted-file count and head — so the basic "where was I" is already in context. Use this
+skill to go deeper.
+
+1. Read the deterministic checkpoint (one call, no extra digging):
+   `.claude/bin/mem checkpoint` → session_id, branch, head, last_prompt, status, updated_at.
+   Cross-check the on-disk state with `git status --porcelain` and `git log -1`.
+2. For a narrated reconstruction (objective / progress / blocker / single best next step),
+   dispatch a subagent (Haiku-class, e.g. claude-haiku-4-5) under this contract:
+   - SCOPE: read the most recent prior transcript for this cwd
+     (`~/.claude/projects/<cwd-with-/-as->-->/`, newest file ≠ the current session).
+     Read-only. **Never invent** — if the transcript is thin, say so plainly.
+   - OUTPUT: a short on-screen briefing. Nothing is written to the mem acervo.
+3. Also surface durable handoffs, if any: `.claude/bin/mem find "" --type session --since 14d`
+   then `.claude/bin/mem get <id>` (prefer those whose `git_meta.branch` matches the branch).
+
+Record a durable handoff at the end of significant work:
+`.claude/bin/mem session "<objective; what changed; handoff pending>"`
+"""
+CONSOLIDATE_SKILL = """---
+name: mem-consolidate
+description: At the end of significant work, propose durable memory candidates for the project's mem inbox by delegating extraction to a subagent. Use when work wrapped up (commit/PR/decision) or when the Stop hook asks for consolidation.
+---
+
+# Consolidating a session into mem inbox candidates
+
+Run this at the end of significant work (or when nudged by the mem Stop hook).
+You orchestrate; a subagent does the extraction under a tight contract.
+
+1. Dispatch a subagent (Haiku-class model, e.g. claude-haiku-4-5) with this contract:
+   - SCOPE: read the recent session/transcript. Extract **0-5** durable memory
+     candidates (types: feedback / decision / episode / reference). **Never invent** —
+     a trivial session yields **0**. Skip anything only relevant to the finished task.
+   - OUTPUT: for each candidate, run
+     `.claude/bin/mem inbox add --origin haiku --type <t> -i <1-5> -t "<title>" --tags a,b "<body>"`.
+     Nothing goes straight to the store — the inbox is the only sink; triage (`mem evolve`)
+     promotes to a real memory via PR (anti-poisoning gate).
+2. Report the count of candidates queued. Do not promote them yourself.
+
+This keeps `mem` LLM-free: the model lives in the subagent, never in the CLI.
+"""
+REPORT_SKILL = """---
+name: mem-report
+description: File a bug or feature request against the mem tool itself when you hit a problem in mem (bad injection, crash, missing capability) instead of silently working around it. Use when mem misbehaves and the friction is worth reporting upstream.
+---
+
+# Reporting a bug or rough edge in `mem` itself
+
+When `mem` itself gets in your way (a bad/oversized injection, a crash, a missing
+capability) — don't just work around it. File it upstream so `mem` improves.
+You orchestrate; a subagent drafts the report under a tight contract.
+
+1. Dispatch a subagent (Haiku-class model, e.g. claude-haiku-4-5) with this contract:
+   - SCOPE: read the context of the mem problem you just hit. Draft a **title** (short,
+     specific) and a **body**. **Never invent** facts.
+   - The `--body` is injected verbatim as the **"O que aconteceu"** section only. Do **NOT**
+     put `##` section headers (`## O que aconteceu`, `## Comportamento esperado`, etc.) in the
+     body — the CLI template supplies all headers, and adding your own duplicates them. Write a
+     self-contained account in plain prose/markdown: what happened, what you expected, and the
+     minimal repro, woven into that one section. The CLI auto-fills **Ambiente** and leaves
+     "Comportamento esperado" / "Como reproduzir" as placeholders for the human to refine.
+   - OUTPUT: run `.claude/bin/mem issue --title "<title>" --body "<body>" --kind bug`
+     (use `--kind feature` or `--kind rough-edge` when it fits). Run it with `--dry-run`
+     first to review the composed report, then drop `--dry-run` to create the issue.
+2. Report the issue URL (or, if `gh` is offline, the ready-made title+body printed for
+   manual filing).
+
+The `mem issue` CLI is fully deterministic and LLM-free (R4): it composes a template,
+auto-collects the environment, applies the secret filter (R6), and calls `gh`. The model
+lives only here in this skill, never in the CLI.
+"""
+RULE_INDEX = """## Project memory (`mem`)
+
+Persistent, searchable memory shared by all devs. Vendored at `.claude/bin/mem` (zero deps).
+
+CONSULT (read) — before acting:
+- starting a task/feature -> `mem find "<area/tech>"` for conventions & past gotchas
+- hit an error / unexpected behavior -> `mem find "<symptom>"` before debugging from scratch
+- a choice that smells like "we decided this before" -> `mem find "<topic>" --type decision`
+
+CAPTURE (write) — when it happens:
+- the user corrects you ("not that" / "redo" / "wrong") -> `add --type feedback`
+- you fix the SAME thing twice, or a fix is a reusable rule -> `add --type feedback`
+- a decision is made with a rationale (chose A over B; accept/defer) -> `add --type decision`
+- a non-obvious bug is solved (hidden root cause) -> `add --type episode`
+- significant work ends -> `mem session "<summary>"` + run the `mem-consolidate` skill to propose inbox candidates
+- unsure / mid-task? queue it: `mem inbox add ...` then triage later via `mem evolve`
+
+REPORT (the mem tool itself) — hit a bug or rough edge IN mem (bad injection, crash, missing capability)?
+Don't silently work around it: `mem issue --title "<short>" --kind bug` (use the `mem-report` skill to draft a full report). mem only improves if friction is filed.
+
+Cut rule: would a future session or another dev rediscover this and waste time? -> record it.
+Only matters to finishing the current task? -> skip it.
+
+- `.claude/bin/mem find "<terms>"`  -> ranked search, titles only
+- `.claude/bin/mem get <id>`        -> full body of one memory
+- `.claude/bin/mem add --type <t> -i <1-5> -t "<title>" --tags a,b "<body>"`
+- `.claude/bin/mem session "<summary>"` -> record a session at the end of work
+
+Types: feedback / decision / episode / reference. If `find` is weak, retry with synonyms.
+Never paste secrets; `add` blocks them. Resume past work with the `mem-resume` skill.
+Recipes: standup `mem find "" --type session --since 7d`; forensics `mem find "<symptom>" --type session --all`."""
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    tmp = path.parent / (path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+_SKILL_MARKER_RE = re.compile(r"<!-- mem-managed sha256:([0-9a-f]{64}) -->")
+
+
+def _skill_payload(skill_text: str) -> str:
+    body = skill_text.rstrip("\n") + "\n\n"
+    digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    return f"{body}<!-- mem-managed sha256:{digest} -->\n"
+
+
+def _skill_is_pristine(text: str) -> bool:
+    match = _SKILL_MARKER_RE.search(text)
+    if match is None:
+        return False
+    body = text[: match.start()]
+    return hashlib.sha256(body.encode("utf-8")).hexdigest() == match.group(1)
+
+
+def _install_skill(root: Path, name: str, skill_text: str) -> Path:
+    dest = root / ".claude" / "skills" / name / "SKILL.md"
+    payload = _skill_payload(skill_text)
+    if dest.exists():
+        current = dest.read_text(encoding="utf-8")
+        if current == payload:
+            return dest
+        if not _skill_is_pristine(current):
+            raise MemError(
+                f"{dest} was modified by hand; refusing to clobber (R9). "
+                "Reconcile changes upstream, then re-run.",
+                exit_code=1,
+            )
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write(dest, payload)
+    return dest
+
+
+def _upsert_block(path: Path, body: str) -> None:
+    # block always ends with exactly one newline; post content is preserved verbatim
+    block = f"{MEM_BLOCK_START}\n{body}\n{MEM_BLOCK_END}\n"
+    if path.exists():
+        text = path.read_text(encoding="utf-8")
+        if MEM_BLOCK_START in text and MEM_BLOCK_END in text:
+            pre = text.split(MEM_BLOCK_START)[0]
+            post = text.split(MEM_BLOCK_END, 1)[1]
+            # post starts with "\n" (the newline after the end marker); strip exactly that one
+            # newline so the block's trailing "\n" and post content aren't doubled, but preserve
+            # any blank lines the user left after the block.
+            if post.startswith("\n"):
+                post = post[1:]
+            new = pre + block + post
+        else:
+            new = text.rstrip("\n") + "\n\n" + block
+    else:
+        new = block
+    _atomic_write(path, new)
+
+
+def _ensure_gitignore_line(root: Path, line: str) -> None:
+    gi = root / ".gitignore"
+    lines = gi.read_text(encoding="utf-8").splitlines() if gi.exists() else []
+    if line not in lines:
+        lines.append(line)
+        _atomic_write(gi, "\n".join(lines) + "\n")
+
+
+def _vendor_into(root: Path) -> Path:
+    dest = root / ".claude" / "bin" / "mem"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(Path(__file__).resolve(), dest)
+    os.chmod(dest, 0o755)
+    return dest
+
+
+def _scaffold(root: Path) -> None:
+    memory_dir(root).mkdir(parents=True, exist_ok=True)
+    _ensure_gitignore_line(root, ".claude/memory/mem.db*")
+    _upsert_block(root / "AGENTS.md", RULE_INDEX)
+    _install_skill(root, "mem-resume", RESUME_SKILL)
+    _install_skill(root, "mem-consolidate", CONSOLIDATE_SKILL)
+    _install_skill(root, "mem-report", REPORT_SKILL)
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    root = find_project_root(Path.cwd())
+    _scaffold(root)
+    if getattr(args, "vendor", False):
+        _vendor_into(root)
+    print(f"initialized mem in {root}")
+    return 0
+
+
+def cmd_vendor(args: argparse.Namespace) -> int:
+    root = find_project_root(Path.cwd())
+    dest = _vendor_into(root)
+    _scaffold(root)
+    print(f"vendored mem to {dest}")
+    return 0
+
+
+# ---- commands: install-hooks ----
+_HOOK_WIRING = {"Stop": "hook stop", "UserPromptSubmit": "hook prompt",
+                "SessionStart": "hook session-start", "PostToolUse": "hook post-tool"}
+_HOOK_MATCHERS = {"PostToolUse": "Edit|Write"}  # default "" for the rest
+
+
+def _hook_command(suffix: str) -> str:
+    return f'"$CLAUDE_PROJECT_DIR"/.claude/bin/mem {suffix}'
+
+
+def _is_mem_hook_entry(entry: dict[str, Any], suffix: str) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    for h in entry.get("hooks", []):
+        if isinstance(h, dict) and isinstance(h.get("command"), str) \
+                and h["command"].rstrip().endswith(f"mem {suffix}"):
+            return True
+    return False
+
+
+def _merged_settings(current: dict[str, Any]) -> dict[str, Any]:
+    settings: dict[str, Any] = json.loads(json.dumps(current))  # deep copy, never mutate
+    hooks = settings.setdefault("hooks", {})
+    for event, suffix in _HOOK_WIRING.items():
+        kept = [e for e in hooks.get(event, []) if not _is_mem_hook_entry(e, suffix)]
+        kept.append({"matcher": _HOOK_MATCHERS.get(event, ""),
+                     "hooks": [{"type": "command", "command": _hook_command(suffix), "timeout": 10}]})
+        hooks[event] = kept
+    return settings
+
+
+def cmd_install_hooks(args: argparse.Namespace) -> int:
+    if args.tool != "claude-code":
+        raise MemError(f"unsupported tool {args.tool!r} (only claude-code)", exit_code=1)
+    root = find_project_root(Path.cwd())
+    path = root / ".claude" / "settings.json"
+    old_text = path.read_text(encoding="utf-8") if path.exists() else ""
+    current = json.loads(old_text) if old_text.strip() else {}
+    new_text = json.dumps(_merged_settings(current), indent=2, ensure_ascii=False) + "\n"
+    if new_text == old_text:
+        print("hooks already up to date")
+        return 0
+    if not args.apply:
+        print("dry-run (use --apply to write):")
+        print(new_text)
+        return 0
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write(path, new_text)
+    print(f"wired hooks into {path}")
+    return 0
+
+
+# ---- commands: import ----
+_NATIVE_TYPE_MAP = {"feedback": "feedback", "reference": "reference",
+                    "user": "reference", "project": "reference"}
+
+
+def _map_native_type(t: str) -> str:
+    return _NATIVE_TYPE_MAP.get(t.strip(), "reference")
+
+
+def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
+    if not text.startswith("---"):
+        return {}, text
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        return {}, text
+    meta: dict[str, str] = {}
+    for line in parts[1].strip().splitlines():
+        if ":" in line:
+            key, value = line.split(":", 1)
+            meta[key.strip()] = value.strip()
+    return meta, parts[2]
+
+
+def cmd_import(args: argparse.Namespace) -> int:
+    root = find_project_root(Path.cwd())
+    src = Path(args.path)
+    files = sorted(src.glob("*.md")) if src.is_dir() else [src]
+    imported, skipped = 0, 0
+    for f in files:
+        if f.name.upper() == "MEMORY.MD":
+            continue
+        meta, body = _parse_frontmatter(f.read_text(encoding="utf-8"))
+        title = meta.get("description") or meta.get("name") or f.stem
+        if not body.strip() or scan_secrets(body) or scan_secrets(title):
+            skipped += 1
+            continue
+        now = _now_iso()
+        mem = Memory(id=new_ulid(), type=_map_native_type(meta.get("type", "reference")),
+                     title=title.strip(), body=body.strip(), importance=3, status="active",
+                     superseded_by=None, author=author_id(), source=f"import:{f.name}",
+                     git_meta=None, tags=_suggest_tags(title), created_at=now, updated_at=now)
+        append_memory(root, mem)
+        imported += 1
+    rebuild(root)
+    if args.json:
+        print(json.dumps({"imported": imported, "skipped": skipped}))
+    else:
+        print(f"imported {imported}, skipped {skipped}")
+    return 0
+
+
+def cmd_trigger(args: argparse.Namespace) -> int:
+    root = find_project_root(Path.cwd())
+    if args.trigger_action == "add":
+        tags = tuple(t.strip() for t in args.tags.split(",") if t.strip())
+        if not tags:
+            raise MemError("at least one --tag is required", exit_code=1)
+        if not args.glob.strip():
+            raise MemError("--glob is required", exit_code=1)
+        t = Trigger(id=new_ulid(), event=args.event, path_glob=args.glob.strip(), tags=tags,
+                    budget=args.budget, enabled=True, author=author_id(), created_at=_now_iso())
+        _append_trigger(root, t)
+        print(json.dumps({"id": t.id}, ensure_ascii=False) if args.json else t.id)
+        return 0
+    if args.trigger_action == "list":
+        con = ensure_db(root)
+        try:
+            rows = []
+            for t in _load_triggers(root, enabled_only=not args.all):
+                st = con.execute("SELECT hits, useful_hits, cooldown_until FROM trigger_stats "
+                                 "WHERE trigger_id=?", (t.id,)).fetchone() or (0, 0, None)
+                rows.append((t, st))
+        finally:
+            con.close()
+        if args.json:
+            print(json.dumps([{"id": t.id, "event": t.event, "glob": t.path_glob,
+                               "tags": list(t.tags), "budget": t.budget, "enabled": t.enabled,
+                               "hits": st[0], "useful_hits": st[1], "cooldown_until": st[2]}
+                              for t, st in rows], ensure_ascii=False))
+        else:
+            for t, st in rows:
+                print(f"{t.id} · {t.event} · {t.path_glob} · [{','.join(t.tags)}] · "
+                      f"b={t.budget} · hits={st[0]} useful={st[1]}")
+        return 0
+    if args.trigger_action == "rm":
+        cur = {t.id: t for t in _load_triggers(root, enabled_only=False)}
+        existing = cur.get(args.id)
+        if existing is None:
+            raise MemError(f"trigger {args.id} not found", exit_code=2)
+        _append_trigger(root, Trigger(
+            id=existing.id, event=existing.event, path_glob=existing.path_glob,
+            tags=existing.tags, budget=existing.budget, enabled=False,
+            author=author_id(), created_at=_now_iso()))
+        print(f"disabled {existing.id}")
+        return 0
+    raise MemError(f"unknown trigger action {args.trigger_action!r}")
+
+
+# ---- brief helpers ----
+
+def _estimate_tokens(text: str) -> int:
+    return max(1, len(text) // 4)
+
+
+def _essence(title: str, body: str) -> str:
+    first = next((ln.strip() for ln in body.splitlines() if ln.strip()), "")
+    line = f"{title} — {first}" if first else title
+    return line[:160]
+
+
+def _brief_select(con: sqlite3.Connection, budget: int) -> list[tuple[str, str, str]]:
+    rows = con.execute(
+        "SELECT id, type, title, body, importance, created_at FROM memories "
+        "WHERE status='active' AND type IN ('feedback','decision')").fetchall()
+    scored: list[tuple[float, str, str, str]] = []
+    for mem_id, mtype, title, body, importance, created_at in rows:
+        days, recall = _recall_stats(con, mem_id, created_at)
+        s = score(1.0, int(importance), days, recall, 0.0)  # no query → bm25/overlap neutral
+        scored.append((s, mem_id, mtype, _essence(title, body)))
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    out: list[tuple[str, str, str]] = []
+    used = 0
+    for _s, mem_id, mtype, line in scored:
+        cost = _estimate_tokens(line)
+        if used + cost > budget:
+            break
+        out.append((mem_id, mtype, line))
+        used += cost
+    return out
+
+
+def cmd_brief(args: argparse.Namespace) -> int:
+    root = find_project_root(Path.cwd())
+    con = ensure_db(root)
+    try:
+        rows = _brief_select(con, args.budget)   # NB: never touches access_log (§6)
+    finally:
+        con.close()
+    if args.json:
+        print(json.dumps([{"id": i, "type": t, "line": ln} for i, t, ln in rows],
+                         ensure_ascii=False))
+    else:
+        for i, t, ln in rows:
+            print(f"{i} · {t} · {ln}")
+    return 0
+
+
+# ---- commands: fire ----
+
+def _score_by_tags(con: sqlite3.Connection, tags: tuple[str, ...]) -> list[tuple[str, str, str]]:
+    """Score memories for reactive injection; return (mem_id, type, essence) sorted.
+
+    Ranks ``importance`` as the dominant criterion, with the relevance score as a strong
+    tiebreaker, so critical memories (importance 5) are never cut by the per-trigger budget
+    before trivial ones survive.  This is safe for injection because every candidate already
+    matched the trigger's own tags via FTS — the set is topically relevant by construction, so
+    ordering it critical-first does not surface off-topic memories.  ``find`` keeps the pure
+    relevance order from ``_fts_score`` (where importance only weights the score multiplicatively);
+    this importance-first ordering is scoped to the injection path on purpose.
+    """
+    qset = set(tags)
+    rows = _fts_score(
+        con, " ".join(tags), qset,
+        where_extra="m.status='active' AND m.type!='session'",
+    )
+    # importance desc (critical-first), then score desc, then id asc → deterministic
+    ranked = sorted(rows, key=lambda r: (-r[7], -r[0], r[1]))
+    return [(mem_id, mtype, _essence(title, body))
+            for _s, mem_id, mtype, title, body, _author, _ca, _imp in ranked]
+
+
+_USEFUL_WINDOW_HOURS = 24
+
+# Global per-session token ceiling for reactive injection (§6 / PLAN §11: ~1k/sessão).
+# Per-trigger budgets come from each trigger's own ``budget`` field.
+_HOOK_SESSION_BUDGET = 1000
+
+_COOLDOWN_MIN_HITS = 5
+_COOLDOWN_RATIO = 0.2
+_COOLDOWN_BACKOFF_HOURS = 24
+_COOLDOWN_DISABLE_AFTER = 20
+
+
+def _apply_cooldown(con: sqlite3.Connection, root: Path, trigger_id: str) -> None:
+    row = con.execute("SELECT hits, useful_hits FROM trigger_stats WHERE trigger_id=?",
+                      (trigger_id,)).fetchone()
+    if not row:
+        return
+    hits, useful = int(row[0]), int(row[1])
+    if hits < _COOLDOWN_MIN_HITS or (useful / hits) >= _COOLDOWN_RATIO:
+        return
+    if hits >= _COOLDOWN_DISABLE_AFTER:
+        cur = {t.id: t for t in _load_triggers(root, enabled_only=False)}
+        t = cur.get(trigger_id)
+        if t is not None and t.enabled:
+            _append_trigger(root, Trigger(id=t.id, event=t.event, path_glob=t.path_glob,
+                                          tags=t.tags, budget=t.budget, enabled=False,
+                                          author=author_id(), created_at=_now_iso()))
+        return
+    # escalating backoff: more hits-without-use → longer cooldown
+    factor = max(1, hits // _COOLDOWN_MIN_HITS)
+    until = (datetime.datetime.now(datetime.timezone.utc)
+             + datetime.timedelta(hours=_COOLDOWN_BACKOFF_HOURS * factor)).strftime(
+                 "%Y-%m-%dT%H:%M:%SZ")
+    con.execute("UPDATE trigger_stats SET cooldown_until=? WHERE trigger_id=?", (until, trigger_id))
+    con.commit()
+
+
+def _fire_select(con: sqlite3.Connection, root: Path, event: str, path: str, session: str,
+                 session_budget: int,
+                 per_cap: int | None = None) -> list[tuple[str, str, str]]:
+    """Select reactive injections, capped per-trigger by each trigger's own ``budget``.
+
+    Each matching trigger limits its own injections by ``t.budget`` (authored via
+    ``mem trigger add --budget``); ``session_budget`` is a global ceiling across all triggers
+    for this invocation.  ``per_cap``, when set (manual ``mem fire --budget``), further caps
+    every trigger's per-event budget to ``min(t.budget, per_cap)``.
+    """
+    now = _now_iso()
+    already = {r[0] for r in con.execute(
+        "SELECT memory_id FROM injection_log WHERE session=?", (session,))}
+    out: list[tuple[str, str, str]] = []
+    used = 0  # global accumulator for this invocation's session budget
+    for t in _load_triggers(root, enabled_only=True):
+        if t.event != event or not fnmatch.fnmatch(path, t.path_glob):
+            continue
+        st = con.execute("SELECT cooldown_until FROM trigger_stats WHERE trigger_id=?",
+                         (t.id,)).fetchone()
+        if st and st[0] and st[0] > now:        # cooldown in the future → skip
+            continue
+        per_budget = t.budget if per_cap is None else min(t.budget, per_cap)
+        per_used = 0
+        for mem_id, mtype, line in _score_by_tags(con, t.tags):
+            if mem_id in already:
+                continue
+            cost = _estimate_tokens(line)
+            if per_used + cost > per_budget or used + cost > session_budget:
+                break
+            out.append((mem_id, mtype, line))
+            already.add(mem_id)
+            per_used += cost
+            used += cost
+            con.execute("INSERT INTO injection_log (memory_id,trigger_id,session,fired_at,credited)"
+                        " VALUES (?,?,?,?,0)", (mem_id, t.id, session, now))
+        con.execute(
+            "INSERT INTO trigger_stats (trigger_id,hits,useful_hits,last_fired_at) VALUES (?,1,0,?) "
+            "ON CONFLICT(trigger_id) DO UPDATE SET hits=hits+1, last_fired_at=excluded.last_fired_at",
+            (t.id, now))
+        _apply_cooldown(con, root, t.id)
+    con.commit()
+    return out
+
+
+def cmd_fire(args: argparse.Namespace) -> int:
+    root = find_project_root(Path.cwd())
+    con = ensure_db(root)
+    try:
+        rows = _fire_select(con, root, args.event, args.path, args.session,
+                            args.session_budget, per_cap=args.budget)
+    finally:
+        con.close()
+    if args.json:
+        print(json.dumps([{"id": i, "type": t, "line": ln} for i, t, ln in rows],
+                         ensure_ascii=False))
+    else:
+        for i, t, ln in rows:
+            print(f"{i} · {t} · {ln}")
+    return 0
+
+
+# ---- cli ----
+COMMANDS = {"rebuild": cmd_rebuild}  # extended by later tasks
+COMMANDS["add"] = cmd_add
+COMMANDS["find"] = cmd_find
+COMMANDS["get"] = cmd_get
+COMMANDS["stats"] = cmd_stats
+COMMANDS["supersede"] = cmd_supersede
+COMMANDS["init"] = cmd_init
+COMMANDS["vendor"] = cmd_vendor
+COMMANDS["doctor"] = cmd_doctor
+COMMANDS["update"] = cmd_update
+COMMANDS["import"] = cmd_import
+COMMANDS["session"] = cmd_session
+COMMANDS["issue"] = cmd_issue
+COMMANDS["evolve"] = cmd_evolve
+COMMANDS["compact"] = cmd_compact
+COMMANDS["inbox"] = cmd_inbox
+COMMANDS["hook"] = cmd_hook
+COMMANDS["install-hooks"] = cmd_install_hooks
+COMMANDS["trigger"] = cmd_trigger
+COMMANDS["brief"] = cmd_brief
+COMMANDS["fire"] = cmd_fire
+COMMANDS["checkpoint"] = cmd_checkpoint
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="mem", description="Project memory for code agents.")
+    parser.add_argument("--version", action="version", version=f"mem {__version__}")
+    parser.add_argument("--json", action="store_true", help="machine-readable output")
+    parser.add_argument("--debug", action="store_true", help="show tracebacks")
+    sub = parser.add_subparsers(dest="command")
+    sub.add_parser("rebuild", help="rebuild the derived index from JSONL")
+    p_add = sub.add_parser("add", help="record a memory")
+    p_add.add_argument("--type", required=True, choices=sorted(VALID_TYPES))
+    p_add.add_argument("-i", "--importance", type=int, default=3)
+    p_add.add_argument("-t", "--title", required=True)
+    p_add.add_argument("--tags", default="")
+    p_add.add_argument("--source", default=None)
+    p_add.add_argument("body")
+    p_find = sub.add_parser("find", help="search memories (ranked, titles only)")
+    p_find.add_argument("query")
+    p_find.add_argument("--type", choices=sorted(VALID_TYPES), default=None)
+    p_find.add_argument("-k", type=int, default=5)
+    p_find.add_argument("--since", default=None,
+                        help="only memories created within a window, e.g. 30m, 24h, 7d, 2w")
+    p_find.add_argument("--all", action="store_true",
+                        help="include archived/superseded memories")
+    p_get = sub.add_parser("get", help="fetch a memory body by id (registers access)")
+    p_get.add_argument("id")
+    p_stats = sub.add_parser("stats", help="counts, vitality (live/stale), top-accessed")
+    p_stats.add_argument("--min-score", type=float, default=DEFAULT_MIN_SCORE,
+                         dest="min_score", help="standing-score threshold for stale")
+    p_stats.add_argument("--max-age-days", type=float, default=DEFAULT_MAX_AGE_DAYS,
+                         dest="max_age_days", help="min days since access for stale")
+    p_sup = sub.add_parser("supersede",
+                           help="mark OLD_ID superseded by NEW_ID (usage: supersede NEW_ID OLD_ID)")
+    p_sup.add_argument("new_id", metavar="NEW_ID", help="the replacement memory id")
+    p_sup.add_argument("old_id", metavar="OLD_ID", help="the memory being superseded")
+    p_init = sub.add_parser("init", help="scaffold mem in this repo (idempotent)")
+    p_init.add_argument("--vendor", action="store_true", help="also copy the script to .claude/bin/mem")
+    sub.add_parser("vendor", help="copy this script into .claude/bin/mem + scaffold")
+    sub.add_parser("doctor", help="diagnose install, schema, version drift")
+    p_up = sub.add_parser("update", help="self-update the vendored copy from the latest release")
+    p_up.add_argument("--check", action="store_true", help="only report drift")
+    p_up.add_argument("--ref", default=None, help="pin a specific tag")
+    p_imp = sub.add_parser(
+        "import",
+        help="ingest native markdown memories (file or dir); additive/one-shot — re-running duplicates",
+    )
+    p_imp.add_argument("path")
+    p_session = sub.add_parser("session", help="record a session summary (auto git_meta)")
+    p_session.add_argument("summary")
+    p_session.add_argument("-i", "--importance", type=int, default=2)
+    p_session.add_argument("--tags", default="")
+    p_session.add_argument("--source", default=None)
+    p_issue = sub.add_parser("issue", help="file a bug/feature report against mem itself (gh)")
+    p_issue.add_argument("--title", required=True, help="short issue title")
+    p_issue.add_argument("--body", default=None, help="what happened (goes into the template)")
+    p_issue.add_argument("--kind", default="bug", choices=list(_ISSUE_KINDS),
+                         help="bug | feature | rough-edge (default: bug)")
+    p_issue.add_argument("--dry-run", action="store_true", dest="dry_run",
+                         help="print the composed title+body; do not call gh")
+    p_evolve = sub.add_parser("evolve", help="propose archive/dup curation (read-only by default)")
+    p_evolve.add_argument("--apply", action="store_true",
+                          help="write archived status for own-author archive candidates")
+    p_evolve.add_argument("--yes", action="store_true", help="alias for --apply (non-TTY safe)")
+    p_evolve.add_argument("--min-score", type=float, default=DEFAULT_MIN_SCORE,
+                          dest="min_score", help="standing-score threshold for archive")
+    p_evolve.add_argument("--max-age-days", type=float, default=DEFAULT_MAX_AGE_DAYS,
+                          dest="max_age_days", help="min days since access for archive")
+    sub.add_parser("compact", help="rewrite your own JSONL, dropping archived memories")
+    p_inbox = sub.add_parser("inbox", help="capture-candidate inbox (local-only)")
+    inbox_sub = p_inbox.add_subparsers(dest="inbox_action", required=True)
+    pi_add = inbox_sub.add_parser("add", help="add a capture candidate")
+    pi_add.add_argument("--type", required=True, choices=sorted(INBOX_TYPES))
+    pi_add.add_argument("-i", "--importance", type=int, default=3)
+    pi_add.add_argument("-t", "--title", required=True)
+    pi_add.add_argument("--tags", default="")
+    pi_add.add_argument("--source", default=None)
+    pi_add.add_argument("--origin", default="manual",
+                        choices=["manual", "haiku", "correction-signal"])
+    pi_add.add_argument("body")
+    pi_list = inbox_sub.add_parser("list", help="list candidates (pending by default)")
+    pi_list.add_argument("--all", action="store_true", help="include promoted/rejected")
+    pi_promote = inbox_sub.add_parser("promote", help="promote a candidate to a real memory")
+    pi_promote.add_argument("id")
+    pi_promote.add_argument("--yes", action="store_true", help="non-TTY confirmation")
+    pi_reject = inbox_sub.add_parser("reject", help="reject a candidate")
+    pi_reject.add_argument("id")
+    p_hook = sub.add_parser("hook", help="hook handlers (read the event JSON on stdin)")
+    hook_sub = p_hook.add_subparsers(dest="hook_action", required=True)
+    hook_sub.add_parser("prompt", help="UserPromptSubmit: queue correction signals to the inbox")
+    hook_sub.add_parser("stop", help="Stop: nudge consolidation on significant uncaptured work")
+    hook_sub.add_parser("session-start", help="SessionStart: inject the brief")
+    hook_sub.add_parser("post-tool", help="PostToolUse: inject reactive trigger matches")
+    p_ih = sub.add_parser("install-hooks", help="wire mem hooks into .claude/settings.json")
+    p_ih.add_argument("--tool", default="claude-code", help="target tool (only claude-code)")
+    p_ih.add_argument("--apply", action="store_true", help="write changes (default: dry-run)")
+    p_trig = sub.add_parser("trigger", help="manage reactive-injection triggers (committed)")
+    trig_sub = p_trig.add_subparsers(dest="trigger_action", required=True)
+    pt_add = trig_sub.add_parser("add", help="author a trigger")
+    pt_add.add_argument("--event", default="post-edit", choices=["post-edit"])
+    pt_add.add_argument("--glob", required=True)
+    pt_add.add_argument("--tags", required=True)
+    pt_add.add_argument("--budget", type=int, default=300)
+    pt_list = trig_sub.add_parser("list", help="list triggers + local stats")
+    pt_list.add_argument("--all", action="store_true", help="include disabled")
+    pt_rm = trig_sub.add_parser("rm", help="disable a trigger (event-sourced, recoverable)")
+    pt_rm.add_argument("id")
+    p_brief = sub.add_parser("brief", help="high-value index for session start (no access logged)")
+    p_brief.add_argument("--budget", type=int, default=800)
+    p_cp = sub.add_parser("checkpoint", help="show the session-continuity checkpoint (read-only)")
+    p_cp.add_argument("--json", action="store_true")
+    p_fire = sub.add_parser("fire", help="reactive injection for a path event (no access logged)")
+    p_fire.add_argument("--event", default="post-edit", choices=["post-edit"])
+    p_fire.add_argument("--path", required=True)
+    p_fire.add_argument("--session", default="")
+    p_fire.add_argument("--budget", type=int, default=None,
+                        help="optional per-trigger token cap (default: each trigger's own budget)")
+    p_fire.add_argument("--session-budget", type=int, default=_HOOK_SESSION_BUDGET,
+                        dest="session_budget")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    cmd = getattr(args, "command", None)
+    if not cmd:
+        parser.print_help()
+        return 1
+    handler = COMMANDS.get(cmd)
+    if handler is None:
+        parser.print_help()
+        return 1
+    try:
+        return handler(args)
+    except MemError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return exc.exit_code
+    except Exception as exc:  # top-level guard, R-output discipline
+        if getattr(args, "debug", False):
+            raise
+        print(f"internal error: {exc}", file=sys.stderr)
+        return 3
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
