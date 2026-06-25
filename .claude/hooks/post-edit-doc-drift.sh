@@ -105,10 +105,14 @@ cat <<EOF >&2
 
 📝 doc-drift: $REL_PATH editado.
 
-Doc-sync pendente (mesmo commit):
+Doc-sync per-commit (mesmo commit):
   · CHANGELOG.md (Unreleased)
-  · docs/design/08-session-handoff.md (Última atualização + Conhecidos limites se mudou)
   · README.md (se stats mudaram)
+
+Fim de sessão (não per-commit): rode \`.claude/bin/mem session\` pra
+registrar o handoff curado (estado + próximos passos; git_meta automático).
+O docs/design/08-session-handoff.md NÃO é mais editado a cada sessão —
+congelou como snapshot histórico + fallback de bootstrap.
 
 Matriz completa: .claude/rules/doc-sync.md
 
