@@ -52,6 +52,7 @@ from engine.utils.paths import (
     claude_dir,
     ensure_dir,
     find_project_root,
+    lifecycle_root,
     memory_dir,
 )
 from engine.utils.yaml_io import read_yaml_or_default, write_yaml
@@ -613,7 +614,7 @@ def _write_verify_log_entry(
         "hard-fails": list(hard_fails),
         "warnings": list(warnings_list),
     }
-    log_path = memory_dir(project_root) / "L1" / feature_slug / "verify-log.jsonl"
+    log_path = lifecycle_root(project_root) / feature_slug / "verify-log.jsonl"
     try:
         ensure_dir(log_path.parent)
         line = json.dumps(entry, ensure_ascii=False, sort_keys=True, separators=(",", ":"))

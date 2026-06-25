@@ -34,18 +34,19 @@ from typing import Any
 
 import yaml
 
+from engine.utils.paths import lifecycle_root
+
 # Severity threshold pra virar proposed-evolution (spec §5.5).
 # low e info são informativos no qa-report mas não geram entry em
 # proposed.yaml — economiza ruído no endpoint humano (forge evolve).
 _ACTIONABLE_SEVERITIES: set[str] = {"critical", "high", "medium"}
 
-_PROPOSED_DIR_PARTS = (".claude", "memory", "L1", "proposed-evolutions")
 _PROPOSED_FILENAME = "proposed.yaml"
 _REJECTED_FILENAME = "rejected-fingerprints.yaml"
 
 
 def _proposed_dir(project_root: Path) -> Path:
-    return project_root.joinpath(*_PROPOSED_DIR_PARTS)
+    return lifecycle_root(project_root) / "proposed-evolutions"
 
 
 def load_rejected_fingerprints(project_root: Path) -> set[str]:

@@ -17,7 +17,10 @@ without monkeypatching `random`.
 from __future__ import annotations
 
 import random
+from pathlib import Path
 from typing import Mapping, Sequence
+
+from engine.utils.paths import lifecycle_root
 
 # H-07: seeded RNG is module-scoped (deterministic-test contract preserved);
 # unseeded path returns a fresh `random.Random()` per call to avoid leaking
@@ -125,15 +128,35 @@ def acknowledgment() -> str:
     return _get_rng().choice(PHRASES_ACK)
 
 
-def pause_message(slug: str | None = None, resume_command: str | None = None) -> str:
+def pause_message(
+    slug: str | None = None,
+    resume_command: str | None = None,
+    project_root: Path | None = None,
+) -> str:
     """Pause confirmation per discipline §7.
 
     Always includes WHERE state was saved and HOW to resume. Never says
     'aborted' here — abort is a different code path (`forge undo`).
+
+    Args:
+        slug: feature slug whose state was saved, or None for the generic root.
+        resume_command: command string to show for resuming. Defaults to
+            "forge {plan|implement|evolve} <slug>".
+        project_root: project root used to derive the lifecycle path via
+            ``lifecycle_root``. When None, falls back to a relative reference.
     """
-    where = (
-        f".claude/memory/L1/{slug}/status.json" if slug else ".claude/memory/L1/"
-    )
+    if project_root is not None:
+        root = lifecycle_root(project_root)
+        # Render as a relative path from project_root so the message is portable.
+        try:
+            rel = root.relative_to(project_root)
+        except ValueError:
+            rel = root
+        where = f"{rel}/{slug}/status.json" if slug else f"{rel}/"
+    else:
+        where = (
+            f".claude/memory/L1/{slug}/status.json" if slug else ".claude/memory/L1/"
+        )
     resume = resume_command or "forge {plan|implement|evolve} <slug>"
     return (
         f"Pausei aqui. Estado salvo em {where}\n"

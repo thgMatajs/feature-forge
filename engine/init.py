@@ -92,6 +92,7 @@ from engine.utils.paths import (
     forge_hooks_dir,
     graph_db_path,
     inventory_dir,
+    lifecycle_root,
     memory_dir,
     memory_l2_path,
 )
@@ -2035,8 +2036,8 @@ def _run_pipeline(project_root: Path) -> int:
 
     # ── Step 10 — Memory L1/L2 seed ──────────────────────────────────────────
     ensure_dir(memory_dir(project_root))
-    ensure_dir(memory_dir(project_root) / "L1")
-    ensure_dir(memory_dir(project_root) / "L1" / "archived")
+    ensure_dir(lifecycle_root(project_root))
+    ensure_dir(lifecycle_root(project_root) / "archived")
     l2_path = memory_l2_path(project_root)
     if not l2_path.exists():
         write_yaml(

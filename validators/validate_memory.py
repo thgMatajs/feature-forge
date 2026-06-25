@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from engine.memory.l1 import _VALID_STATES  # noqa: E402
 from engine.utils.paths import (  # noqa: E402
+    lifecycle_root,
     memory_dir,
     memory_l2_path,
     workflow_config_path,
@@ -241,7 +242,7 @@ def _check_l2_kinds_and_provenance(project_root: Path, config: dict[str, Any]) -
     # Conjunto de slugs L1 conhecidos (active + archived).
     mem = memory_dir(project_root)
     known_slugs: set[str] = set()
-    l1_root = mem / "L1"
+    l1_root = lifecycle_root(project_root)
     if l1_root.is_dir():
         for child in l1_root.iterdir():
             if child.is_dir() and child.name != "archived":
@@ -311,7 +312,7 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
 
     violations: list[str] = []
     soft: list[str] = []
-    l1_root = mem / "L1"
+    l1_root = lifecycle_root(project_root)
     if l1_root.is_dir():
         for slug_dir in l1_root.iterdir():
             if not slug_dir.is_dir():

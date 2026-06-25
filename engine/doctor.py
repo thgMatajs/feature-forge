@@ -55,6 +55,7 @@ from engine.utils.paths import (
     graph_db_path,
     hooks_dir,
     inventory_dir,
+    lifecycle_root,
     memory_dir,
     memory_l2_path,
 )
@@ -588,7 +589,7 @@ def _check_memory_l2(project_root: Path, config: dict) -> _CategoryReport:
 
 def _check_memory_l1(project_root: Path) -> _CategoryReport:
     checks: list[_Check] = []
-    l1_root = memory_dir(project_root) / "L1"
+    l1_root = lifecycle_root(project_root)
     if not l1_root.exists():
         checks.append(_Check("L1 root", _STATUS_OK, "ainda não criado"))
         return _CategoryReport("Memory L1", checks)

@@ -54,6 +54,7 @@ from engine.utils.paths import (  # noqa: E402
     cards_dir,
     forge_cards_local_dir,
     forge_config_path,
+    lifecycle_root,
     memory_dir,
 )
 from engine.utils.sha256 import file_sha256  # noqa: E402
@@ -323,7 +324,7 @@ def _check_l1_mutation_lock(project_root: Path) -> list[str]:
     import json
 
     out: list[str] = []
-    l1_root = memory_dir(project_root) / "L1"
+    l1_root = lifecycle_root(project_root)
     if not l1_root.is_dir():
         return out
     for slug_dir in l1_root.iterdir():

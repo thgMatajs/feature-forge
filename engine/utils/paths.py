@@ -128,9 +128,17 @@ def memory_dir(project_root: Path) -> Path:
     return claude_dir(project_root) / "memory"
 
 
+def lifecycle_root(project_root: Path) -> Path:
+    """Raiz da state-machine de lifecycle (per-feature WIP + archived +
+    proposed-evolutions). Decisão #1: a lifecycle vive em forge/state, fora
+    de .claude/memory/ (que é 100% do mem). [Task 1 mantém o valor legado;
+    Task 2 vira pra forge_state_dir/lifecycle.]"""
+    return memory_dir(project_root) / "L1"
+
+
 def memory_l1_path(project_root: Path, feature_slug: str) -> Path:
-    """L1 (per-feature WIP) directory for a given feature slug."""
-    return memory_dir(project_root) / "L1" / feature_slug
+    """Diretório de lifecycle (per-feature WIP) de uma feature."""
+    return lifecycle_root(project_root) / feature_slug
 
 
 def memory_l2_path(project_root: Path) -> Path:

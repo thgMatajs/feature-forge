@@ -37,6 +37,7 @@ from engine.utils.paths import (
     find_project_root,
     forge_home,
     graph_db_path,
+    lifecycle_root,
     memory_dir,
     try_find_project_root,
 )
@@ -280,7 +281,7 @@ def _handle_post_write_artifact(args: dict[str, str], project_root: Path) -> Non
     artifact = args.get("artifact", "?")
     file_arg = args.get("file")
     if feature_slug:
-        history = memory_dir(project_root) / "L1" / feature_slug / "history.jsonl"
+        history = lifecycle_root(project_root) / feature_slug / "history.jsonl"
         history.parent.mkdir(parents=True, exist_ok=True)
         entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
