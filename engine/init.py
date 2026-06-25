@@ -1398,7 +1398,7 @@ def run(argv: list[str]) -> int:
         return _run_pipeline(project_root)
     except ui_question.PromptAbortedError:
         renderer.write("")
-        renderer.write(mentor_calmo.pause_message(resume_command="forge init"))
+        renderer.write(mentor_calmo.pause_message(resume_command="forge init", project_root=project_root))
         return 130
     except KeyboardInterrupt:
         # Re-raise — the dispatcher in cli.py owns the 130 exit code path.
@@ -1976,7 +1976,8 @@ def _run_pipeline(project_root: Path) -> int:
     except UserAbortError as exc:
         renderer.write(
             mentor_calmo.pause_message(
-                resume_command=f"forge init  # após reconciliar grants — {exc}"
+                resume_command=f"forge init  # após reconciliar grants — {exc}",
+                project_root=project_root,
             )
         )
         return 0  # aborta init sem persistir workflow-config

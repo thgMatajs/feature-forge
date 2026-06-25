@@ -815,7 +815,7 @@ def _persist_deferred(slug: str, project_root: Path, where: str) -> None:
         {"event": "plan-deferred", "where": where},
     )
     renderer.write("")
-    renderer.write(mentor_calmo.pause_message(slug=slug, resume_command=f"forge plan {slug}"))
+    renderer.write(mentor_calmo.pause_message(slug=slug, resume_command=f"forge plan {slug}", project_root=project_root))
 
 
 # ── Wave runners ─────────────────────────────────────────────────────────────

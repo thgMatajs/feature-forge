@@ -40,14 +40,16 @@ def test_progress_phrase_by_stage():
     assert mentor_calmo.progress_phrase("unknown") in mentor_calmo.PHRASES_ACK
 
 
-def test_pause_message_includes_slug_and_resume():
-    msg = mentor_calmo.pause_message("my-slug")
+def test_pause_message_includes_slug_and_resume(tmp_path):
+    msg = mentor_calmo.pause_message("my-slug", project_root=tmp_path)
+    # lifecycle_root(tmp_path) resolves to tmp_path/.claude/memory/L1 in this wave
     assert "L1/my-slug/status.json" in msg
     assert "forge" in msg
 
 
-def test_pause_message_without_slug_uses_l1_root():
-    msg = mentor_calmo.pause_message()
+def test_pause_message_without_slug_uses_lifecycle_root(tmp_path):
+    msg = mentor_calmo.pause_message(project_root=tmp_path)
+    # lifecycle_root still resolves memory/L1 in this wave (behavior-preserving)
     assert ".claude/memory/L1/" in msg
 
 

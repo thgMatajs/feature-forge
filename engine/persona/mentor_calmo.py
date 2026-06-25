@@ -131,7 +131,8 @@ def acknowledgment() -> str:
 def pause_message(
     slug: str | None = None,
     resume_command: str | None = None,
-    project_root: Path | None = None,
+    *,
+    project_root: Path,
 ) -> str:
     """Pause confirmation per discipline §7.
 
@@ -143,20 +144,17 @@ def pause_message(
         resume_command: command string to show for resuming. Defaults to
             "forge {plan|implement|evolve} <slug>".
         project_root: project root used to derive the lifecycle path via
-            ``lifecycle_root``. When None, falls back to a relative reference.
+            ``lifecycle_root``. Required — callers must pass the resolved root
+            so the message always routes through the helper (Task-2 flip
+            propagates automatically without leaving a legacy literal).
     """
-    if project_root is not None:
-        root = lifecycle_root(project_root)
-        # Render as a relative path from project_root so the message is portable.
-        try:
-            rel = root.relative_to(project_root)
-        except ValueError:
-            rel = root
-        where = f"{rel}/{slug}/status.json" if slug else f"{rel}/"
-    else:
-        where = (
-            f".claude/memory/L1/{slug}/status.json" if slug else ".claude/memory/L1/"
-        )
+    root = lifecycle_root(project_root)
+    # Render as a relative path from project_root so the message is portable.
+    try:
+        rel = root.relative_to(project_root)
+    except ValueError:
+        rel = root
+    where = f"{rel}/{slug}/status.json" if slug else f"{rel}/"
     resume = resume_command or "forge {plan|implement|evolve} <slug>"
     return (
         f"Pausei aqui. Estado salvo em {where}\n"

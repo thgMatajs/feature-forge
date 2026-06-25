@@ -1445,7 +1445,7 @@ def run(argv: list[str]) -> int:
             renderer.write("")
             renderer.write(
                 mentor_calmo.pause_message(
-                    slug=slug, resume_command=f"forge implement {slug}"
+                    slug=slug, resume_command=f"forge implement {slug}", project_root=project_root
                 )
             )
             # DRIFT-1 W2.T3b — pause is clean exit, clear checkpoint.
