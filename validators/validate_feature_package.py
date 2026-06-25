@@ -2,7 +2,7 @@
 """validate_feature_package.py — Feature package completeness check.
 
 Checks that a feature directory under
-`docs/feature-implementation-workflow/features/{slug}/` contains all artefacts
+`docs/forge-specs/features/{slug}/` contains all artefacts
 required by the active strictness level (strict / standard / lean) from
 `workflow-config.yaml § workflow.strictness-matrix`, plus that cross-refs
 between artefacts are coherent.

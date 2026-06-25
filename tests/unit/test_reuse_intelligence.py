@@ -356,7 +356,7 @@ def test_apply_writes_intake_and_status(tmp_path: Path, monkeypatch):
 
     intake = (
         tmp_path
-        / "docs/feature-implementation-workflow/non-product"
+        / "docs/forge-specs/non-product"
         / "refactor-firebase-analytics-log-event-safely"
         / "feature-intake.md"
     )

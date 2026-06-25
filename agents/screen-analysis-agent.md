@@ -63,10 +63,10 @@ Read-only on entry (from the context pack the conductor attached):
 
 Write:
 
-- `docs/feature-implementation-workflow/features/{slug}/screen-analysis.md`
-- `docs/feature-implementation-workflow/features/{slug}/ui-state-spec.yaml`
+- `docs/forge-specs/features/{slug}/screen-analysis.md`
+- `docs/forge-specs/features/{slug}/ui-state-spec.yaml`
 - Append open questions to
-  `docs/feature-implementation-workflow/features/{slug}/open-questions.yaml`
+  `docs/forge-specs/features/{slug}/open-questions.yaml`
   with `phase_lock: TASK-{slug}-ui`
 
 You do NOT talk to the user. The conductor reads your output and decides

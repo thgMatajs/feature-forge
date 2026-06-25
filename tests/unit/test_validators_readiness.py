@@ -39,7 +39,7 @@ def test_review_md_with_ready_verdict_passes(tmp_forge_project: Path) -> None:
     f_root = (
         tmp_forge_project
         / "docs"
-        / "feature-implementation-workflow"
+        / "forge-specs"
         / "features"
         / slug
     )

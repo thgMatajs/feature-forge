@@ -30,14 +30,14 @@ def _make_task_project(
 ) -> Path:
     """Cria estrutura mínima com 1 task em 1 feature.
 
-    Layout: ``docs/feature-implementation-workflow/features/<slug>/tasks/<id>.yaml``
+    Layout: ``docs/forge-specs/features/<slug>/tasks/<id>.yaml``
     """
     proj = tmp_path / "qa-task-pilot"
     (proj / ".git").mkdir(parents=True)
     feature_dir = (
         proj
         / "docs"
-        / "feature-implementation-workflow"
+        / "forge-specs"
         / "features"
         / feature_slug
     )

@@ -32,7 +32,7 @@ def _seed_ready_feature(project_root: Path, slug: str = "lembrete-rega") -> Path
     feature_root = (
         project_root
         / "docs"
-        / "feature-implementation-workflow"
+        / "forge-specs"
         / "features"
         / slug
     )

@@ -32,7 +32,7 @@ def qa_pause_project(tmp_path: Path) -> Path:
     feat = (
         proj
         / "docs"
-        / "feature-implementation-workflow"
+        / "forge-specs"
         / "features"
         / "pause-feature"
     )

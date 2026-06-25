@@ -2,7 +2,7 @@
 
 Orchestrates a single feature through 5 sequential planning waves, each one
 emitting one or more artefacts under
-`docs/feature-implementation-workflow/features/{slug}/`. Per-feature working
+`docs/forge-specs/features/{slug}/`. Per-feature working
 state lives in `.claude/memory/L1/{slug}/`.
 
 v1 realism: this module does NOT invoke LLM sub-agents directly. It renders

@@ -2,7 +2,7 @@
 
 When the user picks "aplicar" on a duplicate/promote/migration proposal,
 this module materializes a feature-intake stub under
-``docs/feature-implementation-workflow/non-product/{slug}/feature-intake.md``
+``docs/forge-specs/non-product/{slug}/feature-intake.md``
 plus a ``status.json`` companion. The refactor-subtype flow (Gap 2) takes
 over from there when the user runs ``forge plan {slug}``.
 

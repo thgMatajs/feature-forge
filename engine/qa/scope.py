@@ -2,7 +2,7 @@
 
 Conversacional (Decisao 10 — sem flags). Resolve via 3-caminhos quando
 ambiguo. Reusa convencao de path de engine.plan (mandamento #3):
-features moram em ``docs/feature-implementation-workflow/features/<slug>/``.
+features moram em ``docs/forge-specs/features/<slug>/``.
 
 Consumidor canonico: ``engine/qa.py`` Phase 0 ingest. API publica:
 
@@ -61,7 +61,7 @@ def resolve_scope(
     ``raw_target`` aceita 4 formas:
 
     - ``"paranoid"`` (literal) — enumera ate ``paranoid_max_features``
-      feature dirs presentes em ``docs/feature-implementation-workflow/features/``.
+      feature dirs presentes em ``docs/forge-specs/features/``.
     - ``"TASK-NNNN"`` (prefixo ``TASK-``) — procura task yaml em qualquer
       feature dir.
     - feature slug — casa em ``features/<slug>/``.

@@ -84,7 +84,7 @@ def test_forge_qa_cli_invokes_handler(tmp_path):
     feature_dir = (
         tmp_path
         / "docs"
-        / "feature-implementation-workflow"
+        / "forge-specs"
         / "features"
         / slug
     )
@@ -227,7 +227,7 @@ def test_forge_qa_cli_no_secret_leak_smoke(tmp_path):
     feature_dir = (
         tmp_path
         / "docs"
-        / "feature-implementation-workflow"
+        / "forge-specs"
         / "features"
         / slug
     )

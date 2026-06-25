@@ -37,7 +37,7 @@ def _make_features(tmp_path: Path, slugs: list[str]) -> Path:
     proj = tmp_path / "qa-paranoid-pilot"
     (proj / ".git").mkdir(parents=True)
     features_root = (
-        proj / "docs" / "feature-implementation-workflow" / "features"
+        proj / "docs" / "forge-specs" / "features"
     )
     features_root.mkdir(parents=True)
     for slug in slugs:

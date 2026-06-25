@@ -71,7 +71,7 @@ def _seed_parent_done(
     feature_dir = (
         project_root
         / "docs"
-        / "feature-implementation-workflow"
+        / "forge-specs"
         / "features"
         / slug
     )

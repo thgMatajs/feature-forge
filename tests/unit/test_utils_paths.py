@@ -135,7 +135,7 @@ def test_canonical_paths(tmp_path):
 
 
 def test_feature_dir(tmp_path):
-    assert paths.feature_dir(tmp_path, "auth") == tmp_path / "docs" / "feature-implementation-workflow" / "features" / "auth"
+    assert paths.feature_dir(tmp_path, "auth") == tmp_path / "docs" / "forge-specs" / "features" / "auth"
 
 
 def test_ensure_dir_is_idempotent(tmp_path):

@@ -150,7 +150,7 @@ def hooks_dir(project_root: Path) -> Path:
 
 # Fonte unica do dirname dos artefatos de feature. Alterar este valor
 # e suficiente para renomear o diretorio em todo o codebase.
-FEATURE_WORKFLOW_DIRNAME = "feature-implementation-workflow"
+FEATURE_WORKFLOW_DIRNAME = "forge-specs"
 
 
 def feature_workflow_root(project_root: Path) -> Path:
@@ -159,7 +159,7 @@ def feature_workflow_root(project_root: Path) -> Path:
 
 
 def feature_dir(project_root: Path, feature_slug: str) -> Path:
-    """Per-feature directory under feature-implementation-workflow/features/."""
+    """Per-feature directory under forge-specs/features/."""
     return feature_workflow_root(project_root) / "features" / feature_slug
 
 
@@ -219,7 +219,7 @@ def feature_path(project_root: Path, slug: str, *, subtype: str = "product") -> 
     features because it hardcoded subtype="product".
 
     For `subtype="product"` the layout is the legacy v1.0 path
-    (`docs/feature-implementation-workflow/features/{slug}/`). For
+    (`docs/forge-specs/features/{slug}/`). For
     refactor/spike/chore/bugfix the directory lives under
     `non-product/{slug}/` — see filesystem-layout §3.5.
 

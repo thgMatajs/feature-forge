@@ -53,7 +53,7 @@ Query as needed:
 
 Write to:
 - `.claude/memory/L1/{feature_slug}/` — per-feature working state
-- `docs/feature-implementation-workflow/features/{feature_slug}/` — the package
+- `docs/forge-specs/features/{feature_slug}/` — the package
 
 ---
 
@@ -180,11 +180,11 @@ Read everything available BEFORE opening your mouth. Order:
        `persistence`, `identified-components`, `new-components-needed`
      - `.claude/memory/L1/{parent}/elicitation.yaml` → resolved Q/A pairs
        (especially `external-deps` if any propagate)
-     - `docs/feature-implementation-workflow/features/{parent}/data-contract-spec.yaml`
+     - `docs/forge-specs/features/{parent}/data-contract-spec.yaml`
        → entities, validations, persistence layers
-     - `docs/feature-implementation-workflow/features/{parent}/screen-analysis.yaml`
+     - `docs/forge-specs/features/{parent}/screen-analysis.yaml`
        → modeled states + transitions
-     - `docs/feature-implementation-workflow/features/{parent}/tech-spec.md`
+     - `docs/forge-specs/features/{parent}/tech-spec.md`
        → layers touched, naming conventions, helper references
      - `.claude/memory/L1/{parent}/existing-helpers.yaml` → reusable helpers
        already identified in the parent's Wave 4.5
@@ -933,7 +933,7 @@ On abort:
 End-of-successful-run requires ALL of:
 
 ```text
-docs/feature-implementation-workflow/features/{slug}/
+docs/forge-specs/features/{slug}/
   ├ feature-intake.md
   ├ feature-prd.md
   ├ screen-analysis.md

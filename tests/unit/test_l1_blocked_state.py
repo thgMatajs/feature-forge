@@ -95,7 +95,7 @@ def _write_task_contract(
 ) -> Path:
     """Helper: drop a minimal task YAML with the given depends_on_external."""
     tasks_dir = (
-        project_root / "docs" / "feature-implementation-workflow"
+        project_root / "docs" / "forge-specs"
         / "features" / slug / "tasks"
     )
     tasks_dir.mkdir(parents=True, exist_ok=True)
@@ -278,7 +278,7 @@ def test_validator_accepts_well_formed_depends_on_external(
     """Valid depends_on_external should not introduce violations."""
     tasks_dir = (
         tmp_forge_project_with_feature
-        / "docs" / "feature-implementation-workflow"
+        / "docs" / "forge-specs"
         / "features" / "lembrete-rega" / "tasks"
     )
     (tasks_dir / "TASK-0001.yaml").write_text(
@@ -321,7 +321,7 @@ def test_validator_rejects_invalid_integration(
     """integration must be in the allowed set."""
     tasks_dir = (
         tmp_forge_project_with_feature
-        / "docs" / "feature-implementation-workflow"
+        / "docs" / "forge-specs"
         / "features" / "lembrete-rega" / "tasks"
     )
     (tasks_dir / "TASK-0001.yaml").write_text(
@@ -361,7 +361,7 @@ def test_validator_rejects_missing_ticket(
     """ticket is a required key."""
     tasks_dir = (
         tmp_forge_project_with_feature
-        / "docs" / "feature-implementation-workflow"
+        / "docs" / "forge-specs"
         / "features" / "lembrete-rega" / "tasks"
     )
     (tasks_dir / "TASK-0001.yaml").write_text(
@@ -471,7 +471,7 @@ def _seed_implementable_feature(
     Returns the feature_path.
     """
     feature_root = (
-        project_root / "docs" / "feature-implementation-workflow"
+        project_root / "docs" / "forge-specs"
         / "features" / slug
     )
     feature_root.mkdir(parents=True, exist_ok=True)
@@ -509,7 +509,7 @@ def test_implement_refuses_blocked_task_and_flips_state(
     """Run with only a blocked task → exit 7 + state=blocked-on-external."""
     # Single task, blocked.
     feature_root = (
-        tmp_forge_project / "docs" / "feature-implementation-workflow"
+        tmp_forge_project / "docs" / "forge-specs"
         / "features" / "lembrete-rega"
     )
     feature_root.mkdir(parents=True, exist_ok=True)
@@ -562,7 +562,7 @@ def test_implement_clears_blocked_when_deps_resolved(
 ) -> None:
     """When feature was blocked but the task now resolves, state flips back."""
     feature_root = (
-        tmp_forge_project / "docs" / "feature-implementation-workflow"
+        tmp_forge_project / "docs" / "forge-specs"
         / "features" / "lembrete-rega"
     )
     feature_root.mkdir(parents=True, exist_ok=True)

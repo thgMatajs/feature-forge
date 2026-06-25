@@ -46,9 +46,9 @@ Read-only on entry (from the context pack the conductor attached):
 - `templates/feature-prd.template.md` — canonical template (use if present)
 
 Write:
-- `docs/feature-implementation-workflow/features/{slug}/feature-prd.md`
+- `docs/forge-specs/features/{slug}/feature-prd.md`
 - Append product-level open questions to
-  `docs/feature-implementation-workflow/features/{slug}/open-questions.yaml`
+  `docs/forge-specs/features/{slug}/open-questions.yaml`
   with `phase_lock: prd`
 
 ---
@@ -208,7 +208,7 @@ delivers it to the user.
 ## Output contract
 
 **File written:**
-`docs/feature-implementation-workflow/features/{slug}/feature-prd.md`
+`docs/forge-specs/features/{slug}/feature-prd.md`
 
 **Open questions appended** to `open-questions.yaml`, each:
 
@@ -227,7 +227,7 @@ delivers it to the user.
 {
   "agent": "feature-prd-agent",
   "status": "success" | "partial" | "failed",
-  "output-file": "docs/feature-implementation-workflow/features/{slug}/feature-prd.md",
+  "output-file": "docs/forge-specs/features/{slug}/feature-prd.md",
   "user-stories-count": 6,
   "ac-coverage": 1.0,
   "open-questions-added": 0,

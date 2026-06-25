@@ -27,11 +27,11 @@ def _make_feature_project(tmp_path: Path, slug: str) -> Path:
     """Cria estrutura mínima de feature.
 
     Layout espelha `engine.qa.scope._features_root` —
-    `docs/feature-implementation-workflow/features/<slug>/`.
+    `docs/forge-specs/features/<slug>/`.
     """
     proj = tmp_path / "qa-lifecycle-pilot"
     (proj / ".git").mkdir(parents=True)
-    feature_dir = proj / "docs" / "feature-implementation-workflow" / "features" / slug
+    feature_dir = proj / "docs" / "forge-specs" / "features" / slug
     feature_dir.mkdir(parents=True)
     # specs coerentes — vazias mas presentes pra scope resolution achar.
     (feature_dir / "feature-spec.yaml").write_text(
@@ -139,7 +139,7 @@ def test_conductor_handoff_carries_contract_fields(tmp_path: Path) -> None:
     (
         proj
         / "docs"
-        / "feature-implementation-workflow"
+        / "forge-specs"
         / "features"
         / slug
         / "tasks"

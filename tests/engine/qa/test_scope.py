@@ -24,7 +24,7 @@ from engine.qa.scope import (
 
 
 def _features_dir(root: Path) -> Path:
-    d = root / "docs" / "feature-implementation-workflow" / "features"
+    d = root / "docs" / "forge-specs" / "features"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -139,7 +139,7 @@ def test_scope_missing_raises(tmp_path: Path) -> None:
 
 def test_paranoid_excludes_aborted_state(tmp_path: Path) -> None:
     """Features com state=aborted são filtradas do paranoid scope."""
-    features_root = tmp_path / "docs" / "feature-implementation-workflow" / "features"
+    features_root = tmp_path / "docs" / "forge-specs" / "features"
     features_root.mkdir(parents=True)
 
     # Feature ativa
@@ -162,7 +162,7 @@ def test_paranoid_excludes_aborted_state(tmp_path: Path) -> None:
 
 def test_paranoid_excludes_archived_state(tmp_path: Path) -> None:
     """Features com state=archived são filtradas do paranoid scope."""
-    features_root = tmp_path / "docs" / "feature-implementation-workflow" / "features"
+    features_root = tmp_path / "docs" / "forge-specs" / "features"
     features_root.mkdir(parents=True)
 
     (features_root / "alpha").mkdir()
@@ -183,7 +183,7 @@ def test_paranoid_excludes_archived_state(tmp_path: Path) -> None:
 
 def test_paranoid_includes_when_status_missing_or_malformed(tmp_path: Path) -> None:
     """Edge cases (fail-safe = include): status.json ausente, malformado, sem campo state."""
-    features_root = tmp_path / "docs" / "feature-implementation-workflow" / "features"
+    features_root = tmp_path / "docs" / "forge-specs" / "features"
     features_root.mkdir(parents=True)
 
     # Sem status.json (legacy pre-Gap-8)

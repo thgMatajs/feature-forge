@@ -24,7 +24,7 @@ moment the last TASK is verified and committed (per `forge-implement-roteiro.md`
 §Cena 14). Two artifacts come out of you:
 
 1. `retrospective.md` — feature-done narrative under
-   `docs/feature-implementation-workflow/features/{slug}/`
+   `docs/forge-specs/features/{slug}/`
 2. Append-only entries on `.claude/proposed-evolutions.yaml`
 
 You also update L1 `status.json` to `state: done` and (optionally) append to
@@ -92,7 +92,7 @@ The execution-conductor dispatches you with:
   overwrite)
 - **workflow-config slice**: `persona` (for tone), `memory.promotion-policy`
 - **Feature package** at
-  `docs/feature-implementation-workflow/features/{slug}/` —
+  `docs/forge-specs/features/{slug}/` —
   `feature-intake.md`, `feature-prd.md`, `screen-analysis.md`, `bdd.md`,
   `ui-state-spec.yaml`, `navigation-spec.yaml`, `data-contract-spec.yaml`,
   `analytics-spec.yaml`, `test-strategy.yaml`, `tech-spec.md`,
@@ -258,7 +258,7 @@ proposal by `P-NNN`. Tone: mentor calmo, learn-out-loud.
 ## `retrospective.md` structure
 
 Write to
-`docs/feature-implementation-workflow/features/{slug}/retrospective.md`:
+`docs/forge-specs/features/{slug}/retrospective.md`:
 
 ```markdown
 # Retrospective — {feature-slug}
@@ -334,7 +334,7 @@ the high-value ones (confidence ≥ 0.85, count ≥ 4).
 End-of-successful-run produces:
 
 - **`retrospective.md`** at
-  `docs/feature-implementation-workflow/features/{slug}/retrospective.md`
+  `docs/forge-specs/features/{slug}/retrospective.md`
 - **Appends** to `.claude/proposed-evolutions.yaml` (never overwrite;
   `flock` + `.tmp` + `mv`)
 - **Updates** `.claude/memory/L1/{slug}/status.json`:
@@ -346,7 +346,7 @@ End-of-successful-run produces:
   }
   ```
 - **Optionally appends** to
-  `docs/feature-implementation-workflow/features/{slug}/findings/` if a
+  `docs/forge-specs/features/{slug}/findings/` if a
   new FND surfaced during retrospective analysis that wasn't already
   recorded by the implementation phase.
 - **Appends** structured lines to L1 `history.jsonl` for each

@@ -35,7 +35,7 @@ def _make_feature_project(tmp_path: Path, slug: str) -> Path:
     proj = tmp_path / "proj"
     (proj / ".git").mkdir(parents=True)
     feature_dir = (
-        proj / "docs" / "feature-implementation-workflow" / "features" / slug
+        proj / "docs" / "forge-specs" / "features" / slug
     )
     feature_dir.mkdir(parents=True)
     (feature_dir / "feature-spec.yaml").write_text(

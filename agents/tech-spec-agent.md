@@ -205,7 +205,7 @@ emit a partial with a note in `notes` of the JSON return.
 
 ## What you produce
 
-1. `docs/feature-implementation-workflow/features/{slug}/tech-spec.md`
+1. `docs/forge-specs/features/{slug}/tech-spec.md`
 2. Appended entries (if any) to `open-questions.yaml` with
    `phase_lock: tech-spec` and `blocking: false|true`
 3. Structured JSON return to the conductor (see Output contract)

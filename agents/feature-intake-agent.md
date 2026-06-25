@@ -55,7 +55,7 @@ queries). Missing field → open question, never a guess.
 
 ## What you produce
 
-1. `docs/feature-implementation-workflow/features/{slug}/feature-intake.md`
+1. `docs/forge-specs/features/{slug}/feature-intake.md`
 2. Appended entries (if any) to `open-questions.yaml` in the same folder
 3. Structured JSON return to the conductor (see Output contract)
 
@@ -293,7 +293,7 @@ On success/partial, write the file and return:
 {
   "agent": "feature-intake-agent",
   "status": "success",
-  "output-file": "docs/feature-implementation-workflow/features/{slug}/feature-intake.md",
+  "output-file": "docs/forge-specs/features/{slug}/feature-intake.md",
   "open-questions-added": 0,
   "validation": "pass",
   "notes": "Source: ticket + 3 screenshots. Owner inferred from assignee."

@@ -42,7 +42,7 @@ def _seed_feature_all_tasks_done(
     feature_root = (
         project_root
         / "docs"
-        / "feature-implementation-workflow"
+        / "forge-specs"
         / "features"
         / slug
     )

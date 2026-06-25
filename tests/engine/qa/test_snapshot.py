@@ -149,7 +149,7 @@ def _setup_feature_dir(tmp_path: Path) -> tuple[Path, Path]:
     feature_dir = (
         proj
         / "docs"
-        / "feature-implementation-workflow"
+        / "forge-specs"
         / "features"
         / "snap-feat"
     )
@@ -180,7 +180,7 @@ def test_snapshot_recurses_into_directory(tmp_path: Path) -> None:
     base = (
         tree.snapshot_dir
         / "docs"
-        / "feature-implementation-workflow"
+        / "forge-specs"
         / "features"
         / "snap-feat"
     )
@@ -201,7 +201,7 @@ def test_snapshot_directory_preserves_nested_layout(tmp_path: Path) -> None:
     base = (
         tree.snapshot_dir
         / "docs"
-        / "feature-implementation-workflow"
+        / "forge-specs"
         / "features"
         / "snap-feat"
     )
