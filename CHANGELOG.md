@@ -7,6 +7,15 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Design spec da substituição da camada de memória-de-conhecimento pelo `mem` (CLI vendorizada via shell) — `docs/superpowers/specs/2026-06-25-mem-integration-design.md`. O forge deixará de manter L1-distilável/L2/L3 caseiros em `engine/memory/`; o `mem` (vendorizado em `.claude/bin/mem`, pinado por versão, invocado por subprocess — mesmo padrão de `dispatch_native_tool` pra detekt/gradle) passa a ser o dono único de learnings, decisões, episodes, sessões e convenções curadas. O code graph (`graph.db`) e o L1 state-machine de lifecycle permanecem no forge. O spec também detalha o rename clean-break `docs/feature-implementation-workflow/` → `docs/forge-specs/` (sem back-compat; resolve colisão de namespace — NÃO confundir com `docs/superpowers/specs/`, que é spec do próprio forge).
+
+  ADR-note (sem revisita formal — consistente com decisões locked):
+  - Decisão 20 (Persistence = SQLite + arquivos) é HONRADA: o `mem` É esse modelo — JSONL commitado (arquivos) como fonte + `mem.db` (SQLite) como índice derivado. O graph segue como a outra metade SQLite.
+  - Decisão 22 (zero runtime dep em skills; absorb patterns only) é HONRADA: o `mem` entra como TOOL vendorizada via shell, não import de skill. `engine/` nunca faz `import mem`. Snapshot local pinado alinha com Decisão 15.
+  Nenhuma das duas é revisitada — a substituição opera dentro do que ambas já endossam. (Por não editar `docs/design/01-decisions.md`, o hard-block do Mandamento #1 não dispara; ADR-note aqui é a documentação correta de "honra, não revisita".)
+
 ## [1.6.1] - 2026-06-24
 
 Remediação do piloto: rodar `forge qa` end-to-end contra o consumer real MeoBonsai-qa expôs um bug no `forge doctor` que rejeitava o `schema-version` canônico que o próprio `forge init` escreve — todo consumer recém-inicializado falhava o primeiro `doctor`. Junto, alinhamentos de consistência entre os templates/agents do fluxo qa e o que o engine de fato lê.
