@@ -3,7 +3,10 @@
 > **Spec, não plano de execução.** Aterra decisões de arquitetura já
 > tomadas pelo autor em algo acionável. O plano de implementação
 > (writing-plans → tasks) é o passo seguinte.
-> **Voz:** mentor calmo. **Status:** design aprovado, pré-implementação.
+> **Voz:** mentor calmo. **Status:** design aprovado (revisado pelo autor),
+> pré-implementação. As 5 questões abertas da v1 viraram decisões (ver
+> §Decisões resolvidas) e o rollout foi reorganizado em 3 fases (ver
+> §Fases de rollout).
 > **Data:** 2026-06-25.
 
 ---
@@ -42,6 +45,155 @@ maduro no eixo de memória-de-conhecimento (busca ranqueada, supersede,
 captura via inbox, decay, hooks de injeção). O forge é mais maduro no
 eixo de estrutura-de-código (graph.db, blast-radius, reuse-intelligence).
 A divisão natural é por **eixo de responsabilidade**, não por duplicação.
+
+---
+
+## Decisões resolvidas
+
+As 5 questões abertas da v1 deste spec viraram decisões na revisão do autor.
+Resumo (detalhe nas seções referenciadas):
+
+| # | Questão (v1) | Decisão | Onde |
+|---|---|---|---|
+| 1 | Onde cortar o L1 | A state-machine de lifecycle NÃO é memória — **move pra `.claude/forge/state/`** (fora de `.claude/memory/`). Só o conhecimento distilável vai pro mem. `.claude/memory/` fica 100% do mem. | §Divisão (nota), §Reconciliação (call-sites) |
+| 2 | Tamanho da fronteira | Helper enxuto novo `engine/integrations/mem.py:mem_call` que reusa a espinha de `dispatch_native_tool`; não forçar o encaixe inteiro. | §Fronteira vendor+shell |
+| 3 | Distribuição do mem | **Embarcar o asset pinado no repo forge** (`engine/assets/mem/mem`); init copia pra `.claude/bin/mem`. Sem download via `gh`. Migração L2→mem = migrador forge-side que emite `mem add` (lossy 11→5; campos extras preservados no corpo/tags). Extensão de schema do mem = follow-on. | §Fronteira, §Migração |
+| 4 | Bug multi-passo do `forge memory` | NÃO assumir cura. TDD obrigatório: reproduzir BUG-M1 vermelho ANTES, confirmar que o wrapper o elimina. Os 11 callsites de checkpoint-resume (DRIFT-1) somem ao virar wrapper stateless — mas isso precisa de teste, não de fé. | §Superfície de comando |
+| 5 | `forge evolve` vs `mem evolve` | Ortogonais. forge evolve = reuse-intelligence/cards/templates sobre código; mem evolve = ciclo-de-vida do acervo. Ponte ÚNICA: proposals `promote-to-l2` do forge → `mem inbox add`. | §Superfície de comando |
+
+> Estas decisões são premissas das §Fases de rollout abaixo — o plano de
+> implementação as executa, não as re-litiga.
+
+---
+
+## Fases de rollout
+
+A integração rola em **3 fases**. As Fases 0 e 1 são escopo de produto
+(implementação real); a Fase 2 é só referenciada.
+
+### Fase 0 — dogfood (o forge usa o mem em si mesmo)
+
+**O quê:** o PRÓPRIO repo `feature-forge` adota o `mem` pro conhecimento
+dele. As fontes de conhecimento do forge viram notas mem; os docs
+operacionais sempre-on são enxugados pra Tier-0 + índice mem.
+
+**Por que primeiro:** dogfood real. Se o forge não consegue operar sua
+própria manutenção com o conhecimento no mem, não tem por que impor isso a
+consumidores. Valida o fluxo de redução de rules (Fase 1) no terreno mais
+exigente que existe — o repo cujos rules ENFORÇAM o Mandamento 0.
+
+**Mapeamento Tier-0 (fica injetado, lean) vs. → mem (Tier-1, sob demanda):**
+
+| Fonte do forge | Destino |
+|---|---|
+| `CLAUDE.md` — Mandamento 0 + os 6 mandamentos (enunciado) + workflow-por-verbo essencial | **Tier-0** (enxugado pra o invariante; o resto vira ponteiro pro mem) |
+| `.claude/rules/orchestrator-persona.md`, `subagent-workflow.md` (detalhe de despacho) | → mem (`reference`); Tier-0 mantém o ponteiro |
+| `.claude/rules/decisions.md`, `disciplines.md`, `reuse.md`, `scope.md`, `testing.md`, `doc-sync.md`, `superpowers.md`, `plan-auditor.md` | → mem (`reference`/`feedback`) — recuperados via `find` quando o trabalho toca o tema |
+| `docs/design/01-decisions.md` (decisões) | → mem (`decision`, uma nota por decisão); o arquivo CANÔNICO **permanece** (é fonte de verdade load-bearing + o hard-block do Mandamento #1 depende dele) — o mem é índice consultável, não substituto do arquivo |
+| `docs/design/07-discipline.md` (disciplinas) | → mem (`reference`); arquivo canônico permanece |
+| `docs/design/04-pending.md` (gaps) | → mem (`reference`); arquivo permanece |
+| `docs/design/08-session-handoff.md` (estado/handoff) | → `mem session` (handoff curado) + o arquivo permanece pro SessionStart |
+| Learnings da MEMORY.md auto-memory do autor (feedback recorrentes) | → mem (`feedback`) |
+
+> **Distinção importante:** "→ mem" NÃO significa deletar o arquivo
+> canônico. Os docs `docs/design/*` são fonte de verdade load-bearing e
+> alguns têm enforcement acoplado (o hard-block de `01-decisions.md`, o
+> SessionStart de `08-session-handoff.md`). O que muda é: eles deixam de ser
+> **injetados sempre via CLAUDE.md/rules** e passam a ser **consultáveis via
+> mem** quando relevantes. O CLAUDE.md + `.claude/rules/` é que enxugam.
+
+**ALTO RISCO — por que esta fase é delicada:** mexe nos docs operacionais
+load-bearing do PRÓPRIO forge. `CLAUDE.md` e `.claude/rules/**` estão na
+whitelist load-bearing do `scope.md`. O SessionStart hook
+(`session-start-orientation.sh`) e o enforcement do Mandamento 0 dependem
+desses arquivos estarem presentes e legíveis. Enxugar errado = o
+orquestrador-mantenedor perde os gates que o seguram.
+
+**GATE DE ACEITE da Fase 0 (explícito, validar na branch ANTES de merge):**
+
+1. Uma **sessão de manutenção fresca** (SessionStart limpo, sem contexto
+   prévio) DEVE continuar funcionando: o Mandamento 0 é enforçado (o
+   orquestrador despacha em vez de editar direto), e as rules são acessíveis
+   via `mem find` quando o trabalho as exige.
+2. Os 5 smoke checks do `SMOKE-CHECKLIST.md` que dependem de rules/hooks
+   continuam passando (especialmente #5 — dispatch behavior do Mandamento 0).
+3. O hard-block do Mandamento #1 (`pre-commit-feature-forge.sh`) continua
+   disparando em edit de `01-decisions.md` sem ceremony (o arquivo canônico
+   não foi removido).
+4. **Tudo proposto, nunca silencioso:** a divisão Tier-0/Tier-1 é
+   apresentada ao humano (3-caminhos) antes de qualquer `mem add` + enxugue;
+   o `.claude/rules/` humano nunca é trucidado sem aprovação.
+
+Falhou qualquer gate → a Fase 0 não merge; ajusta a classificação e
+re-valida. Pré-produção permite clean break, mas o forge precisa continuar
+se mantendo.
+
+### Fase 1 — produto (todos os fluxos dos consumidores)
+
+**O quê:** o `mem` substitui a memória-de-conhecimento pros projetos
+**consumidores**. TODOS os fluxos do forge re-roteiam pro mem.
+
+**Fluxos do forge que re-roteiam (enumerados):**
+
+- **`init`** — vendoriza o mem (asset embutido → `.claude/bin/mem`) + roda o
+  scaffold do mem + **executa a redução de rules** (fluxo abaixo).
+- **`plan`** — consulta convenções/decisões via `mem find` (além do graph
+  pra estrutura); escreve lifecycle em `.claude/forge/state/`.
+- **`implement`** — append history/status em `.claude/forge/state/`;
+  consulta `mem find` por gotchas.
+- **`verify`** — verify-log em `.claude/forge/state/`.
+- **`qa`** — consulta `mem find` por episodes/decisões relevantes ao
+  red-team; nenhum validator chama mem (determinismo preservado).
+- **`status`** — lista features do lifecycle (novo path); counts de
+  conhecimento via `mem stats` se quiser.
+- **`evolve`** — proposals de conhecimento (`promote-to-l2`) → `mem inbox
+  add`; reuse-estrutural fica no distiller do forge.
+- **`doctor`** — categoria nova: `mem doctor --json` + check de drift do pin.
+- **Conductor / sub-agents:** `memory-distiller`, `feature-prd-agent`,
+  `planning-conductor`, `contract-planner-agent`, `retrospective-agent`
+  re-roteiam leitura→`mem find`, escrita→`mem inbox add` (ver §Re-roteamento).
+
+**Migração:** brownfield consumidor migra via o migrador forge-side
+(§Migração). Greenfield nasce no mem.
+
+**O que NÃO vai pro mem (fica no forge):** `graph.db` (estrutura de código)
+e a state-machine de lifecycle (`.claude/forge/state/`).
+
+#### Fluxo do `init` pós-mem (com redução de rules)
+
+Este é o fix do gap de assimilação de convenção do piloto:
+
+1. **Vendoriza o mem** (asset embutido → `.claude/bin/mem`, chmod 755) +
+   **`mem init`** (scaffold `.claude/memory/`, gitignore `mem.db*`, índice
+   no `AGENTS.md`).
+2. **LÊ os `.claude/rules/*` + `CLAUDE.md` existentes** do projeto
+   consumidor (se houver). Este passo é o que falta hoje — convenção humana
+   nunca era assimilada.
+3. **Host/conductor CLASSIFICA cada fragmento** em **Tier-0** (invariante,
+   fica injetado lean) vs. **Tier-1** (referência → vira nota mem).
+4. **PROPÕE a divisão ao humano** (G1/G2: NUNCA trucida o `.claude/rules/`
+   do humano em silêncio). Apresentação 3-caminhos: aceitar / ajustar /
+   pular.
+5. **Aprovado:** `mem add` dos fragmentos Tier-1 + **enxuga o núcleo
+   injetado** + **escreve o índice de ~30 linhas** (o `RULE_INDEX` que
+   ensina o agente a consultar a memória).
+
+Nenhuma rule humana some sem aprovação; o que era sempre-on vira
+sob-demanda só com o veredito do humano.
+
+### Fase 2 — curadoria (só referência neste spec)
+
+**Enriquecimento** de rules ao longo do tempo, distinto da redução one-time
+do init:
+
+- **web/init-enrich** — buscar convenções de fontes externas no init.
+- **evolve→rules** — `forge evolve`/`mem evolve` promovendo aprendizados
+  comprovados a rules.
+- **comando `rules-update`** — curadoria ativa do acervo de rules.
+- **version-awareness** — rules cientes de versão de stack/lib.
+
+Este spec **habilita** a direção (a substituição é o pré-requisito) mas NÃO
+a detalha. Ver §Fora de escopo.
 
 ---
 
@@ -222,20 +374,26 @@ YAML/JSON estruturados. `mem import` cru não os entende. Ver §Migração.
 | **Estrutura de código** (símbolos, imports, deps) | — | ✅ `graph.db` (Decisão 20) |
 | Blast-radius, orphans, DI-deps (Q2/Q3/Q8) | — | ✅ `forge graph` |
 | Reuse-intelligence (Q11–Q17) | — | ✅ `engine/graph/reuse/` |
-| Feature lifecycle state (status, phase-lock, history) | — | ✅ ver nota abaixo |
+| Feature lifecycle state (status, phase-lock, history) | — | ✅ forge — move pra `.claude/forge/state/` (ver nota) |
 | Cards / templates / presets / validators | — | ✅ forge |
 | Conductor + sub-agents de planejamento | — | ✅ forge |
 
-> **Nota sobre L1 — fronteira fina e deliberada.** O L1 atual (`l1.py`)
+> **Nota sobre o corte do L1 (Decisão resolvida #1).** O L1 atual (`l1.py`)
 > mistura DOIS conceitos: (a) **estado-de-lifecycle** (status.json,
-> phase-lock, history.jsonl, verify-log, dispatch-log, blocking-deps) —
-> isso é *mecânica de execução do forge*, NÃO memória-de-conhecimento, e
-> **fica no forge**; (b) **conhecimento destilável** (hypothesis,
+> phase-lock, history.jsonl, verify-log, dispatch-log, blocking-deps,
+> subtype, extends-feature) — isso é *mecânica de execução do forge*, NÃO
+> memória-de-conhecimento; (b) **conhecimento destilável** (hypothesis,
 > rationale-trace, elicitation) — candidato a virar nota mem na
-> retrospectiva. A substituição visa a **camada de
-> memória-de-conhecimento** (L2 + a parte distilável de L1 + L3), não o
-> state-machine de execução. **QUESTÃO ABERTA #1** abaixo trata onde
-> exatamente cortar L1.
+> retrospectiva.
+>
+> **Decisão:** a parte (a) — a state-machine de lifecycle — NÃO é memória e
+> **sai de `.claude/memory/` pra `.claude/forge/state/`** (o sub-namespace
+> que o forge já usa pra estado operacional: `forge_state_dir`,
+> `engine/utils/paths.py:285`; já abriga `forge-pending.json`,
+> `cc-gate-bypass.jsonl`, `secrets-gate-bypass.jsonl`). A parte (b) vira
+> nota mem na retrospectiva. **Resultado: `.claude/memory/` fica 100% do
+> mem** — substituição limpa, sem coabitação de layouts. Os call-sites do
+> corte estão na §Reconciliação.
 
 ---
 
@@ -267,11 +425,12 @@ pra *validators* (multi-file, config-template, código de retorno
 benigno-vs-crash de linters). Chamar `mem` é mais simples (1 subcomando,
 sem files, sem config-template, sai 0/1/2/3). Não force o encaixe.
 
-**QUESTÃO ABERTA #2:** extrair um helper menor — `_mem_shell.py` (ou
-`engine/integrations/mem.py`) — que reusa a *espinha* do
-`dispatch_native_tool` (locate binary via path conhecido `.claude/bin/mem`
-com fallback `shutil.which("mem")`, subprocess com timeout, captura
-stdout/exit-code, fail-soft) mas com superfície enxuta:
+**Decisão resolvida #2 (tamanho da fronteira):** extrair um helper menor —
+`engine/integrations/mem.py` — que reusa a *espinha* do
+`dispatch_native_tool` (locate binary, subprocess com timeout, captura
+stdout/exit-code, fail-soft) mas com superfície enxuta; NÃO forçar o
+encaixe inteiro do dispatcher de validators (multi-file/config-template não
+se aplicam ao mem):
 
 ```python
 def mem_call(project_root, subcmd_args, *, json=True, timeout=10) -> MemResult
@@ -299,15 +458,17 @@ hooks usam — `"$CLAUDE_PROJECT_DIR"/.claude/bin/mem`, `mem`:1880):
 projetos consumidores. O plano de implementação vai:
 
 1. No fluxo de `forge init`, após criar `.claude/`, **vendorizar o mem**:
-   copiar o `mem` pinado (que o forge carrega como asset — ver
-   §Pin) pra `<project>/.claude/bin/mem` + chmod 755, e rodar o equivalente
-   de `mem init` (scaffold do `.claude/memory/` no layout do mem).
-2. **QUESTÃO ABERTA #3:** o forge embute uma cópia pinada do script `mem`
-   como asset (ex.: `engine/assets/mem` ou `vendor/mem`), OU baixa via
-   `gh api repos/inRadar/mem` no init? Embutir = clone-and-go, CI sem rede,
-   alinhado com Decisão 15 (snapshot copy local). Baixar = sempre na última.
-   **Recomendação:** embutir (asset pinado no repo forge), consistente com
-   Decisões 15 e 22. O update vem por `forge upgrade` (abaixo).
+   copiar o `mem` pinado (asset embutido no repo forge — ver §Pin) pra
+   `<project>/.claude/bin/mem` + chmod 755, e rodar o equivalente de
+   `mem init` (scaffold do `.claude/memory/` no layout do mem).
+2. **Decisão resolvida #3 (distribuição):** o forge **embarca uma cópia
+   pinada do script `mem` como asset no próprio repo forge** — nada de
+   download via `gh` no init. Embutir = clone-and-go, CI sem rede, alinhado
+   com Decisão 15 (snapshot copy local) e Decisão 22 (zero runtime dep de
+   skill). Local do asset: `engine/assets/mem/mem` (diretório versionado;
+   `engine/assets/mem/VERSION` ou a constante `MEM_PINNED_VERSION` carrega o
+   pin). O `forge init` copia esse asset pra `.claude/bin/mem`. O update vem
+   por `forge upgrade` (abaixo).
 3. Substituir o scaffold caseiro de `L1/L2` por scaffold do mem (o layout
    `.claude/memory/` muda — ver §Reconciliação).
 
@@ -318,23 +479,24 @@ sobre projetos, e hoje **não toca memória**. O update do mem pinado tem
 duas faces:
 
 - **Bump do pin no repo forge:** quando o forge adota uma versão mais nova
-  do `mem`, atualiza o asset embutido (`engine/assets/mem`) + a constante
-  de versão pinada. Isso é manutenção do *próprio forge* (commit no repo
-  forge), não runtime.
-- **Propagação pro projeto consumidor:** quando o usuário roda
-  `forge upgrade` (ou `forge reconfigure`) num projeto, o forge re-vendoriza
-  a cópia do mem pinada pra `<project>/.claude/bin/mem`. Reusar a disciplina
-  R13 do próprio mem (recusar clobber de cópia modificada à mão) é
-  desejável — **QUESTÃO ABERTA #4:** chamar `mem update --ref <pin>` (que
-  já implementa R13, mas baixa da rede via gh) vs. re-copiar o asset
-  embutido (offline, sem R13 sha-check)? Recomendação: re-copiar o asset
-  embutido com um sha-check próprio análogo ao R13, mantendo offline-first.
+  do `mem`, atualiza o asset embutido (`engine/assets/mem/mem`) + a
+  constante de versão pinada. Isso é manutenção do *próprio forge* (commit
+  no repo forge), não runtime.
+- **Propagação pro projeto consumidor (Decisão resolvida #4):** quando o
+  usuário roda `forge upgrade` (ou `forge reconfigure`) num projeto, o forge
+  **re-copia o asset embutido** pra `<project>/.claude/bin/mem` —
+  offline-first, sem depender de `gh`/rede. NÃO chamar `mem update --ref`
+  (que baixa da rede). Pra preservar a disciplina R13 do mem (não clobberar
+  cópia modificada à mão), o forge faz um **sha-check próprio**: se a cópia
+  vendorizada do projeto diverge do sha do asset pinado E não bate com
+  nenhum pin conhecido anterior, avisa via 3-caminhos antes de sobrescrever
+  (espelha R13 sem precisar de rede).
 
 ### Pin de versão
 
 - Forge fixa UMA versão do `mem` por release do forge (ex.: `mem 0.8.1`).
-- O pin vive em uma constante (`engine/integrations/mem.py:MEM_PINNED_VERSION`
-  ou similar) + o asset embutido carrega esse `__version__`.
+- O pin vive numa constante (`engine/integrations/mem.py:MEM_PINNED_VERSION`)
+  + o asset embutido (`engine/assets/mem/mem`) carrega esse `__version__`.
 - `forge doctor` ganha um check de drift: compara `mem --version` da cópia
   vendorizada do projeto vs. o pin do forge → reporta `[drift]` se diferem
   (espelha o check `version` do próprio `mem doctor`, `mem`:1481-1486).
@@ -373,17 +535,37 @@ duas faces:
   cobre o caso de uso (memória persistente consultável). A auto-memory do
   Claude Code (`~/.claude/projects/.../MEMORY.md`) continua existindo como
   feature nativa do host, mas o forge para de proxiá-la — o `mem brief`/
-  hooks cobrem injeção. **QUESTÃO ABERTA #5** trata se algum consumidor de
-  L3 precisa de ponte temporária.
-- **L1 → ver nota na §Divisão.** A parte state-machine (status.json,
-  phase-lock, history, verify-log, dispatch-log) **fica** no forge sob
-  `.claude/memory/L1/` OU migra pra um diretório que não colida com o
-  layout do mem (ex.: `.claude/state/lifecycle/`). **QUESTÃO ABERTA #1.**
-  A parte distilável (hypothesis/rationale/elicitation) vira nota mem na
-  retrospectiva via `forge evolve` → `mem add`.
+  hooks cobrem injeção. Como a retirada é clean-break (pré-produção, sem
+  usuários reais), não há ponte de back-compat: o único consumidor de L3 é
+  `engine/memory_cli.py` (ação "inspect L3"), que some quando o handler vira
+  wrapper (§Superfície).
+- **L1 → corte resolvido (Decisão #1).** A parte state-machine (status.json,
+  phase-lock, history.jsonl, verify-log.jsonl, dispatch-log.jsonl,
+  blocking-deps, subtype, extends-feature) **sai de `.claude/memory/L1/`
+  pra `.claude/forge/state/`** (`forge_state_dir`, paths.py:285). A parte
+  distilável (hypothesis/rationale-trace/elicitation) vira nota mem na
+  retrospectiva via `forge evolve` → `mem add`. Depois do corte,
+  `.claude/memory/` é 100% do mem.
+
+  **Call-sites do L1 state-machine a re-apontar pro novo path:**
+
+  | Arquivo | O que muda |
+  |---|---|
+  | `engine/utils/paths.py:131-138` | `memory_l1_path` deixa de derivar de `memory_dir`; passa a derivar de `forge_state_dir` (ex.: `.claude/forge/state/lifecycle/<slug>/`). `memory_l2_path` é removido. |
+  | `engine/memory/l1.py` | módulo inteiro re-baseia o path-root (status/history/phase-lock/verify-log/dispatch-log/archive) em `forge_state_dir`; a parte distilável (hypothesis/rationale/elicitation) deixa de ser escrita em L1 — vira input do destilador→mem. `archive_feature` (l1.py:721) re-aponta. |
+  | `engine/plan.py` | escreve hypothesis/ambiguity/elicitation/rationale/history → history+status vão pro novo path; hypothesis/rationale/elicitation alimentam a destilação pro mem |
+  | `engine/implement.py` | append history + update status → novo path |
+  | `engine/verify.py` | `append_verify_log` + read hypothesis → verify-log no novo path |
+  | `engine/undo.py` | read/release phase-lock + remove L2 entry → phase-lock no novo path; remoção de L2 vira curadoria mem |
+  | `engine/ingest.py` | read status + list active features → novo path |
+  | `engine/reconfigure.py` | list features + check blocks/external-deps → novo path |
+  | `engine/status.py` | list features + L2 size → features no novo path; L2-size some |
+  | `engine/evolve.py` | apply proposals (L1 archive + L2 add) → archive no novo path; L2 add vira `mem inbox add` |
+  | `engine/graph/reuse_apply.py` | apply L1State + update status → novo path |
 - **Gitignore:** o scaffold do mem adiciona `.claude/memory/mem.db*`
-  (`mem`:1849). O forge deve garantir que isso entra no gitignore do
-  consumidor no init (hoje o forge gitignora L1 como WIP — essa regra muda).
+  (`mem`:1849). O forge garante isso no init. O `.claude/forge/state/`
+  (lifecycle WIP) é gitignored como WIP (a regra que hoje gitignora
+  `.claude/memory/L1/` migra pro novo path).
 
 ---
 
@@ -406,46 +588,52 @@ tooling, risk, finding, decision-frozen, naming-extra,
 contradiction-resolved, promotion-candidate}`; o mem tem
 `type ∈ {feedback, reference, episode, decision, session}`.
 
-### Estratégia: migrador forge-side que emite `mem add`
+### Estratégia: migrador forge-side que emite `mem add` (Decisão #3)
 
-Um comando one-time (ex.: `forge raw migrate-memory-to-mem`, ou um passo
-opt-in dentro de `forge reconfigure`) que:
+**Decisão:** a migração é um **migrador forge-side**, NÃO `mem import` cru.
+Um comando one-time (`forge raw migrate-memory-to-mem`, ou passo opt-in no
+`forge reconfigure`) que:
 
 1. Lê `L2-project.yaml` via `engine/memory/l2.py:read_l2` (ainda existe
    durante a migração).
-2. Mapeia cada `L2Entry.kind` → `mem type` (tabela de mapeamento
-   determinística):
+2. Mapeia cada `L2Entry.kind` → `mem type` (tabela determinística, lossy —
+   11 kinds do forge → 5 tipos do mem):
 
-   | forge L2 kind | → mem type |
-   |---|---|
-   | `convention`, `naming-extra` | `reference` (ou `feedback` se prescritivo) |
-   | `pattern` | `reference` |
-   | `anti-pattern` | `feedback` |
-   | `domain-fact` | `reference` |
-   | `tooling` | `reference` |
-   | `risk` | `reference` |
-   | `finding` | `episode` (se bug) ou `reference` |
-   | `decision-frozen` | `decision` |
-   | `contradiction-resolved` | `decision` |
-   | `promotion-candidate` | (pular — é meta-curadoria, não fato) |
+   | forge L2 kind | → mem type | nota |
+   |---|---|---|
+   | `convention`, `naming-extra` | `feedback` se prescritivo (voz imperativa), senão `reference` | default conservador: prescritivo→feedback |
+   | `pattern` | `reference` | |
+   | `anti-pattern` | `feedback` | prescritivo por natureza |
+   | `domain-fact` | `reference` | |
+   | `tooling` | `reference` | |
+   | `risk` | `reference` | |
+   | `finding` | `episode` se bug-shaped, senão `reference` | |
+   | `decision-frozen` | `decision` | |
+   | `contradiction-resolved` | `decision` | |
+   | `promotion-candidate` | (pular — meta-curadoria, não fato) | |
 
-   **QUESTÃO ABERTA #6:** o mapeamento `convention/anti-pattern →
-   feedback vs reference` precisa de heurística ou triagem humana. Default
-   conservador: tudo prescritivo (`anti-pattern`, `convention` com voz
-   imperativa) → `feedback`; descritivo → `reference`.
-3. Pra cada entry mapeada, invoca `mem add --type <T> -t <title>
-   --tags <derivadas> --source "migrate:L2:<id>" "<body>"` via a fronteira
-   shell. `importance` derivado de `confidence` (ex.: confidence≥0.9→4,
-   senão 3). Provenance vira tag/source.
-4. **Idempotência:** o migrador NÃO deve duplicar se re-rodado. O `mem add`
-   tem near-dup check (Jaccard título ≥0.8, warning não-bloqueante), mas
-   não é garantia. O migrador grava um sentinel
+3. **Preservação dos campos sem equivalente 1:1** (o mem não tem
+   `confidence`/`provenance`/`expires_at`/`promoted_from`). Como a extensão
+   do schema do mem é **follow-on** (NÃO neste spec), o migrador preserva
+   esses campos no **corpo** e nas **tags** da nota mem:
+   - `importance` derivado de `confidence` (ex.: confidence≥0.9→4, senão 3).
+   - `confidence`, `expires_at`, `promoted_from` → linha de rodapé no body
+     da nota (ex.: `\n\n---\nmigrado-de: L2:<id> · confidence: 0.9 ·
+     expires-at: <iso> · promoted-from: <feature>`).
+   - `provenance` (feature slugs) → vira tags + `--source "migrate:L2:<id>"`.
+   Nenhum campo do L2 se perde silenciosamente; ele migra pro corpo/tags
+   até a extensão de schema (Fase 2 / follow-on) dar campos nativos.
+4. Invoca `mem add --type <T> -t <title> --tags <derivadas>
+   --source "migrate:L2:<id>" "<body+rodapé>"` via a fronteira shell.
+5. **Idempotência:** o `mem add` tem near-dup check (Jaccard título ≥0.8,
+   warning não-bloqueante) mas não é garantia. O migrador grava um sentinel
    (`.claude/memory/.migrated-from-l2`) e recusa re-rodar sem `--force`.
-   (`mem import` é one-shot sem proteção — não reusar ele cru.)
-5. A parte distilável do L1 ativo NÃO é migrada em massa — ela já é
-   transiente (WIP per-feature). Features `done` cuja retrospectiva ainda
-   não rodou: **QUESTÃO ABERTA #1/#7** — migrar rationale-trace de features
-   done como `decision`/`reference`?
+   (`mem import` é one-shot sem proteção — por isso NÃO o reusamos cru.)
+6. A parte distilável do L1 ativo NÃO é migrada em massa — é transiente
+   (WIP per-feature). Features `done` cuja retrospectiva ainda não rodou:
+   a destilação normal (`forge evolve` → `mem inbox add`) cobre quando a
+   retrospectiva rodar; não há migração em massa de rationale-trace
+   histórico (evita poluir o acervo com WIP obsoleto).
 
 ### Pós-migração
 
@@ -471,7 +659,7 @@ concretos (do mapeamento do código):
 | `engine/status.py` | lê L2 size, lista features | features (lifecycle) ficam; L2-size some; usar `mem stats` se quiser counts de conhecimento |
 | `engine/doctor.py` (l43-44) | conta features, L2 size | adiciona check de drift do mem pinado; L2-size some |
 | `engine/evolve.py` + `engine/graph/duplicates.py` (l880-1041) + `engine/graph/reuse_apply.py` | reuse-intelligence proposals → distiller queue → L2 | reuse-intelligence **fica** (é code-graph, forge owns). O que muda: proposals "promote-to-shared-helper" etc. continuam no distiller do forge; só proposals de **conhecimento** (promote-to-l2) re-roteiam pra `mem inbox` |
-| `engine/plan.py`, `engine/implement.py`, `engine/verify.py`, `engine/undo.py`, `engine/ingest.py`, `engine/reconfigure.py` (consumidores de L1 state) | L1 state-machine (status/phase-lock/history/verify-log) | **NÃO mudam** — L1 lifecycle fica no forge (ver QUESTÃO ABERTA #1) |
+| `engine/plan.py`, `engine/implement.py`, `engine/verify.py`, `engine/undo.py`, `engine/ingest.py`, `engine/reconfigure.py` (consumidores de L1 state) | L1 state-machine (status/phase-lock/history/verify-log) | lifecycle **fica no forge**, mas re-aponta de `.claude/memory/L1/` → `.claude/forge/state/` (Decisão #1; call-sites na §Reconciliação) |
 
 > **Distinção crítica:** o `distiller` do forge tem DOIS tipos de proposal
 > (`DistillationProposal.kind`): (a) **conhecimento** (`promote-to-l2`,
@@ -489,7 +677,7 @@ Agentes que hoje instruem leitura de L2/inventory/memória → re-roteiam pra
 
 | Agente | O que muda |
 |---|---|
-| `agents/memory-distiller.md` | era o agente que destila L1→L2; vira o que gera **candidatos de inbox** do mem (ou é absorvido pela skill `mem-consolidate` que o próprio mem instala). **QUESTÃO ABERTA #8:** manter `memory-distiller` do forge OU delegar à skill `mem-consolidate`? |
+| `agents/memory-distiller.md` | era o agente que destila L1→L2; vira o que gera **candidatos de inbox** do mem (`mem inbox add --origin haiku`). A skill `mem-consolidate` que o mem instala cobre o caso genérico de captura; o `memory-distiller` do forge permanece como o destilador *específico do lifecycle* (lê hypothesis/rationale-trace/elicitation da feature e emite candidatos). Não duplicar a captura genérica — delegar a parte genérica à skill, manter só o que é forge-specific. |
 | `agents/feature-prd-agent.md` | onde lê memória de convenções/decisões passadas → `mem find "<tema>" --type decision`/`--type reference` antes de redigir PRD |
 | `agents/planning-conductor.md` | onde consulta L2/inventory pra contexto → `mem find` por área antes de planejar (além do graph pra estrutura) |
 | `agents/contract-planner-agent.md` | idem — consulta de convenções/decisões → `mem find` |
@@ -513,22 +701,38 @@ em `engine/cli.py:69`) com 7 ações sobre L1/L2/L3 + checkpoint-resume
 | Ação atual | Vira |
 |---|---|
 | inspect L2-project | `mem find ""` / `mem stats` (paginado) |
-| inspect L1 {slug} | **fica** (L1 lifecycle é forge) — OU separa em `forge status` |
+| inspect L1 {slug} | inspeção de lifecycle **fica** (lê de `.claude/forge/state/`); pode separar pra `forge status` |
 | inspect L3 auto-memory | removido (L3 retirado) |
 | search (L1+L2+L3) | `mem find <query>` |
 | forget L2 entry | `mem supersede`/`evolve --apply` (curadoria do mem) |
 | distill L2 | `mem evolve` + `mem inbox promote/reject` |
 | export L2 for context-pack | `mem brief` |
 
-**Bug multi-passo conhecido:** a Decisão 5 do prompt cita que o wrapper
-"também resolve o bug multi-passo conhecido do comando". O
-`engine/memory_cli.py` carrega complexidade de checkpoint-resume
-(DRIFT-1 W2.T3b, 11 callsites interativos com save-before-`question.ask`).
-Ao virar wrapper fino sobre comandos `mem` não-interativos (todos aceitam
-`--json`, sem prompt em não-TTY), o fluxo multi-passo frágil **desaparece**
-— o mem é stateless por invocação. **QUESTÃO ABERTA #9:** confirmar o
-sintoma exato do bug multi-passo (reproduzir) pra garantir que o wrapper o
-elimina e não só o mascara — o spec não deve assumir cura sem repro.
+**Bug multi-passo do `forge memory` (BUG-M1) — Decisão #4: provar a cura,
+não assumi-la.** O `engine/memory_cli.py` carrega complexidade de
+checkpoint-resume (DRIFT-1 W2.T3b): **11 callsites interativos** com
+save-before-`question.ask` (menu ask, search, forget-L2 com 2 confirms,
+distill-L2 com iteração de proposals). Ao virar wrapper fino sobre comandos
+`mem` não-interativos (todos aceitam `--json`, sem prompt em não-TTY), o
+fluxo multi-passo frágil desaparece estruturalmente — o mem é stateless por
+invocação, então os 11 callsites de checkpoint-resume somem com o handler
+antigo.
+
+**Mas o spec NÃO assume cura por fé.** O plano de implementação DEVE seguir
+TDD sobre o bug:
+
+1. **Reproduzir BUG-M1 com teste FALHANDO primeiro** — capturar o sintoma
+   exato do comportamento multi-passo defeituoso no `memory_cli.py` atual
+   (ex.: resume de checkpoint que pula um passo, ou re-prompt duplicado).
+   Se o sintoma exato não for conhecido, o primeiro passo da implementação é
+   investigá-lo (systematic-debugging) e escrever o regression test que o
+   pega. Sem repro vermelho, não há prova de cura.
+2. **Implementar o wrapper stateless.**
+3. **Confirmar o teste passa** (o bug não pode mais ocorrer porque os
+   callsites de checkpoint-resume não existem) + a suíte verde.
+
+A eliminação dos 11 callsites é a hipótese de cura; o teste vermelho→verde
+é a prova. O spec exige a prova, não a fé.
 
 ### Overlaps de comando entre os dois CLIs — quem ganha
 
@@ -580,7 +784,7 @@ Estes governam comportamento e devem ser atualizados:
 | `engine/utils/paths.py:153` | `feature_workflow_root()` — literal `"docs"/"feature-implementation-workflow"` (CENTRAL) |
 | `engine/utils/paths.py:203` | `_resolve_features_root()` default base literal |
 | `engine/utils/paths.py:228` | `feature_path()` default-comparison literal |
-| `engine/memory/l1.py:721` | `archive_feature`/path base literal (independente de paths.py) |
+| `engine/memory/l1.py:721` | `archive_feature`/path base literal (independente de paths.py) — nota: o archive em si re-baseia em `.claude/forge/state/` (Decisão #1); só o segmento `docs/feature-implementation-workflow` do path de *artefatos* renomeia |
 | `engine/qa/scope.py:166` | `_features_root()` literal (independente) |
 | `engine/graph/duplicates.py:935` | `target-file` string `docs/feature-implementation-workflow/non-product/(generated)` |
 | `engine/graph/reuse_apply.py:28` | `_NON_PRODUCT_DIR = "docs/feature-implementation-workflow/non-product"` |
@@ -589,13 +793,13 @@ Estes governam comportamento e devem ser atualizados:
 | `validators/check_files_in_allowed_files.py:48` | base literal |
 | `validators/validate_feature_package.py:5` | docstring path (+ verificar corpo) |
 
-> **Reuso (Mandamento #3):** idealmente o rename consolida os literais
-> hardcoded (l1.py, qa/scope.py, graph/*, validators/*, init.py) pra
-> consumirem `paths.feature_workflow_root()` em vez de re-hardcodar. Isso é
-> escopo de *refactor* paralelo ao rename — **QUESTÃO ABERTA #10:** rename
-> puro (trocar string em cada sítio) vs. rename + consolidação dos literais
-> num helper único? O plano de implementação decide; o spec recomenda
-> consolidar (reduz futuros call-sites de 11 pra ~3).
+> **Reuso (Mandamento #3) — consolidar (recomendação firme):** o rename
+> consolida os literais hardcoded (l1.py, qa/scope.py, graph/*, validators/*,
+> init.py) pra consumirem `paths.feature_workflow_root()` em vez de
+> re-hardcodar. Reduz os call-sites de path de 11 pra ~3 (os de paths.py) e
+> evita que o próximo rename precise caçar literais espalhados. O refactor
+> de consolidação anda junto com o rename no mesmo plano (não é trabalho
+> separado — é o jeito certo de fazer o rename uma vez só).
 
 ### Docs/prosa afetados (atualizar no mesmo PR, doc-sync)
 
@@ -623,22 +827,35 @@ forge-implement l708, forge-plan l1051,1071),
 
 ---
 
-## Rules no mem — two-tier (REFERÊNCIA, não detalhar)
+## Rules no mem — two-tier (redução entra na Fase 1)
 
 O destino das rules/convenções no mem é **two-tier**:
 
-1. **Núcleo lean sempre-on** — um índice mínimo (~30 linhas, padrão
-   `RULE_INDEX` do mem, `mem`:1736-1766) que ensina o agente a consultar a
-   memória. Esse bloco já é o que `mem init`/`vendor` upserta no `AGENTS.md`.
-2. **Convenções/aprendizados ricos sob-demanda** — notas mem
+1. **Tier-0 — núcleo lean sempre-on (invariante).** Um índice mínimo
+   (~30 linhas, padrão `RULE_INDEX` do mem, `mem`:1736-1766) + os gates
+   verdadeiramente invariantes (o que NÃO pode ser "sob demanda" sem quebrar
+   enforcement). Fica injetado sempre.
+2. **Tier-1 — convenções/aprendizados ricos sob-demanda.** Notas mem
    (`type=reference`/`feedback`) recuperadas via `find`/`fire` quando
    relevantes, em vez de injetadas sempre.
 
-> **Milestone SEGUINTE (fora deste spec):** a curadoria completa de rules —
-> três fontes (web/init scaffolding, evolve-comprovado, contribuição
-> humana) + comando `rules-update`. Este spec apenas **habilita** essa
-> direção (a substituição da memória pelo mem é o pré-requisito); NÃO a
-> detalha. Ver §Fora de escopo.
+### A REDUÇÃO de rules está na Fase 1 (não é mais milestone seguinte)
+
+A **redução** de rules no init — classificar Tier-0 vs Tier-1 e enxugar o
+núcleo injetado — é parte da **Fase 1 (produto)**. É o fix do gap de
+*assimilação de convenção* observado no piloto: hoje o `forge init` não lê
+o `.claude/rules/*`/`CLAUDE.md` existentes do projeto, então convenção
+humana fica sempre-on e nunca destilada. O fluxo de init pós-mem (detalhado
+na §Fases de rollout → Fase 1) lê esses arquivos, classifica cada
+fragmento, PROPÕE a divisão (nunca trucida o `.claude/rules/` do humano em
+silêncio — G1/G2) e, aprovado, faz `mem add` do Tier-1 + enxuga o núcleo +
+escreve o índice.
+
+> **Fase 2 (só referência neste spec):** o **enriquecimento** de rules —
+> três fontes (web/init-enrich, evolve→rules-comprovado, contribuição
+> humana), o comando `rules-update`, e version-awareness. Isso é curadoria
+> ativa do acervo de rules ao longo do tempo, distinta da redução one-time
+> do init. Ver §Fases de rollout → Fase 2 e §Fora de escopo.
 
 ---
 
@@ -711,14 +928,37 @@ Justificativa por decisão:
   determinismo. Reusar o padrão já estabelecido em testes de subprocess do
   forge. Rodar com `.venv/bin/pytest` (canonical — tem deps).
 
+### BUG-M1 do `forge memory` (TDD obrigatório — Decisão #4)
+
+- **Teste vermelho ANTES:** regression test que reproduz o sintoma
+  multi-passo do `memory_cli.py` atual (resume de checkpoint pulando passo /
+  re-prompt duplicado — sintoma exato a confirmar via systematic-debugging
+  no início da implementação). Sem vermelho, não há prova de cura.
+- **Verde DEPOIS:** com o wrapper stateless, o teste passa (os callsites de
+  checkpoint-resume não existem mais) + suíte verde.
+
 ### Migração L2→mem
 
 - Fixture com `L2-project.yaml` de 6 buckets povoado → roda migrador →
   asserta N `mem add` emitidos com mapeamento de tipo correto + tags/source.
+- **Preservação de campos:** assert que `confidence`/`expires_at`/
+  `promoted_from` aparecem no rodapé do body da nota e `provenance` vira
+  tags (nada se perde silenciosamente).
 - Idempotência: re-rodar sem `--force` → recusa (sentinel
   `.migrated-from-l2`); com `--force` → não duplica além do esperado.
 - Edge: L2 vazio, L2 com `promotion-candidate` (pulado), L2 com confidence
   variando (importance derivada).
+
+### Fase 0 — gate de aceite do dogfood
+
+- **Sessão de manutenção fresca:** teste/checklist manual de que o
+  Mandamento 0 continua enforçado e as rules são acessíveis via `mem find`
+  após a redução (rodar os 5 checks do `SMOKE-CHECKLIST.md`, com foco no #5).
+- **Hard-block intacto:** `pre-commit-feature-forge.sh` ainda bloqueia edit
+  de `01-decisions.md` sem ceremony (arquivo canônico preservado).
+- **Proposta, não trucida:** assert que a divisão Tier-0/Tier-1 passa por
+  aprovação humana antes de qualquer enxugue (nenhum `mem add` + corte de
+  rule sem o veredito 3-caminhos).
 
 ### Re-roteamento dos consumidores
 
@@ -752,10 +992,14 @@ Justificativa por decisão:
 
 ## Fora de escopo deste spec
 
-- **Curadoria de rules (milestone 2):** as três fontes (web/init,
-  evolve-comprovado, humana), o comando `rules-update`, e o pipeline
-  completo two-tier de rules. Este spec só **habilita** (a substituição da
-  memória é pré-requisito).
+- **Enriquecimento de rules (Fase 2):** as três fontes (web/init-enrich,
+  evolve→rules-comprovado, contribuição humana), o comando `rules-update`, e
+  version-awareness. Só a **redução** de rules entra (Fase 1); o
+  **enriquecimento** ativo do acervo ao longo do tempo é Fase 2. Este spec
+  só habilita a direção.
+- **Extensão do schema do mem** pra campos nativos de
+  `confidence`/`provenance`/`expires_at` — follow-on. Até lá, a migração
+  preserva esses campos no corpo/tags da nota (§Migração).
 - **Hooks de injeção do mem** (`brief`/`fire`/`install-hooks`) como
   default — são opt-in do mem; ativar por padrão no `forge init` é decisão
   separada (custo de janela vs. valor; medir antes).
@@ -764,49 +1008,17 @@ Justificativa por decisão:
   refinamento pós-substituição.
 - **`mem issue`/`mem-report`** (reportar bugs do próprio mem) — feature do
   mem, não da integração.
-- **Migração de L1 state-machine** pra qualquer outro lugar — fica onde
-  está (QUESTÃO ABERTA #1 só decide o corte, não move agora).
 
 ---
 
-## Riscos e questões abertas
+## Riscos
 
-### Questões abertas (precisam veredito antes/durante o plano)
-
-1. **Onde cortar o L1.** O L1 mistura state-machine de lifecycle (fica no
-   forge) com conhecimento distilável (vai pro mem na retrospectiva).
-   Decidir: o state-machine permanece em `.claude/memory/L1/` (colide
-   visualmente com o layout mem no mesmo dir) OU move pra
-   `.claude/state/lifecycle/`? **Recomendação:** mover pra fora de
-   `.claude/memory/` pra dar o dir inteiro ao mem — mas é refactor de
-   paths não-trivial (l1.py + paths.py + ~6 consumidores).
-2. **Tamanho da fronteira.** Extrair `mem_call` enxuto novo vs. forçar
-   reuso de `dispatch_native_tool`. Recomendação: helper novo enxuto que
-   reusa a *espinha* (locate/subprocess/fail-soft), não o encaixe inteiro.
-3. **Distribuição do mem pinado.** Embutir asset no repo forge
-   (offline, alinha Decisões 15/22) vs. baixar via `gh` no init.
-   Recomendação: embutir.
-4. **Mecanismo de update no `forge upgrade`.** `mem update --ref <pin>`
-   (R13, mas baixa da rede) vs. re-copiar asset embutido com sha-check
-   próprio (offline). Recomendação: re-copiar asset + sha-check.
-5. **Consumidores de L3.** Algum consumidor depende de L3
-   (`engine/memory/l3.py`) de forma que precise de ponte temporária na
-   remoção? Mapear antes de retirar.
-6. **Mapeamento de tipo L2→mem.** `convention`/`anti-pattern` →
-   `feedback` vs `reference` precisa heurística (voz imperativa) ou
-   triagem humana pós-migração.
-7. **Migrar rationale-trace de features `done`?** Conhecimento real, mas
-   pode estar obsoleto. Ligado à QA #1.
-8. **`memory-distiller` do forge vs skill `mem-consolidate`.** Manter o
-   agente do forge OU delegar à skill que o mem instala? Evitar duplicação
-   (Mandamento #3).
-9. **Repro do bug multi-passo do `forge memory`.** Confirmar o sintoma
-   exato antes de afirmar que o wrapper o cura — não mascarar.
-10. **Rename: puro vs. consolidação.** Trocar a string em 11 sítios vs.
-    consolidar os literais hardcoded num helper único (`paths.py`). Spec
-    recomenda consolidar.
-
-### Riscos
+> As 5 questões abertas da v1 viraram decisões (§Decisões resolvidas). As
+> sub-questões de implementação delas (mapeamento prescritivo vs descritivo,
+> migrar rationale-trace de features done, memory-distiller vs
+> mem-consolidate, rename puro vs consolidação) também foram resolvidas
+> in-line nas seções respectivas. Resta a lista de riscos abaixo — coisas a
+> monitorar, não decisões pendentes.
 
 - **Autor (`git config user.email`) instável.** O mem nomeia o JSONL pelo
   email sanitizado. Drift de identidade git (já documentado: thgMatajs vs
@@ -816,10 +1028,12 @@ Justificativa por decisão:
   consumidor. OK, mas o forge precisa garantir que o gitignore certo
   (`mem.db*` ignorado, `*.jsonl` + `triggers.jsonl` commitados) seja
   scaffoldado no init.
-- **Perda de semântica na migração.** O L2 tem `confidence`, `provenance`,
-  `expires_at`, `promoted_from` — campos que o mem não tem 1:1. Migração
-  achata pra source/tags/importance; aceitar a perda (pré-produção) ou
-  preservar no body.
+- **Perda de semântica na migração — mitigada.** O L2 tem `confidence`,
+  `provenance`, `expires_at`, `promoted_from` sem equivalente 1:1 no mem. A
+  Decisão #3 preserva esses campos no corpo/tags da nota (não achata em
+  silêncio); a perda de *consulta estruturada* por esses campos persiste até
+  a extensão de schema (follow-on). Risco residual: queries por `expires_at`
+  não funcionam até lá — aceitável pré-produção.
 - **Acoplamento ao schema do mem.** O wrapper parseia `--json` do mem; se o
   mem mudar o shape do JSON entre versões, o wrapper quebra. Mitigação: pin
   de versão + check de drift no doctor + testes contra o JSON pinado.
@@ -828,6 +1042,17 @@ Justificativa por decisão:
   `.claude/bin/mem` precisa estar acessível de dentro do sandbox. Hoje
   nenhum validator chama mem — manter assim (validators são determinísticos,
   sem dep de memória).
+- **Fase 0 enxuga os gates do próprio forge (ALTO).** Enxugar CLAUDE.md +
+  `.claude/rules/**` errado pode tirar do orquestrador-mantenedor os gates
+  que enforçam o Mandamento 0. Mitigação: o gate de aceite da Fase 0
+  (sessão fresca + 5 smoke checks + hard-block intacto + tudo proposto)
+  valida ANTES do merge; a parte canônica (`docs/design/*` com enforcement
+  acoplado) NÃO é deletada, só deixa de ser injetada sempre.
+- **Corte do L1 toca 11 call-sites (MÉDIO).** Re-apontar a state-machine de
+  `.claude/memory/L1/` → `.claude/forge/state/` mexe em paths.py + l1.py +
+  9 consumidores. Risco de path stale silencioso. Mitigação: consolidar o
+  path-root num helper (`forge_state_dir`-based) e cobrir com teste de path
+  + grep-gate de que nenhum literal `memory/L1` sobra.
 
 ---
 
@@ -835,21 +1060,22 @@ Justificativa por decisão:
 
 - **Placeholder scan:** sem TBD/TODO/FIXME pendentes; `<autor>`, `<repo>`,
   `<slug>`, `<T>`, `<pin>` são placeholders de template intencionais
-  (paths/comandos genéricos), não lacunas. Os 10 itens de "QUESTÃO ABERTA"
-  são explícitos e numerados — decisões deferidas conscientemente pro
-  veredito do autor, não buracos.
+  (paths/comandos genéricos), não lacunas. As 5 questões abertas da v1 viraram
+  decisões (§Decisões resolvidas) — não há mais "QUESTÃO ABERTA" no corpo.
 - **Consistência de nomes:** `mem` (ferramenta), `mem.db` (índice),
-  `mem_call`/`MemResult` (wrapper proposto, nome tentativo marcado em QA
-  #2), `forge memory` (comando wrapper), `docs/forge-specs` (path novo),
-  `docs/superpowers/specs/` (specs do forge — NÃO renomeado, alertado 2x).
-- **Ambiguidade resolvida:** a distinção `forge evolve` vs `mem evolve`
-  (escopos ortogonais) e a distinção proposals-de-conhecimento vs
-  proposals-reuse-estrutural no distiller estão explícitas — eram os dois
-  pontos de maior risco de confusão. A nota L1 (state-machine vs distilável)
-  evita a leitura errada de que "toda memória do forge morre".
+  `engine/integrations/mem.py:mem_call`/`MemResult` (wrapper, Decisão #2),
+  `engine/assets/mem/mem` (asset embutido, Decisão #3),
+  `.claude/forge/state/` (lifecycle, Decisão #1), `forge memory` (comando
+  wrapper), `docs/forge-specs` (path novo), `docs/superpowers/specs/` (specs
+  do forge — NÃO renomeado, alertado 2x), Fase 0/1/2 (rollout).
+- **Ambiguidade resolvida:** `forge evolve` vs `mem evolve` (ortogonais);
+  proposals-de-conhecimento vs proposals-reuse-estrutural no distiller;
+  redução-de-rules (Fase 1) vs enriquecimento-de-rules (Fase 2);
+  state-machine de lifecycle (forge/state) vs conhecimento distilável (mem);
+  "→ mem" não significa deletar o arquivo canônico (Fase 0).
 - **Grounding:** todas as refs de código verificadas no fonte real
-  (`mem`:linha e `engine/*:linha`). Onde não confirmei, marquei QUESTÃO
-  ABERTA em vez de inventar (corte exato do L1, repro do bug, mecanismo de
-  update).
+  (`mem`:linha e `engine/*:linha`). O `forge_state_dir` (paths.py:285) e os
+  call-sites do L1 foram confirmados via grep. Onde a implementação precisa
+  investigar (sintoma exato do BUG-M1), o spec exige TDD em vez de assumir.
 - **Voz:** mentor calmo, PT neutro, sem emoji decorativo, sem hedging
   corporativo.
