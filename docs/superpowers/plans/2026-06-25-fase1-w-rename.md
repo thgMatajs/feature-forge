@@ -141,14 +141,21 @@ git commit -m "refactor(paths): single-source FEATURE_WORKFLOW_DIRNAME (consolid
 
 **Files:**
 - Modify: `engine/utils/paths.py` (valor da constante; docstrings 152/157/217)
-- Modify: `engine/plan.py:5`, `engine/qa/scope.py:5,62`, `engine/graph/reuse_apply.py:5`, validators docstrings (docstrings que citam o path)
+- Modify: `engine/plan.py:5`, `engine/qa/scope.py:5,62`, `engine/graph/reuse_apply.py:5`
+- Modify (docstrings de validators que citam o path — paths explícitos): `validators/validate_feature_package.py:5`, `validators/validate_task_contract.py`, `validators/check_files_in_allowed_files.py`
 - Modify: `hooks/ci-pr-ingest.yml`
 - Modify: `agents/feature-intake-agent.md`, `feature-prd-agent.md`, `planning-conductor.md`, `retrospective-agent.md`, `screen-analysis-agent.md`, `task-contract-writer.md`, `tech-spec-agent.md`
-- Modify (test migration, ~25 arquivos): `tests/conftest.py`, `tests/unit/test_validators_task_contract.py`, `test_implement_lock_release.py`, `test_lock_error_message_shows_real_holder.py`, `test_validators_readiness.py`, `test_validators_screen_analysis.py`, `test_l1_blocked_state.py`, `test_plan_extension.py`, `test_validators_data_contract.py`, `test_reuse_intelligence.py`, `test_memory_l1_blocking_deps_resilient.py`, `test_utils_paths.py`, `test_implement_done.py`, `tests/integration/test_qa_cross_feature_paranoid.py`, `test_qa_lifecycle_feature.py`, `test_qa_lifecycle_task.py`, `test_qa_pause_resume.py`, `tests/validators/test_validate_readiness_elicitation.py`, `tests/e2e/test_qa_cli_smoke.py`, `tests/engine/qa/test_run_qa_synthesis.py`, `test_sandbox_findings.py`, `test_scope.py`, `test_run_qa_resume.py`, `test_snapshot.py`, `test_qa_report.py`
+- Modify (test migration, 25 arquivos = 24 test_*.py + conftest.py): `tests/conftest.py`, `tests/unit/test_validators_task_contract.py`, `test_implement_lock_release.py`, `test_lock_error_message_shows_real_holder.py`, `test_validators_readiness.py`, `test_validators_screen_analysis.py`, `test_l1_blocked_state.py`, `test_plan_extension.py`, `test_validators_data_contract.py`, `test_reuse_intelligence.py`, `test_memory_l1_blocking_deps_resilient.py`, `test_utils_paths.py`, `test_implement_done.py`, `tests/integration/test_qa_cross_feature_paranoid.py`, `test_qa_lifecycle_feature.py`, `test_qa_lifecycle_task.py`, `test_qa_pause_resume.py`, `tests/validators/test_validate_readiness_elicitation.py`, `tests/e2e/test_qa_cli_smoke.py`, `tests/engine/qa/test_run_qa_synthesis.py`, `test_sandbox_findings.py`, `test_scope.py`, `test_run_qa_resume.py`, `test_snapshot.py`, `test_qa_report.py`
 - Create: `tests/unit/test_no_legacy_workflow_path.py` (grep-gate)
 
 **Interfaces:**
 - Consumes: `paths.FEATURE_WORKFLOW_DIRNAME` (Task 1).
+
+**Anti-padrões (Task 2):**
+- NÃO tocar `tests/unit/test_validators_forge_config.py` nem `tests/integration/test_subnamespace_paths.py` — usam override custom de `paths.feature-roots`, não o default.
+- Trocar SÓ o valor default; preservar qualquer valor de override custom em teste.
+- NÃO reescrever `docs/superpowers/**` (histórico/design).
+- NÃO tocar `.claude/worktrees/**` (worktree stale, fora de escopo).
 
 - [ ] **Step 1: Write the grep-gate regression test (red)**
 
@@ -168,7 +175,11 @@ def test_no_legacy_workflow_path_in_behavior_dirs():
         ["grep", "-rln", "--exclude-dir=__pycache__", LEGACY, *existing],
         cwd=root, capture_output=True, text=True,
     )
-    hits = [l for l in out.stdout.splitlines() if l and Path(l).name != Path(__file__).name]
+    # Self-exclusão por path resolvido completo (não basename): evita falso-verde
+    # se um homônimo existir noutro dir. O split de LEGACY já previne self-match
+    # do conteúdo; esta exclusão cobre só este próprio arquivo.
+    self_path = Path(__file__).resolve()
+    hits = [l for l in out.stdout.splitlines() if l and (root / l).resolve() != self_path]
     assert hits == [], f"Literal legado sobrou em: {hits}"
 ```
 
@@ -184,14 +195,14 @@ Expected: FAIL — lista os arquivos de teste/agents/hooks que ainda têm o lite
 FEATURE_WORKFLOW_DIRNAME = "forge-specs"
 ```
 
-Atualizar docstrings/comentários que citam o path velho (paths.py 152/157/217; plan.py:5; qa/scope.py 5,62; reuse_apply.py:5; validators docstrings) para `docs/forge-specs/...`.
+Atualizar docstrings/comentários que citam o path velho (paths.py 152/157/217; plan.py:5; qa/scope.py 5,62; reuse_apply.py:5; `validators/validate_feature_package.py:5`, `validators/validate_task_contract.py`, `validators/check_files_in_allowed_files.py`) para `docs/forge-specs/...`.
 
 - [ ] **Step 4: Migrate behavior files (agents, hooks) + test fixtures/assertions**
 
 Substituição literal `feature-implementation-workflow` → `forge-specs` em:
 - os 7 `agents/*.md` listados (onde instruem onde os artefatos moram),
 - `hooks/ci-pr-ingest.yml`,
-- os ~25 arquivos de teste listados (fixtures que CRIAM dirs + asserts que esperam o path).
+- os 25 arquivos de teste listados (fixtures que CRIAM dirs + asserts que esperam o path).
 
 Regra de migração (clean-break): testes que asseguram o **DEFAULT** migram pra `forge-specs`. Se algum teste assegura um **OVERRIDE** custom (config `paths.feature-roots` com valor próprio), **preserve o valor custom** — não é o default. (Verificar antes de trocar cegamente. Nota: `test_validators_forge_config.py` e `test_subnamespace_paths.py` usam override custom e NÃO estão na lista — não os toque.)
 
@@ -240,6 +251,8 @@ git commit -m "refactor(rename): docs/feature-implementation-workflow -> docs/fo
 
 Run: `grep -rln "feature-implementation-workflow" docs/ README.md | grep -v "docs/superpowers/" || echo "CLEAN"`
 Expected: `CLEAN` (CHANGELOG pode citar o nome velho na própria entrada de rename — aceitável, é histórico).
+
+Exaustividade de schemas (confirmada por `grep -rln "feature-implementation-workflow" docs/schemas/`): os ÚNICOS schemas com o literal são `forge-config.md`, `memory.md`, `proposed-evolutions.md` — os três já estão na file-list desta task. O comando grep acima é o gate autoritativo: se qualquer schema/doc escapar da enumeração, ele fica vermelho antes do commit.
 
 - [ ] **Step 4: Commit**
 
