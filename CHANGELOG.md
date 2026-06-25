@@ -10,6 +10,7 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 ### Added
 
 - mem vendorizado em `.claude/bin/mem` (asset pinado v0.8.1) + scaffold `.claude/memory/` + skills do mem (`mem-resume`/`mem-consolidate`/`mem-report`) — substrato de memória do dogfood da Fase 0. O `mem init` também adicionou `.claude/memory/mem.db*` ao `.gitignore` (índice SQLite derivado, não versionado) e criou um bloco rule-índice delimitado em `AGENTS.md` na raiz. Nenhuma migração de conhecimento aqui — só o substrato vazio (`mem stats` → `total: 0`); a curadoria Tier-0/Tier-1 vem nas tasks seguintes.
+- Decisões/disciplinas/pending/handoff/learnings espelhados no acervo mem (aditivo; os canônicos `docs/design/*` preservados intactos) — Fase 0 dogfood (T5). As 33 decisões de `01-decisions.md` (rows 1-32 + 18-v2, com `tag:superseded` nas supersedidas e `importance 4-5` nas 8 load-bearing), as 10 disciplinas de `07-discipline.md` (as 6 universais com `tag:universal`), os 7 gaps abertos de `04-pending.md`, o estado curado v1.6.1 de `08-session-handoff.md` (via `mem session`) e os 27 learnings duráveis da auto-memory (24 feedback + 3 reference, preservando Why/How-to-apply + links cruzados). Migração só por `mem add`/`mem session` (acervo `total: 45 → 123`, zero near-dup). Os `docs/design/*` permanecem como fonte de verdade load-bearing com enforcement acoplado; o mem é o espelho recuperável que destrava o enxugue do núcleo injetado na T6.
 
 ### Changed
 
