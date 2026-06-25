@@ -83,6 +83,13 @@ resolvidas). Inegociáveis pra toda task abaixo:
   + `.claude/rules/` injetado, e é SEPARADO/POSTERIOR à migração.
 - **Branch única `feat/mem-integration`.** Todo o trabalho acumula nela; um PR
   ao final. Sem worktree por task. NÃO criar branch nova por task.
+- **Autor mem estável (flag-1).** O `mem` deriva o autor do JSONL de
+  `git config user.email` sanitizado (`mem`:97; NÃO há override `MEM_AUTHOR`
+  nem flag `--author` — confirmado no `--help`). Há drift recorrente de
+  identidade git neste repo (thgMatajs ↔ thgPacheco). Antes de qualquer
+  migração (T4/T5), a identidade DEVE estar pinada na conta canônica
+  `thgMatajs` pra o JSONL não divergir pro mesmo humano. (Detalhe operacional
+  no step prerequisito da Task 4.)
 - **Gate de aceite ANTES de merge.** Os 5 smoke checks (foco #5 — dispatch do
   Mandamento 0) + hard-block de `01-decisions.md` intacto + rules acessíveis
   via `mem find`/`get` + zero info perdida DEVEM passar na branch antes de
@@ -178,6 +185,8 @@ verificação é por comandos `mem` reais, não pytest.
   existentes `41:.claude/memory/L1/*` e `42:!.claude/memory/L1/archived/` —
   o corte do L1 state-machine é Fase 1, NÃO toca aqui)
 - Create (via `mem init`): `.claude/memory/` (scaffold do layout mem) +
+  `.claude/skills/mem-resume/`, `.claude/skills/mem-consolidate/`,
+  `.claude/skills/mem-report/` (skills próprias do mem — ver nota flag-2) +
   upsert do bloco rule-índice no índice do mem (o `mem init` cria o que
   precisar; NÃO sobrescrever conteúdo humano existente)
 
@@ -192,6 +201,17 @@ verificação é por comandos `mem` reais, não pytest.
   cria `.claude/memory/`, adiciona gitignore `mem.db*`, instala skills
   `mem-resume`/`-consolidate`/`-report`). Capturar o output pra revisar o que
   foi criado.
+- [ ] **Nota de efeito colateral aceito (flag-2):** o `mem init` instala
+  skills PRÓPRIAS do mem em `.claude/skills/mem-resume/SKILL.md`,
+  `.claude/skills/mem-consolidate/SKILL.md` e
+  `.claude/skills/mem-report/SKILL.md`. São skills do mem (não do forge) e
+  entram no diff do commit desta task — efeito ESPERADO, documentado aqui pra
+  não surpreender o reviewer. Confirmar via `git status --short .claude/skills/`
+  que só esses 3 diretórios surgem; nenhuma skill/regra existente do forge é
+  tocada (o `init` é upsert, não sobrescreve). Estas skills NÃO se confundem
+  com as superpowers skills (Decisão 22 — sem runtime import; estas são
+  arquivos de instrução do mem, consistentes com o modelo de skill-como-recurso
+  do projeto).
 - [ ] Confirmar via `git status --short` que `.claude/memory/mem.db` NÃO
   aparece como untracked (gitignored); e que `.gitignore` tem a linha
   `.claude/memory/mem.db*`. Se o `mem init` não a adicionou, adicionar à mão.
@@ -202,14 +222,15 @@ verificação é por comandos `mem` reais, não pytest.
   (acervo vazio, índice saudável).
 - [ ] Doc-sync mínimo desta task: registrar em `CHANGELOG.md` `## [Unreleased]`
   `### Added` a entrada "mem vendorizado em `.claude/bin/mem` (asset pinado
-  v0.8.1) + scaffold `.claude/memory/` (Fase 0 dogfood)".
+  v0.8.1) + scaffold `.claude/memory/` + skills mem (`mem-resume`/
+  `-consolidate`/`-report`) (Fase 0 dogfood)".
 - [ ] Commit atômico: `chore(mem): vendor mem 0.8.1 + scaffold memory (Fase 0
   T2)`.
 
 **Deliverable verificável**
 - `.claude/bin/mem --json doctor` → todos `ok`; `.claude/bin/mem --json stats`
-  → `total: 0`; `git status` confirma `mem.db` gitignored e as linhas L1 do
-  gitignore preservadas.
+  → `total: 0`; `git status` confirma `mem.db` gitignored, as linhas L1 do
+  gitignore preservadas, e só as 3 skills do mem novas em `.claude/skills/`.
 
 ---
 
@@ -270,7 +291,7 @@ silêncio.
 - [ ] **PROPOR ao humano via 3-caminhos** (G1/G2): apresentar o mapa e pedir
   veredito com os três caminhos canônicos:
   - ✅ aceitar a classificação como está
-  - 🔧 ajustar (humano move fragmentos entre Tiers)
+  - 🤔 ajustar (humano move fragmentos entre Tiers)
   - ⏭️ pular (não migrar este fragmento)
 - [ ] Registrar o veredito do humano no mapa (a versão aprovada é o input das
   Tasks 4–6). NENHUMA escrita em mem/rules até aprovação.
@@ -300,6 +321,21 @@ recuperabilidade via `mem find`/`get`, não pytest.
   (Task 3); `.claude/bin/mem` (Task 2).
 
 **Steps**
+- [ ] **Prerequisito — autor mem estável (flag-1).** ANTES de qualquer
+  `mem add`, garantir a identidade canônica `thgMatajs` pra o JSONL não
+  divergir (drift recorrente thgMatajs ↔ thgPacheco). O `mem` NÃO tem override
+  de autor (sem `MEM_AUTHOR`, sem flag `--author` — derivação é estrita de
+  `git config user.email` sanitizado, `mem`:97). Passos concretos:
+  - Rodar `/usr/bin/git config user.name` e `/usr/bin/git config user.email`;
+    confirmar que apontam pra a conta canônica `thgMatajs` deste repo.
+  - Rodar `.claude/bin/mem --json doctor` e ler o check `author`; confirmar que
+    o nome sanitizado (ex.: `thgmatajs_at_users.noreply.github.com`) é o
+    esperado e NÃO uma variante thgPacheco.
+  - Se divergir: corrigir `git config user.email`/`user.name` pra a conta
+    canônica ANTES de prosseguir. NÃO migrar com autor errado — o JSONL passa a
+    nomear por esse autor e dividir o acervo do mesmo humano em dois arquivos.
+  - Registrar o autor confirmado em `.planning/mem-fase0/coverage-rules.md`
+    (topo) pra a Task 5 herdar a mesma identidade.
 - [ ] Pra cada fragmento Tier-1 das rules aprovado, emitir
   `.claude/bin/mem add --type <T> -t "<título>" --tags <tags derivadas>
   --source "dogfood:rules:<arquivo>" "<corpo markdown do fragmento>"`. Voz
@@ -340,8 +376,8 @@ recuperabilidade via `mem find`/`get`, não pytest.
 - Cada `.claude/rules/*.md` Tier-1 + cada seção Tier-1 do `CLAUDE.md` é
   recuperável: o `mem find "<tema>"` correspondente devolve a nota e
   `mem get <id>` mostra o corpo equivalente. `.planning/mem-fase0/
-  coverage-rules.md` lista arquivo→id→query pra todos. Nenhuma rule canônica
-  foi enxugada.
+  coverage-rules.md` lista arquivo→id→query pra todos + o autor mem confirmado.
+  Nenhuma rule canônica foi enxugada.
 
 ---
 
@@ -363,6 +399,13 @@ recuperabilidade + confirmação explícita de que os canônicos não mudaram.
   `08-session-handoff.md` (LEITURA apenas).
 
 **Steps**
+- [ ] **Prerequisito — autor mem estável (flag-1).** Herdar a identidade
+  canônica `thgMatajs` confirmada na Task 4 (registrada no topo de
+  `coverage-rules.md`). Re-confirmar via `.claude/bin/mem --json doctor` que o
+  check `author` ainda aponta pra a conta canônica antes de gravar — se a
+  sessão trocou de identidade git no meio, corrigir `git config` ANTES de
+  qualquer `mem add`/`session`. (O mem não tem override; o `git config` é o
+  único mecanismo.)
 - [ ] **Decisões** (`docs/design/01-decisions.md`): pra cada decisão (27 locked
   + 7 direcionais), emitir `.claude/bin/mem add --type decision -t
   "<decisão N: enunciado>" --tags decision,forge --source
@@ -429,6 +472,9 @@ reduz as `.claude/rules/**` Tier-1 a ponteiros. Reversível por `git checkout`
   `SMOKE-CHECKLIST.md`, `README.md` (reduzir cada um a um ponteiro lean:
   "detalhe consultável via `.claude/bin/mem find \"<tema>\"`" + manter o que é
   invariante de enforcement)
+- Modify: `README.md` (raiz — doc-sync de stats; ver step H-001)
+- Modify: `docs/design/08-session-handoff.md` (§Conhecidos limites — ver step
+  M-001; + `**Última atualização:**`/`**Estado:**`)
 - Create: o bloco `RULE_INDEX` (~30 linhas, padrão do mem) — emitido em
   `CLAUDE.md` ou no índice que o SessionStart lê
 
@@ -465,6 +511,37 @@ reduz as `.claude/rules/**` Tier-1 a ponteiros. Reversível por `git checkout`
 - [ ] **Verificação de cobertura zero-perda:** pra cada bloco removido de um
   arquivo, confirmar (via `coverage-rules.md`/`coverage-docs.md`) que existe
   `mem find`→`mem get` que o recupera. Anexar a confirmação ao mapa.
+- [ ] **Doc-sync README (H-001).** Atualizar `README.md` (raiz) pras stats que
+  esta Fase 0 muda — recontar com dados reais, sem placeholder:
+  - **LOC / Engine LOC:** o asset `engine/assets/mem/mem` adiciona ~2363
+    linhas ao repo (script único v0.8.1) + `engine/integrations/mem.py`
+    (~novo módulo de fronteira). Recontar o total e o Engine LOC com
+    `find engine -name '*.py' | xargs wc -l | tail -1` (Python) e registrar o
+    asset `mem` separadamente (NÃO é Python do forge — é asset vendorizado;
+    declarar como "asset pinado, 2363 linhas, fora da contagem de LOC Python do
+    engine" pra não inflar a métrica de código próprio).
+  - **Contagem de arquivos:** atualizar pra incluir `engine/assets/mem/mem`,
+    `engine/assets/mem/VERSION`, `engine/integrations/__init__.py`,
+    `engine/integrations/mem.py`.
+  - **Contagem de testes:** RECONTAR pós-T1 com
+    `.venv/bin/pytest --collect-only -q 2>/dev/null | tail -1` (ou por lane:
+    `.venv/bin/pytest -m 'not integration and not e2e' --collect-only -q
+    | tail -1`) e atualizar o número no README pra o count real (baseline
+    1.5.0: rapid 1863 / integration 204 / e2e 30 — somar os novos
+    `tests/integrations/test_mem_call.py`).
+  - **Enumeração de subsistemas do engine:** adicionar `engine/integrations/`
+    à descrição da anatomia do engine ("mem boundary — fronteira shell pro mem
+    vendorizado"), junto a foundation/state/integrations existentes.
+- [ ] **Limite conhecido (M-001).** Anotar em
+  `docs/design/08-session-handoff.md` §Conhecidos limites a dependência nova de
+  runtime, texto concreto:
+  "**Memória de rules sob-demanda depende do mem vivo.** Pós-enxugue da Fase 0,
+  o detalhe das rules (despacho, reuso, testing, doc-sync, plan-auditor,
+  decisões) é recuperável só com `.claude/bin/mem` presente + o índice
+  reconstruído. O `mem.db` é gitignored (derivado) — após `git clone` ou
+  `git pull` que traga JSONL novo, rode `.claude/bin/mem rebuild` pra
+  reconstruir o índice antes de `mem find`. O Tier-0 injetado (Mandamento 0 +
+  6 mandamentos + workflow-loop) permanece sempre-on e não depende do mem."
 - [ ] Doc-sync: `CHANGELOG.md` `### Changed` — "CLAUDE.md + `.claude/rules/**`
   enxugados pra Tier-0 lean + índice mem; detalhe migrado pro acervo
   (recuperável via `mem find`). Canônicos `docs/design/*` preservados." +
@@ -479,8 +556,10 @@ reduz as `.claude/rules/**` Tier-1 a ponteiros. Reversível por `git checkout`
 **Deliverable verificável**
 - `CLAUDE.md` contém o Mandamento 0 verbatim + os 6 mandamentos + o índice
   `mem find` (grep gates passam); cada bloco enxugado tem nota recuperável
-  registrada na cobertura; `docs/design/*` permanecem intactos; CHANGELOG tem a
-  ADR-note das Decisões 20/22.
+  registrada na cobertura; `docs/design/*` permanecem intactos (exceto o
+  §Conhecidos limites + cabeçalho do handoff, doc-sync legítimo); `README.md`
+  reflete LOC/arquivos/testes/subsistemas atualizados; CHANGELOG tem a ADR-note
+  das Decisões 20/22.
 
 ---
 
@@ -520,6 +599,8 @@ veredito ao humano — NÃO faz merge, NÃO faz PR.
   `mem find`/`mem get` das Tasks 4–5 (cobertura-rules + cobertura-docs) e
   confirmar que TODO fragmento enxugado continua recuperável. Cruzar com
   `.planning/mem-fase0/coverage-rules.md` + `coverage-docs.md` — zero órfão.
+  Antes, rodar `.claude/bin/mem rebuild` (espelha o limite conhecido M-001 —
+  índice reconstruível) e confirmar que `find`/`get` seguem verdes pós-rebuild.
 - [ ] **Critério 5 — proposto, nunca silencioso.** Confirmar que o veredito
   3-caminhos da Task 3 está registrado e precedeu todo `mem add`/enxugue
   (auditável pela ordem dos commits: T3 aprovação → T4/T5 add → T6 enxugue).
@@ -539,8 +620,8 @@ veredito ao humano — NÃO faz merge, NÃO faz PR.
 **Deliverable verificável**
 - `.planning/mem-fase0/acceptance-gate.md` com pass/fail por critério +
   evidência; os 5 smoke checks rodados; hard-block reproduzido e intacto; toda
-  rule enxugada confirmada recuperável; suíte verde. Veredito (GATE-PASS ou
-  GATE-FAIL) reportado ao humano sem merge.
+  rule enxugada confirmada recuperável (inclusive pós-`mem rebuild`); suíte
+  verde. Veredito (GATE-PASS ou GATE-FAIL) reportado ao humano sem merge.
 
 ---
 
@@ -553,20 +634,38 @@ veredito ao humano — NÃO faz merge, NÃO faz PR.
   `import mem` (Decisão #2, G-VENDOR) — Task 1, TDD estrito.
 - ✅ Vendor pra `.claude/bin/mem` + scaffold `.claude/memory/` + gitignore
   `mem.db*` (§Fronteira, §Reconciliação) — Task 2. Linhas L1 do gitignore
-  preservadas (corte do L1 é Fase 1, fora de escopo aqui).
+  preservadas (corte do L1 é Fase 1, fora de escopo aqui). Skills do mem
+  (`mem-resume`/`-consolidate`/`-report`) documentadas como efeito colateral
+  aceito (flag-2).
 - ✅ Mapeamento Tier-0 vs →mem expandido por arquivo concreto (14 rules +
   CLAUDE.md + 4 `docs/design/*` + learnings) — Task 3, com PROPOSTA 3-caminhos
   (G1/G2) antes de qualquer escrita.
 - ✅ Migração ADITIVA (`mem add`/`mem session`, NÃO `mem import` cru) — Tasks
   4–5; canônicos `docs/design/*` preservados e confirmados via `git status`.
+  Autor mem pinado em `thgMatajs` como prerequisito (flag-1) — sem override no
+  mem, só `git config`.
 - ✅ Enxugue SEPARADO/POSTERIOR, com gate interno de recuperabilidade antes de
   remover — Task 6; ADR-note Decisões 20/22 verbatim no CHANGELOG (honra, não
-  revisita; `01-decisions.md` não tocado → hard-block não dispara).
+  revisita; `01-decisions.md` não tocado → hard-block não dispara). Doc-sync
+  README (H-001) + limite conhecido `mem rebuild` pós-clone (M-001) incluídos.
 - ✅ Gate de aceite = 5 smoke checks + Mandamento 0 + hard-block intacto + mem
-  recuperável + zero perda; valida e reporta, NÃO faz merge — Task 7.
+  recuperável (inclusive pós-`mem rebuild`) + zero perda; valida e reporta, NÃO
+  faz merge — Task 7.
 - ✅ Detalhe crucial grounded: `mem --json <subcmd>` (flag global ANTES do
   subcomando) — capturado em Task 1 como regression test e usado em todas as
   invocações.
+
+**Refinos pós-auditoria (PASS_WITH_WARNINGS) incorporados:**
+- H-001 (doc-sync README: LOC/Engine LOC + arquivos + testes recontados +
+  subsistema `engine/integrations/`) → Task 6.
+- M-001 (limite conhecido: `mem rebuild` após clone pro detalhe ser
+  recuperável) → Task 6 §Conhecidos limites + reforçado no Critério 4 da Task 7.
+- L-001 (voz: 🔧 → 🤔 pra alinhar ao set canônico ✅⏭️🤔) → Task 3 + esta
+  §Self-Review.
+- flag-1 (autor mem estável `thgMatajs`; sem override no mem, só `git config`)
+  → step prerequisito nas Tasks 4 e 5.
+- flag-2 (skills do mem em `.claude/skills/` — efeito colateral aceito) →
+  Task 2.
 
 **Placeholder scan:** sem TODO/FIXME/"similar à Task N"/"etc." em conteúdo
 load-bearing. `<autor>`, `<T>`, `<tema>`, `<id>`, `<seção>`, `<slug>`,
@@ -577,8 +676,9 @@ do `mem`), não lacunas do plano. Caminhos de arquivo concretos sempre dados.
 gitignored) · `engine/assets/mem/mem` (asset pinado) · `engine/integrations/
 mem.py:mem_call`/`MemResult`/`MEM_PINNED_VERSION` (fronteira) · `.claude/bin/
 mem` (vendorizado) · `.claude/memory/<autor>.jsonl` (fonte commitada) ·
-Tier-0/Tier-1 · `RULE_INDEX` · `feat/mem-integration` (branch única). Verbo
-"forge" só como verbo (Decisão 4 do projeto). Voz mentor calmo em todos os
+Tier-0/Tier-1 · `RULE_INDEX` · `feat/mem-integration` (branch única) ·
+`thgMatajs` (autor canônico). Verbo "forge" só como verbo (Decisão 4 do
+projeto). Voz mentor calmo + emoji só do set canônico ✅⏭️🤔 em todos os
 artefatos gerados.
 
 **Reversibilidade (risco ALTO — docs operacionais load-bearing):** a sequência
