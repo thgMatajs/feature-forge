@@ -19,56 +19,68 @@
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 STATE_DIR="$PROJECT_ROOT/.claude/state"
 HANDOFF="$PROJECT_ROOT/docs/design/08-session-handoff.md"
-MEM_BIN="$PROJECT_ROOT/.claude/bin/mem"
+MEM_DIR="$PROJECT_ROOT/.claude/memory"
 
 # Reset per-session state
 rm -f "$STATE_DIR/drift-warned.json" 2>/dev/null || true
 
-# ── Session state: tenta o último `mem session`, fallback pro arquivo ──
+# ── Session state: lê nota `session` mais recente diretamente do JSONL ──
 # Contrato exit-0 (R3.5): o hook NÃO usa `set -e`; toda etapa abaixo
-# degrada graciosamente (mem ausente → fallback grep → "(handoff missing)").
+# degrada graciosamente (sem JSONL → fallback grep → "(handoff missing)").
+#
+# Por que JSONL em vez de `mem find/get`:
+#   `mem find` ranqueia por SCORE (importância × decay × recall_count), NÃO
+#   por data de criação. `mem get` infla o recall_count da nota acessada a
+#   cada sessão → a PRIMEIRA nota `session` lida fica pinada no topo do
+#   `-k 1` para sempre; a nota genuinamente mais recente nunca é injetada.
+#   Ler o JSONL committed diretamente evita ambos os problemas e funciona
+#   mesmo sem mem.db (clone fresco antes do rebuild).
 MEM_BODY=""
-if [[ -x "$MEM_BIN" ]]; then
-    # Passo 1: id da última `mem session` (score-ordered; a mais recente
-    # decai menos → maior score → topo de `-k 1`). `[]` quando não há
-    # sessão → SID vazio → cai no fallback. Stderr do mem é descartado.
-    #
-    # Timeout portátil (L-001): `timeout` não é built-in no macOS. Como
-    # python3 já é dep dura do projeto, usamos subprocess.run(timeout=5)
-    # pra bound ambas as chamadas ao mem. Se o teto estourar (ou o mem
-    # retornar erro), retornamos string vazia → cai no fallback do arquivo.
-    SID=$(python3 - "$MEM_BIN" <<'PYEOF' 2>/dev/null
-import json, subprocess, sys
-mem_bin = sys.argv[1]
+if [[ -d "$MEM_DIR" ]]; then
+    MEM_BODY=$(python3 - "$MEM_DIR" <<'PYEOF' 2>/dev/null
+import json, os, sys, glob
+
+mem_dir = sys.argv[1]
 try:
-    r = subprocess.run(
-        [mem_bin, "--json", "find", "", "--type", "session", "-k", "1"],
-        capture_output=True, text=True, timeout=5
-    )
-    data = json.loads(r.stdout) if r.returncode == 0 else []
-    print(data[0]["id"] if data else "")
+    # Passo 1: coleta todos os snapshots de todos os arquivos .jsonl,
+    # ordenados por (nome-do-arquivo, posição-da-linha) — mesma ordem
+    # que o mem usa no event-sourcing (last-write-wins por id).
+    snapshots = []
+    for jsonl_path in sorted(glob.glob(os.path.join(mem_dir, "*.jsonl"))):
+        with open(jsonl_path, encoding="utf-8") as fh:
+            for lineno, raw in enumerate(fh):
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    snapshots.append((jsonl_path, lineno, json.loads(raw)))
+                except Exception:
+                    pass  # linha malformada — ignora
+
+    # Passo 2: last-write-wins por id (mantém o snapshot mais recente na
+    # ordem de leitura — arquivo alfabético + posição de linha).
+    latest_by_id = {}
+    for path, lineno, obj in snapshots:
+        oid = obj.get("id")
+        if oid:
+            latest_by_id[oid] = obj
+
+    # Passo 3: filtra type == "session" E status == "active".
+    sessions = [
+        obj for obj in latest_by_id.values()
+        if obj.get("type") == "session" and obj.get("status") == "active"
+    ]
+
+    if not sessions:
+        print("")
+    else:
+        # Passo 4: maior created_at (ISO-8601 Z → comparação lexicográfica ok).
+        newest = max(sessions, key=lambda o: o.get("created_at", ""))
+        print(newest.get("body", "").strip())
 except Exception:
     print("")
 PYEOF
 )
-    # Passo 2: corpo do handoff curado (.body). `get` registra access — é
-    # uma leitura real, comportamento esperado (igual à skill mem-resume).
-    if [[ -n "$SID" ]]; then
-        MEM_BODY=$(python3 - "$MEM_BIN" "$SID" <<'PYEOF' 2>/dev/null
-import json, subprocess, sys
-mem_bin, sid = sys.argv[1], sys.argv[2]
-try:
-    r = subprocess.run(
-        [mem_bin, "--json", "get", sid],
-        capture_output=True, text=True, timeout=5
-    )
-    body = json.loads(r.stdout).get("body", "").strip() if r.returncode == 0 else ""
-    print(body)
-except Exception:
-    print("")
-PYEOF
-)
-    fi
 fi
 
 # Fallback pro arquivo (clone fresco antes do mem rebuild, ou repo sem
