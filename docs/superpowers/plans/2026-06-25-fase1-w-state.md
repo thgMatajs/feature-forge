@@ -76,14 +76,14 @@ def memory_l1_path(project_root: Path, feature_slug: str) -> Path:
 Substituir cada `memory_dir(project_root) / "L1"` (e variações de string `("...","memory","L1",...)`) por `lifecycle_root(project_root)`:
 - `engine/memory/l1.py:128` `_archived_dir` → `return lifecycle_root(project_root) / "archived"`
 - `engine/memory/l1.py:466` list-active → `root = lifecycle_root(project_root)`
-- `engine/qa/emit.py:42` `_PROPOSED_DIR_PARTS` → derivar de `lifecycle_root(project_root) / "proposed-evolutions"` (ler como o helper é consumido na função que usa `_PROPOSED_DIR_PARTS`; trocar pra montar via `lifecycle_root`)
+- `engine/qa/emit.py` — re-escrever `_proposed_dir` (linha 47-48) pra `return lifecycle_root(project_root) / "proposed-evolutions"` e **REMOVER** a tupla `_PROPOSED_DIR_PARTS` (linha 42) — ela é o site que escapa o grep-gate na forma tupla; eliminá-la resolve a raiz. (Verificar que `_proposed_dir` é o único consumidor de `_PROPOSED_DIR_PARTS`; o grep do Step inicial confirma.)
 - `engine/ingest.py:283` → `lifecycle_root(project_root) / feature_slug / "history.jsonl"`
 - `engine/verify.py:616` → `lifecycle_root(project_root) / feature_slug / "verify-log.jsonl"`
 - `engine/doctor.py:591` → `lifecycle_root(project_root)`
 - `engine/init.py:2038-2039` → `ensure_dir(lifecycle_root(project_root))` + `ensure_dir(lifecycle_root(project_root) / "archived")`
 - `validators/validate_extension_feature.py:59,110,161` → via `memory_l1_path`/`lifecycle_root`
 - `validators/validate_forge_config.py:326` → `lifecycle_root(project_root)`
-- `validators/validate_memory.py:244,314` → `lifecycle_root(project_root)` (ajustar a semântica: valida o layout de lifecycle no novo root)
+- `validators/validate_memory.py:244,314` → **só** os dois `mem / "L1"` (`l1_root`) viram `lifecycle_root(project_root)`. **NÃO tocar** `mem / "archived"` (linhas ~288/290, `_check_archived`) nem os checks de L2 — `memory/archived` (memory-root) e L2 NÃO movem no W-STATE; ficam derivando de `memory_dir`. (Pós-move o validator legitimamente mistura: lifecycle_root pra L1, memory_dir pra L2/archived-root — estado transicional correto.)
 - `engine/persona/mentor_calmo.py:135` → montar a string via `lifecycle_root` (não hardcodar `.claude/memory/L1/`)
 
 (Importar `lifecycle_root` onde necessário. NÃO mudar o valor — ainda `memory/L1`.)
@@ -110,9 +110,10 @@ git commit -m "refactor(paths): single-source lifecycle_root (consolida sites de
 
 **Files:**
 - Modify: `engine/utils/paths.py` (`lifecycle_root` → `forge_state_dir(project_root) / "lifecycle"`; docstring)
+- Modify (docstrings/strings de código em behavior dirs — Forma 1 do gate, paths explícitos): `engine/memory/l1.py` (docstring linhas 1-8), `engine/plan.py` (6/1174/1177/2120), `engine/verify.py` (285/597), `engine/memory/__init__.py` (4), `engine/qa/__init__.py` (1526/1531), `engine/qa/emit.py` (docstrings 2/11/16/132), `engine/undo.py` (627), `engine/implement.py` (966), `validators/validate_extension_feature.py` (docstrings 5/8 + string `where=` linha 201)
 - Modify: `.gitignore` (migrar a regra de L1 WIP)
 - Modify: `CHANGELOG.md` (ADR-note Decisão 20, Unreleased)
-- Modify (testes que criam/asseguram path L1 — fixtures + asserts): os arquivos de teste que constroem `.claude/memory/L1/` ou esperam esse path (ex.: `tests/unit/test_utils_paths.py`, `test_l1_blocked_state.py`, `test_implement_*.py`, `test_memory_l1_blocking_deps_resilient.py`, `tests/engine/qa/*` que tocam proposed-evolutions, `tests/integration/*` de lifecycle, `validators` tests). Enumerar via grep no Step 2.
+- Modify (testes que criam/asseguram path L1 — fixtures + asserts): os arquivos de teste que constroem `.claude/memory/L1/` ou esperam esse path (ex.: `tests/unit/test_utils_paths.py`, `test_l1_blocked_state.py`, `test_implement_*.py`, `test_memory_l1_blocking_deps_resilient.py`, `tests/unit/test_persona_mentor_calmo.py` (assert da string de path, ~linha 51), `tests/engine/qa/*` que tocam proposed-evolutions, `tests/integration/*` de lifecycle, `validators` tests). **Enumerar a lista COMPLETA via grep no Step 2** (`grep -rln 'memory/L1\|"L1"' tests/`) — a lista acima é ilustrativa; o grep do Step 2 + o grep-gate são autoritativos.
 - Create: `tests/unit/test_no_legacy_l1_path.py` (grep-gate)
 
 **Interfaces:**
@@ -133,11 +134,16 @@ import subprocess
 from pathlib import Path
 
 # DETECÇÃO SIMÉTRICA: o path L1 legado aparece em DUAS formas no código —
-#   (1) string literal: ".claude/memory/L1/..." (docstrings, mensagens, qa parts)
-#   (2) construção Path: memory_dir(project_root) / "L1"  (a maioria dos sites)
-# O gate pega as duas. Padrões montados por partes pra o próprio gate não auto-casar.
-STRING_LITERAL = "memory" + "/L1"
-PATH_CONSTRUCT = "memory_dir"  # par com "L1" na mesma linha = construção legada
+#   (1) string literal: ".claude/memory/L1/..." (docstrings, mensagens)
+#   (2) segmento quotado "L1": construção Path (memory_dir / "L1") E tupla de
+#       literais (".claude","memory","L1",...) — ambas contêm o token "L1".
+# Grepar o segmento "L1" quotado pega AS DUAS variantes da Forma 2 (construção
+# E tupla); o único "L1" quotado legítimo que NÃO é path é o config
+# `"layers-enabled": ["L1","L2","L3"]` (init.py) — allowlisted explicitamente.
+# Padrões montados por partes pra o próprio gate não auto-casar.
+STRING_LITERAL = "memory" + "/L1"          # Forma 1
+QUOTED_SEGMENT = '"' + "L1" + '"'          # Forma 2 (construção + tupla)
+ALLOWLIST_TOKENS = ("layers-enabled", "layers_enabled")  # "L1" como nome de camada, não path
 BEHAVIOR_DIRS = ["engine", "validators", "hooks", "tests"]
 
 def _grep(pattern, dirs, root):
@@ -156,18 +162,16 @@ def test_no_legacy_l1_path_in_behavior_code():
     root = Path(__file__).resolve().parents[2]
     self_path = Path(__file__).resolve()
     dirs = [d for d in BEHAVIOR_DIRS if (root / d).is_dir()]
-    # Forma 1: string literal memory/L1
     str_hits = [l for l in _grep(STRING_LITERAL, dirs, root) if _not_self(l, root, self_path)]
-    # Forma 2: construção Path — linha com memory_dir(...) E o segmento "L1"
-    # (não casa `"layers-enabled": ["L1","L2","L3"]` pois essa linha não tem memory_dir)
-    construct_hits = [
-        l for l in _grep(PATH_CONSTRUCT, dirs, root)
-        if '"L1"' in l and _not_self(l, root, self_path)
+    quoted_hits = [
+        l for l in _grep(QUOTED_SEGMENT, dirs, root)
+        if _not_self(l, root, self_path)
+        and not any(tok in l for tok in ALLOWLIST_TOKENS)
     ]
-    hits = sorted(set(str_hits + construct_hits))
+    hits = sorted(set(str_hits + quoted_hits))
     assert hits == [], f"Path L1 legado sobrou: {hits}"
 ```
-Nota: o gate cobre código de comportamento + testes (as duas formas). Docstrings/comentários em `engine/*.py` (plan.py, verify.py, l1.py:1, __init__ etc.) que citam `.claude/memory/L1/` em STRING são pegos pela Forma 1 → devem virar `forge/state/lifecycle` na Task 2 (não só Task 3), porque vivem em behavior dirs. (Task 3 cobre só prosa markdown em `docs/`.) O `"layers-enabled": ["L1","L2","L3"]` (init.py:2404) NÃO é path e NÃO casa nenhuma das formas (sem `memory_dir` na linha, sem string `memory/L1`).
+Nota: o gate cobre código de comportamento + testes nas duas formas (string `memory/L1` E segmento `"L1"` — construção Path OU tupla de literais como `engine/qa/emit.py:42 _PROPOSED_DIR_PARTS`). Docstrings/comentários em `engine/*.py` que citam `.claude/memory/L1/` em STRING são pegos pela Forma 1 → viram `forge/state/lifecycle` na Task 2 (vivem em behavior dirs; Task 3 cobre só prosa markdown em `docs/`). O `"layers-enabled": ["L1","L2","L3"]` (init.py:2404) é allowlisted (é nome de camada, não path) e NÃO é tocado por esta onda. ⚠️ Se algum dia um path legítimo precisar do token `"L1"` allowlistado, revisar — hoje `layers-enabled` é o único caso.
 
 - [ ] **Step 2: Run gate to verify it fails + enumerar arquivos afetados**
 
