@@ -99,9 +99,14 @@ Templates, mensagens de gate, prompts de agent — todos seguem o tom de
 
 Mexeu em `engine/`, `validators/`, `hooks/`, `templates/`, `cards/`,
 `presets/`, `docs/schemas/`, `docs/guides/`, `docs/diagrams/` → atualizou
-no MESMO commit: `CHANGELOG.md` (Unreleased) + `docs/design/08-session-
-handoff.md` (Última atualização + Conhecidos limites se aplicável) +
-`README.md` (se stats mudaram) + guides/diagrams (se comportamento mudou).
+no MESMO commit: `CHANGELOG.md` (Unreleased) + `README.md` (se stats
+mudaram) + guides/diagrams (se comportamento mudou).
+
+O **estado de sessão** não é per-commit: no fim de trabalho significativo,
+rode `.claude/bin/mem session` (handoff curado, committed, com git_meta
+automático). O `docs/design/08-session-handoff.md` congelou — snapshot
+histórico + fallback de bootstrap do SessionStart, não mais editado a cada
+sessão.
 
 Matriz código→docs: `.claude/bin/mem find "matriz código docs sincronizar ao tocar engine"`.
 

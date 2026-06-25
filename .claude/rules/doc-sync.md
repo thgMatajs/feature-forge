@@ -8,11 +8,14 @@ como-editar handoff/CHANGELOG e os bloqueios opt-in vivem no `mem`.
 
 Mexeu em `engine/`, `validators/`, `hooks/`, `templates/`, `cards/`,
 `presets/`, `docs/schemas/`, `docs/guides/`, `docs/diagrams/` → atualize no
-MESMO commit: `CHANGELOG.md` (Unreleased) + `docs/design/08-session-
-handoff.md` (Última atualização + Conhecidos limites se aplicável) +
-`README.md` (se stats mudaram) + guides/diagrams (se comportamento
-documentado mudou). O pre-commit emite SOFT WARNING quando código vivo é
-staged sem CHANGELOG/handoff/README.
+MESMO commit: `CHANGELOG.md` (Unreleased) + `README.md` (se stats mudaram)
++ guides/diagrams (se comportamento documentado mudou). O pre-commit emite
+SOFT WARNING quando código vivo é staged sem CHANGELOG/README.
+
+O **estado de sessão** saiu do gate per-commit: rode `.claude/bin/mem
+session` no fim de sessão (handoff curado, committed). O
+`docs/design/08-session-handoff.md` congelou — snapshot histórico +
+fallback de bootstrap do SessionStart, não mais editado a cada sessão.
 
 ## Detalhe (recupere por tema)
 
