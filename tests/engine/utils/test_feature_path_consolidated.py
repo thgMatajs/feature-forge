@@ -16,3 +16,4 @@ def test_workflow_dirname_is_single_source(monkeypatch, tmp_path):
     assert paths.feature_workflow_root(root) == root / "docs" / "SENTINEL_DIR"
     assert paths.feature_dir(root, "x") == root / "docs" / "SENTINEL_DIR" / "features" / "x"
     assert paths._resolve_features_root(root) == (root / "docs" / "SENTINEL_DIR" / "features").resolve()
+    assert paths.feature_path(root, "feat-x") == root / "docs" / "SENTINEL_DIR" / "features" / "feat-x"
