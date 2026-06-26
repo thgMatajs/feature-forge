@@ -299,10 +299,11 @@ exige `feature <slug>`/`task TASK-NNNN`; `graph` exige `forge graph --json
   non-interactive: assume scope `full` (o ask de scope não pode pausar pra máquina).
 - `forge verify --json` → `{scope: {type, target}, overall, exit_code, validators:
   [{name, status, duration_ms, message, paths, what_failed, where, why}]}`.
-- `forge memory --json` → snapshot read-only NARROW dos 3 layers: `{l2: {size_bytes,
-  entries: [{id, kind, confidence, title, provenance}]}, l1: {active: [{slug, status,
-  last_action_kind}], archived: [slug]}, l3: [{title, hook}]}`. Search/forget/distill/
-  export permanecem no menu REPL — sem sub-flags por carve-out meta-flags-only.
+- `forge memory <ação> --json` → cada subcomando repassa `--json` ao `mem`; o schema de
+  saída casa com o do `mem` correspondente: `search <query>` → hits de `mem find`,
+  `inspect [id]` → nota/stats de `mem get`/`mem stats`, `export [--budget N]` → briefing
+  de `mem brief`, `distill [--apply]` → resultado de `mem evolve`. Não há mais snapshot
+  `{l1, l2, l3}` nem menu REPL — a superfície é arg-driven stateless.
 - `forge --help --json` → manifesto: `{forge_version, commands: [{name, summary,
   interactive, hidden, flags, args}]}`. Itera `_VISIBLE_ORDER` (ingest oculto
   omitido) e busca cada nome em `_COMMAND_META` — metadata hand-maintained em

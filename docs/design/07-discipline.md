@@ -561,14 +561,14 @@ Em vez disso:
           propostas e mudar L2 sob seus pés invalidaria as próximas.
           
           Caminhos:
-            • forge memory → "distill L2"   (depois retoma evolve)
+            • forge memory distill            (depois retoma evolve)
             • forge evolve (retoma)         (após distill manual)
             • Pausar e revisar depois       (estado salvo)
           
           O que prefere?
    ```
 
-4. Usuário roda `forge memory` → distill, depois retorna a `forge evolve`,
+4. Usuário roda `forge memory distill`, depois retorna a `forge evolve`,
    que detecta `.evolve-checkpoint.yaml` e auto-resume da proposta
    pendente.
 
