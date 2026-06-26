@@ -16,6 +16,7 @@
 - Voz mentor-calmo em toda string user-facing. Sem emoji decorativo.
 - Invariante de prova: o módulo `memory_cli` reescrito tem ZERO `question.ask*` e ZERO checkpoint helper.
 - Doc-sync no MESMO commit da mudança de comportamento (Mandamento #6).
+- `--json` é meta-flag global (resolvida em `cli.main` via contextvar antes do dispatch); o handler arg-driven DEVE filtrá-la do argv pra não poluir os args posicionais. `cli.main` passa `argv[1:]` sem strip.
 - Design de referência: `docs/superpowers/specs/2026-06-26-w-route-6a-design.md` (refina a spec congelada `2026-06-25-mem-integration-design.md`).
 
 ---
@@ -326,7 +327,7 @@ W-ROUTE 6a Task 2. MemQuery uniforme (ok/data/message), degrade soft
 
 **Interfaces:**
 - Consumes: `mem_find/mem_get/mem_stats/mem_brief/mem_evolve` + `MemQuery` (Task 2); `output_mode.is_json_mode()`; `renderer`; `find_project_root`/`ProjectRootNotFoundError`.
-- Produces: `run(argv: list[str]) -> int` — dispatcher de `search|inspect|export|distill`.
+- Produces: `run(argv: list[str]) -> int` — dispatcher de `search|inspect|export|distill`; filtra `--json` do argv antes de extrair ação/rest.
 
 - [ ] **Step 1: Escrever os testes (falhando)**
 
@@ -459,6 +460,49 @@ def test_checkpoint_machinery_removed() -> None:
         "_memory_snapshot",
     ):
         assert not hasattr(memory_cli, name), f"{name} deveria ter sumido"
+
+
+# ── C-002: --json não polui os args posicionais do dispatch ──────────────
+
+def test_json_flag_stripped_from_query(monkeypatch, tmp_project_root) -> None:
+    monkeypatch.chdir(tmp_project_root)
+    seen: dict = {}
+
+    def _fake_find(root, query, **kw):
+        seen["query"] = query
+        return MemQuery(ok=True, data=[])
+
+    monkeypatch.setattr(memory_cli, "mem_find", _fake_find)
+    assert memory_cli.run(["search", "reuse", "--json"]) == 0
+    assert seen["query"] == "reuse"  # --json removido, não poluiu a query
+
+
+# ── C-001: JSON-mode emite o JSON do mem (substitui test_memory_json) ────
+
+def test_inspect_json_mode_emits_stats_json(monkeypatch, tmp_project_root, capsys) -> None:
+    import json as _json
+    monkeypatch.chdir(tmp_project_root)
+    monkeypatch.setattr(memory_cli.output_mode, "is_json_mode", lambda: True)
+    monkeypatch.setattr(
+        memory_cli, "mem_stats",
+        lambda root: MemQuery(ok=True, data={"total": 2, "live": 2}),
+    )
+    assert memory_cli.run(["inspect", "--json"]) == 0
+    out = capsys.readouterr().out
+    assert _json.loads(out) == {"total": 2, "live": 2}
+
+
+def test_search_json_mode_emits_hits_json(monkeypatch, tmp_project_root, capsys) -> None:
+    import json as _json
+    monkeypatch.chdir(tmp_project_root)
+    monkeypatch.setattr(memory_cli.output_mode, "is_json_mode", lambda: True)
+    monkeypatch.setattr(
+        memory_cli, "mem_find",
+        lambda root, q, **kw: MemQuery(ok=True, data=[{"id": "X", "title": "t"}]),
+    )
+    assert memory_cli.run(["search", "reuse", "--json"]) == 0
+    out = capsys.readouterr().out
+    assert _json.loads(out) == [{"id": "X", "title": "t"}]
 ```
 
 > Se a Task 1 deu `REPRO-FOUND`, adicione AQUI também o teste de regressão histórico descrito no veredito (red→green), além da prova estrutural acima.
@@ -661,7 +705,13 @@ _ACTIONS = {
 
 
 def run(argv: list[str]) -> int:
-    """Dispatcher arg-driven do `forge memory` (stateless, sem prompt)."""
+    """Dispatcher arg-driven do `forge memory` (stateless, sem prompt).
+
+    `--json` é meta-flag global já resolvida em `cli.main` (contextvar via
+    `output_mode.is_json_mode()`); filtramos do argv aqui pra não poluir os
+    args posicionais — `cli.main` repassa `argv[1:]` sem strip.
+    """
+    argv = [a for a in argv if a != "--json"]
     if not argv:
         sys.stderr.write(_USAGE)
         return 2
@@ -682,32 +732,33 @@ def run(argv: list[str]) -> int:
 __all__ = ["run"]
 ```
 
-- [ ] **Step 4: Remover o teste de resume obsoleto**
+- [ ] **Step 4: Remover os testes obsoletos**
 
 ```bash
-git rm tests/unit/test_engine_memory_cli_resume.py
+git rm tests/unit/test_engine_memory_cli_resume.py tests/unit/test_memory_json.py
 ```
 
-(Testa o checkpoint-resume que deixou de existir — remoção é correta, não regressão. Clean-break declarado no design 6a.)
+(Ambos testam comportamento que deixa de existir — `test_engine_memory_cli_resume.py` (checkpoint-resume) e `test_memory_json.py` (snapshot `_memory_snapshot` de 3 camadas + `read_l3_index`). Remoção correta, não regressão. Clean-break declarado no design 6a.)
 
 - [ ] **Step 5: Rodar a lane afetada**
 
 Run: `.venv/bin/pytest tests/unit/test_commands_memory.py tests/integrations/test_mem_wrappers.py -v`
-Expected: PASS (todos). Confirme que nenhum import órfão quebrou: `.venv/bin/pytest -m "not integration and not e2e" -q | tail -3`.
+Expected: PASS (todos). Dois arquivos de teste obsoletos removidos (resume + memory_json) — a queda de count é declarada, não regressão. Confirme que nenhum import órfão quebrou: `.venv/bin/pytest -m "not integration and not e2e" -q | tail -3`.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add engine/memory_cli.py tests/unit/test_commands_memory.py
-git rm tests/unit/test_engine_memory_cli_resume.py
+git rm tests/unit/test_engine_memory_cli_resume.py tests/unit/test_memory_json.py
 git commit -m "feat(memory): forge memory vira wrapper arg-driven stateless (BUG-M1)
 
 W-ROUTE 6a Task 3. Menu interativo + checkpoint-resume (DRIFT-1) → dispatcher
 search/inspect/export/distill que delega ao mem. Zero question.ask, zero
 checkpoint: o burden multi-passo some estruturalmente. Inspeção de lifecycle
 sai (→ forge status); L3 removido; forget dropado (sem primitivo de archive
-por-id no mem — curadoria via distill→mem evolve). Remove o teste de resume
-obsoleto."
+por-id no mem — curadoria via distill→mem evolve). Remove os testes de resume
+e de snapshot-JSON (ambos cobrem comportamento removido); adiciona testes de
+JSON-mode da superfície nova."
 ```
 
 ---
@@ -720,6 +771,7 @@ obsoleto."
 - Modify: `README.md` (só se a linha de `forge memory` mudar)
 - Modify: `docs/guides/daily-workflow.md` (se descreve o menu)
 - Modify: `engine/evolve.py` (3 strings que apontam pro comando antigo)
+- Modify: `docs/design/04-pending.md` (anota `forget` dropado + `l3.py` órfão)
 
 **Interfaces:**
 - Consumes: a superfície nova da Task 3.
@@ -764,15 +816,30 @@ Adicione em `### Changed`:
   `forge status`; L3 e `forget` por-id removidos (W-ROUTE 6a).
 ```
 
-- [ ] **Step 6: Rodar a lane rápida + verify**
+- [ ] **Step 6: Anotar gaps em `docs/design/04-pending.md`**
+
+Adicione duas entradas a `docs/design/04-pending.md`:
+
+```markdown
+- **`forge memory forget` removido (W-ROUTE 6a)** — o mem não tem primitivo
+  de archive-por-id (`supersede` exige NEW+OLD; `evolve --apply` arquiva por
+  standing, não por alvo). Curadoria de archive passa a ser `forge memory
+  distill` → `mem evolve`. Candidato a `mem-report` upstream: um `mem archive
+  <id>`.
+- **`engine/memory/l3.py` órfão (W-ROUTE 6a)** — perdeu o único consumidor de
+  produção (`memory_cli` parou de inspecionar L3). Slated pra remoção num
+  passo clean-break posterior; mantido agora pra não expandir o escopo de 6a.
+```
+
+- [ ] **Step 7: Rodar a lane rápida + verify**
 
 Run: `.venv/bin/pytest -m "not integration and not e2e" -q | tail -3`
 Expected: verde (sem regressão de count além da remoção declarada do teste de resume).
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add docs/design/06-command-surface.md CHANGELOG.md README.md docs/guides/daily-workflow.md engine/evolve.py
+git add docs/design/06-command-surface.md CHANGELOG.md README.md docs/guides/daily-workflow.md engine/evolve.py docs/design/04-pending.md
 git commit -m "docs(w-route): doc-sync da superfície arg-driven do forge memory (6a)
 
 CHANGELOG + command-surface + guide + strings de evolve.py alinhados ao
@@ -787,3 +854,4 @@ novo forge memory <ação>."
 - **Sem placeholder:** todo step de código tem o código real; comandos têm output esperado.
 - **Consistência de tipos:** `MemQuery(ok, data, message)` definido na Task 2 e consumido com os mesmos campos na Task 3 e nos testes. Assinaturas dos 5 wrappers idênticas entre Task 2 (Produces), Task 3 (chamadas) e os testes.
 - **Decisão aberta resolvida:** `forget` dropado (sem primitivo de archive por-id no mem) — curadoria via `distill`→`mem evolve`. Documentado no commit da Task 3 e no doc-sync.
+- **C-001/C-002 do plan-audit r1 endereçados:** `--json` filtrado no `run()` + testes de strip e JSON-mode; `test_memory_json.py` removido junto do resume; `forget` dropado e `l3.py` órfão anotados em 04-pending.
