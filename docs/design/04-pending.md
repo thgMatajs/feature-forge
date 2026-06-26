@@ -16,6 +16,28 @@ checklist for next sessions.
   os consumidores — nesse ponto o drift de pin passa de cosmético a funcional e o
   custo do "force `forge init`" vira fricção real.
 
+## W-MIGRATE (migrador L2→mem) — DEFERIDO até brownfield real (2026-06-26)
+
+O migrador forge-side L2→mem (spec §Migração: kind→type, field-preservation,
+sentinel `.migrated-from-l2`, `--source migrate:L2:<id>`, idempotência,
+`--force`) foi DEFERIDO na Fase 1. Razão: pré-produção — nenhum consumidor
+brownfield com `.claude/memory/L2-project.yaml` existe; projetos greenfield
+nascem diretamente no mem (sem dados a migrar); o próprio repo feature-forge
+migrou seu conhecimento na Fase 0 (W-VENDOR já entregue). Implementar o
+migrador agora é YAGNI sem evidência de brownfield real.
+
+Critério de reentrada: quando ≥1 projeto brownfield (com `L2-project.yaml`
+povoado) for adotar a integração mem. O design completo está congelado na
+spec `docs/superpowers/specs/2026-06-25-mem-integration-design.md §Migração`
+— implementar a partir dele quando o gatilho ocorrer.
+
+Decisão em aberto (não resolvida nesta deferral): reconfigure opt-in vs
+comando dedicado (`forge migrate-l2`?) — `forge raw` é read-only e não serve
+como ponto de entrada. Resolução na reentrada.
+
+Ordem efetiva de execução da Fase 1: W-RENAME → W-STATE → W-VENDOR →
+W-RULES → W-ROUTE → W-AGENTS (W-MIGRATE pulado; W-RULES avança pra posição 4).
+
 ## Pilot R7 — qa flow fixes (2026-06-19)
 
 Os fixes de `forge qa` (F-1..F-5 + CR-01) estão em CHANGELOG `## [Unreleased]
