@@ -104,6 +104,16 @@ def test_export_calls_mem_brief(monkeypatch, tmp_path) -> None:
     assert seen["budget"] == 200
 
 
+def test_export_budget_missing_value_is_usage(monkeypatch, tmp_path) -> None:
+    _patch_root(monkeypatch, tmp_path)
+    assert memory_cli.run(["export", "--budget"]) == 1
+
+
+def test_export_budget_non_int_is_usage(monkeypatch, tmp_path) -> None:
+    _patch_root(monkeypatch, tmp_path)
+    assert memory_cli.run(["export", "--budget", "abc"]) == 1
+
+
 def test_distill_calls_mem_evolve(monkeypatch, tmp_path) -> None:
     _patch_root(monkeypatch, tmp_path)
     seen: dict = {}

@@ -30,7 +30,7 @@ from engine.integrations.mem import (
     mem_stats,
 )
 from engine.ui import output_mode, renderer
-from engine.ui.exit_codes import ERR_USAGE, fail_with_tag
+from engine.ui.exit_codes import ERR_PROJECT_NOT_FOUND, ERR_USAGE, fail_with_tag
 from engine.utils.paths import ProjectRootNotFoundError, find_project_root
 
 _USAGE = (
@@ -199,7 +199,7 @@ def run(argv: list[str]) -> int:
         project_root = find_project_root()
     except ProjectRootNotFoundError as exc:
         sys.stderr.write(f"forge memory: {exc}\n")
-        return 1
+        return fail_with_tag(ERR_PROJECT_NOT_FOUND)
     argv = [a for a in argv if a != "--json"]
     if not argv:
         sys.stderr.write(_USAGE)
