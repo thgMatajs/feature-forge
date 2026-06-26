@@ -161,3 +161,38 @@ por contrato, não por import.
 
 A camada típica de wrappers criada em 6a (D3) é o contrato estável que essas
 sub-ondas estendem.
+
+## BUG-M1 — resultado da investigação (Task 1)
+
+**Veredito:** NO-REPRO
+
+Os testes de resume atuais passam integralmente:
+
+```
+tests/unit/test_engine_memory_cli_resume.py::test_memory_cli_checkpoint_dataclass_exists PASSED
+tests/unit/test_engine_memory_cli_resume.py::test_memory_cli_save_load_clear_roundtrip PASSED
+tests/unit/test_engine_memory_cli_resume.py::test_resume_from_checkpoint PASSED
+
+3 passed in 0.11s
+```
+
+O resume funciona para o cenário coberto (menu top-level pausado → response.json com
+`intent_id` correspondente → `question.ask` consome sem re-prompt → exit 0 → checkpoint
+apagado). A maquinaria de save/load/clear do checkpoint é correta nesse caminho.
+
+**Cenário não coberto investigado (dois submenus encadeados, exit-2 no segundo):**
+Quando a pausa ocorre dentro de um submenu (ex.: `_distill_l2` com `question.ask` +
+`allow_pause=True`), o `run()` retorna 130. Na re-invocação, o checkpoint em disco tem
+`step=step-submenu:{choice}` com `intent_id=None`. O código de re-entrada **não usa esse
+checkpoint de submenu para nada** — ele simplesmente recalcula o `intent_id` do menu
+top-level e invoca `question.ask("O que olhar?", ...)` normalmente. Resultado: o menu
+top-level reaparece mesmo que o usuário já tivesse escolhido um submenu na invocação
+anterior. Isso é fragilidade arquitetural (re-prompt inesperado do top-level), mas não
+levanta exceção nem produz output errado capturável — não há sintoma reproduzível em
+forma de teste que falhe hoje.
+
+**Consequência para a Task 3:** a "cura" do BUG-M1 é a **eliminação estrutural** dos
+callsites (o wrapper stateless não tem `question.ask`, não tem checkpoint, não tem
+`allow_pause`). A prova é a asserção de ausência estrutural + equivalência de dispatch
+da Task 3, não um teste de regressão histórico vermelho. A Task 3 não precisa adicionar
+um teste de regressão histórico além da prova estrutural.
