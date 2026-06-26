@@ -5,6 +5,7 @@ de mem_call) pra capturar o argv montado sem rodar o binário real.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -176,10 +177,10 @@ def test_inbox_add_body_with_leading_dash_safe(tmp_path, monkeypatch):
     from engine.integrations import mem
     _stub(tmp_path / ".claude" / "bin" / "mem")
     cap = _patch_run(monkeypatch, 0, stdout='"01DEF"')
-    mem.mem_inbox_add(tmp_path, title="t", body="--option-like body", mem_type="reference")
+    mem.mem_inbox_add(tmp_path, title="t", body="-flag-body", mem_type="reference")
     cmd = cap["cmd"]
     dash_dash_idx = cmd.index("--")
-    assert cmd[dash_dash_idx + 1] == "--option-like body"
+    assert cmd[dash_dash_idx + 1] == "-flag-body"
 
 
 def test_inbox_add_degrades_soft_when_binary_missing(tmp_path, monkeypatch):
@@ -194,13 +195,10 @@ def test_inbox_add_degrades_soft_when_binary_missing(tmp_path, monkeypatch):
 # ── Teste real-mem (MOCK-BLINDNESS): path de escrita contra binário real ──
 
 
-import os as _os
-
-
 @pytest.mark.skipif(
-    not (_os.path.isfile("/tmp/.claude/bin/mem") or _os.path.isfile(
+    not os.path.isfile(
         str(Path(__file__).resolve().parents[2] / ".claude" / "bin" / "mem")
-    )),
+    ),
     reason="binário mem não disponível — pule em CI sem vendorização",
 )
 def test_inbox_add_real_mem_roundtrip(tmp_path):
