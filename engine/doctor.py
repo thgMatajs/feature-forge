@@ -1235,8 +1235,13 @@ def _check_mem(project_root: Path) -> _CategoryReport:
 
     H-001: `mem doctor` (cmd_doctor) retorna exit 0 SEMPRE — exit_code não é
     sinal de saúde. A saúde é derivada do PIOR check do JSON `--json`, não do
-    exit code. Trata 3 modos de falha sem crash: binário não encontrado, JSON
-    inválido, lista vazia.
+    exit code. Trata 5 modos de falha sem crash:
+      - binário não encontrado (not-found → FAIL)
+      - JSON inválido (parse error → WARN)
+      - JSON não-lista, ex.: envelope de erro {"error":"..."} (não-lista → WARN)
+      - lista vazia [] — mem não executou checks (lista vazia → WARN)
+      - checks com status não-ok (WARN com nomes dos checks falhando)
+    Quando todos os checks reportam status "ok", health → OK.
     """
     vendored = vendored_mem_path(project_root)
     if not vendored.is_file():
@@ -1256,24 +1261,41 @@ def _check_mem(project_root: Path) -> _CategoryReport:
     else:
         try:
             report = json.loads(res.stdout or "[]")
-            # mem doctor --json → lista de {"check","status","detail"};
-            # status do mem ∈ {"ok", e não-ok (ex.: "fail"/"error"/"stale")}.
-            bad = [c for c in report if isinstance(c, dict) and c.get("status") != "ok"]
-            if bad:
-                names = ", ".join(str(c.get("check")) for c in bad)
-                checks.append(_Check(
-                    "health",
-                    _STATUS_WARN,
-                    f"mem doctor reportou checks não-ok: {names}",
-                ))
-            else:
-                checks.append(_Check("health", _STATUS_OK, "mem doctor: todos os checks ok"))
         except (ValueError, TypeError):
             checks.append(_Check(
                 "health",
                 _STATUS_WARN,
                 f"mem doctor saída ininteligível: {(res.stderr or res.stdout or '')[:120]}",
             ))
+        else:
+            # mem doctor --json → lista de {"check","status","detail"};
+            # status do mem ∈ {"ok", e não-ok (ex.: "fail"/"error"/"stale")}.
+            # H-VENDOR-01: JSON não-lista (ex.: envelope de erro {"error":"..."})
+            #   → iterar keys de um dict é silencioso; detectar explicitamente.
+            # H-VENDOR-02: lista vazia [] → bad=[] → falso-OK; distinguir.
+            if not isinstance(report, list):
+                checks.append(_Check(
+                    "health",
+                    _STATUS_WARN,
+                    f"mem doctor saída em formato inesperado: {str(report)[:120]}",
+                ))
+            elif not report:
+                checks.append(_Check(
+                    "health",
+                    _STATUS_WARN,
+                    "mem doctor não reportou checks (mem inicializado?)",
+                ))
+            else:
+                bad = [c for c in report if isinstance(c, dict) and c.get("status") != "ok"]
+                if bad:
+                    names = ", ".join(str(c.get("check")) for c in bad)
+                    checks.append(_Check(
+                        "health",
+                        _STATUS_WARN,
+                        f"mem doctor reportou checks não-ok: {names}",
+                    ))
+                else:
+                    checks.append(_Check("health", _STATUS_OK, "mem doctor: todos os checks ok"))
 
     # Drift do pin: VERSION vendorizada vs asset embutido neste forge.
     pin = vendored.parent / "mem.version"
