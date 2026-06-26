@@ -3,6 +3,19 @@
 What still needs to be drafted, in dependency order. Use this as the
 checklist for next sessions.
 
+## W-VENDOR — gaps pós Fase 1 Onda 3 (2026-06-25)
+
+- **M-001 (forge reconfigure/upgrade não re-vendoriza o mem)** — `forge init`
+  é idempotente e re-vendoriza o asset (overwrite de `.claude/bin/mem` + rerun
+  do scaffold). `forge reconfigure` e `forge upgrade` NÃO re-vendorizam o mem
+  nesta onda — o pin drift é sinalizado pelo `forge doctor` categoria `mem`
+  (check `pin` → WARN), mas o remédio hoje é rodar `forge init` manualmente.
+  Gap: adicionar ao `forge reconfigure` → opção "re-vendorizar mem" (ou ao
+  `forge upgrade`) pra cobrir o fluxo de atualização sem re-init full.
+  *Reentrar* quando W-MIGRATE/W-ROUTE fizerem do mem o substrato padrão de todos
+  os consumidores — nesse ponto o drift de pin passa de cosmético a funcional e o
+  custo do "force `forge init`" vira fricção real.
+
 ## Pilot R7 — qa flow fixes (2026-06-19)
 
 Os fixes de `forge qa` (F-1..F-5 + CR-01) estão em CHANGELOG `## [Unreleased]

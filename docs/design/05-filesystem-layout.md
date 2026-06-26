@@ -335,6 +335,15 @@ What `forge init` writes when run inside a project:
 │   │           ├── README.md
 │   │           └── detection/signals.yaml
 │   │
+│   ├── bin/                               executáveis vendorizados pelo forge init
+│   │   ├── mem                            mem CLI vendorizado (asset pinado — executável 755)
+│   │   └── mem.version                    pin de versão do asset (ex.: "0.8.1")
+│   │
+│   │   NOTE coexistência transitória (W-VENDOR): `.claude/memory/` hospeda o mem
+│   │   (JSONL commitado + mem.db SQLite derivado) e remanescentes L2/L3 enquanto
+│   │   as ondas W-MIGRATE e W-ROUTE não completam o roteamento. Após W-MIGRATE/
+│   │   W-ROUTE: `.claude/memory/` passa a ser exclusivamente do mem.
+│   │
 │   ├── settings.json                      APPEND-ONLY merge pelo forge (não sobrescreve)
 │   │                                      hook registrations adicionadas, não substituídas
 │   │

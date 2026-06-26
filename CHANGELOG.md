@@ -9,12 +9,21 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Added
 
+- `forge init` vendoriza o mem no consumidor: copia o asset embutido pra
+  `.claude/bin/mem` (executável), roda o scaffold do mem (gitignore `mem.db*`,
+  índice no `AGENTS.md`) via a fronteira `mem_call`. `forge doctor` ganha a
+  categoria `mem` (saúde via `mem doctor` + drift do pin vendorizado vs asset).
+
 - Relatório-mãe do piloto end-to-end do forge contra o MeoBonsai (KMP) persistido em `docs/reports/2026-06-25-piloto-meobonsai-gaps.md` — gaps IA-first priorizados P0/P1/P2, scorecard dos 14 comandos, 8 temas cross-cutting, registro completo de bugs e fixes já aplicados. Síntese durável dos 11 relatórios por-comando que eram efêmeros (scratchpad da sessão do piloto).
 - mem vendorizado em `.claude/bin/mem` (asset pinado v0.8.1) + scaffold `.claude/memory/` + skills do mem (`mem-resume`/`mem-consolidate`/`mem-report`) — substrato de memória do dogfood da Fase 0. O `mem init` também adicionou `.claude/memory/mem.db*` ao `.gitignore` (índice SQLite derivado, não versionado) e criou um bloco rule-índice delimitado em `AGENTS.md` na raiz. Nenhuma migração de conhecimento aqui — só o substrato vazio (`mem stats` → `total: 0`); a curadoria Tier-0/Tier-1 vem nas tasks seguintes.
 - Decisões/disciplinas/pending/handoff/learnings espelhados no acervo mem (aditivo; os canônicos `docs/design/*` preservados intactos) — Fase 0 dogfood (T5). As 33 decisões de `01-decisions.md` (rows 1-32 + 18-v2, com `tag:superseded` nas supersedidas e `importance 4-5` nas 8 load-bearing), as 10 disciplinas de `07-discipline.md` (as 6 universais com `tag:universal`), os 7 gaps abertos de `04-pending.md`, o estado curado v1.6.1 de `08-session-handoff.md` (via `mem session`) e os 27 learnings duráveis da auto-memory (24 feedback + 3 reference, preservando Why/How-to-apply + links cruzados). Migração só por `mem add`/`mem session` (acervo `total: 45 → 123`, zero near-dup). Os `docs/design/*` permanecem como fonte de verdade load-bearing com enforcement acoplado; o mem é o espelho recuperável que destrava o enxugue do núcleo injetado na T6.
 - Hooks do mem instalados no `.claude/settings.json` via `mem install-hooks --apply` (Fase 0.5 — P2): `Stop`/`UserPromptSubmit` (eventos novos pro repo) + `SessionStart`/`PostToolUse` somados aos do forge. Merge aditivo verificado (gate de coexistência): os hooks do forge — `session-start-orientation`, `pre-tool-use-load-bearing`, `post-edit-doc-drift` — continuam registrados e funcionais; `PreToolUse` fica só do forge (mem não o registra). Continuidade via `checkpoint` (singleton mantido pelos hooks do mem) + consolidação via skill `mem-consolidate` passam a ser a prática canônica.
 
 ### Changed
+
+- ADR-note Decisão 22 (sem dep runtime de outras skills): o mem é vendorizado
+  como snapshot pinado fork-and-forget (Decisão 15), não import runtime — o
+  espírito da 22 se mantém. Sem revisita formal (não contradiz a decisão locked).
 
 - State-machine de lifecycle migrada de `.claude/memory/L1/` →
   `.claude/forge/state/lifecycle/` (Decisão #1 da integração mem). Consolidada
