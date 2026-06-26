@@ -27,7 +27,7 @@ from engine.memory.l1 import (
     read_history,
     read_l1_status,
 )
-from engine.memory.l2 import l2_size_bytes
+from engine.integrations.mem import mem_stats
 from engine.ui import output_mode, renderer
 from engine.utils.paths import (
     ProjectRootNotFoundError,
@@ -35,7 +35,6 @@ from engine.utils.paths import (
     claude_dir,
     find_project_root,
     memory_dir,
-    memory_l2_path,
 )
 from engine.utils.yaml_io import YamlIOError, read_yaml
 
@@ -196,26 +195,28 @@ def _format_blocked_summary(deps: list[dict[str, Any]]) -> str:
     return " · ".join(parts)
 
 
-def _render_memory(project_root: Path, config: dict) -> None:
-    max_mb = _config_get_path(config, ["memory", "l2", "max-size-mb"], None)
-    if max_mb is None:
-        max_mb = _config_get_path(config, ["memory", "L2-project", "max-size-mb"], 0.5)
-    try:
-        max_bytes = float(max_mb) * 1024 * 1024
-    except (TypeError, ValueError):
-        max_bytes = 0.5 * 1024 * 1024
-    l2_path = memory_l2_path(project_root)
-    if l2_path.exists():
-        size_bytes = l2_size_bytes(project_root)
-        pct = (size_bytes / max_bytes * 100) if max_bytes else 0
-        l2_summary = f"{size_bytes / 1024:.1f} KB / {max_mb} MB ({pct:.0f}%)"
+def _render_memory(project_root: Path, config: dict) -> None:  # noqa: ARG001
+    l1_active = len(list_active_features(project_root))
+    l1_archived = len(list_archived_features(project_root))
+
+    stats_res = mem_stats(project_root)
+    if stats_res.ok and isinstance(stats_res.data, dict):
+        s = stats_res.data
+        mem_line = (
+            f"mem total={s.get('total', 0)}  live={s.get('live', 0)}"
+            f"  stale={s.get('stale', 0)}"
+        )
+        by_type = s.get("by_type") or {}
+        by_type_parts = "  ".join(f"{t}={n}" for t, n in sorted(by_type.items()))
+        mem_detail = f"  ({by_type_parts})" if by_type_parts else ""
     else:
-        l2_summary = "(ainda não criado)"
+        mem_line = "mem: indisponível (rode `forge init` pra vendorizar `.claude/bin/mem`)"
+        mem_detail = ""
 
     body = [
-        f"L2 size:          {l2_summary}",
-        f"L1 active:        {len(list_active_features(project_root))}",
-        f"L1 archived:      {len(list_archived_features(project_root))}",
+        f"{mem_line}{mem_detail}",
+        f"L1 active:        {l1_active}",
+        f"L1 archived:      {l1_archived}",
     ]
     renderer.write("")
     renderer.write(renderer.box("memory", body))
@@ -314,6 +315,20 @@ def _render_recent_activity(project_root: Path) -> None:
         renderer.write(f"  · {at[:19] or '?':<19} {source:<22} {kind}  ({delta})")
 
 
+def _mem_stats_snapshot(project_root: Path) -> dict | None:
+    """Snapshot de mem stats pro JSON payload. None se mem indisponível."""
+    res = mem_stats(project_root)
+    if not res.ok or not isinstance(res.data, dict):
+        return None
+    s = res.data
+    return {
+        "total": s.get("total", 0),
+        "by_type": s.get("by_type") or {},
+        "live": s.get("live", 0),
+        "stale": s.get("stale", 0),
+    }
+
+
 # ── Machine-readable payload (A1 + A2) ────────────────────────────────────────
 
 
@@ -345,6 +360,7 @@ def _status_payload(project_root: Path, config: dict) -> dict:
         "memory": {
             "l1_active": len(list_active_features(project_root)),
             "l1_archived": len(list_archived_features(project_root)),
+            "mem": _mem_stats_snapshot(project_root),
         },
         "pending_evolutions": _pending_evolutions_count(project_root),
         "doctor": {
