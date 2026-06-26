@@ -1,637 +1,216 @@
-"""`forge memory` — interactive memory layer inspector + L2 management.
+"""`forge memory` — wrapper fino arg-driven sobre o `mem` vendorizado.
 
-Read-only by default. Mutations (`forget L2 entry`, manual `distill L2`)
-require explicit double confirmation. Manual distill is only meaningful
-when L2 is over `max-size-mb` — discipline §6 says auto-distill mid-apply
-is forbidden, so the user reaches it via this menu after `forge evolve`
-parks itself with `deferred-l2-full`.
+W-ROUTE 6a: o handler deixou de ser menu interativo (com checkpoint-resume
+do DRIFT-1) e virou um dispatcher stateless de subcomandos que delega ao
+substrato `mem` via a fronteira shell (`engine.integrations.mem`). Cada
+invocação é stateless — sem prompt pausável, sem checkpoint — então o burden
+multi-passo desaparece estruturalmente.
 
-Export option dumps `export_for_context_pack(...)` to stdout — that's the
-single intentional non-renderer write in the engine (consumer pipes it
-into a context-pack file).
+Superfície:
+    forge memory search <query>      → mem find
+    forge memory inspect [id]        → mem get <id> | mem stats
+    forge memory export [--budget N] → mem brief
+    forge memory distill [--apply]   → mem evolve
+
+Inspeção de lifecycle (status/phase/history) NÃO vive aqui — é `forge status`
+(estado operacional, não memória-de-conhecimento). L3 (proxy de MEMORY.md)
+foi removido. Voz: mentor calmo.
 """
-
 from __future__ import annotations
 
 import json
 import sys
-from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
 
-from engine.memory.distiller import (
-    apply_proposal_to_l2,
-    detect_l2_overflow,
-    read_proposals_queue,
+from engine.integrations.mem import (
+    mem_brief,
+    mem_evolve,
+    mem_find,
+    mem_get,
+    mem_stats,
 )
-from engine.memory.l1 import (
-    list_active_features,
-    list_archived_features,
-    read_ambiguity_map,
-    read_history,
-    read_hypothesis,
-    read_l1_status,
-    read_rationale_trace,
+from engine.ui import output_mode, renderer
+from engine.ui.exit_codes import ERR_USAGE, fail_with_tag
+from engine.utils.paths import ProjectRootNotFoundError, find_project_root
+
+_USAGE = (
+    "uso: forge memory <ação> [args]\n"
+    "  search <query>       busca ranqueada no acervo (mem find)\n"
+    "  inspect [id]         corpo de uma nota (mem get) ou stats do acervo\n"
+    "  export [--budget N]  índice de alto valor pro context-pack (mem brief)\n"
+    "  distill [--apply]    curadoria do acervo (mem evolve)\n"
 )
-from engine.memory.l2 import (
-    L2Entry,
-    export_for_context_pack,
-    l2_size_bytes,
-    read_l2,
-    remove_entry as l2_remove_entry,
-)
-from engine.memory.l3 import read_l3_entry, read_l3_index
-from engine.ui import output_mode, question, renderer
-from engine.ui.question import PromptAbortedError
-from engine.ui.tree import render_tree
-from engine.utils.paths import (
-    ProjectRootNotFoundError,
-    active_config_path,
-    claude_dir,
-    ensure_dir,
-    find_project_root,
-    memory_l2_path,
-)
-from engine.memory import MemoryError as MemoryStoreError  # C-36/C-40: domain error (subclass de Exception, não o builtin)
-from engine.utils.yaml_io import YamlIOError, read_yaml_or_default, write_yaml
-from engine.utils.checkpoint_io import (
-    clear_checkpoint as _clear_checkpoint_io,
-    load_yaml_checkpoint as _load_yaml_checkpoint_io,
-    save_yaml_checkpoint as _save_yaml_checkpoint_io,
-)
-from engine.utils.iso import utc_now_iso as _utc_now_iso_shared
-
-_PAGE_SIZE = 10
 
 
-# ── Checkpoint (DRIFT-1 W2.T3b — intent-resume, outcome C) ───────────────────
-#
-# Per the T3a audit (.planning/drift-1/checkpoint-audit.json,
-# action="add-new", reuse_path="init-pattern"), memory_cli ganha um
-# checkpoint pra cobrir os 11 callsites interativos (menu ask + prompts
-# em inspect-L1/inspect-L3, search, forget L2 com 2 confirms, distill
-# L2). Mirrors ``_InitCheckpoint`` (engine/init.py:100-108) — outcome
-# C, sem import de ``engine.qa.checkpoint`` (Decision 22).
-#
-# Refs:
-#   - docs/superpowers/specs/drift-1-intent-protocol.md §3, §5, §8
-#   - engine/init.py:100-108 (canonical template)
+def _emit_degraded(message: str) -> int:
+    sys.stderr.write(f"forge memory: {message}\n")
+    return 1
 
 
-@dataclass
-class _MemoryCliCheckpoint:
-    """State serialized before each ``question.ask*`` call in ``memory_cli.run``.
-
-    Carrega ``submenu`` (1..7) e ``entry_id`` opcional pra recuperar
-    o ponto exato do fluxo apos exit-2 + re-invoke. Submenus podem ter
-    multiplos prompts em cadeia (distill L2 itera por propostas).
-    """
-
-    step: str
-    at: str
-    project_root: str
-    intent_id: str | None = None
-    submenu: str | None = None
-    entry_id: str | None = None
-
-
-def _memory_cli_checkpoint_path(project_root: Path) -> Path:
-    return claude_dir(project_root) / ".memory-cli-checkpoint.yaml"
-
-
-# Os 4 helpers abaixo são thin shims sobre ``engine.utils.checkpoint_io`` +
-# ``engine.utils.iso`` — consolidação dos 30 duplicates + 10 cópias de
-# ``_utc_now_iso_*`` apontada pelos findings #5 e #21 do master review do
-# PR #11. Os nomes ``_save_memory_cli_checkpoint`` etc. permanecem como API
-# privada do módulo para preservar os contracts dos testes em
-# ``tests/unit/test_engine_memory_cli_resume.py`` (Mandamento #2 — verde).
-
-
-def _save_memory_cli_checkpoint(cp: _MemoryCliCheckpoint) -> None:
-    """Persist the memory_cli checkpoint atomically."""
-    _save_yaml_checkpoint_io(
-        _memory_cli_checkpoint_path(Path(cp.project_root)),
-        {
-            "schema-version": 1,
-            "step": cp.step,
-            "at": cp.at,
-            "project-root": cp.project_root,
-            "intent-id": cp.intent_id,
-            "submenu": cp.submenu,
-            "entry-id": cp.entry_id,
-        },
-    )
-
-
-def _load_memory_cli_checkpoint(project_root: Path) -> dict[str, Any] | None:
-    """Read the memory_cli checkpoint, returning ``None`` when absent."""
-    return _load_yaml_checkpoint_io(_memory_cli_checkpoint_path(project_root))
-
-
-def _clear_memory_cli_checkpoint(project_root: Path) -> None:
-    """Remove the checkpoint — best-effort; silent on OSError (idempotent)."""
-    _clear_checkpoint_io(_memory_cli_checkpoint_path(project_root))
-
-
-def _utc_now_iso_memory_cli() -> str:
-    """ISO-8601 UTC timestamp — thin shim sobre ``engine.utils.iso``."""
-    return _utc_now_iso_shared()
-
-
-def _load_workflow_config(project_root: Path) -> dict[str, Any]:
-    cfg = read_yaml_or_default(active_config_path(project_root), {})
-    return cfg if isinstance(cfg, dict) else {}
-
-
-# ── Inspect L2 ──────────────────────────────────────────────────────────────
-
-
-def _inspect_l2(project_root: Path) -> None:
-    entries = read_l2(project_root)
-    if not entries:
-        renderer.write(renderer.dim("  L2 vazia."))
-        return
-
-    size_kb = l2_size_bytes(project_root) / 1024
-    renderer.write("")
-    renderer.write(
-        renderer.bold(f"L2-project.yaml — {len(entries)} entradas, {size_kb:.1f} KB")
-    )
-    renderer.write("")
-
-    total = len(entries)
-    cursor = 0
-    while cursor < total:
-        page = entries[cursor : cursor + _PAGE_SIZE]
-        for i, e in enumerate(page, start=cursor + 1):
-            prov = ", ".join(e.provenance) if e.provenance else "—"
-            renderer.write(
-                f"  [{i:>3}] {e.id:<10} {e.kind:<16} conf={e.confidence:.2f}  "
-                f"{(e.title or '')[:42]}"
-            )
-            renderer.write(renderer.dim(f"        provenance: {prov}"))
-        cursor += _PAGE_SIZE
-        if cursor < total:
-            try:
-                cont = question.confirm(
-                    f"Mostrar mais {min(_PAGE_SIZE, total - cursor)} de {total}?",
-                    default=True,
-                )
-            except PromptAbortedError:
-                break
-            if not cont:
-                break
-
-
-# ── Inspect L1 ──────────────────────────────────────────────────────────────
-
-
-def _inspect_l1(project_root: Path) -> None:
-    active = list_active_features(project_root)
-    archived = list_archived_features(project_root)
-    all_slugs = sorted(set(active) | set(archived))
-    if not all_slugs:
-        renderer.write(renderer.dim("  Sem features em L1."))
-        return
-
-    options = {str(i): s for i, s in enumerate(all_slugs, start=1)}
-    options["c"] = "cancelar"
-    pick = question.ask(
-        "Qual feature?", options, default="1", allow_pause=True
-    )
-    if pick == "c":
-        return
-    slug = options[pick]
-
-    state = read_l1_status(slug, project_root)
-    hyp = read_hypothesis(slug, project_root)
-    amb = read_ambiguity_map(slug, project_root)
-    rat = read_rationale_trace(slug, project_root)
-    history = read_history(slug, project_root, tail=10)
-
-    tree: dict[str, Any] = {
-        "feature": slug,
-        "status": (state.status if state else "(arquivada)"),
-        "last-action": (state.last_action_kind if state else "—"),
-        "hypothesis": hyp if hyp else "—",
-        "ambiguity-map": amb if amb else "—",
-        "rationale-trace": rat if rat else "—",
-        "recent-history": history if history else "—",
-    }
-    renderer.write("")
-    renderer.write(renderer.section_header(f"L1: {slug}", width=78))
-    renderer.write("")
-    renderer.write(render_tree(tree))
-
-
-# ── Inspect L3 ──────────────────────────────────────────────────────────────
-
-
-def _inspect_l3() -> None:
-    index = read_l3_index()
-    if not index:
-        renderer.write(renderer.dim("  MEMORY.md ausente ou vazio."))
-        return
-    renderer.write("")
-    renderer.write(renderer.bold(f"L3 auto-memory — {len(index)} entradas"))
-    renderer.write("")
-    for i, entry in enumerate(index, start=1):
-        renderer.write(f"  [{i:>2}] {entry['title']}")
-        renderer.write(renderer.dim(f"       {entry['hook']}"))
-    renderer.write("")
-    if not question.confirm("Abrir uma entrada específica?", default=False):
-        return
-    options = {str(i): entry["title"] for i, entry in enumerate(index, start=1)}
-    options["c"] = "cancelar"
-    pick = question.ask("Qual?", options, default="1", allow_pause=True)
-    if pick == "c":
-        return
-    target = index[int(pick) - 1]
-    body = read_l3_entry(target["file"])
-    if not body:
-        renderer.write(renderer.colored("  arquivo não acessível.", "yellow"))
-        return
-    renderer.write("")
-    renderer.write(renderer.section_header(target["title"], width=78))
-    renderer.write("")
-    if body.get("frontmatter"):
-        renderer.write(render_tree({"frontmatter": body["frontmatter"]}))
-    for line in (body.get("body") or "").splitlines():
-        renderer.write(f"  {line}")
-
-
-# ── Search ──────────────────────────────────────────────────────────────────
-
-
-def _search_all(project_root: Path) -> None:
-    needle = question.ask_text("Termo a buscar (substring):").strip().casefold()
-    if not needle:
-        return
-
-    results_l2: list[tuple[float, str]] = []
-    for e in read_l2(project_root):
-        score = 0.0
-        if needle in (e.title or "").casefold():
-            score += 2.0
-        if needle in (e.body or "").casefold():
-            score += 1.0
-        if score > 0:
-            results_l2.append((score, f"L2 · {e.id} — {e.title}"))
-
-    results_l1: list[tuple[float, str]] = []
-    for slug in list_active_features(project_root):
-        hyp = read_hypothesis(slug, project_root) or {}
-        amb = read_ambiguity_map(slug, project_root) or {}
-        blob = (str(hyp) + " " + str(amb)).casefold()
-        if needle in blob:
-            results_l1.append((1.0, f"L1 · {slug}"))
-
-    results_l3: list[tuple[float, str]] = []
-    for entry in read_l3_index():
-        if (
-            needle in entry["title"].casefold()
-            or needle in entry["hook"].casefold()
-        ):
-            results_l3.append((1.5, f"L3 · {entry['title']}"))
-
-    all_results = sorted(
-        results_l2 + results_l1 + results_l3,
-        key=lambda item: item[0],
-        reverse=True,
-    )
-    renderer.write("")
-    if not all_results:
+def _action_search(project_root: Path, rest: list[str], json_mode: bool) -> int:
+    query = " ".join(rest).strip()
+    if not query:
+        sys.stderr.write("forge memory search: falta <query>.\n")
+        return fail_with_tag(ERR_USAGE)
+    res = mem_find(project_root, query)
+    if not res.ok:
+        return _emit_degraded(res.message)
+    hits = res.data or []
+    if json_mode:
+        print(json.dumps(hits, indent=2, default=str))
+        return 0
+    if not hits:
         renderer.write(renderer.dim("  sem matches."))
-        return
-    renderer.write(renderer.bold(f"matches ({len(all_results)})"))
-    for _, line in all_results:
-        renderer.write(f"  · {line}")
-
-
-# ── Forget L2 entry ─────────────────────────────────────────────────────────
-
-
-def _forget_l2(project_root: Path) -> None:
-    entries = read_l2(project_root)
-    if not entries:
-        renderer.write(renderer.dim("  L2 vazia."))
-        return
-    entry_id = question.ask_text("ID da entrada (ex.: L2-007):").strip()
-    target: Optional[L2Entry] = next(
-        (e for e in entries if e.id == entry_id), None
-    )
-    if target is None:
-        renderer.write(renderer.colored("  ID não encontrado em L2.", "yellow"))
-        return
-    renderer.write(f"  alvo: {target.id} — {target.title}")
-    if not question.confirm("Apagar essa entrada? (1ª)", default=False):
-        return
-    if not question.confirm("Confirma — sem restauração. (2ª)", default=False):
-        return
-    l2_remove_entry(project_root, entry_id)
-    renderer.write(renderer.colored(f"  ✓ {entry_id} removida de L2.", "green"))
-
-
-# ── Distill (manual) ────────────────────────────────────────────────────────
-
-
-def _distill_l2(project_root: Path) -> None:
-    """Detect overflow + apply queued DistillationProposals one by one.
-
-    Algorithm v1 (per discipline §5 single-by-single apply):
-
-    - ``distill-l2``: apply one proposal — adds a new consolidated L2 entry
-      and (when payload declares ``obsoletes``) the source entries are marked
-      so the next read sees them as obsoleted-by the new entry. v1 keeps
-      this conservative: `apply_proposal_to_l2` already handles the L2 write
-      for the consolidated promote, and the user-facing flow surfaces one
-      proposal at a time.
-    - ``consolidate-l2``: merge entries with the same ``kind`` and similar
-      ``title`` (substring/keyword match) into a single L2 entry with a
-      widened provenance. Delegated to `apply_proposal_to_l2` for the L2
-      write — caller approves each proposal explicitly.
-
-    Distillation auto-trigger lives in the retrospective-agent flow; this
-    interactive menu is the manual escape hatch.
-    """
-    cfg = _load_workflow_config(project_root)
-    if not detect_l2_overflow(project_root, cfg):
-        renderer.write(renderer.dim(
-            "  L2 ainda não excede max-size-mb — distill manual não é "
-            "necessário (auto roda em feature-done)."
-        ))
-        renderer.write(renderer.dim(
-            "  Distillation auto-gerada acontece via retrospective-agent "
-            "ou L2 overflow detectado em runtime."
-        ))
-        if not question.confirm("Forçar distill mesmo assim?", default=False):
-            return
-
-    proposals = [
-        p for p in read_proposals_queue(project_root)
-        if p.kind in {"distill-l2", "consolidate-l2"}
-    ]
-    if not proposals:
-        renderer.write(renderer.dim(
-            "  Nenhuma proposta de distillation/consolidation na queue."
-        ))
-        renderer.write(renderer.dim(
-            "  Distillation auto-gerada acontece via retrospective-agent "
-            "ou L2 overflow detectado em runtime."
-        ))
-        return
-
-    renderer.write(renderer.bold(f"propostas de distill ({len(proposals)})"))
-    for i, p in enumerate(proposals, start=1):
+        return 0
+    renderer.write(renderer.bold(f"matches ({len(hits)})"))
+    for h in hits:
         renderer.write(
-            f"  [{i:>2}] {p.id}  conf={p.confidence:.2f}  {p.title[:48]}"
+            f"  {h.get('id', '?'):<28} score={h.get('score', 0):.3f}  "
+            f"{h.get('type', ''):<10} {(h.get('title') or '')[:48]}"
         )
+    return 0
 
-    # Single-by-single apply (discipline §5) — same pattern usado por evolve.py
-    for p in proposals:
+
+def _action_inspect(project_root: Path, rest: list[str], json_mode: bool) -> int:
+    if rest:
+        note_id = rest[0]
+        res = mem_get(project_root, note_id)
+        if not res.ok:
+            return _emit_degraded(res.message)
+        if res.data is None:
+            if json_mode:
+                print(json.dumps(None))
+            else:
+                renderer.write(
+                    renderer.colored(f"  nota {note_id} não encontrada.", "yellow")
+                )
+            return 0
+        if json_mode:
+            print(json.dumps(res.data, indent=2, default=str))
+            return 0
+        note = res.data
         renderer.write("")
-        renderer.write(renderer.section_header(p.id, width=78))
-        for line in (p.description or "").splitlines() or ["—"]:
+        renderer.write(renderer.section_header(note.get("title") or note_id, width=78))
+        renderer.write(
+            renderer.dim(
+                f"  {note.get('id', '')} · {note.get('type', '')} · "
+                f"imp={note.get('importance', '?')}"
+            )
+        )
+        renderer.write("")
+        for line in (note.get("body") or "").splitlines():
             renderer.write(f"  {line}")
-        action = question.ask(
-            f"O que fazer com {p.id}?",
-            {"a": "aplicar", "d": "depois", "s": "sair"},
-            default="d",
-            allow_pause=True,
-        )
-        if action == "s":
-            return
-        if action == "a":
-            apply_proposal_to_l2(project_root, p)
-            renderer.write(renderer.colored(f"  ✓ aplicado {p.id}.", "green"))
+        return 0
+
+    res = mem_stats(project_root)
+    if not res.ok:
+        return _emit_degraded(res.message)
+    stats = res.data or {}
+    if json_mode:
+        print(json.dumps(stats, indent=2, default=str))
+        return 0
+    renderer.write("")
+    renderer.write(renderer.bold("acervo (mem stats)"))
+    renderer.write(
+        f"  total={stats.get('total', 0)}  live={stats.get('live', 0)}  "
+        f"stale={stats.get('stale', 0)}"
+    )
+    for t, n in sorted((stats.get("by_type") or {}).items()):
+        renderer.write(f"    {t:<12} {n}")
+    renderer.write(
+        f"  inbox: pending={stats.get('inbox_pending', 0)} "
+        f"promoted={stats.get('inbox_promoted', 0)} "
+        f"rejected={stats.get('inbox_rejected', 0)}"
+    )
+    return 0
 
 
-# ── Export ──────────────────────────────────────────────────────────────────
-
-
-def _export_l2(project_root: Path) -> None:
-    md = export_for_context_pack(project_root)
-    # Single intentional direct stdout write — caller may pipe into a file.
-    sys.stdout.write(md)
-    sys.stdout.flush()
-
-
-# ── Entry point ─────────────────────────────────────────────────────────────
-
-
-_SNAPSHOT_READ_ERRORS = (MemoryStoreError, YamlIOError, OSError, ValueError, KeyError)
-
-
-def _memory_snapshot(project_root: Path) -> dict:
-    """Read-only machine snapshot of the 3 memory layers (A1, narrow).
-
-    Mutating submenus (forget/distill) and interactive ones (search, inspect
-    with selection prompt) are intentionally excluded — they have no
-    unambiguous machine contract under the meta-flags-only carve-out of
-    Decisão 10 revisitada. Export keeps its own stdout-pipe path.
-
-    C-40 (PR21-I9): cada data-access (read_l2 / l2_size_bytes /
-    list_active_features / read_l3_index) é guardado granularmente — uma camada
-    corrompida degrada pra um snapshot PARCIAL coerente (campo `degraded` lista
-    o que falhou) em vez de derrubar o snapshot inteiro. C-36 (o outer guard no
-    branch JSON) ainda pega qualquer erro residual.
-    """
-    degraded: list[str] = []
-
-    try:
-        l2_entries = list(read_l2(project_root))
-    except _SNAPSHOT_READ_ERRORS:
-        l2_entries = []
-        degraded.append("l2-entries")
-    try:
-        l2_size = (
-            l2_size_bytes(project_root)
-            if memory_l2_path(project_root).exists()
-            else 0
-        )
-    except _SNAPSHOT_READ_ERRORS:
-        l2_size = 0
-        degraded.append("l2-size")
-    try:
-        active = list(list_active_features(project_root))
-    except _SNAPSHOT_READ_ERRORS:
-        active = []
-        degraded.append("l1-active")
-    try:
-        archived = list(list_archived_features(project_root))
-    except _SNAPSHOT_READ_ERRORS:
-        archived = []
-        degraded.append("l1-archived")
-
-    active_payload = []
-    for slug in active:
+def _action_export(project_root: Path, rest: list[str], json_mode: bool) -> int:
+    budget: int | None = None
+    if "--budget" in rest:
+        idx = rest.index("--budget")
+        if idx + 1 >= len(rest):
+            sys.stderr.write("forge memory export: --budget exige um inteiro.\n")
+            return fail_with_tag(ERR_USAGE)
         try:
-            st = read_l1_status(slug, project_root)
-        except _SNAPSHOT_READ_ERRORS:
-            st = None
-            degraded.append(f"l1-status:{slug}")
-        active_payload.append(
-            {
-                "slug": slug,
-                "status": (st.status if st is not None else None),
-                "last_action_kind": (st.last_action_kind if st is not None else None),
-            }
+            budget = int(rest[idx + 1])
+        except ValueError:
+            sys.stderr.write("forge memory export: --budget exige um inteiro.\n")
+            return fail_with_tag(ERR_USAGE)
+    res = mem_brief(project_root, budget=budget)
+    if not res.ok:
+        return _emit_degraded(res.message)
+    items = res.data or []
+    if json_mode:
+        print(json.dumps(items, indent=2, default=str))
+        return 0
+    # Texto pro context-pack — stdout direto, pipeable.
+    for it in items:
+        sys.stdout.write(f"- [{it.get('type', '')}] {it.get('line', '')}\n")
+    sys.stdout.flush()
+    return 0
+
+
+def _action_distill(project_root: Path, rest: list[str], json_mode: bool) -> int:
+    apply = "--apply" in rest
+    res = mem_evolve(project_root, apply=apply)
+    if not res.ok:
+        return _emit_degraded(res.message)
+    data = res.data or {}
+    if json_mode:
+        print(json.dumps(data, indent=2, default=str))
+        return 0
+    archive = data.get("archive") or []
+    dups = data.get("dup_clusters") or []
+    renderer.write("")
+    renderer.write(renderer.bold("curadoria do acervo (mem evolve)"))
+    renderer.write(
+        f"  archive-candidatos={len(archive)}  dup-clusters={len(dups)}  "
+        f"aplicados={data.get('applied', 0)}"
+    )
+    if not apply and (archive or dups):
+        renderer.write(
+            renderer.dim(
+                "  rode `forge memory distill --apply` pra arquivar candidatos "
+                "own-author."
+            )
         )
+    return 0
 
-    try:
-        l3 = [
-            {"title": entry["title"], "hook": entry["hook"]}
-            for entry in read_l3_index()
-        ]
-    except _SNAPSHOT_READ_ERRORS:
-        l3 = []
-        degraded.append("l3")
 
-    snapshot = {
-        "l2": {
-            "size_bytes": l2_size,
-            "entries": [
-                {
-                    "id": e.id,
-                    "kind": e.kind,
-                    "confidence": e.confidence,
-                    "title": e.title,
-                    "provenance": list(e.provenance) if e.provenance else [],
-                }
-                for e in l2_entries
-            ],
-        },
-        "l1": {"active": active_payload, "archived": list(archived)},
-        "l3": l3,
-    }
-    if degraded:
-        snapshot["degraded"] = degraded
-    return snapshot
+_ACTIONS = {
+    "search": _action_search,
+    "inspect": _action_inspect,
+    "export": _action_export,
+    "distill": _action_distill,
+}
 
 
 def run(argv: list[str]) -> int:
-    """Interactive memory menu."""
-    _ = argv
+    """Dispatcher arg-driven do `forge memory` (stateless, sem prompt).
 
+    `find_project_root()` vem PRIMEIRO: pré-init (dir sem projeto) → exit 1
+    (contrato Bug U1/SPEC §3 A.1), antes de qualquer parse de ação. `--json`
+    é meta-flag global já resolvida em `cli.main` (contextvar via
+    `output_mode.is_json_mode()`); filtramos do argv aqui pra não poluir os
+    args posicionais — `cli.main` repassa `argv[1:]` sem strip.
+    """
     try:
         project_root = find_project_root()
     except ProjectRootNotFoundError as exc:
         sys.stderr.write(f"forge memory: {exc}\n")
         return 1
-
-    # A1 (narrow) — JSON mode emits a read-only snapshot of the 3 memory
-    # layers and returns BEFORE any renderer.write / question.ask, so the
-    # interactive menu is never entered. Mutating/interactive submenus
-    # (forget/distill/search) have no machine contract under the meta-flags-only
-    # carve-out of Decisão 10 revisitada (documented in 04-pending.md).
-    if output_mode.is_json_mode():
-        # C-36 (PR21-I6): o path interativo é guardado, mas o JSON cuspia
-        # traceback cru em L2/L3 corrompido. Outer guard: erro residual (após os
-        # guards granulares de C-40) → mensagem clean em stderr + exit 1, stdout
-        # puro (nada de JSON parcial nem traceback).
-        try:
-            payload = _memory_snapshot(project_root)
-        except _SNAPSHOT_READ_ERRORS as exc:
-            sys.stderr.write(f"forge memory: snapshot falhou — {exc}\n")
-            return 1
-        print(json.dumps(payload, indent=2, default=str))
-        return 0
-
-    # Hint when L2 file just doesn't exist yet.
-    if not memory_l2_path(project_root).exists():
-        renderer.write(renderer.dim("  (L2-project.yaml ainda não existe)"))
-
-    renderer.write(renderer.bold("forge memory — layers:"))
-    options = {
-        "1": "inspect L2-project          (paginated)",
-        "2": "inspect L1 {slug}",
-        "3": "inspect L3 auto-memory      (MEMORY.md proxy)",
-        "4": "search                       (substring L1+L2+L3)",
-        "5": "forget L2 entry             (confirm dupla)",
-        "6": "distill L2                  (apenas em overflow)",
-        "7": "export L2 for context-pack  (stdout)",
-        "c": "cancelar",
-    }
-
-    # DRIFT-1 W2.T3b — persist checkpoint with the deterministic intent-id
-    # for the menu ask BEFORE invoking ``question.ask``. On exit-2 +
-    # re-invoke, ``question.ask`` finds the matching forge-response.json
-    # and returns the value without re-prompting. Outcome C — per-subcommand
-    # dataclass, no import from ``engine.qa.checkpoint``.
-    _save_memory_cli_checkpoint(
-        _MemoryCliCheckpoint(
-            step="step-menu",
-            at=_utc_now_iso_memory_cli(),
-            project_root=str(project_root),
-            intent_id=question.stable_intent_id(
-                "ask",
-                "O que olhar?",
-                options,
-                extra={
-                    "default": "1",
-                    "min-selected": None,
-                    "validator-hint": None,
-                },
-            ),
-            submenu=None,
-        )
-    )
-
-    try:
-        choice = question.ask(
-            "O que olhar?", options, default="1", allow_pause=True
-        )
-    except PromptAbortedError:
-        return 130
-
-    if choice == "c":
-        # DRIFT-1 W2.T3b — clear intent-resume checkpoint on clean completion.
-        _clear_memory_cli_checkpoint(project_root)
-        return 0
-
-    # DRIFT-1 W2.T3b — atualiza checkpoint pra refletir o submenu escolhido
-    # ANTES de invocar o handler. Prompts internos (paginacao, search,
-    # confirm em forget L2, distill L2) herdam intent-resume via
-    # question.ask* — cada um calcula seu proprio intent-id deterministico
-    # quando chamado.
-    _save_memory_cli_checkpoint(
-        _MemoryCliCheckpoint(
-            step=f"step-submenu:{choice}",
-            at=_utc_now_iso_memory_cli(),
-            project_root=str(project_root),
-            intent_id=None,
-            submenu=choice,
-        )
-    )
-
-    try:
-        if choice == "1":
-            _inspect_l2(project_root)
-        elif choice == "2":
-            _inspect_l1(project_root)
-        elif choice == "3":
-            _inspect_l3()
-        elif choice == "4":
-            _search_all(project_root)
-        elif choice == "5":
-            _forget_l2(project_root)
-        elif choice == "6":
-            _distill_l2(project_root)
-        elif choice == "7":
-            _export_l2(project_root)
-    except PromptAbortedError:
-        renderer.write("  pausado.")
-        _clear_memory_cli_checkpoint(project_root)
-        return 130
-    except Exception as exc:
-        sys.stderr.write(f"forge memory: operação falhou — {exc}\n")
-        _clear_memory_cli_checkpoint(project_root)
-        return 1
-
-    # DRIFT-1 W2.T3b — clear intent-resume checkpoint on clean completion.
-    _clear_memory_cli_checkpoint(project_root)
-    return 0
+    argv = [a for a in argv if a != "--json"]
+    if not argv:
+        sys.stderr.write(_USAGE)
+        return fail_with_tag(ERR_USAGE)
+    action, rest = argv[0], argv[1:]
+    handler = _ACTIONS.get(action)
+    if handler is None:
+        sys.stderr.write(f"forge memory: ação desconhecida '{action}'.\n")
+        sys.stderr.write(_USAGE)
+        return fail_with_tag(ERR_USAGE)
+    return handler(project_root, rest, output_mode.is_json_mode())
 
 
 __all__ = ["run"]
