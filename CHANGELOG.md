@@ -19,6 +19,27 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 - Decisões/disciplinas/pending/handoff/learnings espelhados no acervo mem (aditivo; os canônicos `docs/design/*` preservados intactos) — Fase 0 dogfood (T5). As 33 decisões de `01-decisions.md` (rows 1-32 + 18-v2, com `tag:superseded` nas supersedidas e `importance 4-5` nas 8 load-bearing), as 10 disciplinas de `07-discipline.md` (as 6 universais com `tag:universal`), os 7 gaps abertos de `04-pending.md`, o estado curado v1.6.1 de `08-session-handoff.md` (via `mem session`) e os 27 learnings duráveis da auto-memory (24 feedback + 3 reference, preservando Why/How-to-apply + links cruzados). Migração só por `mem add`/`mem session` (acervo `total: 45 → 123`, zero near-dup). Os `docs/design/*` permanecem como fonte de verdade load-bearing com enforcement acoplado; o mem é o espelho recuperável que destrava o enxugue do núcleo injetado na T6.
 - Hooks do mem instalados no `.claude/settings.json` via `mem install-hooks --apply` (Fase 0.5 — P2): `Stop`/`UserPromptSubmit` (eventos novos pro repo) + `SessionStart`/`PostToolUse` somados aos do forge. Merge aditivo verificado (gate de coexistência): os hooks do forge — `session-start-orientation`, `pre-tool-use-load-bearing`, `post-edit-doc-drift` — continuam registrados e funcionais; `PreToolUse` fica só do forge (mem não o registra). Continuidade via `checkpoint` (singleton mantido pelos hooks do mem) + consolidação via skill `mem-consolidate` passam a ser a prática canônica.
 
+- Novo intent-kind `classify` (Fase 1 W-RULES, ADITIVO): o engine emite um
+  pending `kind:"classify"` com `fragments` (fragmentos de text das rules do
+  consumidor) + `classification-schema`; o host-LLM fulfilla escrevendo
+  `forge-response.json` com `classification:[{fragment_id, tier:int, rationale,
+  mem_note?}]`. `tier 0` = invariante always-on (gates, enforcement,
+  "NUNCA/sempre"); `tier 1` = detalhe recuperável → mem. `TtyAdapter` retorna
+  `None` (host sem LLM) — `_reduce_rules` pula com aviso (fallback honesto
+  H-101). Schema: `docs/schemas/intent-protocol.md §classify`. Driver:
+  `skills/feature-forge/SKILL.md §Fulfillment do intent classify`.
+
+- `forge init` ganha passo de redução de rules do consumidor (`_reduce_rules`,
+  Fase 1 W-RULES): após o vendoring do mem, o init lê `.claude/rules/` +
+  `CLAUDE.md`, fatia por heading, emite um `classify` intent e exibe proposta
+  em 3-caminhos (G1 aceitar / G2 ajustar / G3 pular). Ao aceitar: `mem add`
+  de todos os tier-1 (verificado — sem `.bak` nem trim se algum falhar), depois
+  `.bak` imediato de cada arquivo tocado (Decisão 24), depois trim — substituindo
+  o conteúdo tier-1 por ponteiro `mem find`. Revisão (M-202): caminho G2 re-emite
+  `classify` com `revise:true` + `prior`, novo `intent-id` (sem colidir com o
+  anterior); máximo 3 rodadas. Greenfield sem rules e consumidor com sentinel
+  `.rules-reduced` (sem `--force`) pulam sem efeito.
+
 ### Changed
 
 - ADR-note Decisão 22 (sem dep runtime de outras skills): o mem é vendorizado

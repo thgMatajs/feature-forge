@@ -16,6 +16,40 @@ checklist for next sessions.
   os consumidores — nesse ponto o drift de pin passa de cosmético a funcional e o
   custo do "force `forge init`" vira fricção real.
 
+## W-RULES — gaps pós Fase 1 Onda 5 (2026-06-26)
+
+- **W-RULES-OC (opencode adapter `classify` não coberto)** — o `ClaudeCodeAdapter`
+  e o `IntentFileAdapter` implementam `classify` com pending/response via
+  `forge-pending.json`. O `OpencodeAdapter` (quando implementado — gap
+  MCP-dormant acima) precisará de um `classify` próprio no mesmo padrão.
+  Até lá, opencode usa `IntentFileAdapter` como fallback (Veredito B), que já
+  suporta `classify` corretamente. Sem impacto funcional imediato.
+  *Reentrar* quando `OpencodeAdapter` for implementado (critério: ver §MCP-dormant).
+
+- **W-RULES-PAUSE (round-trip de pause do `ask_three_paths` dentro do loop de
+  ajuste sem teste dedicado)** — a sequência G2 (ajustar) no `_reduce_rules`
+  re-emite `classify` (novo `intent-id`) e depois exibe novo `ask_three_paths`
+  (outro `intent-id`). O mecanismo de pause/resume do `ask_three_paths`
+  nessa posição — onde dois intents encadeados podem pausar em ordens diferentes
+  entre re-runs — não tem teste de integração dedicado. O mecanismo é
+  determinístico (mesmo padrão provado no classify e em outros multi-intent),
+  mas a cobertura do encadeamento específico G2 falta. Risco: baixo (lógica
+  idêntica a outros caminhos cobertos).
+  *Reentrar* quando suite de integração do init for ampliada.
+
+- **W-RULES-RESUME (checkpoint pré-existente re-roda `_reduce_rules`)** — o
+  init usa `_InitCheckpoint` (checkpoint de etapas). O passo `_reduce_rules`
+  está inserido após o vendoring, mas o checkpoint não salva a posição interna
+  do `_reduce_rules` (etapa de classify já consumida vs. ainda pendente). Numa
+  re-invocação pós-pausa no `ask_three_paths`, o `_reduce_rules` recalcula os
+  fragments (determinístico — H-101 garante o mesmo `intent-id` pra classify)
+  e re-consome a response cacheada corretamente. No entanto, se o checkpoint de
+  etapa posicionar o resume ANTES do `_reduce_rules` em vez de dentro dele, os
+  steps anteriores do pipeline do init são re-executados — operações idempotentes,
+  não incorretas, mas custosas. Não é incorreção: o idempotent-by-design do
+  pipeline absorve o re-run.
+  *Reentrar* se o custo de re-run virar fricção real em inits longos.
+
 ## W-MIGRATE (migrador L2→mem) — DEFERIDO até brownfield real (2026-06-26)
 
 O migrador forge-side L2→mem (spec §Migração: kind→type, field-preservation,
