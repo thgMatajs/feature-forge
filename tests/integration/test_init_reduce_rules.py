@@ -151,11 +151,64 @@ def test_reduce_rules_aborts_trim_when_mem_add_fails(
         "engine.init.question.ask_three_paths", lambda *a, **k: "a"  # aceitar
     )
     monkeypatch.setattr("engine.init.mem_call", lambda pr, args, **k: _fail())
-    with pytest.raises(Exception):
+    with pytest.raises(init.InitError):  # IMP-02: _MemAddError é InitError, não RuntimeError cru
         init._reduce_rules(c)
     body = (c / ".claude" / "rules" / "reuso.md").read_text(encoding="utf-8")
     assert "Consulte o graph" in body, "corpo deve estar preservado (sem trim)"
     assert not (c / ".claude" / "rules" / "reuso.md.bak").exists(), "M-201: sem .bak orfao no abort"
+
+
+@pytest.mark.integration
+def test_reduce_rules_revise_incomplete_raises_init_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """IMP-01: se classify(revise=True) omite algum fragmento, InitError é levantado."""
+    c = _consumer(tmp_path)
+    call_count = 0
+
+    def fake_classify(fragments, *, schema=None, **k):
+        nonlocal call_count
+        call_count += 1
+        schema = schema or {}
+        if schema.get("revise"):
+            # Retorna classificação incompleta — omite CLAUDE.md::gate.
+            return [
+                {
+                    "fragment_id": "reuso.md::reuso",
+                    "tier": 1,
+                    "rationale": "ref",
+                    "mem_note": {
+                        "type": "reference",
+                        "title": "Reuso",
+                        "body": "x",
+                        "tags": ["reuso"],
+                    },
+                }
+            ]
+        # 1ª chamada: ambos os fragmentos classificados.
+        return [
+            {
+                "fragment_id": "reuso.md::reuso",
+                "tier": 1,
+                "rationale": "ref",
+                "mem_note": {
+                    "type": "reference",
+                    "title": "Reuso",
+                    "body": "x",
+                    "tags": ["reuso"],
+                },
+            },
+            {"fragment_id": "CLAUDE.md::gate", "tier": 0, "rationale": "invariante"},
+        ]
+
+    paths_seq = iter(["b"])  # escolhe ajustar → dispara revise
+    monkeypatch.setattr("engine.init.question.classify", fake_classify)
+    monkeypatch.setattr(
+        "engine.init.question.ask_three_paths", lambda *a, **k: next(paths_seq)
+    )
+    monkeypatch.setattr("engine.init.mem_call", lambda pr, args, **k: _ok())
+    with pytest.raises(init.InitError, match="classify \\(revise\\).*incompleto"):
+        init._reduce_rules(c)
 
 
 @pytest.mark.integration

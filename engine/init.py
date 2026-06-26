@@ -1426,8 +1426,9 @@ def _parse_rule_fragments(project_root: Path) -> list[dict]:
     - Dentro de cada arquivo, os fragmentos aparecem na ordem do texto.
 
     Retorna lista de dicts: {id, source, heading, text}.
-    Fragmentos sem heading (preâmbulo) são incluídos com heading="" e
-    id="<source>::__preamble__".
+    Fragmentos sem heading (preâmbulo) são EXCLUÍDOS — só seções com
+    heading ##/### são classificáveis. Preâmbulos sem heading não entram
+    no payload do classify.
     """
     import re
 
@@ -1497,7 +1498,7 @@ def _parse_rule_fragments(project_root: Path) -> list[dict]:
     return fragments
 
 
-class _MemAddError(RuntimeError):
+class _MemAddError(InitError):
     """Falha de mem add — aborta ANTES de .bak/trim (H-104/M-201)."""
 
 
@@ -1616,16 +1617,34 @@ def _reduce_rules(project_root: Path) -> bool:
                     },
                     {
                         "label": "pular a redução",
-                        "motive": "mantém as rules como estão",
+                        "motive": "mantém as rules como estão — pode rodar manualmente depois",
                     },
                     {
-                        "label": "pular a redução (confirma)",
-                        "motive": "sai sem alterar nada",
+                        "label": "inspecionar a classificação",
+                        "motive": "exibe a lista de fragmentos e tiers propostos antes de decidir",
                     },
                 ],
             )
             if choice == "a":
                 break
+            if choice == "c":
+                # Inspecionar: re-renderiza a lista de fragmentos + tiers e
+                # retorna ao 3-caminhos (outcome distinto — sem aplicar nem pular).
+                _cur_tier1 = [
+                    item for item in current_classification if item.get("tier") == 1
+                ]
+                _cur_tier0 = [
+                    item for item in current_classification if item.get("tier") == 0
+                ]
+                renderer.write("")
+                renderer.write("  Tier-0 (invariante always-on):")
+                for _item in _cur_tier0:
+                    renderer.write(f"    · {_item['fragment_id']}")
+                renderer.write("  Tier-1 (vai pro mem):")
+                for _item in _cur_tier1:
+                    renderer.write(f"    · {_item['fragment_id']}")
+                renderer.write("")
+                continue
             return False
 
         # Re-classifica com revise=True + prior (M-202).
@@ -1640,6 +1659,15 @@ def _reduce_rules(project_root: Path) -> bool:
             return False
         current_classification = revised
 
+        # Valida completude da classificação revisada (mesmo gate que a inicial).
+        rev_ids = {item["fragment_id"] for item in current_classification}
+        missing_rev = fragment_ids - rev_ids
+        if missing_rev:
+            raise InitError(
+                f"classify (revise) retornou resultado incompleto — "
+                f"fragmentos sem tier: {sorted(missing_rev)}"
+            )
+
     # ── Apply ordenado (H-104 + M-201) ──────────────────────────────────────
     # Tier-1 final após loop de aceitar/ajustar.
     tier1_items = [item for item in current_classification if item.get("tier") == 1]
@@ -1647,7 +1675,6 @@ def _reduce_rules(project_root: Path) -> bool:
     # Passo 1: mem add de TODOS os Tier-1 — verifica cada MemResult ANTES
     # de qualquer operação destrutiva (.bak / trim).
     # Se QUALQUER add falha → aborta imediatamente (dado intacto, sem .bak orfão).
-    add_results: list[tuple[dict, "MemResult"]] = []  # type: ignore[name-defined]
     for item in tier1_items:
         note = item.get("mem_note") or {}
         note_type = note.get("type", "reference")
@@ -1662,8 +1689,6 @@ def _reduce_rules(project_root: Path) -> bool:
         args.append(body)
 
         res = mem_call(project_root, args, json=False)
-        add_results.append((item, res))
-
         if not (res.found and res.exit_code == 0):
             raise _MemAddError(
                 f"mem add falhou para '{title}' "
@@ -1674,7 +1699,6 @@ def _reduce_rules(project_root: Path) -> bool:
     # Identifica os arquivos fonte que têm Tier-1.
     tier1_sources: set[str] = {item["fragment_id"].split("::")[0] for item in tier1_items}
 
-    files_baked: list[Path] = []
     for source_name in sorted(tier1_sources):
         if source_name == "CLAUDE.md":
             src_path = project_root / "CLAUDE.md"
@@ -1682,9 +1706,7 @@ def _reduce_rules(project_root: Path) -> bool:
             src_path = claude_dir(project_root) / "rules" / source_name
         if src_path.is_file():
             bak_path = src_path.with_suffix(src_path.suffix + ".bak")
-            import shutil as _shutil
-            _shutil.copy2(src_path, bak_path)
-            files_baked.append(src_path)
+            shutil.copy2(src_path, bak_path)
 
     # Passo 3: trim — substitui fragmentos Tier-1 por ponteiro, escreve sentinel.
     tier1_frag_ids = {item["fragment_id"] for item in tier1_items}
