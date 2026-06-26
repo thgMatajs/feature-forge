@@ -249,3 +249,35 @@ def mem_evolve(project_root: Path, *, apply: bool = False) -> MemQuery:
     if apply:
         args.append("--apply")
     return _run_or_degrade(project_root, args)
+
+
+def mem_inbox_add(
+    project_root: Path,
+    title: str,
+    body: str,
+    mem_type: str,
+    *,
+    importance: int | None = None,
+    tags: str | None = None,
+    source: str | None = None,
+    origin: str = "manual",
+) -> MemQuery:
+    """`mem inbox add` — enfileira candidato curado no inbox do mem.
+
+    O conhecimento aprovado no ``forge evolve`` entra na fila de inbox
+    (anti-envenenamento G11/R12) e só vira nota ativa após ``mem evolve`` /
+    ``mem inbox promote``. Reusa ``_run_or_degrade`` — degrade soft 3-caminhos.
+
+    O separador ``"--"`` antes do ``body`` posicional é OBRIGATÓRIO (lição
+    W-RULES): body começando com ``-`` quebraria o argparse do mem sem ele.
+    """
+    args = ["inbox", "add", "--type", mem_type, "-t", title]
+    if importance is not None:
+        args += ["--importance", str(importance)]
+    if tags is not None:
+        args += ["--tags", tags]
+    if source is not None:
+        args += ["--source", source]
+    args += ["--origin", origin]
+    args += ["--", body]
+    return _run_or_degrade(project_root, args)
