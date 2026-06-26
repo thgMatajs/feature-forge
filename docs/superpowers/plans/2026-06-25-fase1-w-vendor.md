@@ -100,8 +100,13 @@ def _vendor_mem(project_root: Path) -> bool:
     if version.is_file():
         shutil.copy2(version, dst.parent / "mem.version")
     # Scaffold idempotente via a fronteira (mem init não aceita --json).
-    mem_call(project_root, ["init"], json=False)
-    return True
+    # M-002: NÃO descartar o resultado — se o scaffold falhar, o binário foi
+    # copiado mas o estado (.claude/memory, gitignore, AGENTS.md) pode estar
+    # incompleto. Retorna o sucesso REAL (cópia + scaffold), pra não afirmar
+    # vendorização completa quando o scaffold falhou. O init segue gracioso
+    # (não crasha), e a categoria `mem` do doctor pega o estado depois.
+    res = mem_call(project_root, ["init"], json=False)
+    return res.found and res.exit_code == 0
 ```
 Wire em `_run_pipeline` (junto do bloco de hooks, ~linha 2228, ANTES de qualquer passo que use mem):
 ```python
@@ -137,6 +142,7 @@ git commit -m "feat(init): vendoriza o mem no consumidor (.claude/bin/mem + scaf
 ```python
 # tests/unit/test_doctor_mem.py
 from engine import doctor
+from engine.integrations.mem import MemResult
 
 def test_check_mem_fails_when_not_vendored(tmp_path):
     (tmp_path / ".git").mkdir()
@@ -144,6 +150,22 @@ def test_check_mem_fails_when_not_vendored(tmp_path):
     assert report.title == "mem"
     assert report.worst == doctor._STATUS_FAIL      # sem vendor → fail (não silencioso)
     assert any("vendor" in c.name for c in report.checks)
+
+def test_check_mem_health_warns_on_non_ok_check(tmp_path, monkeypatch):
+    # H-001: mem doctor retorna exit 0 mesmo com check não-ok; a saúde deve
+    # derivar do JSON, não do exit code. Vendoriza um stub e injeta um doctor não-ok.
+    binp = tmp_path / ".claude" / "bin" / "mem"
+    binp.parent.mkdir(parents=True)
+    binp.write_text("#!/bin/sh\nexit 0\n"); binp.chmod(0o755)
+    def fake_mem_call(project_root, args, **kw):
+        # exit 0 (como o mem real), mas um check schema não-ok no JSON.
+        return MemResult(found=True, exit_code=0,
+                         stdout='[{"check":"schema","status":"fail","detail":"db=3 code=4"}]',
+                         stderr="")
+    monkeypatch.setattr(doctor, "mem_call", fake_mem_call)
+    report = doctor._check_mem(tmp_path)
+    health = next(c for c in report.checks if c.name == "health")
+    assert health.status == doctor._STATUS_WARN     # NÃO ok, apesar do exit 0
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -168,24 +190,42 @@ def _check_mem(project_root: Path) -> _CategoryReport:
             message="mem não vendorizado em .claude/bin/mem",
             remediation="rode `forge init` ou `forge reconfigure`")])
     checks: list[_Check] = [_Check("vendored", _STATUS_OK, "mem vendorizado em .claude/bin/mem")]
-    res = mem_call(project_root, ["doctor"])
-    if res.found and res.exit_code == 0:
-        checks.append(_Check("health", _STATUS_OK, "mem doctor ok"))
+    # H-001: `mem doctor` (cmd_doctor) retorna exit 0 SEMPRE — exit_code não é
+    # sinal de saúde. Derivar a saúde do PIOR check do JSON `--json`, não do exit.
+    res = mem_call(project_root, ["doctor"])  # json=True por default
+    if not res.found:
+        checks.append(_Check("health", _STATUS_WARN, "mem doctor não executou"))
     else:
-        checks.append(_Check("health", _STATUS_WARN,
-                             f"mem doctor reportou problema: {(res.stderr or '')[:120]}"))
+        import json as _json
+        try:
+            report = _json.loads(res.stdout or "[]")
+            # mem doctor --json → lista de {"check","status","detail"};
+            # status do mem ∈ {"ok", e não-ok (ex.: "fail"/"error"/"stale")}.
+            bad = [c for c in report if isinstance(c, dict) and c.get("status") != "ok"]
+            if bad:
+                names = ", ".join(str(c.get("check")) for c in bad)
+                checks.append(_Check("health", _STATUS_WARN,
+                                     f"mem doctor reportou checks não-ok: {names}"))
+            else:
+                checks.append(_Check("health", _STATUS_OK, "mem doctor: todos os checks ok"))
+        except (ValueError, TypeError):
+            checks.append(_Check("health", _STATUS_WARN,
+                                 f"mem doctor saída ininteligível: {(res.stderr or res.stdout or '')[:120]}"))
     pin = vendored.parent / "mem.version"
     asset_v = mem_asset_version_path()
     if pin.is_file() and asset_v.is_file():
         vp, va = pin.read_text().strip(), asset_v.read_text().strip()
         if vp != va:
+            # M-001: reconfigure NÃO re-vendoriza nesta onda; `forge init` é
+            # idempotente e re-vendoriza (overwrite do asset). Remediation honesta.
             checks.append(_Check("pin", _STATUS_WARN,
                                  f"drift: vendorizado {vp} vs asset {va}",
-                                 remediation="rode `forge reconfigure` pra atualizar o mem"))
+                                 remediation="rode `forge init` pra re-vendorizar o asset mais novo"))
         else:
             checks.append(_Check("pin", _STATUS_OK, f"pin alinhado ({vp})"))
     return _CategoryReport("mem", checks)
 ```
+> **Confirmar a forma real do `mem doctor --json`** (já scoutado: lista de objetos `{"check","status","detail"}`, status `"ok"` no caminho feliz). O implementador valida com um teste que injeta um mem doctor não-ok (ex.: stub do binário OU fixture com schema drift) e prova que `health` vira WARN — NÃO assumir ok. Se `MemResult` já expõe um campo parseado (em vez de `res.stdout` cru), usá-lo.
 Adicionar `_check_mem(project_root)` ao bloco `scope == "full"` de `_all_categories` (engine/doctor.py:230-247), junto das outras categorias full.
 
 - [ ] **Step 4: Run test + rapid lane**
@@ -206,7 +246,8 @@ git commit -m "feat(doctor): categoria mem (saúde via mem doctor + drift do pin
 
 **Files:**
 - Modify: `CHANGELOG.md` (Added: init vendoriza mem + doctor mem; ADR-note Decisão 22)
-- Modify: `docs/design/05-filesystem-layout.md` (`.claude/bin/mem`), `docs/design/06-command-surface.md` (doctor mem)
+- Modify: `docs/design/05-filesystem-layout.md` (`.claude/bin/mem`; + L-002: nomear a coexistência transitória — `.claude/memory/` hospeda o mem (jsonl/db) + remanescentes L2/L3 até W-MIGRATE/W-ROUTE), `docs/design/06-command-surface.md` (doctor mem)
+- Modify: `docs/design/04-pending.md` (M-001 follow-on: `forge reconfigure`/upgrade re-vendorizar o mem — hoje só `forge init` re-vendoriza; reconfigure-revendor é gap anotado)
 - Modify: `docs/guides/getting-started.md` / `docs/guides/dot-claude-reference.md` (se citam o layout do init) — enumerar via grep, só se relevante
 - **NÃO tocar:** históricos/congelados (08-session-handoff, docs/reports, docs/superpowers, docs/design/outputs)
 
@@ -227,11 +268,11 @@ git commit -m "feat(doctor): categoria mem (saúde via mem doctor + drift do pin
   espírito da 22 se mantém. Sem revisita formal (não contradiz a decisão locked).
 ```
 
-- [ ] **Step 2: docs** — atualizar `05-filesystem-layout.md` (incluir `.claude/bin/mem` no layout) e `06-command-surface.md` (categoria mem do doctor). Grep `docs/` por menções ao init/doctor que precisem do novo passo; atualizar só prosa atual (não históricos).
+- [ ] **Step 2: docs** — atualizar `05-filesystem-layout.md` (incluir `.claude/bin/mem` no layout + nota L-002 da coexistência transitória de `.claude/memory/`), `06-command-surface.md` (categoria mem do doctor), e `04-pending.md` (gap M-001: reconfigure/upgrade re-vendorizar o mem — follow-on). Grep `docs/` por menções ao init/doctor que precisem do novo passo; atualizar só prosa atual (não históricos).
 
 - [ ] **Step 3: Commit** (git add com PATHS EXPLÍCITOS — nunca `git add docs/`)
 
 ```bash
-git add CHANGELOG.md docs/design/05-filesystem-layout.md docs/design/06-command-surface.md
+git add CHANGELOG.md docs/design/05-filesystem-layout.md docs/design/06-command-surface.md docs/design/04-pending.md
 git commit -m "docs(vendor): doc-sync init vendoriza mem + doctor mem + ADR-note Dec.22"
 ```
