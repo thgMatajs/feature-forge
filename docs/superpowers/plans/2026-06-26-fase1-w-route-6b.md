@@ -12,8 +12,8 @@
 
 - Branch: `feat/mem-integration` — acumula, NÃO cria branch nova, UM PR no fim da Fase 1.
 - Test runner canônico: `.venv/bin/pytest` (tem json5 + deps; system pytest dá false-fail).
-- `mem_inbox_add` monta argv: `["inbox", "add", "--type", mem_type, "-t", title]` + opcionais (`-i`, `--tags`, `--source`, `--origin`) + **`"--", body`** OBRIGATORIAMENTE no fim — `--` antes do body posicional previne que body começando com `-` quebre o argparse do mem (lição W-RULES).
-- Re-rota só os 3 branches de L2-knowledge implementados (`promote-to-l2`, `l1-to-l2-promotion`, `consolidate-l2`). Loop do `forge evolve` inalterado; `detect_l2_overflow` permanece (relevante para outros kinds). `forget-l1` e branches estruturais INALTERADOS.
+- `mem_inbox_add` monta argv: `["inbox", "add", "--type", mem_type, "-t", title]` + opcionais (`--importance`, `--tags`, `--source`, `--origin`) + **`"--", body`** OBRIGATORIAMENTE no fim — `--` antes do body posicional previne que body começando com `-` quebre o argparse do mem (lição W-RULES). Usa-se a forma longa `--importance` (mais legível que o alias `-i`).
+- Re-rota só os 3 branches de L2-knowledge implementados (`promote-to-l2`, `l1-to-l2-promotion`, `consolidate-l2`). O loop interativo do `forge evolve` (single-by-single, checkpoint-resume) permanece intacto — 6b NÃO o torna stateless. Mas D5 É implementado: o overflow-guard (`detect_l2_overflow`) em `_apply_proposal` PULA para os 3 kinds de conhecimento (eles vão pro mem inbox, não escrevem L2 — bloqueá-los por "L2 cheia" seria incorreto). `forget-l1` e branches estruturais INALTERADOS (continuam sujeitos ao overflow-guard, pois `forget-l1` mexe em L1 e os estruturais não tocam L2 mas mantêm o comportamento legacy do guard).
 - Raise-não-drena: se `mem_inbox_add` retornar `ok=False`, raise `MemoryError` — não chamar `remove_from_queue`. Só remove da queue após sucesso.
 - `l2.add_entry` e `apply_proposal_to_l2` NÃO são deletados nem renomeados em 6b (órfão e misnomer anotados em 04-pending).
 - Full-lane unit+integration. Teste real-mem obrigatório pro path de escrita inbox-add.
@@ -45,6 +45,8 @@
   ```
   `data` = stdout parseado (o id da nota candidata ou dict); `ok=False` em degrade/erro.
 
+**Reuso (Mandamento #3):** `mem_inbox_add` COMPÕE sobre os helpers já existentes — chama `_run_or_degrade` (que por sua vez usa `mem_call` + `_parse_json` + `_degraded_message`). NÃO introduz subprocess novo nem lógica de degrade própria; estende a camada D3 criada em 6a no mesmo módulo (`engine/integrations/mem.py`), seguindo o padrão verbatim dos 5 wrappers de 6a (`mem_find`/`mem_get`/`mem_stats`/`mem_brief`/`mem_evolve`). Consultado o padrão dos wrappers de 6a antes de escrever — zero helper novo.
+
 - [ ] **Step 1: Escrever os testes (falhando)**
 
 Adicione ao final de `tests/integrations/test_mem_wrappers.py` os seguintes testes. Os helpers `_stub`, `_Fake`, `_patch_run` já existem no arquivo — não os redefina:
@@ -70,7 +72,7 @@ def test_inbox_add_builds_correct_argv(tmp_path, monkeypatch):
     assert res.ok is True
     # argv esperado (sem o binário — index 1 em diante):
     # --json inbox add --type reference -t use-stateflow
-    # -i 4 --tags auth,kotlin --source forge-evolve:P-001 --origin manual
+    # --importance 4 --tags auth,kotlin --source forge-evolve:P-001 --origin manual
     # -- Use MutableStateFlow para screen state
     cmd = cap["cmd"]
     assert cmd[1] == "--json"
@@ -78,7 +80,7 @@ def test_inbox_add_builds_correct_argv(tmp_path, monkeypatch):
     assert cmd[3] == "add"
     assert "--type" in cmd and cmd[cmd.index("--type") + 1] == "reference"
     assert "-t" in cmd and cmd[cmd.index("-t") + 1] == "use-stateflow"
-    assert "-i" in cmd and cmd[cmd.index("-i") + 1] == "4"
+    assert "--importance" in cmd and cmd[cmd.index("--importance") + 1] == "4"
     assert "--tags" in cmd and cmd[cmd.index("--tags") + 1] == "auth,kotlin"
     assert "--source" in cmd and cmd[cmd.index("--source") + 1] == "forge-evolve:P-001"
     assert "--origin" in cmd and cmd[cmd.index("--origin") + 1] == "manual"
@@ -102,7 +104,7 @@ def test_inbox_add_minimal_argv(tmp_path, monkeypatch):
     assert res.ok is True
     cmd = cap["cmd"]
     # Opcionais ausentes
-    assert "-i" not in cmd
+    assert "--importance" not in cmd
     assert "--tags" not in cmd
     assert "--source" not in cmd
     # --origin default é "manual" — deve estar presente
@@ -222,7 +224,7 @@ def mem_inbox_add(
     """
     args = ["inbox", "add", "--type", mem_type, "-t", title]
     if importance is not None:
-        args += ["-i", str(importance)]
+        args += ["--importance", str(importance)]
     if tags is not None:
         args += ["--tags", tags]
     if source is not None:
@@ -257,12 +259,18 @@ argv mockado (completo + minimal + body-com-dash) + real-mem roundtrip."
 
 **Files:**
 - Modify: `engine/memory/distiller.py` (3 branches de L2-knowledge → `mem_inbox_add`)
+- Modify: `engine/evolve.py` (`_apply_proposal` — skip do overflow-guard pra kinds de conhecimento; D5)
 - Test: `tests/unit/test_memory_distiller.py` (adiciona testes de conhecimento-apply + l2.add_entry ausência)
+- Test: `tests/unit/test_engine_evolve_resume.py` (adiciona teste: knowledge-proposal NÃO bloqueado por L2-overflow)
 - Test: `tests/unit/test_reuse_intelligence.py` (confirma que reuse-intelligence INALTERADO)
 
 **Interfaces:**
-- Consumes: `mem_inbox_add` (Task 1); `DistillationProposal` (já existe); `is_fingerprint_rejected`, `remove_from_queue`, `_apply_forget_l1`, `apply_reuse_intelligence_proposal` (todos já existem).
-- Produces: `apply_proposal_to_l2` com os 3 branches de conhecimento redirecionados pro `mem inbox add`. Contrato de raise: se `mem_inbox_add` retorna `ok=False` → `raise MemoryError(...)` sem chamar `remove_from_queue`. Contrato de sucesso: `remove_from_queue` após `mem_inbox_add` retornar `ok=True`.
+- Consumes: `mem_inbox_add` (Task 1); `DistillationProposal` (já existe); `is_fingerprint_rejected`, `remove_from_queue`, `_apply_forget_l1`, `apply_reuse_intelligence_proposal`, `detect_l2_overflow` (todos já existem).
+- Produces:
+  - `apply_proposal_to_l2` com os 3 branches de conhecimento redirecionados pro `mem inbox add`. Contrato de raise: se `mem_inbox_add` retorna `ok=False` → `raise MemoryError(...)` sem chamar `remove_from_queue`. Contrato de sucesso: `remove_from_queue` após `mem_inbox_add` retornar `ok=True`.
+  - `_apply_proposal` (evolve.py) com **skip do overflow-guard** (D5): se `proposal.kind` ∈ {`promote-to-l2`, `l1-to-l2-promotion`, `consolidate-l2`}, pula `detect_l2_overflow` — esses kinds vão pro mem inbox, não escrevem L2; bloqueá-los por "L2 cheia" seria incorreto.
+
+**Conjunto de kinds de conhecimento (constante reusada):** os 3 kinds re-roteados são uma lista compartilhada entre `distiller.py` e `evolve.py`. Para evitar duplicação literal do set em dois módulos, declare-o como constante exportável em `distiller.py` (`_KNOWLEDGE_KINDS`) e importe em `evolve.py` — reuso antes de copiar (Mandamento #3).
 
 **Mapeamento D3 (proposal → mem inbox add):**
 
@@ -271,10 +279,18 @@ argv mockado (completo + minimal + body-com-dash) + real-mem roundtrip."
 | `proposal.title`       | `-t`                               | direto                          |
 | `proposal.description` | `body` (após `--`)                 | direto                          |
 | `proposal.provenance`  | `--tags`                           | `",".join(proposal.provenance)` |
-| `proposal.confidence`  | `--importance`                     | `max(1, min(5, round(confidence * 5)))` |
+| `proposal.confidence`  | `--importance`                     | `max(1, min(5, round(confidence * 4) + 1))` |
 | `proposal.id`          | `--source`                         | `f"forge-evolve:{proposal.id}"` |
 | (ação "a" = humano)    | `--origin manual`                  | curadoria humana                |
 | `"reference"`          | `--type`                           | padrões/convenções aprendidas   |
+
+> **Fórmula de importance — `round(confidence * 4) + 1`, não `round(confidence * 5)`.**
+> Python usa banker's rounding (round-half-to-even): `round(2.5) == 2`, então
+> `round(0.5 * 5) == 2` — quebraria a expectativa de confidence 0.5 → importance 3.
+> A fórmula `round(confidence * 4) + 1` é monotônica e bate o midpoint corretamente:
+> `0.0 → round(0)+1 = 1`; `0.5 → round(2.0)+1 = 3`; `0.8 → round(3.2)+1 = 4`;
+> `1.0 → round(4)+1 = 5`. O `max(1, min(5, ...))` é cinto-de-segurança para
+> confidence fora de `[0.0, 1.0]`.
 
 - [ ] **Step 1: Escrever os testes (falhando)**
 
@@ -316,7 +332,7 @@ def test_apply_promote_to_l2_calls_mem_inbox_add(tmp_path, monkeypatch):
     assert called["title"] == "use-stateflow"
     assert called["body"] == "Use MutableStateFlow para screen state"
     assert called["mem_type"] == "reference"
-    assert called["importance"] == 4  # round(0.8 * 5) = 4, clamp 1-5
+    assert called["importance"] == 4  # round(0.8 * 4) + 1 = round(3.2) + 1 = 4, clamp 1-5
     assert called["tags"] == "auth,profile"
     assert called["source"] == "forge-evolve:P-001"
     assert called["origin"] == "manual"
@@ -437,7 +453,8 @@ def test_apply_knowledge_raises_on_mem_inbox_add_failure(tmp_path, monkeypatch):
 
 
 def test_apply_knowledge_importance_clamp(tmp_path, monkeypatch):
-    """importance é clampado em [1, 5] — confidence=0.0 → 1, confidence=1.0 → 5."""
+    """importance via round(confidence*4)+1, clamp [1,5]. Midpoint 0.5 → 3
+    (não 2 — a fórmula evita o banker's rounding de round(0.5*5)==round(2.5)==2)."""
     import engine.memory.distiller as _dist
     importances: list = []
 
@@ -499,8 +516,9 @@ def test_apply_forget_l1_unchanged_no_mem_call(tmp_path, monkeypatch):
 
 ```bash
 .venv/bin/pytest tests/unit/test_memory_distiller.py -v -k "mem_inbox or inbox or knowledge or raises_on or importance or forget_l1"
+.venv/bin/pytest tests/unit/test_engine_evolve_resume.py -v -k "skips_overflow or keeps_overflow"
 ```
-Expected: FAIL (os branches de conhecimento ainda chamam `l2.add_entry` / `_apply_consolidate_l2`; `mem_inbox_add` não está importado no distiller).
+Expected: FAIL (os branches de conhecimento ainda chamam `l2.add_entry` / `_apply_consolidate_l2`; `mem_inbox_add` e `_KNOWLEDGE_KINDS` não estão importados; o overflow-skip ainda não existe).
 
 - [ ] **Step 3: Implementar a re-rota em `engine/memory/distiller.py`**
 
@@ -510,7 +528,15 @@ Expected: FAIL (os branches de conhecimento ainda chamam `l2.add_entry` / `_appl
 from engine.integrations.mem import mem_inbox_add
 ```
 
-**3b.** Substitua o corpo de `apply_proposal_to_l2` a partir da linha atual `if proposal.kind in {"promote-to-l2", "l1-to-l2-promotion"}:` até (exclusive) o bloco `if proposal.kind == "forget-l1":`. O código ANTES (fingerprint-veto) e DEPOIS (forget-l1, reuse-intelligence, NotImplementedError) PERMANECE INALTERADO. Somente o trecho de conhecimento muda:
+**3b.** Declare a constante compartilhada `_KNOWLEDGE_KINDS` logo após o set `_VALID_KINDS` existente (≈ linha 98, após o `}` que fecha `_VALID_KINDS`). Esta constante é o conjunto único de kinds de conhecimento re-roteados, reusado tanto aqui quanto em `evolve.py` (Step 3d):
+
+```python
+# W-ROUTE 6b: os 3 kinds de L2-knowledge que agora vão pro mem inbox em vez
+# de escrever L2. Compartilhado com engine/evolve.py (skip do overflow-guard).
+_KNOWLEDGE_KINDS = frozenset({"promote-to-l2", "l1-to-l2-promotion", "consolidate-l2"})
+```
+
+**3c.** Substitua o corpo de `apply_proposal_to_l2` a partir da linha atual `if proposal.kind in {"promote-to-l2", "l1-to-l2-promotion"}:` até (exclusive) o bloco `if proposal.kind == "forget-l1":`. O código ANTES (fingerprint-veto) e DEPOIS (forget-l1, reuse-intelligence, NotImplementedError) PERMANECE INALTERADO. Somente o trecho de conhecimento muda:
 
 O código atual (linhas ~483–501) é:
 ```python
@@ -538,11 +564,13 @@ O código atual (linhas ~483–501) é:
 Substitua por:
 
 ```python
-    if proposal.kind in {"promote-to-l2", "l1-to-l2-promotion", "consolidate-l2"}:
+    if proposal.kind in _KNOWLEDGE_KINDS:
         # W-ROUTE 6b: knowledge proposals vão pro mem inbox (anti-envenenamento G11).
         # O merge-semantic do consolidate-l2 é moot com L2 abandonado para conhecimento
         # — vira candidato inbox como os outros dois.
-        importance = max(1, min(5, round(proposal.confidence * 5)))
+        # round(confidence*4)+1 (não *5): evita banker's rounding de round(0.5*5)==2;
+        # 0.0→1, 0.5→3, 0.8→4, 1.0→5. clamp [1,5] para confidence fora de [0,1].
+        importance = max(1, min(5, round(proposal.confidence * 4) + 1))
         tags = ",".join(proposal.provenance) if proposal.provenance else None
         result = mem_inbox_add(
             project_root,
@@ -563,10 +591,146 @@ Substitua por:
         return
 ```
 
+**3d.** Implemente o skip do overflow-guard (D5) em `engine/evolve.py`. Adicione o import da constante compartilhada ao bloco `from engine.memory.distiller import (...)` existente (≈ linhas 20–29):
+
+```python
+from engine.memory.distiller import (
+    DistillationProposal,
+    apply_proposal_to_l2,
+    compute_proposal_fingerprint,
+    detect_l2_overflow,
+    is_fingerprint_rejected,
+    read_proposals_queue,
+    record_rejection,
+    remove_from_queue,
+    _KNOWLEDGE_KINDS,
+)
+```
+
+O código atual de `_apply_proposal` (linhas 272–291) é:
+
+```python
+def _apply_proposal(
+    project_root: Path,
+    p: DistillationProposal,
+    cfg: dict[str, Any],
+) -> bool:
+    """Apply with overflow guard. Returns True on success, False on overflow pause."""
+    max_mb = _l2_max_mb(cfg)
+    if detect_l2_overflow(project_root, cfg):
+        renderer.write(
+            renderer.colored(
+                f"  🛑 L2 cheia — {_format_kb(l2_size_bytes(project_root))} "
+                f"/ {max_mb * 1024:.0f} KB",
+                "yellow",
+            )
+        )
+        return False
+
+    apply_proposal_to_l2(project_root, p)
+    renderer.write(renderer.colored(f"  ✓ Aplicado {p.id}.", "green"))
+    return True
+```
+
+Substitua por (o skip é uma guarda ANTES do `detect_l2_overflow` — knowledge kinds vão pro mem inbox, não escrevem L2, então o overflow-check não se aplica):
+
+```python
+def _apply_proposal(
+    project_root: Path,
+    p: DistillationProposal,
+    cfg: dict[str, Any],
+) -> bool:
+    """Apply with overflow guard. Returns True on success, False on overflow pause.
+
+    W-ROUTE 6b (D5): kinds de conhecimento (``_KNOWLEDGE_KINDS``) vão pro mem
+    inbox em vez de escrever L2 — o overflow-guard (`detect_l2_overflow`) não
+    se aplica a eles e seria incorreto bloqueá-los por "L2 cheia". Os demais
+    kinds (forget-l1, reuse-intelligence, etc.) mantêm o guard legacy.
+    """
+    if p.kind not in _KNOWLEDGE_KINDS:
+        max_mb = _l2_max_mb(cfg)
+        if detect_l2_overflow(project_root, cfg):
+            renderer.write(
+                renderer.colored(
+                    f"  🛑 L2 cheia — {_format_kb(l2_size_bytes(project_root))} "
+                    f"/ {max_mb * 1024:.0f} KB",
+                    "yellow",
+                )
+            )
+            return False
+
+    apply_proposal_to_l2(project_root, p)
+    renderer.write(renderer.colored(f"  ✓ Aplicado {p.id}.", "green"))
+    return True
+```
+
+**3e.** Adicione ao FINAL de `tests/unit/test_engine_evolve_resume.py` o teste que prova o skip (knowledge-proposal NÃO bloqueado por L2-overflow):
+
+```python
+# ── Task 2 (6b / D5): overflow-skip pra kinds de conhecimento ─────────────
+
+
+def test_apply_proposal_skips_overflow_for_knowledge_kind(tmp_path, monkeypatch):
+    """Knowledge proposal NÃO é bloqueado por L2-overflow (D5).
+
+    detect_l2_overflow é forçado a True; mem_inbox_add (via apply_proposal_to_l2)
+    é stubado pra sucesso. O proposal de conhecimento deve aplicar (retorna True),
+    provando que o guard foi pulado.
+    """
+    import engine.evolve as _evolve
+    from engine.memory.distiller import DistillationProposal
+
+    # Força overflow True — se o guard NÃO fosse pulado, _apply_proposal retornaria False.
+    monkeypatch.setattr(_evolve, "detect_l2_overflow", lambda root, cfg: True)
+    # Stuba o apply pra não tocar mem real nem L2.
+    applied: list = []
+    monkeypatch.setattr(
+        _evolve, "apply_proposal_to_l2",
+        lambda root, p: applied.append(p.id),
+    )
+
+    p = DistillationProposal(
+        id="P-know",
+        kind="promote-to-l2",
+        title="t",
+        description="d",
+        provenance=["auth"],
+        confidence=0.7,
+    )
+    result = _evolve._apply_proposal(tmp_path, p, {})
+    assert result is True, "knowledge proposal foi bloqueado pelo overflow-guard (D5 falhou)"
+    assert applied == ["P-know"]
+
+
+def test_apply_proposal_keeps_overflow_guard_for_non_knowledge_kind(tmp_path, monkeypatch):
+    """forget-l1 (não-conhecimento) AINDA respeita o overflow-guard (regression)."""
+    import engine.evolve as _evolve
+    from engine.memory.distiller import DistillationProposal
+
+    monkeypatch.setattr(_evolve, "detect_l2_overflow", lambda root, cfg: True)
+    applied: list = []
+    monkeypatch.setattr(
+        _evolve, "apply_proposal_to_l2",
+        lambda root, p: applied.append(p.id),
+    )
+
+    p = DistillationProposal(
+        id="P-forget",
+        kind="forget-l1",
+        title="t",
+        description="d",
+        provenance=["auth"],
+        payload={"target": "auth"},
+    )
+    result = _evolve._apply_proposal(tmp_path, p, {})
+    assert result is False, "forget-l1 deveria ser pausado por overflow (guard preservado)"
+    assert applied == [], "apply não deveria rodar sob overflow para kind não-conhecimento"
+```
+
 - [ ] **Step 4: Rodar pra confirmar verde**
 
 ```bash
-.venv/bin/pytest tests/unit/test_memory_distiller.py -v
+.venv/bin/pytest tests/unit/test_memory_distiller.py tests/unit/test_engine_evolve_resume.py -v
 ```
 Expected: PASS (todos). Em seguida confirme que `test_reuse_intelligence.py` continua verde (o branch reuse-intelligence é inalterado):
 
@@ -578,16 +742,19 @@ Expected: PASS (o `apply_proposal_to_l2` com proposal de kind `consolidate-dupli
 - [ ] **Step 5: Commit**
 
 ```bash
-git add engine/memory/distiller.py tests/unit/test_memory_distiller.py
-git commit -m "feat(distiller): re-rota knowledge proposals → mem inbox add (6b Task 2)
+git add engine/memory/distiller.py engine/evolve.py tests/unit/test_memory_distiller.py tests/unit/test_engine_evolve_resume.py
+git commit -m "feat(distiller): re-rota knowledge proposals → mem inbox add + D5 overflow-skip (6b Task 2)
 
 W-ROUTE 6b Task 2. Os 3 branches de L2-knowledge (promote-to-l2,
 l1-to-l2-promotion, consolidate-l2) colapsam num único caminho que
 chama mem_inbox_add com mapeamento D3 (title/-t, description/body,
-provenance/--tags, confidence→importance, id/--source, --type reference,
---origin manual). Raise-não-drena: MemoryError se ok=False, sem
-remove_from_queue. forget-l1 e branches estruturais INALTERADOS.
-l2.add_entry órfão-pra-conhecimento (anotado em Task 4/04-pending)."
+provenance/--tags, confidence→importance=round(c*4)+1, id/--source,
+--type reference, --origin manual). Raise-não-drena: MemoryError se
+ok=False, sem remove_from_queue. forget-l1 e branches estruturais
+INALTERADOS. D5: _apply_proposal pula detect_l2_overflow para os kinds
+de conhecimento (_KNOWLEDGE_KINDS compartilhada distiller↔evolve) —
+eles vão pro mem inbox, não escrevem L2. l2.add_entry órfão-pra-
+conhecimento (anotado em Task 4/04-pending)."
 ```
 
 ---
@@ -850,7 +1017,7 @@ ausente → linha placeholder sem crash. _status_payload ganha mem block
 Os testes abaixo devem ser varridos ANTES de escrever código (grep ou leitura direta) pra identificar quais asserts tocam o contrato observável que mudou:
 
 - `tests/unit/test_memory_distiller.py` — já atualizado na Task 2; verificar que nenhum teste asserta `l2.add_entry` para kinds de conhecimento (os novos asserts fazem o inverso — ausência).
-- `tests/unit/test_engine_evolve_resume.py` — verificar se asserta que `apply_proposal_to_l2` chama `add_entry` ou escreve L2 para kinds de conhecimento. Se sim, atualizar pro novo contrato (chama `mem_inbox_add`).
+- `tests/unit/test_engine_evolve_resume.py` — DOIS pontos: (a) verificar se asserta que `apply_proposal_to_l2` chama `add_entry`/escreve L2 para conhecimento; se sim, atualizar pro novo contrato (`mem_inbox_add`). (b) verificar que os testes EXISTENTES de overflow-pause usam um kind NÃO-conhecimento — se algum teste de overflow-pause usar `promote-to-l2`/`l1-to-l2-promotion`/`consolidate-l2`, ele agora FALHARÁ corretamente (o skip D5 da Task 2 faz esses kinds não pausarem). Reconcilie trocando o kind do proposal para `forget-l1` no teste de overflow-pause, ou consolide com o novo `test_apply_proposal_keeps_overflow_guard_for_non_knowledge_kind` (Task 2 Step 3e).
 - `tests/unit/test_commands_evolve.py` — verificar se tem asserts sobre L2 size ou `l2.add_entry` no contexto de apply de conhecimento.
 - `tests/unit/test_memory_l2.py` — usa `l2.add_entry` diretamente nos testes de L2 (não via distiller); esses FICAM intactos (testam a função L2 em si, não o caller).
 - `tests/unit/test_reuse_intelligence.py:355` — chama `apply_proposal_to_l2` com proposal de kind `consolidate-duplicate-helper` → delega a `apply_reuse_intelligence_proposal`. Verificar se o monkeypatch de `mem_inbox_add` introduzido na Task 2 interfere com este teste (não deve, pois o kind é reuse-intelligence, mas confirmar).
@@ -866,6 +1033,8 @@ Os testes abaixo devem ser varridos ANTES de escrever código (grep ou leitura d
 Para cada FAIL encontrado: leia o assert quebrado, identifique se ele testa o contrato antigo (escrita L2 para conhecimento) ou um contrato não-relacionado. Se for o contrato antigo → atualize pro novo contrato (chama `mem_inbox_add`, não `add_entry`). Se for não-relacionado → investigue se é side-effect da Task 2/3 ou bug pré-existente.
 
 - [ ] **Step 2: Atualizar `docs/design/06-command-surface.md`**
+
+`06-command-surface.md` é doc load-bearing (whitelist do hook PreToolUse). A edição aqui é **necessária pra doc-sync da superfície (Mandamento #6) — não é revisita de decisão**: nenhuma decisão de `01-decisions.md` muda; apenas a documentação do comportamento observável de `forge evolve`/`forge status` é sincronizada com o código das Tasks 2–3 no mesmo ciclo. Sem cerimônia "Revisita decisão N".
 
 Localize a descrição de `forge evolve` e `forge status` (seção memory). Se mencionar "L2" no contexto de proposals de conhecimento aprovadas, atualize para refletir que aprovação de conhecimento emite `mem inbox add` (candidato curado, não persiste direto no L2). Se mencionar a linha de L2-size no status, atualize para "resumo de mem stats". Exemplo de adição:
 
@@ -914,7 +1083,7 @@ E em `### Added`:
 
 - [ ] **Step 6: Anotar órfão e misnomer em `docs/design/04-pending.md`**
 
-Adicione duas entradas a `docs/design/04-pending.md`:
+Adicione **exatamente duas** entradas a `docs/design/04-pending.md` (NÃO anote D5/overflow-skip como limitação — D5 É implementado na Task 2, não há divergência pendente):
 
 ```markdown
 - **`l2.add_entry` órfão-pra-conhecimento (W-ROUTE 6b)** — após 6b, os 3
@@ -957,9 +1126,9 @@ contrato (mem_inbox_add); test_memory_l2 e test_reuse_intelligence intactos."
 
 - **D1 (conjunto re-roteado — só 4 kinds L2-knowledge):** Task 2 colapsa `promote-to-l2`, `l1-to-l2-promotion`, `consolidate-l2` num único caminho `mem_inbox_add`. `distill-l2` permanece `NotImplementedError` (inalterado). Forget-l1 e reuse-intelligence inalterados (confirmado pelo teste `test_apply_forget_l1_unchanged_no_mem_call` e pela continuidade de `test_reuse_intelligence.py`).
 - **D2 ("aplicar" enfileira, não persiste):** Task 2 chama `mem_inbox_add` (inbox = fila de candidatos); só vira nota ativa via `mem evolve`/`mem inbox promote`. Semântica documentada em CHANGELOG e command-surface na Task 4.
-- **D3 (mapeamento de campos + `--type reference`):** Task 1 constrói o argv e os testes assertam cada campo: `-t`←title, body←description (após `--`), `--tags`←",".join(provenance), `--importance`←clamp(1,round(conf*5),5), `--source`←`forge-evolve:{id}`, `--origin manual`, `--type reference`. Task 2 confirma os valores via `test_apply_promote_to_l2_calls_mem_inbox_add`.
+- **D3 (mapeamento de campos + `--type reference`):** Task 1 constrói o argv (com `--importance` forma longa) e os testes assertam cada campo: `-t`←title, body←description (após `--`), `--tags`←",".join(provenance), `--importance`←`max(1, min(5, round(conf*4)+1))`, `--source`←`forge-evolve:{id}`, `--origin manual`, `--type reference`. **Fórmula `round(conf*4)+1`, não `round(conf*5)`** — esta última sofre banker's rounding (`round(0.5*5)==round(2.5)==2`, errado; o esperado é 3). Task 2 confirma os valores via `test_apply_promote_to_l2_calls_mem_inbox_add` (0.8→4) e `test_apply_knowledge_importance_clamp` (`[1, 5, 3]` para confidence `[0.0, 1.0, 0.5]`).
 - **D4 (status: L2-size → mem stats + bloco JSON):** Task 3 substitui `_render_memory` inteiro e adiciona `_mem_stats_snapshot` no `_status_payload`. Testes cobrem: render com stats, degrade sem crash, bloco JSON presente e bloco JSON com None em degrade.
-- **D5 (loop do evolve inalterado; overflow-guard permanece):** Task 2 não toca `engine/evolve.py`. A função `_apply_proposal` em `evolve.py` (linhas 272–291) chama `apply_proposal_to_l2` — o overhead de `detect_l2_overflow` para kinds de conhecimento torna-se irrelevante operacionalmente (não crescem L2), mas o código permanece inalterado para conter footprint de 6b.
+- **D5 (overflow-skip pra kinds de conhecimento — IMPLEMENTADO):** Task 2 Step 3d altera `_apply_proposal` em `engine/evolve.py`: ANTES do `detect_l2_overflow`, pula o overflow-guard se `p.kind in _KNOWLEDGE_KINDS` (os 3 kinds vão pro mem inbox, não escrevem L2 — bloqueá-los por "L2 cheia" seria incorreto). O loop INTERATIVO do `forge evolve` (single-by-single, checkpoint-resume) permanece intacto — 6b NÃO o torna stateless; apenas o overflow-guard ganha o skip para conhecimento. `_KNOWLEDGE_KINDS` é constante compartilhada (declarada em `distiller.py`, importada em `evolve.py` — reuso, não cópia). Provado por `test_apply_proposal_skips_overflow_for_knowledge_kind` (knowledge não bloqueado mesmo com overflow True) + `test_apply_proposal_keeps_overflow_guard_for_non_knowledge_kind` (forget-l1 ainda pausa — regression).
 - **D6 (`l2.add_entry` órfão, misnomer anotados):** Task 4 adiciona ambos em 04-pending explicitamente.
 
 ### Sem placeholder
@@ -979,10 +1148,15 @@ Todo passo de código contém código Python completo, verbatim. Comandos têm e
 
 Assinaturas idênticas entre implementação (Task 1) e todos os call-sites (Task 2). O distiller importa `mem_inbox_add` de `engine.integrations.mem` — disciplina Decisão 22 (zero runtime dep em outra ferramenta via import direto; a fronteira é o subprocess no `mem_call`).
 
+### Reuso (Mandamento #3)
+
+- `mem_inbox_add` (Task 1) compõe sobre `_run_or_degrade`/`mem_call` existentes — zero subprocess novo, estende a camada D3 de 6a no mesmo módulo, padrão verbatim dos 5 wrappers de 6a.
+- `_KNOWLEDGE_KINDS` (Task 2) é constante única declarada em `distiller.py` e importada em `evolve.py` — o set dos 3 kinds não é duplicado em dois módulos.
+
 ### Lição MOCK-BLINDNESS (teste real-mem)
 
 Task 1 inclui `test_inbox_add_real_mem_roundtrip`: copia o binário vendorizado do repo para `tmp_path`, chama `mem_inbox_add` sem mock, asserta que a nota aparece em `mem inbox list`. O teste é marcado com `skipif` quando o vendorizado não está disponível (ambientes CI sem o asset). A disciplina é: paths que ESCREVEM no mem exigem ao menos um teste sem mock — um bug de quoting/arg que o monkeypatch silencia (ex.: `body` começando com `-` sem `--`) só é pego contra o binário real.
 
 ### Footprint por contrato (não por import)
 
-Task 4 varre explicitamente: `test_engine_evolve_resume.py`, `test_commands_evolve.py`, `test_memory_l2.py` (intacto — testa `l2.add_entry` direto, não via distiller), `test_reuse_intelligence.py:355` (kind reuse-intelligence — inalterado), `test_qa_evolve_integration.py`, e os testes de status (já atualizados na Task 3). O implementer confirma quais quebram rodando a lane antes de editar.
+Task 4 varre explicitamente: `test_engine_evolve_resume.py` (Task 2 já adicionou os 2 testes de overflow-skip; Task 4 confirma que testes legacy de overflow-pause não usam kind de conhecimento), `test_commands_evolve.py`, `test_memory_l2.py` (intacto — testa `l2.add_entry` direto, não via distiller), `test_reuse_intelligence.py:355` (kind reuse-intelligence — inalterado), `test_qa_evolve_integration.py`, e os testes de status (já atualizados na Task 3). O implementer confirma quais quebram rodando a lane antes de editar.
