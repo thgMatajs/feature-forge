@@ -6,12 +6,15 @@ from pathlib import Path
 #   (1) string literal: ".claude/memory/L1/..." (docstrings, mensagens)
 #   (2) segmento quotado "L1": construção Path (memory_dir / "L1") E tupla de
 #       literais (".claude","memory","L1",...) — ambas contêm o token "L1".
-# Grepar o segmento "L1" quotado pega AS DUAS variantes da Forma 2 (construção
+#       Cobre double-quote ("L1") E single-quote ('L1') pra não escapar construções
+#       como `path / 'L1'` ou tuplas com aspas simples.
+# Grepar ambas as formas de aspas pega AS DUAS variantes da Forma 2 (construção
 # E tupla); o único "L1" quotado legítimo que NÃO é path é o config
 # `"layers-enabled": ["L1","L2","L3"]` (init.py) — allowlisted explicitamente.
 # Padrões montados por partes pra o próprio gate não auto-casar.
 STRING_LITERAL = "memory" + "/L1"          # Forma 1
-QUOTED_SEGMENT = '"' + "L1" + '"'          # Forma 2 (construção + tupla)
+QUOTED_SEGMENT = '"' + "L1" + '"'          # Forma 2a (double-quote: construção + tupla)
+SINGLE_QUOTED_SEGMENT = "'" + "L1" + "'"  # Forma 2b (single-quote: construção + tupla)
 ALLOWLIST_TOKENS = ("layers-enabled", "layers_enabled")  # "L1" como nome de camada, não path
 BEHAVIOR_DIRS = ["engine", "validators", "hooks", "tests"]
 
@@ -37,5 +40,10 @@ def test_no_legacy_l1_path_in_behavior_code():
         if _not_self(l, root, self_path)
         and not any(tok in l for tok in ALLOWLIST_TOKENS)
     ]
-    hits = sorted(set(str_hits + quoted_hits))
+    single_quoted_hits = [
+        l for l in _grep(SINGLE_QUOTED_SEGMENT, dirs, root)
+        if _not_self(l, root, self_path)
+        and not any(tok in l for tok in ALLOWLIST_TOKENS)
+    ]
+    hits = sorted(set(str_hits + quoted_hits + single_quoted_hits))
     assert hits == [], f"Path L1 legado sobrou: {hits}"
