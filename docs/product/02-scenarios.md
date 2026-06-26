@@ -332,7 +332,7 @@ Este é o caminho oficial pra abrir disciplina forge em projeto brownfield — n
 **Passos**
 
 1. **Cold-start.** Marina abre sessão Claude Code nova hoje (quinta) 9h. Contexto zerado — Claude não lembra de ontem. Marina precisa orientar a sessão sem assumir que o engine sabe onde parou. Ela tem 2 opções mentais: rodar Wave A do zero (perde 1h) ou usar o status board pra ver o que existe. Ferramenta dirigida torna a segunda opção óbvia.
-2. **Status board.** Roda `forge status`. Engine lê `.claude/memory/L1/` (todos os slugs em estado não-done) + `.claude/memory/L2/` (config + cards merged) e renderiza o board agrupado por estado:
+2. **Status board.** Roda `forge status`. Engine lê `.claude/forge/state/lifecycle/` (todos os slugs em estado não-done) + `.claude/memory/L2-project.yaml` (config + cards merged) e renderiza o board agrupado por estado:
 
    ```
    planning        (vazio)
@@ -434,7 +434,7 @@ Zero retrabalho, zero "qual era mesmo o contract da analytics?". Componentes do 
 
    > "Detectei `lembrete-rega` em L1 com state=done (shipped 2026-05-28). Slug `lembrete-rega-hora` parece extension natural. Confirma caminho 'Estender'? (alternativas: Greenfield, Retomar, Bugfix)"
 2. **Marina escolhe Estender.** Indica `parent=lembrete-rega`. Validator `validate_extension_feature` roda os 4 checks EXT-001..004 conforme `docs/design/07-discipline.md` §10:
-   - **EXT-001**: parent existe em L1? (sim, `.claude/memory/L1/lembrete-rega/status.json` presente)
+   - **EXT-001**: parent existe em L1? (sim, `.claude/forge/state/lifecycle/lembrete-rega/status.json` presente)
    - **EXT-002**: parent.state==done? (sim, com `shipped-at` válido timestamped)
    - **EXT-003**: `extends-feature` field setado em L1 da nova feature? (sim, registrado pelo conductor ao escolher caminho)
    - **EXT-004**: slug derivado tem forma válida `<parent>-<suffix>`? (sim, `lembrete-rega-hora` matcha o pattern `lembrete-rega-*`)

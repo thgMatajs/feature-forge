@@ -98,7 +98,7 @@ Se fonte ausente (PRD vago, ticket sem repro, screen sem comportamento documenta
 
 **2. Files > Memory**
 
-State persistido em disco é fonte de verdade; sessão Claude Code é volátil e dispensável. Tudo em `.claude/memory/L1/<slug>/` + `.claude/memory/L2/` + `.planning/<slug>/`. Auto-resume cross-session funciona porque arquivo é canon (Decision 27 LOCKED). Marina pode dar Ctrl+C às 18h e retomar no dia seguinte em sessão Claude Code nova sem reescrever Waves A-D — vide cenário C4 em [`02-scenarios.md`](02-scenarios.md). Princípio Files > Memory também protege auditoria: tudo que aconteceu durante o planning fica versionável em git, inspeccionável por humano, e migrável entre versões via `forge raw migrator-N-to-M`.
+State persistido em disco é fonte de verdade; sessão Claude Code é volátil e dispensável. Tudo em `.claude/forge/state/lifecycle/<slug>/` + `.claude/memory/L2-project.yaml` + `.planning/<slug>/`. Auto-resume cross-session funciona porque arquivo é canon (Decision 27 LOCKED). Marina pode dar Ctrl+C às 18h e retomar no dia seguinte em sessão Claude Code nova sem reescrever Waves A-D — vide cenário C4 em [`02-scenarios.md`](02-scenarios.md). Princípio Files > Memory também protege auditoria: tudo que aconteceu durante o planning fica versionável em git, inspeccionável por humano, e migrável entre versões via `forge raw migrator-N-to-M`.
 
 **3. Usuário decide WHAT, engine dirige HOW**
 
@@ -440,7 +440,7 @@ Termos são organizados em camadas conceituais: subtype/wave/card/preset cobrem 
 | **Wave** | Fase de planning: A (intake), B (PRD + screen-analysis, conditional via `wave_b_required`), C (contracts — BDD + analytics + threat + data-contract), D (tech-spec + tasks com `allowed_files`), E (readiness review). | [`docs/ux/forge-plan-roteiro.md`](../ux/forge-plan-roteiro.md) |
 | **Card** | Unidade atômica de composição: templates + validators + agent prompts. 22 canon em v1.2 + overlay local (Gap 5). README substantivo por card explicando trade-offs vs alternativas. | [`docs/schemas/card.md`](../schemas/card.md) |
 | **Preset** | Alias para combinação canônica de cards. v1.2 tem `kmp-mobile` (10 cards stack + 4 backend-candidates dormentes). Onda 2 introduz `ios-only` e `android-only`. | [`docs/schemas/card.md`](../schemas/card.md) |
-| **L1** | Memory per-feature (WIP). Grava estado intermediário em `.claude/memory/L1/<slug>/status.json` + artefatos em `.planning/<slug>/`. Resumível cross-session via Decision 27 (auto-resume `deferred`). | [`docs/schemas/memory.md`](../schemas/memory.md) |
+| **L1** | Memory per-feature (WIP). Grava estado intermediário em `.claude/forge/state/lifecycle/<slug>/status.json` + artefatos em `.planning/<slug>/`. Resumível cross-session via Decision 27 (auto-resume `deferred`). | [`docs/schemas/memory.md`](../schemas/memory.md) |
 | **L2** | Memory project-level (committed em repo). Acumula learnings via retrospective auto-trigger pós-verify; `proposed-evolutions.yaml` revisado em `forge evolve`. | [`docs/schemas/memory.md`](../schemas/memory.md) |
 | **L3** | Memory cross-project read-only (futuro — Onda 3 aspiracional). Auto-injetado em context-pack quando aplicável; sub-agente consome, não escreve. | [`docs/schemas/memory.md`](../schemas/memory.md) |
 | **Capability label** | Abstração de capacidade técnica (ex: `http-client`, `auth-provider`, `persistence-local`, `analytics-emitter`). Cards declaram quais capabilities providenciam; queries Q1-Q11 do graph operam sobre essa abstração. | [`docs/schemas/capability-labels.md`](../schemas/capability-labels.md) |

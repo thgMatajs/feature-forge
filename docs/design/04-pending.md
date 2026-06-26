@@ -569,7 +569,7 @@ auditoria consolidada (§6 item 11) + `auditoria-llm-first` §7-8:
   Regression test fecha o gap de cobertura (testes anteriores semeavam o
   marker legacy à mão). Legacy compat mantido — não é breaking change.
 - **`.gitignore` semantic narrowing** — `.gitignore` que `forge init` cria
-  ainda usa paths v1.x (`.claude/memory/L1/*`, `.claude/graph.db`). v1.3 move
+  ainda usa paths v1.x (`.claude/forge/state/lifecycle/*`, `.claude/graph.db`). v1.3 move
   esses pra `.claude/forge/state/` e `.claude/graph.db` (caminho inalterado).
   Sem impacto funcional imediato (paths antigos também existem por compatibilidade),
   mas narrowing pra `.claude/forge/state/` ficou fora do W5. Critério:
@@ -1849,7 +1849,7 @@ overlay local, não via canon expansion.
       "{parent-slug}"` (reverse pointer pra otimizar queries L1).
       `docs/schemas/memory.md` documenta + MEM-L1-008 ganha rule: se
       `extends-feature != null` → parent existe em
-      `.claude/memory/L1/{parent-slug}/` E `parent.state == "done"`.
+      `.claude/forge/state/lifecycle/{parent-slug}/` E `parent.state == "done"`.
       Forward-compat: status.json pré-Gap 9 carregam normais (default null).
 - [x] **`L1State` em `engine/memory/l1.py` ganha 2 fields + helpers** —
       `extends_feature`, `parent_feature`, `parent_state(slug, root)` +
@@ -2315,7 +2315,7 @@ existentes.
       interactive prompt pra tipos de entidade.
 - [x] **`planning-conductor.md` Phase 4.5** (entre Wave B e Wave C):
       conductor parseia entities do data-contract-spec, roda Q11, persiste
-      resultado em `.claude/memory/L1/{slug}/existing-helpers.yaml`. Empty
+      resultado em `.claude/forge/state/lifecycle/{slug}/existing-helpers.yaml`. Empty
       result é normal — sempre escreve arquivo.
 - [x] **`tech-spec-agent.md` context pack** atualizado para incluir
       `existing-helpers.yaml`. Phase 5 (CFR scan) reescrita em 2 steps:

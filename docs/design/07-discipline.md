@@ -439,7 +439,7 @@ completo.
 
 ### Storage
 
-`.claude/memory/L1/proposed-evolutions/rejected-fingerprints.yaml`:
+`.claude/forge/state/lifecycle/proposed-evolutions/rejected-fingerprints.yaml`:
 
 ```yaml
 rejected:
@@ -619,7 +619,7 @@ Ctrl+C **ou** digitar `para` interrompe o loop e **salva como deferred**:
 - Mensagem de saída:
 
   ```
-  Pausei aqui. Estado salvo em .claude/memory/L1/{slug}/status.json
+  Pausei aqui. Estado salvo em .claude/forge/state/lifecycle/{slug}/status.json
   
   Pra retomar: forge {plan|implement|evolve} {slug}
   ```
@@ -986,7 +986,7 @@ pegado isso antes?"
 ### Filesystem layout
 
 `docs/forge-specs/non-product/{slug}/` paralelo a
-`features/{slug}/`. Mesmo `.claude/memory/L1/{slug}/` para `L1`. Sub-tree
+`features/{slug}/`. Mesmo `.claude/forge/state/lifecycle/{slug}/` para estado de lifecycle. Sub-tree
 de status, history, dispatch-log, verify-log idênticos. Bugfix usa o
 mesmo `non-product/{slug}/` que refactor — decisão deliberada: bugfix
 também é "não é nova product behavior", é "restaurar product behavior
@@ -1347,7 +1347,7 @@ refactor/bugfix retrospective, extension retrospective também alimenta
 
 ### Filesystem layout
 
-Extension feature vive em `.claude/memory/L1/{parent-slug}-{descriptive-suffix}/`
+Extension feature vive em `.claude/forge/state/lifecycle/{parent-slug}-{descriptive-suffix}/`
 — **NÃO** em `non-product/{slug}/` (que é o guarda-chuva de refactor +
 bugfix em §8). Razão: extension é product-derived (gera valor de
 usuário novo, ainda que correlato), segue o pipeline product. O slug

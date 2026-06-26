@@ -500,7 +500,7 @@ highlight.
          graph.db                       codebase graph (SQLite)
        
        💡 Dica: commit .claude/ no git pra o time todo herdar este setup.
-              Exceções: .claude/memory/L1-*, .claude/graph.db
+              Exceções: .claude/forge/state/lifecycle/*, .claude/graph.db
               (já incluí em .claude/.gitignore)
        
        Pronto.

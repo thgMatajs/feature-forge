@@ -181,7 +181,7 @@ Detalhe em [`02-scenarios.md`](02-scenarios.md) quando criado.
 
 - Instância Claude Code dispatchada via `Agent` tool pelo orchestrator-mantenedor humano
 - Recebe context-pack estruturado pelo orchestrator
-- Opera com state persistido em L1 (`.claude/memory/L1/<slug>/status.json`) entre invocações
+- Opera com state persistido em L1 (`.claude/forge/state/lifecycle/<slug>/status.json`) entre invocações
 - Nunca decide de fato — sempre apresenta 3-caminhos quando há ambiguidade
 
 **Inputs canônicos esperados**
@@ -194,7 +194,7 @@ Detalhe em [`02-scenarios.md`](02-scenarios.md) quando criado.
   - instrução literal de voz mentor calmo PT-BR neutro
 - Agent prompt (frontmatter com role + extension-points conforme `agents/<name>.md` — 9 prompts canônicos hoje: planning-conductor, feature-intake-agent, prd-writer, screen-analysis-agent, tech-spec-agent, task-contract-writer, readiness-reviewer, retrospective-agent, executor)
 - Cards merged (catálogo canon ∪ overlay local quando Gap 5 ativo no projeto-x — loader helper `validators/_common.load_catalog` aplica guards)
-- L1 status atual lido de `.claude/memory/L1/<slug>/status.json` (`intake` / `planning` / `implementing` / `verified` / `done` / `blocked-on-external` / `deferred`)
+- L1 status atual lido de `.claude/forge/state/lifecycle/<slug>/status.json` (`intake` / `planning` / `implementing` / `verified` / `done` / `blocked-on-external` / `deferred`)
 
 **Outputs canônicos esperados**
 

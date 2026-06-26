@@ -55,9 +55,9 @@ event router (engine/ingest.py)
 | Event | Hook surface | Updates | Strategy |
 |---|---|---|---|
 | File saved | Claude Code `post-edit` | `graph.db` (incremental) | Reindex only the file + its reverse-deps |
-| Feature artifact saved | Claude Code `post-edit` | `memory/L1/{slug}/` | Update timestamp + summary |
+| Feature artifact saved | Claude Code `post-edit` | `forge/state/lifecycle/{slug}/` | Update timestamp + summary |
 | Pre-commit | Git `pre-commit` | nothing (read-only) | Validates gates, doesn't write |
-| Local commit | Git `post-commit` | `graph.db` (feature↔commit edge) + `L1/{slug}/history.jsonl` | Append-only log |
+| Local commit | Git `post-commit` | `graph.db` (feature↔commit edge) + `forge/state/lifecycle/{slug}/history.jsonl` | Append-only log |
 | Push to remote | Git `pre-push` | nothing (read-only) | Final validation gate |
 
 ### Feature lifecycle events
@@ -119,7 +119,7 @@ Concurrency: SQLite WAL mode + write lock
 There is no `forge graph rebuild` subcommand — full rebuild lives only inside
 `forge init` ou via menu de `forge reconfigure` → "rebuild do graph".
 
-### `memory/L1/{slug}/`
+### `forge/state/lifecycle/{slug}/`
 
 ```
 Trigger: planning-conductor writes a decision
@@ -131,8 +131,8 @@ forge native (doesn't come from hook, comes from inside agent)
    ├──→ elicitation.yaml: update ambiguity counter
    └──→ history.jsonl: append event line
    
-Concurrency: each feature has its own L1 dir, no collision
-Disposal: when feature.status == archived, compresses L1 → 1 summary file
+Concurrency: each feature has its own lifecycle dir, no collision
+Disposal: when feature.status == archived, compresses lifecycle dir → 1 summary file
 ```
 
 L1 is the **feature logbook**. Everything that happened is recorded. Never
@@ -341,8 +341,8 @@ Total: **9 thin hooks**. All logic in `engine/ingest.py`.
               ┌────────────────────┼────────────────────┐
               ▼                    ▼                    ▼
       ┌──────────────┐   ┌──────────────────┐   ┌──────────────────┐
-      │  graph.db    │   │  memory/L1/L2    │   │ proposed-        │
-      │  (SQLite)    │   │  (YAML/JSONL)    │   │ evolutions.yaml  │
+      │  graph.db    │   │  forge/state/    │   │ proposed-        │
+      │  (SQLite)    │   │  lifecycle + L2  │   │ evolutions.yaml  │
       └──────┬───────┘   └──────────┬───────┘   └──────────┬───────┘
              │                      │                      │
              │                      │                      ▼

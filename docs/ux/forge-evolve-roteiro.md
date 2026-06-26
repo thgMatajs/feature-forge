@@ -576,14 +576,14 @@ demanding.
        
        Se você esperava ver propostas e a fila está vazia, pode ser que:
          ├ a retrospectiva ainda não rodou nessa feature
-         │   (verifica `.claude/memory/L1/<slug>/status.json` — state == done?)
+         │   (verifica `.claude/forge/state/lifecycle/<slug>/status.json` — state == done?)
          ├ a retrospectiva rodou mas não detectou nada acima de
          │   confidence 0.5 (limiar mínimo pra enfileirar)
          └ um `forge undo` apagou propostas recentes
        
        💡 Pra forçar uma retrospectiva manual:
           (não recomendado — retro automática é mais limpa)
-          edita `.claude/memory/L1/<slug>/status.json` se necessário.
+          edita `.claude/forge/state/lifecycle/<slug>/status.json` se necessário.
        
        Sem nada pra fazer aqui. Volto depois.
 ```

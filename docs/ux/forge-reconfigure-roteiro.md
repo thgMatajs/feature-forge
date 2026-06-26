@@ -9,7 +9,7 @@ never a full rebuild.
 
 - Standalone repo `~/Documents/feature-forge/` (canonical source of cards)
 - `.claude/workflow-config.yaml` already exists (else: redirect to `forge init`)
-- Active feature lock (`.claude/memory/L1/*/status.json`) is the gatekeeper
+- Active feature lock (`.claude/forge/state/lifecycle/*/status.json`) is the gatekeeper
 - Persona: **mentor calmo** — warm in exploration, firm at gates, didactic on
   changes, asks confirmation before applying diffs
 - Every applied change appends to `.claude/workflow-config-history.jsonl`
@@ -30,7 +30,7 @@ $ forge reconfigure
        Reconfigure mexe em estado compartilhado e isso só rola se
        nada estiver no meio do caminho.
 
-[0:01] 🔍 Scanning .claude/memory/L1/*/status.json
+[0:01] 🔍 Scanning .claude/forge/state/lifecycle/*/status.json
        ├ auth                       done       (safe)
        ├ bonsai                     done       (safe)
        ├ bonsai-detail              done       (safe)

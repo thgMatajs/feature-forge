@@ -497,7 +497,7 @@ CLI form: named query `reusable-helpers` (interactive prompt for comma-
 separated entity types, e.g., `Bonsai, Task`)
 
 Used by `planning-conductor` Phase 4.5 (between Wave B and Wave C). Result
-is persisted to `.claude/memory/L1/{slug}/existing-helpers.yaml` so the
+is persisted to `.claude/forge/state/lifecycle/{slug}/existing-helpers.yaml` so the
 tech-spec-agent receives it in the context pack — preserves the
 deterministic-context discipline (agent never queries the graph live).
 

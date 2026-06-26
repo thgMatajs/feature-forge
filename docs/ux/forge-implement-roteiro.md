@@ -659,7 +659,7 @@ roda retrospectiva.
        
 [3:20] 📦 L1 → summary
        
-       .claude/memory/L1/lembrete-rega/ comprimido em summary.yaml
+       .claude/forge/state/lifecycle/lembrete-rega/ comprimido em summary.yaml
          (1 arquivo · 8kb · arquivado em archives/lembrete-rega/)
 ```
 
@@ -709,8 +709,8 @@ roda retrospectiva.
          retrospective.md · proposed-evolutions.yaml
          7 evidence files · status: done
        
-       .claude/memory/L1/lembrete-rega/
-         arquivado em archives/lembrete-rega/summary.yaml
+       .claude/forge/state/lifecycle/lembrete-rega/
+         arquivado em forge/state/lifecycle/archived/lembrete-rega/summary.yaml
        
        💡 Dica: rode `forge evolve` em até 7 dias.
               Propostas envelhecem — confidence cai depois disso.

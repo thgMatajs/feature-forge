@@ -326,7 +326,7 @@ memory:
   layers-enabled: [L1, L2, L3]          # L4 (skill-global), L5 (per-card) added when present
   
   L1-per-feature:
-    location:      .claude/memory/L1/{feature-slug}/
+    location:      .claude/forge/state/lifecycle/{feature-slug}/
     retention:     until-feature-archived
     max-size-mb:   2
   
@@ -693,7 +693,7 @@ implementado v1.2).
 |---|---|---|---|
 | `forge-config.yaml` (at `.claude/forge/forge-config.yaml`) | **Fixed decisions** about project (preset, cards, paths, backend, persona) | Init + reconfigure | ✅ yes |
 | `.claude/inventory/*.yaml` | **Factual snapshot** of project (DS, i18n, conventions) | Init + on-demand re-scan | ✅ yes |
-| `.claude/memory/L*.yaml` | **Accumulated learning** (inferred patterns, FNDs, resolved contradictions) | Each feature | ⚠️ L2/L3 yes; L1 no |
+| `.claude/forge/state/lifecycle/` + `.claude/memory/L*.yaml` | **Accumulated learning** (lifecycle state per feature in `forge/state/lifecycle/`; inferred patterns, FNDs, resolved contradictions in `memory/L2`) | Each feature | ⚠️ L2/L3 yes; L1 lifecycle no |
 | `.claude/graph.db` | **Structural map** of code (queryable) | Incremental | ❌ rebuildable |
 
 Config = "what we chose." Inventory = "what exists." Memory = "what we learned."

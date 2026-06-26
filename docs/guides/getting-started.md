@@ -176,8 +176,8 @@ Depois do `forge init`, seu projeto ganha uma estrutura nova dentro de
 | `inventory/` | Sim | Time compartilha o mesmo catálogo de DS/i18n |
 | `memory/L2-project.yaml` | Sim | Conhecimento acumulado do time |
 | `graph.db` | **Não** | Rebuildável, muda por dev, causaria conflito |
-| `memory/L1/` | **Não** | WIP de features ativas — gitignored |
-| `memory/L1/archived/` | Sim | Histórico de features concluídas |
+| `forge/state/lifecycle/` | **Não** | WIP de features ativas — gitignored |
+| `forge/state/lifecycle/archived/` | Sim | Histórico de features concluídas |
 
 ---
 
