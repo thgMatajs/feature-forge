@@ -302,7 +302,7 @@ def _three_paths_overflow(project_root: Path) -> str:
     return question.ask(
         "Caminho?",
         {
-            "a": "forge memory → distill L2 (depois retomo)",
+            "a": "forge memory distill (depois retomo)",
             "b": "pausar e revisar depois (estado salvo)",
             "c": "abortar a sessão de evolve",
         },
@@ -422,7 +422,7 @@ def run(argv: list[str]) -> int:
         )
         if choice == "a":
             renderer.write(
-                "  Rode `forge memory` → distill L2, depois `forge evolve` "
+                "  Rode `forge memory distill`, depois `forge evolve` "
                 "novamente — o checkpoint resume daqui."
             )
         elif choice == "b":
@@ -513,7 +513,7 @@ def run(argv: list[str]) -> int:
                 choice = _three_paths_overflow(project_root)
                 if choice == "a":
                     renderer.write(
-                        "  Rode `forge memory` → distill L2, depois `forge evolve`."
+                        "  Rode `forge memory distill`, depois `forge evolve`."
                     )
                 elif choice == "b":
                     renderer.write("  Pausei. Checkpoint salvo.")

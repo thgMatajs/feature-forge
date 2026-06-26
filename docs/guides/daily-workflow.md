@@ -496,34 +496,31 @@ $ forge undo
 
 ---
 
-## forge memory — Gerenciar memória do time
+## forge memory — Gerenciar o acervo mem
 
-**O que faz:** Inspetor interativo das camadas de memória (L1/L2/L3).
-Read-only por padrão; operações de mutação (`forget`, `distill L2`) exigem
-confirmação dupla.
+**O que faz:** Wrapper fino arg-driven sobre o `mem` vendorizado (stateless).
+Sem menu interativo; cada ação é um subcomando direto.
 
-**Quando usar:** "Quero ver o que o time aprendeu até agora", "a L2 estourou o
-limite e preciso distilar", "quero exportar o context-pack pro agente".
+**Quando usar:** "Quero buscar o que o time aprendeu sobre autenticação",
+"preciso exportar o context-pack pro agente", "a L2 estourou e quero curar".
 
-**Exemplo:**
+**Subcomandos:**
 
 ```bash
-$ forge memory
+# Buscar no acervo (ranqueado por relevância)
+$ forge memory search "Firebase Auth timeout"
 
-┌─ forge memory ──────────────────────────────────────┐
-│ L1 (working — 2 ativas, 0 arquivadas)               │
-│   login-screen        planning → ready               │
-│   fix-crash-auth      implementing → TASK-0002 done  │
-│                                                       │
-│ L2 (committed — 12KB / 256KB)                       │
-│   • Decision: usar Koin para DI (2026-06-01)        │
-│   • Pattern: error handling com sealed class         │
-│   • Learning: Firebase Auth timeout no Brasil        │
-│   ... (8 entradas no total)                          │
-│                                                       │
-│ [i] Inspectar  [f] Forget  [d] Distill L2           │
-│ [e] Export context-pack                              │
-└──────────────────────────────────────────────────────┘
+# Inspecionar uma nota pelo id, ou ver stats do acervo
+$ forge memory inspect <id>
+$ forge memory inspect
+
+# Exportar índice de alto valor pro context-pack
+$ forge memory export
+$ forge memory export --budget 8000
+
+# Curadoria do acervo (dry-run por padrão; --apply persiste)
+$ forge memory distill
+$ forge memory distill --apply
 ```
 
 ---
@@ -674,7 +671,7 @@ Qual é o seu próximo passo?
 | `forge doctor` | Health check | Diagnóstico |
 | `forge reconfigure` | Muda configuração | Pós-init |
 | `forge graph` | Consulta o graph | Investigação |
-| `forge memory` | Gerencia memória do time | Aprendizado contínuo |
+| `forge memory <ação>` | Gerencia o acervo mem (search/inspect/export/distill) | Aprendizado contínuo |
 | `forge evolve` | Revisa propostas de melhoria | Quando há findings |
 | `forge undo` | Reverte última ação | Erro |
 | `forge raw` | Escape hatch | Raramente |

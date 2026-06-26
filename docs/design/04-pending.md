@@ -50,6 +50,18 @@ checklist for next sessions.
   pipeline absorve o re-run.
   *Reentrar* se o custo de re-run virar fricção real em inits longos.
 
+## W-ROUTE 6a — gaps pós reescrita do forge memory (2026-06-26)
+
+- **`forge memory forget` removido (W-ROUTE 6a)** — o mem não tem primitivo
+  de archive-por-id (`supersede` exige NEW+OLD; `evolve --apply` arquiva por
+  standing, não por alvo). Curadoria de archive passa a ser `forge memory
+  distill` → `mem evolve`. Candidato a `mem-report` upstream: um `mem archive
+  <id>`.
+
+- **`engine/memory/l3.py` órfão (W-ROUTE 6a)** — perdeu o único consumidor de
+  produção (`memory_cli` parou de inspecionar L3). Slated pra remoção num
+  passo clean-break posterior; mantido agora pra não expandir o escopo de 6a.
+
 ## W-MIGRATE (migrador L2→mem) — DEFERIDO até brownfield real (2026-06-26)
 
 O migrador forge-side L2→mem (spec §Migração: kind→type, field-preservation,
@@ -1142,7 +1154,7 @@ Motivação: Fase 3 inicial calcificou Firebase como o backend canônico. Projet
 - [x] `engine/evolve.py` — review proposed evolutions single-by-single
 - [x] `engine/undo.py` — 7 targets menu
 - [x] `engine/graph_cli.py` — Q1-Q10 read-only CLI
-- [x] `engine/memory_cli.py` — inspect/search/forget/distill/export
+- [x] `engine/memory_cli.py` — search/inspect/export/distill (arg-driven; forget/L3 removidos — W-ROUTE 6a)
 - [x] `engine/utils/{paths,yaml_io,sha256,sqlite_io}.py`
 - [x] `engine/ui/{renderer,progress,tree,question}.py`
 - [x] `engine/persona/mentor_calmo.py`

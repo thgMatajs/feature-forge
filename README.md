@@ -236,7 +236,7 @@ forge graph          query graph (Q1-Q17, "r" combined view)
                      · `forge graph --json <query> [args...]` — non-interactive JSON
                        (entrypoint pra IA/automação; aceita aliases/keys/labels);
                        combina com `--no-auto-build` em CI determinístico (v1.3.0+)
-forge memory         inspect L1/L2/L3
+forge memory         search/inspect/export/distill (wrapper mem, arg-driven)
 forge evolve         review propostas (single-by-single) — 16 kinds
                      · 10 retrospective + 6 reuse-intelligence
 forge undo           reverter última ação

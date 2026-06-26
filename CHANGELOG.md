@@ -42,6 +42,11 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Changed
 
+- `forge memory` reescrito como wrapper fino arg-driven sobre o `mem`
+  vendorizado (`search`/`inspect`/`export`/`distill`), stateless — elimina
+  o checkpoint-resume do DRIFT-1 (BUG-M1). Inspeção de lifecycle move pra
+  `forge status`; L3 e `forget` por-id removidos (W-ROUTE 6a).
+
 - ADR-note Decisão 22 (sem dep runtime de outras skills): o mem é vendorizado
   como snapshot pinado fork-and-forget (Decisão 15), não import runtime — o
   espírito da 22 se mantém. Sem revisita formal (não contradiz a decisão locked).

@@ -43,7 +43,7 @@ dedicated PR. Silent expansion is forbidden.
 | 6 | `forge doctor` | Read-only health check across config, cards, inventory, memory, graph, hooks, MCPs, i18n, connectivity, mem. Categoria `mem` (scope `full`): verifica vendorização em `.claude/bin/mem`, saúde via `mem doctor` e drift do pin vendorizado vs asset. Interactive choice of scope (full / quick). |
 | 7 | `forge reconfigure` | **Single entrypoint for any post-init mutation**: cards, paths, conventions, backend, ticketing, workflow, persona, memory policy, external-docs, hooks, inventory re-extract, graph rebuild. Diff → confirm → apply → auto-doctor. |
 | 8 | `forge graph` | Read graph queries Q1–Q17 (similar features, blast-radius, orphans, reusable-helpers, duplications, KMP-migration candidates, near-duplicates, redundant-platform). Rebuild lives inside `forge reconfigure`. |
-| 9 | `forge memory` | Inspect and manage memory across L1–L5. Interactive menu: inspect, forget, promote-from-L1, view-L2. Distillation is **automatic** (não tem comando manual). |
+| 9 | `forge memory <ação>` | Wrapper fino sobre o `mem` vendorizado (stateless): `search <query>` (busca ranqueada — `mem find`), `inspect [id]` (corpo de uma nota ou stats do acervo — `mem get`/`mem stats`), `export [--budget N]` (índice de alto valor pro context-pack — `mem brief`), `distill [--apply]` (curadoria do acervo — `mem evolve`). Inspeção de lifecycle vive em `forge status`; L3/forget removidos (W-ROUTE 6a). |
 | 10 | `forge evolve` | Review and apply / reject proposed evolutions queued by retrospective-agent. |
 | 11 | `forge undo` | Revert the last state-mutating action (task commit, reconfigure apply, init). Interactive prompt picks target if ambiguous — `last` is not a CLI suffix, é a opção default no menu. |
 | 12 | `forge raw` | Escape hatch. Direct invocation of internal scripts (`migrator-N-to-M`, `verify-card`, `edit-config`, `rebuild-templates`). Documented per-script. **NÃO** é uma porta pra inventar novos comandos via raw — é a porta pra operações pontuais sem UX. |
@@ -60,14 +60,15 @@ dedicated PR. Silent expansion is forbidden.
 | **Card: remove** | `forge reconfigure` → menu `[ ] cards` → opção "remover card" | Resolver bloqueia se outro card ativo depende. |
 | **Card: upgrade (from canonical)** | `forge reconfigure` → menu `[ ] cards` → opção "atualizar card do canonical" | Mostra diff; usuário aceita ou pula. |
 | **Card: lock (trust local edit)** | `forge reconfigure` → menu `[ ] cards` → opção "travar edição local" | Marca `pinned: true` na config. |
-| **Card: inspect** | `forge memory` ou `forge reconfigure` → menu cards → opção "inspecionar" | Read-only; mostra sha256, conflicts, contributions. |
+| **Card: inspect** | `forge reconfigure` → menu cards → opção "inspecionar" | Read-only; mostra sha256, conflicts, contributions. |
 | **Inventory: refresh design-system** | `forge reconfigure` → menu `[ ] paths` (ou diretamente "re-extrair inventory") → escolhe quais | Auto também via post-commit hook quando DS muda no disco. |
 | **Inventory: refresh i18n** | Mesmo. Geralmente roda automático via hooks `i18n-changes`. | |
 | **Inventory: refresh conventions** | Mesmo. Roda automático no `feature-done` retrospective. | |
 | **Schema migration v(n) → v(n+1)** | `forge raw migrator-N-to-M` | `raw` é o escape hatch por design — migrations não têm UX cinemática própria. |
-| **Memory: distill L2 quando ultrapassa max-size** | (a) Automático no `feature-done` retrospective. (b) Manual via `forge memory` → menu "distill L2" — usado quando `forge evolve` apply é pausado por overflow (ver `docs/design/07-discipline.md` §6). | Não existe `forge memory distill` como CLI standalone; só opção de menu interativo. |
-| **Memory: inspect L1/L2/L3** | `forge memory` (interactive menu) | "Inspect" é uma das opções do menu. |
-| **Memory: forget / esquecer item** | `forge memory` (interactive menu) | "Forget" é opção; pede confirmação. |
+| **Memory: distill quando acervo precisa curadoria** | (a) Manual via `forge memory distill [--apply]` — usado quando `forge evolve` apply é pausado por overflow de L2 (ver `docs/design/07-discipline.md` §6). (b) Interativo via `mem evolve`. | `forge memory distill` é CLI standalone arg-driven (W-ROUTE 6a). |
+| **Memory: buscar no acervo** | `forge memory search "<query>"` | Busca ranqueada; equivalente a `mem find`. |
+| **Memory: inspecionar nota ou stats** | `forge memory inspect [id]` | Sem id: stats do acervo (`mem stats`). Com id: corpo da nota (`mem get`). |
+| **Memory: exportar context-pack** | `forge memory export [--budget N]` | Índice de alto valor (`mem brief`). |
 | **Memory: promote L1 → L2** | `forge evolve` aplica propostas que vieram de retrospective-agent | Promoção nunca é manual via comando — é review-and-apply. |
 | **Graph: rebuild full** | `forge reconfigure` → opção "rebuild graph" (também dentro de menu paths quando paths mudam) | Hooks normalmente mantêm o graph quente; rebuild manual é raro. |
 | **Graph: query** | `forge graph` | Read-only sempre. Q1–Q10 estruturais, Q11 reusable-helpers, Q12–Q17 reuse-intelligence (duplications, KMP-migration, near-duplicates, redundant-platform, TS-helpers), `r` para combined view. |
@@ -98,10 +99,9 @@ A tabela completa de tudo que foi inventado nos roteiros e o que vira agora:
 | `forge card upgrade X` | `forge reconfigure` → menu cards → "atualizar card do canonical" |
 | `forge card upgrade X --from-canonical` | Same as above — `--from-canonical` é o default; sem flag. |
 | `forge card lock X` | `forge reconfigure` → menu cards → "travar edição local" |
-| `forge card list` | `forge memory` → menu → "inspecionar cards", ou `forge status`. |
+| `forge card list` | `forge status` (cards ativos listados). |
 | `forge inventory refresh X` | `forge reconfigure` → opção "re-extrair inventory: X" |
 | `forge migrate --from N --to M` | `forge raw migrator-N-to-M` |
-| `forge memory distill` (CLI standalone) | `forge memory` → menu "distill L2" (opção interativa). Auto também no `feature-done` retrospective. |
 | `forge memory promote` | `forge evolve` (review-and-apply de propostas do retrospective-agent) |
 | `forge ship` | Out-of-scope v1. Removido das referências. |
 | `forge feature-done` | Automático ao verificar a última task. Sem comando próprio. |
