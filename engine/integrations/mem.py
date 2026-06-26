@@ -17,10 +17,12 @@ Voz: mentor calmo. PT neutro.
 """
 from __future__ import annotations
 
+import json as _json
 import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from engine.host.env import scrubbed_subprocess_env
 
@@ -148,3 +150,102 @@ def mem_call(
         stdout=proc.stdout or "",
         stderr=proc.stderr or "",
     )
+
+
+@dataclass(frozen=True)
+class MemQuery:
+    """Resultado de um wrapper de alto nível sobre ``mem_call``.
+
+    ok:      True se o mem rodou e devolveu dado parseável (ou not-found
+             contratual em ``get``). False em binário ausente / timeout /
+             exit não-zero / JSON inválido.
+    data:    JSON parseado (list|dict) quando ok; ``None`` em not-found ou
+             em qualquer caminho degradado.
+    message: mensagem 3-caminhos (mentor-calmo) quando ``ok`` é False.
+    """
+
+    ok: bool
+    data: Any
+    message: str = ""
+
+
+def _degraded_message(result: MemResult) -> str:
+    if not result.found:
+        return (
+            "mem indisponível. Três caminhos: "
+            "(1) rode `forge init` pra vendorizar `.claude/bin/mem`; "
+            "(2) instale o `mem` no PATH (dev/dogfood); "
+            "(3) confira que `.claude/bin/mem` existe e é executável."
+        )
+    if result.timed_out:
+        return (
+            f"mem não respondeu a tempo ({result.stderr}). Tente de novo "
+            "ou rode o subcomando direto em `.claude/bin/mem`."
+        )
+    return (
+        f"mem falhou (exit {result.exit_code}): "
+        f"{result.stderr.strip() or 'sem detalhe'}."
+    )
+
+
+def _parse_json(result: MemResult) -> MemQuery:
+    try:
+        return MemQuery(ok=True, data=_json.loads(result.stdout or "null"))
+    except _json.JSONDecodeError as exc:
+        return MemQuery(
+            ok=False, data=None, message=f"mem devolveu JSON inválido: {exc}"
+        )
+
+
+def _run_or_degrade(project_root: Path, args: list[str]) -> MemQuery:
+    result = mem_call(project_root, args)
+    if not result.found or result.timed_out or result.exit_code != 0:
+        return MemQuery(ok=False, data=None, message=_degraded_message(result))
+    return _parse_json(result)
+
+
+def mem_find(
+    project_root: Path,
+    query: str,
+    *,
+    limit: int = 10,
+    mem_type: str | None = None,
+) -> MemQuery:
+    """`mem find` — busca ranqueada (títulos only). data = list de hits."""
+    args = ["find", query, "-k", str(limit)]
+    if mem_type:
+        args += ["--type", mem_type]
+    return _run_or_degrade(project_root, args)
+
+
+def mem_get(project_root: Path, note_id: str) -> MemQuery:
+    """`mem get` — corpo da nota. exit 2 (not-found) → ok=True, data=None."""
+    result = mem_call(project_root, ["get", note_id])
+    if not result.found or result.timed_out:
+        return MemQuery(ok=False, data=None, message=_degraded_message(result))
+    if result.exit_code == 2:
+        return MemQuery(ok=True, data=None)
+    if result.exit_code != 0:
+        return MemQuery(ok=False, data=None, message=_degraded_message(result))
+    return _parse_json(result)
+
+
+def mem_stats(project_root: Path) -> MemQuery:
+    """`mem stats` — counts + vitality + inbox. data = dict."""
+    return _run_or_degrade(project_root, ["stats"])
+
+
+def mem_brief(project_root: Path, *, budget: int | None = None) -> MemQuery:
+    """`mem brief` — índice de alto valor. data = list de `{id,type,line}`."""
+    args = ["brief"]
+    if budget is not None:
+        args += ["--budget", str(budget)]
+    return _run_or_degrade(project_root, args)
+
+
+def mem_evolve(project_root: Path, *, apply: bool = False) -> MemQuery:
+    """`mem evolve` — curadoria do acervo. data = dict de proposals."""
+    args = ["evolve"]
+    if apply:
+        args.append("--apply")
+    return _run_or_degrade(project_root, args)
