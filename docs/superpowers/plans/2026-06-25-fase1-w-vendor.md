@@ -188,7 +188,7 @@ def _check_mem(project_root: Path) -> _CategoryReport:
         return _CategoryReport("mem", [_Check(
             name="vendored", status=_STATUS_FAIL,
             message="mem não vendorizado em .claude/bin/mem",
-            remediation="rode `forge init` ou `forge reconfigure`")])
+            remediation="rode `forge init` pra vendorizar o mem")])  # M-002-r2: só init re-vendoriza nesta onda
     checks: list[_Check] = [_Check("vendored", _STATUS_OK, "mem vendorizado em .claude/bin/mem")]
     # H-001: `mem doctor` (cmd_doctor) retorna exit 0 SEMPRE — exit_code não é
     # sinal de saúde. Derivar a saúde do PIOR check do JSON `--json`, não do exit.
@@ -196,9 +196,10 @@ def _check_mem(project_root: Path) -> _CategoryReport:
     if not res.found:
         checks.append(_Check("health", _STATUS_WARN, "mem doctor não executou"))
     else:
-        import json as _json
+        # L-001: usar o `json` do topo do módulo (doctor.py já importa json;
+        # se não importar, adicionar `import json` no topo — não local).
         try:
-            report = _json.loads(res.stdout or "[]")
+            report = json.loads(res.stdout or "[]")
             # mem doctor --json → lista de {"check","status","detail"};
             # status do mem ∈ {"ok", e não-ok (ex.: "fail"/"error"/"stale")}.
             bad = [c for c in report if isinstance(c, dict) and c.get("status") != "ok"]
