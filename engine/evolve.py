@@ -19,6 +19,7 @@ from typing import Any, Optional
 
 from engine.memory.distiller import (
     DistillationProposal,
+    _KNOWLEDGE_KINDS,
     apply_proposal_to_l2,
     compute_proposal_fingerprint,
     detect_l2_overflow,
@@ -274,17 +275,24 @@ def _apply_proposal(
     p: DistillationProposal,
     cfg: dict[str, Any],
 ) -> bool:
-    """Apply with overflow guard. Returns True on success, False on overflow pause."""
-    max_mb = _l2_max_mb(cfg)
-    if detect_l2_overflow(project_root, cfg):
-        renderer.write(
-            renderer.colored(
-                f"  🛑 L2 cheia — {_format_kb(l2_size_bytes(project_root))} "
-                f"/ {max_mb * 1024:.0f} KB",
-                "yellow",
+    """Apply with overflow guard. Returns True on success, False on overflow pause.
+
+    W-ROUTE 6b (D5): kinds de conhecimento (``_KNOWLEDGE_KINDS``) vão pro mem
+    inbox em vez de escrever L2 — o overflow-guard (`detect_l2_overflow`) não
+    se aplica a eles e seria incorreto bloqueá-los por "L2 cheia". Os demais
+    kinds (forget-l1, reuse-intelligence, etc.) mantêm o guard legacy.
+    """
+    if p.kind not in _KNOWLEDGE_KINDS:
+        max_mb = _l2_max_mb(cfg)
+        if detect_l2_overflow(project_root, cfg):
+            renderer.write(
+                renderer.colored(
+                    f"  🛑 L2 cheia — {_format_kb(l2_size_bytes(project_root))} "
+                    f"/ {max_mb * 1024:.0f} KB",
+                    "yellow",
+                )
             )
-        )
-        return False
+            return False
 
     apply_proposal_to_l2(project_root, p)
     renderer.write(renderer.colored(f"  ✓ Aplicado {p.id}.", "green"))

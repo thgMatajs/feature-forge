@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
+from engine.integrations.mem import mem_inbox_add
 from engine.memory import MemoryError
 from engine.memory.l2 import (
     L2Entry,
@@ -96,6 +97,10 @@ _VALID_KINDS = {
     "kmp-migration-candidate",
     "consolidate-ts-helper",
 }
+
+# W-ROUTE 6b: os 3 kinds de L2-knowledge que agora vão pro mem inbox em vez
+# de escrever L2. Compartilhado com engine/evolve.py (skip do overflow-guard).
+_KNOWLEDGE_KINDS = frozenset({"promote-to-l2", "l1-to-l2-promotion", "consolidate-l2"})
 
 
 # ── Dataclass ────────────────────────────────────────────────────────────────
@@ -480,23 +485,29 @@ def apply_proposal_to_l2(
             f"refusing to apply proposal {proposal.id}: fingerprint is on the veto list"
         )
 
-    if proposal.kind in {"promote-to-l2", "l1-to-l2-promotion"}:
-        entry = L2Entry(
-            id=proposal.id.replace("P-", "L2-") if proposal.id.startswith("P-") else proposal.id,
-            kind="pattern",
+    if proposal.kind in _KNOWLEDGE_KINDS:
+        # W-ROUTE 6b: knowledge proposals vão pro mem inbox (anti-envenenamento G11).
+        # O merge-semantic do consolidate-l2 é moot com L2 abandonado para conhecimento
+        # — vira candidato inbox como os outros dois.
+        # round(confidence*4)+1 (não *5): evita banker's rounding de round(0.5*5)==2;
+        # 0.0→1, 0.5→3, 0.8→4, 1.0→5. clamp [1,5] para confidence fora de [0,1].
+        importance = max(1, min(5, round(proposal.confidence * 4) + 1))
+        tags = ",".join(proposal.provenance) if proposal.provenance else None
+        result = mem_inbox_add(
+            project_root,
             title=proposal.title,
             body=proposal.description,
-            provenance=list(proposal.provenance),
-            promoted_at=utc_now_iso(),
-            promoted_from=proposal.provenance[0] if proposal.provenance else "",
-            confidence=proposal.confidence,
+            mem_type="reference",
+            importance=importance,
+            tags=tags or None,
+            source=f"forge-evolve:{proposal.id}",
+            origin="manual",
         )
-        add_entry(project_root, entry)
-        remove_from_queue(project_root, proposal.id)
-        return
-
-    if proposal.kind == "consolidate-l2":
-        _apply_consolidate_l2(project_root, proposal)
+        if not result.ok:
+            raise MemoryError(
+                f"apply_proposal_to_l2: mem_inbox_add falhou para {proposal.id} — "
+                f"{result.message} — queue não drenada (raise-não-drena)."
+            )
         remove_from_queue(project_root, proposal.id)
         return
 

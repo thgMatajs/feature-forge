@@ -127,3 +127,218 @@ def test_queue_proposal_skips_when_rejected(tmp_path):
     # Now queue — should silently skip.
     distiller.queue_proposal(tmp_path, p)
     assert distiller.read_proposals_queue(tmp_path) == []
+
+
+# ── Task 2 (6b): re-rota dos branches de conhecimento ────────────────────
+
+
+def test_apply_promote_to_l2_calls_mem_inbox_add(tmp_path, monkeypatch):
+    """promote-to-l2 deve chamar mem_inbox_add com campos mapeados (D3)."""
+    import engine.memory.distiller as _dist
+    called: dict = {}
+
+    def _fake_inbox_add(project_root, title, body, mem_type, **kw):
+        called["title"] = title
+        called["body"] = body
+        called["mem_type"] = mem_type
+        called["importance"] = kw.get("importance")
+        called["tags"] = kw.get("tags")
+        called["source"] = kw.get("source")
+        called["origin"] = kw.get("origin")
+        from engine.integrations.mem import MemQuery
+        return MemQuery(ok=True, data="01ABC")
+
+    monkeypatch.setattr(_dist, "mem_inbox_add", _fake_inbox_add)
+
+    p = DistillationProposal(
+        id="P-001",
+        kind="promote-to-l2",
+        title="use-stateflow",
+        description="Use MutableStateFlow para screen state",
+        provenance=["auth", "profile"],
+        confidence=0.8,
+        fingerprint="",
+    )
+    _dist.apply_proposal_to_l2(tmp_path, p)
+
+    assert called["title"] == "use-stateflow"
+    assert called["body"] == "Use MutableStateFlow para screen state"
+    assert called["mem_type"] == "reference"
+    assert called["importance"] == 4  # round(0.8 * 4) + 1 = round(3.2) + 1 = 4, clamp 1-5
+    assert called["tags"] == "auth,profile"
+    assert called["source"] == "forge-evolve:P-001"
+    assert called["origin"] == "manual"
+
+
+def test_apply_l1_to_l2_promotion_calls_mem_inbox_add(tmp_path, monkeypatch):
+    """l1-to-l2-promotion (alias) segue o mesmo caminho que promote-to-l2."""
+    import engine.memory.distiller as _dist
+    called: list = []
+
+    def _fake_inbox_add(project_root, title, body, mem_type, **kw):
+        called.append(True)
+        from engine.integrations.mem import MemQuery
+        return MemQuery(ok=True, data="01XYZ")
+
+    monkeypatch.setattr(_dist, "mem_inbox_add", _fake_inbox_add)
+
+    p = DistillationProposal(
+        id="P-002",
+        kind="l1-to-l2-promotion",
+        title="mvvm-pattern",
+        description="Padrão MVVM consistente",
+        provenance=["onboarding"],
+        confidence=0.7,
+    )
+    _dist.apply_proposal_to_l2(tmp_path, p)
+    assert len(called) == 1
+
+
+def test_apply_consolidate_l2_calls_mem_inbox_add(tmp_path, monkeypatch):
+    """consolidate-l2 colapsa no mesmo caminho (merge-semantic moot com L2 abandonado)."""
+    import engine.memory.distiller as _dist
+    called: list = []
+
+    def _fake_inbox_add(project_root, title, body, mem_type, **kw):
+        called.append(True)
+        from engine.integrations.mem import MemQuery
+        return MemQuery(ok=True, data="01DEF")
+
+    monkeypatch.setattr(_dist, "mem_inbox_add", _fake_inbox_add)
+
+    p = DistillationProposal(
+        id="P-003",
+        kind="consolidate-l2",
+        title="repo-pattern",
+        description="Padrão de repositório unificado",
+        provenance=["payment", "cart"],
+        confidence=0.9,
+    )
+    _dist.apply_proposal_to_l2(tmp_path, p)
+    assert len(called) == 1
+
+
+def test_apply_knowledge_does_not_call_l2_add_entry(tmp_path, monkeypatch):
+    """Nenhum dos 3 branches de conhecimento deve chamar l2.add_entry."""
+    import engine.memory.distiller as _dist
+    import engine.memory.l2 as _l2
+
+    add_entry_calls: list = []
+    original_add_entry = _l2.add_entry
+
+    def _spy_add_entry(*args, **kwargs):
+        add_entry_calls.append(args)
+        return original_add_entry(*args, **kwargs)
+
+    monkeypatch.setattr(_l2, "add_entry", _spy_add_entry)
+
+    def _fake_inbox_add(project_root, title, body, mem_type, **kw):
+        from engine.integrations.mem import MemQuery
+        return MemQuery(ok=True, data="01GHI")
+
+    monkeypatch.setattr(_dist, "mem_inbox_add", _fake_inbox_add)
+
+    for kind in ("promote-to-l2", "l1-to-l2-promotion", "consolidate-l2"):
+        _dist.apply_proposal_to_l2(
+            tmp_path,
+            DistillationProposal(
+                id=f"P-{kind[:3]}",
+                kind=kind,
+                title="t",
+                description="d",
+                provenance=["feat-a"],
+                confidence=0.6,
+            ),
+        )
+
+    assert add_entry_calls == [], f"l2.add_entry foi chamado: {add_entry_calls}"
+
+
+def test_apply_knowledge_raises_on_mem_inbox_add_failure(tmp_path, monkeypatch):
+    """Se mem_inbox_add retorna ok=False, raise MemoryError (não drena a queue)."""
+    import engine.memory.distiller as _dist
+    from engine.memory import MemoryError as _MemError
+
+    def _fake_inbox_add(project_root, title, body, mem_type, **kw):
+        from engine.integrations.mem import MemQuery
+        return MemQuery(ok=False, data=None, message="mem indisponível. Três caminhos: ...")
+
+    monkeypatch.setattr(_dist, "mem_inbox_add", _fake_inbox_add)
+
+    p = DistillationProposal(
+        id="P-004",
+        kind="promote-to-l2",
+        title="t",
+        description="d",
+        provenance=["auth"],
+        confidence=0.5,
+    )
+    # Enfileira primeiro pra testar que não é drenada
+    _dist.queue_proposal(tmp_path, p)
+
+    with pytest.raises(_MemError):
+        _dist.apply_proposal_to_l2(tmp_path, p)
+
+    # Queue não deve ter sido drenada (raise antes do remove_from_queue)
+    queue = _dist.read_proposals_queue(tmp_path)
+    assert any(q.id == "P-004" for q in queue), "queue foi drenada indevidamente"
+
+
+def test_apply_knowledge_importance_clamp(tmp_path, monkeypatch):
+    """importance via round(confidence*4)+1, clamp [1,5]. Midpoint 0.5 → 3
+    (não 2 — a fórmula evita o banker's rounding de round(0.5*5)==round(2.5)==2)."""
+    import engine.memory.distiller as _dist
+    importances: list = []
+
+    def _fake_inbox_add(project_root, title, body, mem_type, **kw):
+        importances.append(kw.get("importance"))
+        from engine.integrations.mem import MemQuery
+        return MemQuery(ok=True, data="01JKL")
+
+    monkeypatch.setattr(_dist, "mem_inbox_add", _fake_inbox_add)
+
+    for confidence, expected in ((0.0, 1), (1.0, 5), (0.5, 3)):
+        _dist.apply_proposal_to_l2(
+            tmp_path,
+            DistillationProposal(
+                id=f"P-conf{int(confidence*10)}",
+                kind="promote-to-l2",
+                title="t",
+                description="d",
+                confidence=confidence,
+            ),
+        )
+
+    assert importances == [1, 5, 3]
+
+
+def test_apply_forget_l1_unchanged_no_mem_call(tmp_path, monkeypatch):
+    """forget-l1 NÃO toca mem_inbox_add — branch estrutural inalterado."""
+    import engine.memory.distiller as _dist
+
+    inbox_add_calls: list = []
+
+    def _spy_inbox_add(*args, **kwargs):
+        inbox_add_calls.append(args)
+        from engine.integrations.mem import MemQuery
+        return MemQuery(ok=True, data="x")
+
+    monkeypatch.setattr(_dist, "mem_inbox_add", _spy_inbox_add)
+
+    # forget-l1 exige target — simula via payload
+    p = DistillationProposal(
+        id="P-forget",
+        kind="forget-l1",
+        title="archive auth",
+        description="feature obsoleta",
+        provenance=["auth"],
+        payload={"target": "auth"},
+    )
+    # O _apply_forget_l1 pode falhar sem estrutura de L1 real; catching MemoryError
+    # (target não existe) é ok — o importante é que inbox_add não foi chamado.
+    try:
+        _dist.apply_proposal_to_l2(tmp_path, p)
+    except Exception:
+        pass
+
+    assert inbox_add_calls == [], "forget-l1 não deve chamar mem_inbox_add"

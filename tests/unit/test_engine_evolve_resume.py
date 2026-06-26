@@ -185,3 +185,63 @@ def test_resume_from_checkpoint(
     assert evolve._read_checkpoint(tmp_forge_project) is None, (
         "checkpoint should be cleared on clean completion"
     )
+
+
+# ── Task 2 (6b / D5): overflow-skip pra kinds de conhecimento ─────────────
+
+
+def test_apply_proposal_skips_overflow_for_knowledge_kind(tmp_path, monkeypatch):
+    """Knowledge proposal NÃO é bloqueado por L2-overflow (D5).
+
+    detect_l2_overflow é forçado a True; mem_inbox_add (via apply_proposal_to_l2)
+    é stubado pra sucesso. O proposal de conhecimento deve aplicar (retorna True),
+    provando que o guard foi pulado.
+    """
+    import engine.evolve as _evolve
+    from engine.memory.distiller import DistillationProposal
+
+    # Força overflow True — se o guard NÃO fosse pulado, _apply_proposal retornaria False.
+    monkeypatch.setattr(_evolve, "detect_l2_overflow", lambda root, cfg: True)
+    # Stuba o apply pra não tocar mem real nem L2.
+    applied: list = []
+    monkeypatch.setattr(
+        _evolve, "apply_proposal_to_l2",
+        lambda root, p: applied.append(p.id),
+    )
+
+    p = DistillationProposal(
+        id="P-know",
+        kind="promote-to-l2",
+        title="t",
+        description="d",
+        provenance=["auth"],
+        confidence=0.7,
+    )
+    result = _evolve._apply_proposal(tmp_path, p, {})
+    assert result is True, "knowledge proposal foi bloqueado pelo overflow-guard (D5 falhou)"
+    assert applied == ["P-know"]
+
+
+def test_apply_proposal_keeps_overflow_guard_for_non_knowledge_kind(tmp_path, monkeypatch):
+    """forget-l1 (não-conhecimento) AINDA respeita o overflow-guard (regression)."""
+    import engine.evolve as _evolve
+    from engine.memory.distiller import DistillationProposal
+
+    monkeypatch.setattr(_evolve, "detect_l2_overflow", lambda root, cfg: True)
+    applied: list = []
+    monkeypatch.setattr(
+        _evolve, "apply_proposal_to_l2",
+        lambda root, p: applied.append(p.id),
+    )
+
+    p = DistillationProposal(
+        id="P-forget",
+        kind="forget-l1",
+        title="t",
+        description="d",
+        provenance=["auth"],
+        payload={"target": "auth"},
+    )
+    result = _evolve._apply_proposal(tmp_path, p, {})
+    assert result is False, "forget-l1 deveria ser pausado por overflow (guard preservado)"
+    assert applied == [], "apply não deveria rodar sob overflow para kind não-conhecimento"
