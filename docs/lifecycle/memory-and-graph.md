@@ -64,12 +64,12 @@ event router (engine/ingest.py)
 
 | Event | Hook surface | Updates | Strategy |
 |---|---|---|---|
-| `forge plan` starts | forge native | `L1/{slug}/hypothesis.yaml`, `ambiguity-map.yaml` | Create dir, write initial state |
-| Sub-agent dispatch | forge native | `L1/{slug}/dispatch-log.jsonl` | Append-only |
-| Sub-agent returns | forge native | `L1/{slug}/dispatch-log.jsonl` + validates output | Append + validation result |
-| Question answered | forge native | `L1/{slug}/elicitation.yaml` + `rationale-trace.yaml` | Update with confidence |
+| `forge plan` starts | forge native | `forge/state/lifecycle/{slug}/hypothesis.yaml`, `ambiguity-map.yaml` | Create dir, write initial state |
+| Sub-agent dispatch | forge native | `forge/state/lifecycle/{slug}/dispatch-log.jsonl` | Append-only |
+| Sub-agent returns | forge native | `forge/state/lifecycle/{slug}/dispatch-log.jsonl` + validates output | Append + validation result |
+| Question answered | forge native | `forge/state/lifecycle/{slug}/elicitation.yaml` + `rationale-trace.yaml` | Update with confidence |
 | Readiness=ready | forge native | `status.json`, proposes L1→L2 candidates | Writes `proposed-evolutions.yaml` |
-| Task complete | forge native | `L1/{slug}/history.jsonl`, `graph.db` (task→commits edge) | Append + edges |
+| Task complete | forge native | `forge/state/lifecycle/{slug}/history.jsonl`, `graph.db` (task→commits edge) | Append + edges |
 | Feature done | forge native | Triggers retrospective | Spawn retrospective-agent |
 | Retrospective complete | forge native | `proposed-evolutions.yaml` + L2 candidates | Queue for `forge evolve` |
 
@@ -258,7 +258,7 @@ Points where things go wrong without care:
 
 | Risk | Mitigation |
 |---|---|
-| Two agents writing L1/{slug}/history.jsonl concurrently | append-only + OS-level flock per file |
+| Two agents writing forge/state/lifecycle/{slug}/history.jsonl concurrently | append-only + OS-level flock per file |
 | Graph incremental rebuild fails mid-flight | SQLite transaction with BEGIN/COMMIT/ROLLBACK |
 | Memory L2 corrupted by partial scribble | write to `.tmp` + atomic `mv` |
 | Hook locks up Claude Code (latency) | 5s timeout + silent failure (log warn, continue session) |

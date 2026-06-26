@@ -327,6 +327,9 @@ diferentes.
 
 ```
 .claude/
++-- bin/
+|   +-- mem                       versionado — CLI de memória persistente (acervo JSONL + índice SQLite)
+|   +-- mem.version               versionado — versão do binário mem vendorizado
 +-- workflow-config.yaml          versionado — time compartilha
 +-- cards/                        versionado — time compartilha
 +-- inventory/                    versionado — time compartilha

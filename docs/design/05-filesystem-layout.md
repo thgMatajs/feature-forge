@@ -540,7 +540,7 @@ vs `refactor` → A·C·D·E (`non-product/{slug}/`). See
 ```
 planned → active → done → archived
    │        │       │        │
-   │        │       │        └─ L1 compressed to L1/archived/{slug}.summary.yaml
+   │        │       │        └─ L1 compressed to forge/state/lifecycle/archived/{slug}.summary.yaml
    │        │       │           feature folder remains in docs/
    │        │       │
    │        │       └─ retrospective.md written; L2 promotion candidates queued
