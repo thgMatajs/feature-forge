@@ -358,7 +358,7 @@ def _status_payload(project_root: Path, config: dict) -> dict:
         },
         "active_features": features,
         "memory": {
-            "l1_active": len(list_active_features(project_root)),
+            "l1_active": len(features),
             "l1_archived": len(list_archived_features(project_root)),
             "mem": _mem_stats_snapshot(project_root),
         },
@@ -445,17 +445,6 @@ def _safe_read_yaml(path: Path) -> dict | None:
     except YamlIOError:
         return None
     return data if isinstance(data, dict) else None
-
-
-def _config_get_path(config: dict, keys: list[str], default: Any) -> Any:
-    cursor: Any = config
-    for key in keys:
-        if not isinstance(cursor, dict):
-            return default
-        cursor = cursor.get(key)
-        if cursor is None:
-            return default
-    return cursor
 
 
 def _parse_iso(value: str) -> datetime | None:

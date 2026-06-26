@@ -49,6 +49,8 @@ def test_render_memory_shows_mem_stats(monkeypatch, tmp_project_root, capsys):
     assert "total=5" in out or "total: 5" in out
     assert "live=4" in out or "live: 4" in out
     assert "stale=1" in out or "stale: 1" in out
+    assert "feedback=3" in out
+    assert "reference=2" in out
 
 
 def test_render_memory_degrades_soft_when_mem_unavailable(monkeypatch, tmp_project_root, capsys):

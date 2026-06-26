@@ -54,7 +54,6 @@ def test_status_json_stdout_is_pure_json(tmp_forge_project, capsys, monkeypatch)
 
 def test_status_json_memory_has_mem_block(tmp_forge_project, capsys, monkeypatch):
     """O payload JSON deve ter memory.mem com total/by_type/live/stale."""
-    import json
     from engine.integrations.mem import MemQuery
 
     import engine.status as _status
@@ -79,7 +78,6 @@ def test_status_json_memory_has_mem_block(tmp_forge_project, capsys, monkeypatch
 
 def test_status_json_memory_mem_block_absent_when_degraded(tmp_forge_project, capsys, monkeypatch):
     """Se mem_stats degrada, o bloco 'mem' pode ser None ou ausente — sem crash."""
-    import json
     from engine.integrations.mem import MemQuery
 
     import engine.status as _status
