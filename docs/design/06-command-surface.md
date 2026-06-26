@@ -44,7 +44,7 @@ dedicated PR. Silent expansion is forbidden.
 | 7 | `forge reconfigure` | **Single entrypoint for any post-init mutation**: cards, paths, conventions, backend, ticketing, workflow, persona, memory policy, external-docs, hooks, inventory re-extract, graph rebuild. Diff → confirm → apply → auto-doctor. |
 | 8 | `forge graph` | Read graph queries Q1–Q17 (similar features, blast-radius, orphans, reusable-helpers, duplications, KMP-migration candidates, near-duplicates, redundant-platform). Rebuild lives inside `forge reconfigure`. |
 | 9 | `forge memory <ação>` | Wrapper fino sobre o `mem` vendorizado (stateless): `search <query>` (busca ranqueada — `mem find`), `inspect [id]` (corpo de uma nota ou stats do acervo — `mem get`/`mem stats`), `export [--budget N]` (índice de alto valor pro context-pack — `mem brief`), `distill [--apply]` (curadoria do acervo — `mem evolve`). Inspeção de lifecycle vive em `forge status`; L3/forget removidos (W-ROUTE 6a). |
-| 10 | `forge evolve` | Review and apply / reject proposed evolutions queued by retrospective-agent. |
+| 10 | `forge evolve` | Review and apply / reject proposed evolutions queued by retrospective-agent. Knowledge proposals (`promote-to-l2` / `l1-to-l2-promotion` / `consolidate-l2`): ao aprovar ("a"), emite `mem inbox add` (candidato curado) em vez de escrever direto no L2. O conhecimento entra na fila de inbox do mem e fica disponível via `mem evolve` / `mem inbox promote` (W-ROUTE 6b). Reuse-intelligence e `forget-l1` não são afetados. |
 | 11 | `forge undo` | Revert the last state-mutating action (task commit, reconfigure apply, init). Interactive prompt picks target if ambiguous — `last` is not a CLI suffix, é a opção default no menu. |
 | 12 | `forge raw` | Escape hatch. Direct invocation of internal scripts (`migrator-N-to-M`, `verify-card`, `edit-config`, `rebuild-templates`). Documented per-script. **NÃO** é uma porta pra inventar novos comandos via raw — é a porta pra operações pontuais sem UX. |
 | 13 | `forge qa` | Adversarial red-team gate. Audita artefatos do lifecycle inventando cenários hostis (4 attack vectors: spec-vs-spec, chaos, coverage, validator-claim), executa fixtures sintéticos em sandbox isolado, emite findings actionable em proposed-evolutions. Scope: feature / screen / task / paranoid (cross-feature). Trigger: manual + opt-in auto via `qa.auto-run-on-feature-done`. Verdict (BLOCK/FLAG/PASS) NÃO bloqueia retrospective nem commit — alinha Decisão 5 (code review final out-of-scope). |
@@ -69,7 +69,7 @@ dedicated PR. Silent expansion is forbidden.
 | **Memory: buscar no acervo** | `forge memory search "<query>"` | Busca ranqueada; equivalente a `mem find`. |
 | **Memory: inspecionar nota ou stats** | `forge memory inspect [id]` | Sem id: stats do acervo (`mem stats`). Com id: corpo da nota (`mem get`). |
 | **Memory: exportar context-pack** | `forge memory export [--budget N]` | Índice de alto valor (`mem brief`). |
-| **Memory: promote L1 → L2** | `forge evolve` aplica propostas que vieram de retrospective-agent | Promoção nunca é manual via comando — é review-and-apply. |
+| **Memory: knowledge → mem inbox** | `forge evolve` aplica propostas que vieram de retrospective-agent | Aprovação de proposal de conhecimento emite `mem inbox add`; curadoria final via `mem evolve` / `mem inbox promote`. |
 | **Graph: rebuild full** | `forge reconfigure` → opção "rebuild graph" (também dentro de menu paths quando paths mudam) | Hooks normalmente mantêm o graph quente; rebuild manual é raro. |
 | **Graph: query** | `forge graph` | Read-only sempre. Q1–Q10 estruturais, Q11 reusable-helpers, Q12–Q17 reuse-intelligence (duplications, KMP-migration, near-duplicates, redundant-platform, TS-helpers), `r` para combined view. |
 | **Reuse intelligence: list findings** | `forge graph` → opções 12–17 ou `r` (combined); `forge doctor` mostra counts agregados | Read-only. Findings são populated automaticamente em `forge init` Step 11.5 + `forge reconfigure → rebuild graph`. Apply review fica em `forge evolve`. |
@@ -285,7 +285,10 @@ exige `feature <slug>`/`task TASK-NNNN`; `graph` exige `forge graph --json
 **Payloads:**
 
 - `forge status --json` → `{project, active_features, memory, pending_evolutions,
-  doctor, suggested_next_command}`. `suggested_next_command` é o workflow router
+  doctor, suggested_next_command}`. O bloco `memory` inclui `memory.mem`
+  (total/by_type/live/stale — resumo de `mem stats`) + `memory.l1`
+  (active/archived). Degrade soft se mem indisponível: `memory.mem` ausente
+  ou `null` (W-ROUTE 6b). `suggested_next_command` é o workflow router
   (A2): mapeia o estado da feature mais recente pro próximo verbo, cobrindo TODOS
   os 9 estados de `_VALID_STATES` (H-002): not-started→plan, planning/planned→
   implement, implementing/verifying→verify, done→status, deferred→status,

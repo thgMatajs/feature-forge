@@ -62,6 +62,19 @@ checklist for next sessions.
   produção (`memory_cli` parou de inspecionar L3). Slated pra remoção num
   passo clean-break posterior; mantido agora pra não expandir o escopo de 6a.
 
+## W-ROUTE 6b — gaps pós re-roteamento de knowledge proposals (2026-06-26)
+
+- **`l2.add_entry` órfão-pra-conhecimento (W-ROUTE 6b)** — após 6b, os 3
+  branches de L2-knowledge (`promote-to-l2`, `l1-to-l2-promotion`,
+  `consolidate-l2`) param de chamar `l2.add_entry`. A função permanece no
+  código (a leitura de L2 ainda serve ao migrador W-MIGRATE deferido e ao
+  `forget-l1`); remoção do write-path órfão de conhecimento é candidata a 6c.
+
+- **`apply_proposal_to_l2` misnomer (W-ROUTE 6b)** — o nome deixou de ser
+  preciso: a função não escreve L2 para proposals de conhecimento. Mantido em
+  6b pra conter footprint (rename ripplaria em callers/tests); candidato a
+  rename num sweep posterior de limpeza semântica.
+
 ## W-MIGRATE (migrador L2→mem) — DEFERIDO até brownfield real (2026-06-26)
 
 O migrador forge-side L2→mem (spec §Migração: kind→type, field-preservation,

@@ -9,6 +9,11 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Added
 
+- `mem_inbox_add` — wrapper sobre `mem inbox add` na camada de integração
+  (`engine/integrations/mem.py`). Argv: `inbox add --type mem_type -t title
+  [opcionais] --origin origin -- body`. Separador `--` antes do body é
+  obrigatório (lição W-RULES). Degrade soft via `_run_or_degrade` (W-ROUTE 6b).
+
 - `forge init` vendoriza o mem no consumidor: copia o asset embutido pra
   `.claude/bin/mem` (executável), roda o scaffold do mem (gitignore `mem.db*`,
   índice no `AGENTS.md`) via a fronteira `mem_call`. `forge doctor` ganha a
@@ -41,6 +46,16 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   `.rules-reduced` (sem `--force`) pulam sem efeito.
 
 ### Changed
+
+- `forge evolve` (knowledge proposals): aprovação de `promote-to-l2` /
+  `l1-to-l2-promotion` / `consolidate-l2` agora emite `mem inbox add` em vez
+  de escrever direto no L2 (anti-envenenamento G11). O conhecimento entra na
+  fila de inbox do mem e fica disponível via `mem evolve` / `mem inbox promote`
+  (W-ROUTE 6b).
+
+- `forge status` (seção memory): linha de L2-size substituída por resumo de
+  `mem stats` (total/live/stale/by_type). Payload JSON ganha bloco
+  `memory.mem`. Degrade soft se mem indisponível (W-ROUTE 6b).
 
 - `forge memory` reescrito como wrapper fino arg-driven sobre o `mem`
   vendorizado (`search`/`inspect`/`export`/`distill`), stateless — elimina

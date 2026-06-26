@@ -165,7 +165,7 @@ $ forge status
 │  login-screen      ── planning (ready)     há 2h     │
 │  fix-crash-auth    ── implementing (WIP)   há 30min  │
 │                                                       │
-│ Memória: L2: 12KB / 256KB · L1: 2 ativas · 0 arch   │
+│ Memória: mem: 45 notas (32 live) · L1: 2 ativas · 0 arch │
 │ Evoluções pendentes: 3                                │
 │ Doctor: rodado há 15min (saudável ✅)                │
 │                                                       │
