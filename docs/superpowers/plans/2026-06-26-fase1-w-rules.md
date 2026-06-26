@@ -14,7 +14,7 @@
 - **Decisão 22:** engine NÃO roda LLM. Classificação = host via intent `classify`.
 - **G1/G2:** `.bak` (Decisão 24) ANTES de qualquer edição; 3-caminhos ANTES de aplicar. Nenhuma rule some sem ratificação.
 - **Fallback honesto (H-101):** `classify` retorna `list[dict] | None`. `None` = host SEM LLM (TtyAdapter) → `_reduce_rules` PULA com aviso claro. Lista = classificação real (TODO fragmento recebe tier). NUNCA confundir os dois; NUNCA inventar classificação.
-- **Apply ordenado (H-104, lição W-VENDOR M-002):** `.bak` → `mem add` de TODOS os Tier-1 + VERIFICAR cada `MemResult` (found && exit_code==0) → SÓ se todos OK, trim destrutivo dos arquivos-fonte. Add falhou → aborta o trim (dado preservado) + erro claro. `mem_call` é fail-soft (nunca levanta) — checar o resultado é obrigatório.
+- **Apply ordenado (H-104 + M-201, lição W-VENDOR M-002):** `mem add` de TODOS os Tier-1 + VERIFICAR cada `MemResult` (found && exit_code==0) PRIMEIRO → se todos OK: `.bak` (Decisão 24) imediatamente antes do trim → trim destrutivo. Add falhou → aborta ANTES de `.bak`/trim (dado e arquivos intactos, sem `.bak` órfão) + erro claro. `mem_call` é fail-soft (nunca levanta) — checar o resultado é obrigatório.
 - **Schema aditivo (H-102):** o kind `classify` é ADITIVO em `intent-protocol.md`; kinds existentes intocados; teste de não-regressão dos kinds atuais.
 - **`tier` é int (0|1)** na fronteira engine↔driver↔response (M-201) — consistente em todo lugar.
 - **RULE_INDEX:** reusa o do mem em `AGENTS.md` (W-VENDOR); não duplica.
@@ -241,16 +241,58 @@ def test_reduce_rules_aborts_trim_when_mem_add_fails(tmp_path, monkeypatch):
     with pytest.raises(Exception):
         init._reduce_rules(c)
     assert "Consulte o graph" in (c / ".claude" / "rules" / "reuso.md").read_text()  # corpo PRESERVADO
+    assert not (c / ".claude" / "rules" / "reuso.md.bak").exists()  # M-201: sem .bak órfão no abort
+
+def test_reduce_rules_adjust_then_accept(tmp_path, monkeypatch):
+    # M-202: "ajustar" re-classifica (revise) e volta ao 3-caminhos; depois aceita.
+    c = _consumer(tmp_path)
+    seen_schemas = []
+    def fake_classify(fragments, *, schema=None, **k):
+        seen_schemas.append(schema or {})
+        # 1ª: Reuso como Tier-0 (humano discorda → ajustar). 2ª (revise): Tier-1.
+        tier = 1 if (schema or {}).get("revise") else 0
+        note = {"type": "reference", "title": "Reuso", "body": "x", "tags": ["reuso"]} if tier == 1 else None
+        return [{"fragment_id": "reuso.md::Reuso", "tier": tier, "rationale": "r", **({"mem_note": note} if note else {})}]
+    paths_seq = iter(["b", "a"])  # ajustar, depois aceitar
+    monkeypatch.setattr("engine.init.question.classify", fake_classify)
+    monkeypatch.setattr("engine.init.question.ask_three_paths", lambda *a, **k: next(paths_seq))
+    monkeypatch.setattr("engine.init.mem_call", lambda pr, args, **k: _ok())
+    assert init._reduce_rules(c) is True
+    assert any(s.get("revise") for s in seen_schemas)  # a revisão ocorreu
+    assert (c / ".claude" / ".rules-reduced").exists()
+
+def test_reduce_rules_real_pause_resume(tmp_path, monkeypatch):
+    # H-101b: exercita o exit-2/re-entry REAL (sem monkeypatch de classify) com
+    # o IntentFileAdapter — prova que o intent-id determinístico sobrevive à re-run.
+    for v in ("CLAUDECODE", "OPENCODE_BIN", "CODEX", "CURSOR_TRACE_ID"):
+        monkeypatch.delenv(v, raising=False)
+    c = _consumer(tmp_path)
+    # pin host=intent-file via forge-config (ou o mecanismo que os testes de intent usam).
+    _pin_intent_file_host(c)
+    from engine.host.adapter import PausedForInputError
+    # 1ª invocação: classify sem response → pausa (exit 2).
+    with pytest.raises(PausedForInputError):
+        init._reduce_rules(c)
+    pending = intent_state.read_pending(c)
+    assert pending["kind"] == "classify"
+    iid = pending["intent-id"]
+    intent_state.write_response(c, {"intent-id": iid, "classification": [
+        {"fragment_id": fr["id"], "tier": 0, "rationale": "inv"} for fr in pending["fragments"]]})
+    # 2ª invocação (re-run): parse determinístico → MESMO intent-id → consome a response.
+    # (todos Tier-0 → nada vai pro mem; mas a proposta 3-caminhos pausa de novo OU
+    #  o teste seed também a response do three_paths; o implementador encadeia os 2 intents.)
+    # O ponto provado: a re-run NÃO re-pausa no classify (intent-id estável).
 ```
+> O implementador ajusta `_pin_intent_file_host` (forge-config `host: intent-file`) e o encadeamento dos 2 intents (classify → three_paths) seguindo o padrão dos testes de intent existentes; o invariante a provar é o intent-id determinístico sobrevivendo à re-run (H-101).
 (`_ok()`/`_fail()`: helpers que retornam `MemResult(found=True, exit_code=0/1, ...)`. O implementador importa `MemResult` real e ajusta a forma do `fragment_id` ao parser de seção que implementar.)
 
 - [ ] **Step 2: Run to verify red** — `AttributeError: _reduce_rules`.
 
-- [ ] **Step 3a: parse de fragmentos** — helper que lê `.claude/rules/*.md` + `CLAUDE.md`, fatia por heading (`##`/`###`), retorna `[{id: "<file>::<heading-slug>", source, heading, text}]`.
+- [ ] **Step 3a: parse de fragmentos (DETERMINÍSTICO — H-101)** — helper que lê `.claude/rules/*.md` + `CLAUDE.md`, fatia por heading (`##`/`###`), retorna `[{id: "<file>::<heading-slug>", source, heading, text}]`. **CRÍTICO p/ pause-resume:** ordem ESTÁVEL — `sorted()` dos arquivos + EXCLUIR `*.bak` (e o próprio `.rules-reduced`). O intent-id do classify deriva dos `fragments` (via `stable_intent_id(extra={"fragments":...})`); se a ordem/conteúdo dos fragments mudar entre a 1ª invocação (pending) e a re-run (consume), o intent-id diverge → deadlock intent-mismatch (o bug do piloto MeoBonsai). Parse determinístico fecha isso.
 - [ ] **Step 3b: guards** — greenfield (sem rules/CLAUDE.md reduzível) → False; sentinel `.claude/.rules-reduced` presente (sem `--force`) → False.
 - [ ] **Step 3c: classify** — `c = question.classify(fragments)`. `c is None` → `emit_warn` (host sem LLM) + return False. Validar que TODO fragmento recebeu tier (senão erro claro).
-- [ ] **Step 3d: proposta 3-caminhos** — `ask_three_paths("reducao-de-rules", [aceitar, ajustar, pular])`. `pular` → False. `ajustar` → re-emite o classify pedindo revisão (M-202: o caminho "ajustar" re-dispara o intent classify com uma flag `revise=True` + o split atual no payload; host devolve split ajustado; volta ao 3-caminhos). `aceitar` → 3e.
-- [ ] **Step 3e: aplicar (ordem H-104)** — (1) `.bak` de CLAUDE.md + cada rule tocada; (2) p/ CADA Tier-1: `res = mem_call(pr, ["add","--type",t,"-t",title,"--tags",tags,body], json=False)`; coletar `res`; se QUALQUER `not (res.found and res.exit_code==0)` → abortar ANTES de qualquer trim, levantar erro claro (dado preservado); (3) só com todos OK: remover os fragmentos Tier-1 dos arquivos-fonte (substituir por ponteiro "detalhe: `mem find '<tema>'`"), enxugar CLAUDE.md p/ Tier-0 + ref ao RULE_INDEX, escrever sentinel.
+- [ ] **Step 3d: proposta 3-caminhos** — `ask_three_paths("reducao-de-rules", [aceitar, ajustar, pular])`. `pular` → False. `aceitar` → 3e. `ajustar` (M-202 — payload de revisão FIXO): re-chama `question.classify(fragments, schema={"tiers":[0,1], "revise": True, "prior": <classificação atual>})` — o `schema` carrega `revise:True` + `prior` (o split corrente); o host re-classifica considerando o `prior` e devolve o split ajustado; volta ao 3-caminhos (loop até aceitar/pular). O intent-id muda (schema mudou) → nova rodada de pending/response, sem colidir com a anterior. **Cap de 3 rodadas de ajuste** → na 4ª, força aceitar-ou-pular (evita loop infinito). O driver (Task C) é ensinado a interpretar `revise`/`prior`.
+- [ ] **Step 3e: aplicar (ordem H-104 + M-201)** — (1) p/ CADA Tier-1: `res = mem_call(pr, ["add","--type",t,"-t",title,"--tags",tags,body], json=False)`; coletar `res`; se QUALQUER `not (res.found and res.exit_code==0)` → abortar AGORA (nada destrutivo aconteceu ainda — sem `.bak`, sem trim), levantar erro claro (dado e arquivos intactos); (2) só com TODOS os adds OK: `.bak` de CLAUDE.md + cada rule tocada (Decisão 24) — `.bak` criado SÓ aqui, imediatamente antes do trim, pra não deixar órfão no caminho de abort (M-201); (3) trim: remover os fragmentos Tier-1 dos arquivos-fonte (substituir por ponteiro "detalhe: `mem find '<tema>'`"), enxugar CLAUDE.md p/ Tier-0 + ref ao RULE_INDEX, escrever sentinel `.claude/.rules-reduced`.
 - [ ] **Step 3f: wire** — inserir `_reduce_rules(project_root)` no pipeline do init APÓS o vendoring, FORA de qualquer try/except que engula, com `PausedForInputError` propagando (ver WIRE acima).
 
 - [ ] **Step 4: Run green** — os 4 testes passam; rapid sem regressão; integração não sobe além de 10.
@@ -269,7 +311,7 @@ git commit -m "feat(init): _reduce_rules — classify + 3-caminhos + move Tier-1
 **Files:**
 - Modify: `skills/feature-forge/SKILL.md`, `AGENTS.md`, `templates/AGENTS.md.template`
 
-- [ ] **Step 1:** Seção de driver: ao ver pending/marker `kind:"classify"`, o host lê `fragments`, classifica cada um em `tier:0` (invariante sempre-on: gates, enforcement, "NUNCA/sempre") vs `tier:1` (referência/exemplo/detalhe recuperável), gera `mem_note` p/ os tier-1, escreve `forge-response.json` `{intent-id, classification:[{fragment_id,tier,rationale,mem_note?}]}`. `tier` é INT. Voz mentor calmo.
+- [ ] **Step 1:** Seção de driver: ao ver pending/marker `kind:"classify"`, o host lê `fragments`, classifica cada um em `tier:0` (invariante sempre-on: gates, enforcement, "NUNCA/sempre") vs `tier:1` (referência/exemplo/detalhe recuperável), gera `mem_note` p/ os tier-1, escreve `forge-response.json` `{intent-id, classification:[{fragment_id,tier,rationale,mem_note?}]}`. `tier` é INT. **Revisão (M-202):** se o `classification-schema` do pending traz `revise:true` + `prior` (o split anterior), o host RE-classifica considerando o feedback implícito do `prior` (o humano pediu ajuste) — devolve um split revisado no MESMO formato. Voz mentor calmo.
 - [ ] **Step 2:** Espelhar em `templates/AGENTS.md.template` (consumidor recebe no init).
 - [ ] **Step 3: Commit** — `docs(driver): fulfillment do intent classify`
 
