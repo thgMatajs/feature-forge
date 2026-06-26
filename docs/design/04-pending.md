@@ -75,6 +75,15 @@ checklist for next sessions.
   6b pra conter footprint (rename ripplaria em callers/tests); candidato a
   rename num sweep posterior de limpeza semântica.
 
+- **`forge undo` de evolve-apply é no-op pra knowledge kinds (W-ROUTE 6b)**
+  — após 6b, proposals de conhecimento vão pro inbox do mem (não pro L2), mas
+  `engine/undo.py::_undo_evolve` só reverte L2 (`l2.remove_entry`). O resultado
+  é um no-op silencioso: o candidato persiste no inbox do mem e o usuário acredita
+  ter desfeito o evolve-apply quando, na prática, nada foi revertido no substrato
+  de memória. `undo.py` ficou fora do escopo de 6b (não foi tocado). *Tratar em
+  6c (re-rota de undo pra knowledge kinds) ou via `mem inbox reject` como
+  alternativa operacional enquanto o fix não chega.*
+
 ## W-MIGRATE (migrador L2→mem) — DEFERIDO até brownfield real (2026-06-26)
 
 O migrador forge-side L2→mem (spec §Migração: kind→type, field-preservation,

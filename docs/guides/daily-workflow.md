@@ -267,7 +267,7 @@ $ forge doctor
 │  ✅ config              workflow-config.yaml OK      │
 │  ✅ cards               8 cards ativos, 0 conflitos  │
 │  ✅ inventory           DS + i18n + conventions OK   │
-│  ✅ mem                 45 notas · 32 live            │
+│  ✅ mem                 vendorizado · health ok · pin 0.8.1  │
 │  ✅ memory L1           2 features ativas            │
 │  ✅ graph               graph.db: 2140 nós, OK       │
 │  ⚠️  reuse findings      3 propostas pendentes       │
