@@ -467,10 +467,10 @@ def apply_proposal_to_l2(
     """Apply a single proposal to L2 — discipline §5 (no batch).
 
     Behavior depends on `proposal.kind`:
-    - `promote-to-l2` / `l1-to-l2-promotion` → adds a new L2Entry.
-    - `consolidate-l2` → mescla entries L2 de mesmo `kind` cujo `title` faz
-      substring-match com `proposal.title`, criando um novo entry consolidado
-      e marcando os fontes como `obsoleted-by`.
+    - `promote-to-l2` / `l1-to-l2-promotion` / `consolidate-l2` → enfileira no
+      mem inbox como candidato curado (`mem inbox add --type reference`). O merge-
+      semantic do consolidate-l2 é moot com L2 abandonado para conhecimento —
+      vira candidato inbox como os outros dois (anti-envenenamento G11).
     - `forget-l1` → arquiva a feature L1 indicada por `proposal.payload.target`
       (ou primeiro elemento de `provenance`).
     - Demais kinds (`distill-l2`, `template-patch`, `agent-prompt-addition`,
@@ -499,7 +499,7 @@ def apply_proposal_to_l2(
             body=proposal.description,
             mem_type="reference",
             importance=importance,
-            tags=tags or None,
+            tags=tags,
             source=f"forge-evolve:{proposal.id}",
             origin="manual",
         )

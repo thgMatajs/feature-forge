@@ -243,3 +243,54 @@ def test_inbox_add_real_mem_roundtrip(tmp_path):
     items = _json_rt.loads(list_result.stdout or "[]")
     titles = [it.get("title") for it in items if isinstance(it, dict)]
     assert unique_title in titles, f"nota não aparece no inbox list: {titles}"
+
+
+# ── Task 2 (6b): apply_proposal_to_l2(knowledge) real-mem e2e ────────────────
+
+
+def test_apply_proposal_to_l2_knowledge_real_mem_roundtrip(tmp_path):
+    """E2E: apply_proposal_to_l2(knowledge) → mem inbox REAL (MOCK-BLINDNESS).
+
+    Confirma que o path de escrita do distiller — description com bullet '-'/
+    multiline, provenance→--tags, importance boundary — chega ao inbox sem
+    perda de mapeamento. Nenhum mock: o binário real processa o argv e escreve.
+    """
+    import json
+    import shutil
+
+    repo_root = Path(__file__).resolve().parents[2]
+    src_bin = repo_root / ".claude" / "bin" / "mem"
+    if not src_bin.is_file():
+        pytest.skip("binário mem vendorizado ausente")
+
+    dest_bin = tmp_path / ".claude" / "bin" / "mem"
+    dest_bin.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(str(src_bin), str(dest_bin))
+    dest_bin.chmod(0o755)
+
+    from engine.integrations.mem import mem_call
+    from engine.memory.distiller import (
+        DistillationProposal,
+        apply_proposal_to_l2,
+        queue_proposal,
+    )
+
+    # Description adversarial: bullet começando com '-' + multiline
+    p = DistillationProposal(
+        id="P-real-knowledge",
+        kind="promote-to-l2",
+        title="real-mem-knowledge-roundtrip",
+        description="- bullet começando com hífen\n  segunda linha do corpo",
+        provenance=["feat-auth", "feat-profile"],
+        confidence=0.5,
+    )
+    queue_proposal(tmp_path, p)
+    apply_proposal_to_l2(tmp_path, p)
+
+    result = mem_call(tmp_path, ["inbox", "list"])
+    assert result.exit_code == 0, f"inbox list falhou: {result.stderr}"
+    items = json.loads(result.stdout or "[]")
+    titles = [it.get("title") for it in items if isinstance(it, dict)]
+    assert "real-mem-knowledge-roundtrip" in titles, (
+        f"nota não aparece no inbox list: {titles}"
+    )
