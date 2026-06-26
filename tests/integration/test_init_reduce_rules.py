@@ -10,16 +10,23 @@ Exercitam o comportamento end-to-end de init._reduce_rules:
 - adjust-then-accept (M-202): re-classify com revise + prior
 - pause-resume REAL via intent-file (H-101): intent-id determinístico sobrevive
   a re-run
+- CR-01: mem add com body começando em '-' (bullet) — usa mem REAL, sem mock
+- CR-02: Tier-1 sem mem_note.body → InitError + arquivo-fonte intacto + sem .bak
+- WR-01: headings idênticos no mesmo arquivo — só Tier-1 é trimado, Tier-0 preservado
 
 Marcados com `integration` (exercitam multiplos modulos com tmp filesystem).
 """
 from __future__ import annotations
+
+import shutil
+import subprocess
 
 import pytest
 from pathlib import Path
 from engine import init
 from engine.integrations.mem import MemResult
 from engine.ui import intent_state
+from engine.utils.paths import mem_asset_path
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -49,6 +56,31 @@ def _consumer(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return tmp_path
+
+
+def _vendor_mem_for_test(project_root: Path) -> bool:
+    """Vendoriza o mem REAL no projeto de teste (para testes que não mockam mem_call).
+
+    Copia o asset embarcado → .claude/bin/mem (755) e roda 'mem init' para
+    criar o estado inicial do banco. Retorna True se tudo OK, False se o
+    asset não estiver disponível (skip sinal para o teste).
+    """
+    asset = mem_asset_path()
+    if not asset.is_file():
+        return False
+    bin_dir = project_root / ".claude" / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    mem_dst = bin_dir / "mem"
+    shutil.copy2(asset, mem_dst)
+    mem_dst.chmod(0o755)
+    res = subprocess.run(
+        [str(mem_dst), "init"],
+        cwd=str(project_root),
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    return res.returncode == 0
 
 
 def _pin_intent_file_host(project_root: Path) -> None:
@@ -317,3 +349,193 @@ def test_reduce_rules_real_pause_resume(
     # O ponto provado: NÃO re-pausa no classify.
     result = init._reduce_rules(c)
     assert result is False  # sem Tier-1 → nada movido
+
+
+@pytest.mark.integration
+def test_reduce_rules_cr01_bullet_body_with_real_mem(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CR-01: body começando com '-' (bullet markdown) não quebra o mem add real.
+
+    Fecha a cegueira de mock: exercita mem_call SEM mock — usa o mem REAL
+    embarcado em engine/assets/mem/mem. Confirma que o `--` antes do body
+    posicional impede o argparse do mem de tratar '-' como flag.
+
+    Assertions:
+    - _reduce_rules retorna True (redução aplicada).
+    - mem find consegue achar a nota gravada (prova que add foi a disco).
+    - O arquivo-fonte vira ponteiro com 'mem find'.
+    - .bak criado e sentinel gravados.
+    """
+    if not mem_asset_path().is_file():
+        pytest.skip("mem asset não disponível — skip CR-01 real-mem test")
+
+    c = _consumer(tmp_path)
+    # Substitui reuso.md por um body começando com '-' (bullet).
+    (c / ".claude" / "rules" / "reuso.md").write_text(
+        "## Reuso\n- consulte o graph antes\n- verifique inventory/\n",
+        encoding="utf-8",
+    )
+    ok = _vendor_mem_for_test(c)
+    assert ok, "falha ao inicializar mem no projeto de teste"
+
+    monkeypatch.setattr(
+        "engine.init.question.classify",
+        lambda *a, **k: [
+            {
+                "fragment_id": "reuso.md::reuso",
+                "tier": 1,
+                "rationale": "referência — enxugável pro mem",
+                "mem_note": {
+                    "type": "reference",
+                    "title": "Reuso bullet",
+                    "body": "- consulte o graph antes\n- verifique inventory/",
+                    "tags": ["reuso"],
+                },
+            },
+            {"fragment_id": "CLAUDE.md::gate", "tier": 0, "rationale": "invariante"},
+        ],
+    )
+    monkeypatch.setattr(
+        "engine.init.question.ask_three_paths", lambda *a, **k: "a"  # aceitar
+    )
+    # NÃO mocka mem_call — usa o mem REAL para fechar a cegueira de mock.
+
+    result = init._reduce_rules(c)
+    assert result is True, "_reduce_rules deve retornar True (redução aplicada)"
+
+    # Prova que a nota foi gravada no mem real (find retorna a nota).
+    mem_bin = str(c / ".claude" / "bin" / "mem")
+    find_res = subprocess.run(
+        [mem_bin, "find", "reuso"],
+        cwd=str(c),
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert find_res.returncode == 0, f"mem find falhou: {find_res.stderr}"
+    assert "Reuso bullet" in find_res.stdout, "nota deve estar no mem após add"
+
+    # Arquivo-fonte virou ponteiro.
+    rule_text = (c / ".claude" / "rules" / "reuso.md").read_text(encoding="utf-8")
+    assert "mem find" in rule_text, "arquivo deve conter ponteiro mem find"
+    # .bak e sentinel.
+    assert (c / ".claude" / "rules" / "reuso.md.bak").exists(), ".bak deve existir"
+    assert (c / ".claude" / ".rules-reduced").exists(), "sentinel deve existir"
+
+
+@pytest.mark.integration
+def test_reduce_rules_cr02_missing_mem_note_body_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CR-02: Tier-1 sem mem_note.body → InitError + arquivo-fonte intacto + sem .bak.
+
+    O engine deve recusar o trim ANTES de qualquer operação destrutiva quando
+    um item Tier-1 não carrega body no mem_note. Sem esse gate, o trim
+    apagaria conteúdo sem gravá-lo no mem (perda de conhecimento silenciosa).
+    """
+    c = _consumer(tmp_path)
+    monkeypatch.setattr(
+        "engine.init.question.classify",
+        lambda *a, **k: [
+            {
+                "fragment_id": "reuso.md::reuso",
+                "tier": 1,
+                "rationale": "ref",
+                "mem_note": {
+                    "type": "reference",
+                    "title": "Reuso",
+                    # body deliberadamente ausente (vazio/None).
+                    "body": "",
+                    "tags": ["reuso"],
+                },
+            },
+            {"fragment_id": "CLAUDE.md::gate", "tier": 0, "rationale": "invariante"},
+        ],
+    )
+    monkeypatch.setattr(
+        "engine.init.question.ask_three_paths", lambda *a, **k: "a"  # aceitar
+    )
+    # mem_call mockado — não deve ser chamado (CR-02 aborta ANTES do add).
+    add_called = []
+    monkeypatch.setattr(
+        "engine.init.mem_call",
+        lambda pr, args, **k: add_called.append(args) or _ok(),
+    )
+
+    with pytest.raises(init.InitError, match="sem mem_note.body"):
+        init._reduce_rules(c)
+
+    # Arquivo-fonte deve estar intacto.
+    body = (c / ".claude" / "rules" / "reuso.md").read_text(encoding="utf-8")
+    assert "Consulte o graph" in body, "corpo deve estar preservado (sem trim)"
+    # Sem .bak orfão.
+    assert not (c / ".claude" / "rules" / "reuso.md.bak").exists(), "sem .bak orfão"
+    # mem add NÃO deve ter sido invocado.
+    assert not add_called, "mem_call não deve ser chamado quando body está vazio"
+
+
+@pytest.mark.integration
+def test_reduce_rules_wr01_duplicate_headings_trim_only_tier1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WR-01: dois headings idênticos no mesmo arquivo — só o Tier-1 é trimado.
+
+    Arquivo com '## Reuso' duas vezes: 1ª ocorrência é Tier-1 (vai pro mem),
+    2ª é Tier-0 (invariante, deve permanecer intacta). Sem desambiguação por
+    ocorrência, o trim casaria AMBAS as seções e destruiria a Tier-0.
+    """
+    c = _consumer(tmp_path)
+    # Cria arquivo com dois headings idênticos: 1ª Tier-1, 2ª Tier-0.
+    (c / ".claude" / "rules" / "reuso.md").write_text(
+        "## Reuso\nConsulte o graph antes de criar helper.\n\n"
+        "## Reuso\nEsta seção é invariante e NUNCA deve ser removida.\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "engine.init.question.classify",
+        lambda *a, **k: [
+            # 1ª ocorrência de "## Reuso" → Tier-1 (id: "reuso.md::reuso")
+            {
+                "fragment_id": "reuso.md::reuso",
+                "tier": 1,
+                "rationale": "referência enxugável",
+                "mem_note": {
+                    "type": "reference",
+                    "title": "Reuso-1",
+                    "body": "Consulte o graph antes de criar helper.",
+                    "tags": ["reuso"],
+                },
+            },
+            # 2ª ocorrência de "## Reuso" → Tier-0 (id: "reuso.md::reuso#2")
+            {
+                "fragment_id": "reuso.md::reuso#2",
+                "tier": 0,
+                "rationale": "invariante always-on",
+            },
+            {"fragment_id": "CLAUDE.md::gate", "tier": 0, "rationale": "invariante"},
+        ],
+    )
+    monkeypatch.setattr(
+        "engine.init.question.ask_three_paths", lambda *a, **k: "a"  # aceitar
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "engine.init.mem_call",
+        lambda pr, args, **k: calls.append(list(args)) or _ok(),
+    )
+
+    result = init._reduce_rules(c)
+    assert result is True
+
+    rule_text = (c / ".claude" / "rules" / "reuso.md").read_text(encoding="utf-8")
+    # A 2ª seção Tier-0 deve permanecer intacta.
+    assert "NUNCA deve ser removida" in rule_text, (
+        "seção Tier-0 (2ª ocorrência) deve estar intacta"
+    )
+    # A 1ª seção Tier-1 deve ter virado ponteiro (body original removido).
+    assert "Consulte o graph antes de criar helper" not in rule_text, (
+        "corpo Tier-1 (1ª ocorrência) deve ter sido substituído pelo ponteiro"
+    )
+    assert "mem find" in rule_text, "ponteiro 'mem find' deve aparecer"

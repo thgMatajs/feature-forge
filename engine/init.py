@@ -1403,18 +1403,48 @@ def _write_graph_docs(project_root: Path) -> tuple[Path, Path]:
 
 
 def _rules_fragment_id(source_name: str, heading: str) -> str:
-    """Constrói o fragment_id determinístico: '<filename>::<heading-slug>'.
+    """Constrói o fragment_id base: '<filename>::<heading-slug>'.
 
     O slug é gerado a partir do texto do heading sem os marcadores Markdown
     (##/###): lowercase, sem espaços iniciais/finais. Espaços internos são
     preservados como-estão após strip — mantendo simplicidade e
     determinismo. Caracteres especiais não são removidos (slugs simples pra
     nomes de seção curtos, como são os de rules/).
+
+    Nota: não desambigua headings repetidos — use _rules_slug_counter para
+    gerar o fragment_id final quando múltiplas ocorrências são possíveis.
     """
     import re
 
     heading_text = re.sub(r"^#+\s*", "", heading).strip().lower()
     return f"{source_name}::{heading_text}"
+
+
+def _rules_fragment_id_counted(
+    source_name: str,
+    heading: str,
+    occurrence_counter: dict[str, int],
+) -> str:
+    """Constrói o fragment_id desambiguado por ocorrência no mesmo arquivo.
+
+    WR-01: headings idênticos no mesmo arquivo geram slugs iguais → colisão
+    de fragment_id → o trim casa AMBAS as ocorrências, destruindo Tier-0.
+    Esta função incrementa `occurrence_counter[base_id]` a cada chamada e
+    sufixo com `#N` (N>=2) a partir da 2ª ocorrência.
+
+    Exemplo (mesmo arquivo, heading "## Reuso"):
+      1ª chamada → "reuso.md::reuso"     (occurrence_counter["reuso.md::reuso"] == 1)
+      2ª chamada → "reuso.md::reuso#2"   (occurrence_counter["reuso.md::reuso"] == 2)
+
+    `occurrence_counter` deve ser um dict vazio passado pelo chamador e
+    reutilizado dentro do mesmo arquivo (resetado entre arquivos).
+    """
+    base = _rules_fragment_id(source_name, heading)
+    count = occurrence_counter.get(base, 0) + 1
+    occurrence_counter[base] = count
+    if count == 1:
+        return base
+    return f"{base}#{count}"
 
 
 def _parse_rule_fragments(project_root: Path) -> list[dict]:
@@ -1439,6 +1469,10 @@ def _parse_rule_fragments(project_root: Path) -> list[dict]:
         lines = content.splitlines(keepends=True)
         current_heading = ""
         current_lines: list[str] = []
+        # WR-01: contador de ocorrência por slug dentro deste arquivo.
+        # Resetado por arquivo (local à função), garante que "reuso.md::x#2"
+        # só aparece quando há 2 headings idênticos no MESMO arquivo.
+        _occ: dict[str, int] = {}
 
         def _flush() -> None:
             body = "".join(current_lines).strip()
@@ -1449,7 +1483,7 @@ def _parse_rule_fragments(project_root: Path) -> list[dict]:
                 return
             if not body:
                 return
-            fid = _rules_fragment_id(source_name, current_heading)
+            fid = _rules_fragment_id_counted(source_name, current_heading, _occ)
             fragments.append(
                 {
                     "id": fid,
@@ -1672,12 +1706,36 @@ def _reduce_rules(project_root: Path) -> bool:
     # Tier-1 final após loop de aceitar/ajustar.
     tier1_items = [item for item in current_classification if item.get("tier") == 1]
 
+    # CR-02: valida ANTES de qualquer operação destrutiva que todo Tier-1
+    # tem mem_note.body não-vazio. Tier-1 sem body é perda de conhecimento —
+    # recusa o trim e aborta com mensagem clara.
+    _MEM_NOTE_TYPE_ENUM = {"decision", "episode", "feedback", "reference", "session"}
+    for item in tier1_items:
+        note = item.get("mem_note") or {}
+        if not (note.get("body") or "").strip():
+            raise InitError(
+                f"Tier-1 '{item['fragment_id']}' sem mem_note.body — "
+                "recusando trim que perderia conteúdo. "
+                "Refaça a classificação."
+            )
+
     # Passo 1: mem add de TODOS os Tier-1 — verifica cada MemResult ANTES
     # de qualquer operação destrutiva (.bak / trim).
     # Se QUALQUER add falha → aborta imediatamente (dado intacto, sem .bak orfão).
     for item in tier1_items:
         note = item.get("mem_note") or {}
         note_type = note.get("type", "reference")
+        # WR-02: valida --type contra o enum do mem; coage para "reference"
+        # com aviso se fora do conjunto aceito.
+        if note_type not in _MEM_NOTE_TYPE_ENUM:
+            renderer.write(
+                renderer.colored(
+                    f"  aviso: mem_note.type '{note_type}' inválido para "
+                    f"'{item['fragment_id']}' — coagindo para 'reference'.",
+                    "yellow",
+                )
+            )
+            note_type = "reference"
         title = note.get("title", item["fragment_id"])
         body = note.get("body", "")
         tags = note.get("tags", [])
@@ -1686,7 +1744,7 @@ def _reduce_rules(project_root: Path) -> bool:
         args = ["add", "--type", note_type, "-t", title]
         if tags_str:
             args += ["--tags", tags_str]
-        args.append(body)
+        args += ["--", body]  # CR-01: `--` força body posicional (bullets com '-')
 
         res = mem_call(project_root, args, json=False)
         if not (res.found and res.exit_code == 0):
@@ -1733,11 +1791,14 @@ def _reduce_rules(project_root: Path) -> bool:
         out_lines: list[str] = []
         in_tier1_section = False
         current_heading = ""
+        # WR-01: mesmo contador de ocorrência usado no parse, garante que o
+        # fragment_id calculado no trim é idêntico ao do parse (determinismo).
+        _trim_occ: dict[str, int] = {}
 
         for line in lines:
             if re.match(r"^#{2,3}\s", line):
                 heading_text = line.rstrip()
-                fid = _rules_fragment_id(source_name, heading_text)
+                fid = _rules_fragment_id_counted(source_name, heading_text, _trim_occ)
                 if fid in tier1_frag_ids:
                     # Inicia secão Tier-1: escreve o heading + ponteiro.
                     in_tier1_section = True
@@ -1745,8 +1806,11 @@ def _reduce_rules(project_root: Path) -> bool:
                     out_lines.append(line)
                     # Infere o tema do título pra o ponteiro.
                     tema = re.sub(r"^#+\s*", "", heading_text).strip()
+                    # WR-03: normaliza apóstrofo — um ' no tema quebraria o
+                    # template do ponteiro (aspas desbalanceadas). Remove.
+                    tema_safe = tema.replace("'", "")
                     out_lines.append(
-                        f"\nDetalhe: `mem find '{tema}'`\n"
+                        f"\nDetalhe: `mem find '{tema_safe}'`\n"
                     )
                 else:
                     in_tier1_section = False
