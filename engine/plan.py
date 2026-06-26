@@ -3,7 +3,7 @@
 Orchestrates a single feature through 5 sequential planning waves, each one
 emitting one or more artefacts under
 `docs/forge-specs/features/{slug}/`. Per-feature working
-state lives in `.claude/memory/L1/{slug}/`.
+state lives in `.claude/forge/state/lifecycle/{slug}/`.
 
 v1 realism: this module does NOT invoke LLM sub-agents directly. It renders
 the canonical templates as placeholder artefacts and walks the user through
@@ -1171,10 +1171,10 @@ def _create_extension_l1(
     """Create the child's status.json + seed hypothesis.yaml as an extension.
 
     Gap 9 — extends-feature mechanic. Writes:
-      - ``.claude/memory/L1/{child}/status.json`` with extends-feature +
+      - ``.claude/forge/state/lifecycle/{child}/status.json`` with extends-feature +
         parent-feature pointing at ``parent_slug``, state=planning,
         subtype=product (extensions are always product-derived).
-      - ``.claude/memory/L1/{child}/hypothesis.yaml`` seeded with the
+      - ``.claude/forge/state/lifecycle/{child}/hypothesis.yaml`` seeded with the
         ``extends-feature`` + ``parent-feature`` fields so the conductor
         can read it on resume without re-asking.
 
@@ -2117,7 +2117,7 @@ def record_external_dep(
 
     Discipline §9 — engine helper invoked by planning-conductor when the
     user confirms a concrete external dep. Writes to
-    `.claude/memory/L1/{slug}/elicitation.yaml.external-deps[]` so Wave D
+    `.claude/forge/state/lifecycle/{slug}/elicitation.yaml.external-deps[]` so Wave D
     (task-contract-writer) can read it from the context pack and emit
     `depends_on_external` entries on the right tasks.
 

@@ -8,7 +8,7 @@ Algoritmo (resumo):
    proposed-evolution).
 2. Para cada finding actionable, carrega rejected-fingerprints.yaml
    (Decisão 25). Se fingerprint vetada → skip silencioso.
-3. Append entry em `.claude/memory/L1/proposed-evolutions/proposed.yaml`.
+3. Append entry em `.claude/forge/state/lifecycle/proposed-evolutions/proposed.yaml`.
 4. Write atômico: temp file `proposed.yaml.tmp` → `os.replace(tmp, final)`.
 5. OSError mid-write (ex: disk full) → retorna `write_failed=True`
    graceful, NÃO propaga; tmp file é limpo.
@@ -62,7 +62,7 @@ def load_rejected_fingerprints(project_root: Path) -> set[str]:
     - Chave `rejected` ausente ou não-list → set().
 
     Args:
-        project_root: raiz do projeto onde `.claude/memory/L1/...` mora.
+        project_root: raiz do projeto onde `.claude/forge/state/lifecycle/...` mora.
 
     Returns:
         Conjunto de fingerprints (strings) a pular durante emit.
@@ -130,7 +130,7 @@ def emit_proposed_evolutions(
             espera campos `severity`, `fingerprint`, `title`,
             `proposed_evolution.type`, `proposed_evolution.summary`.
         project_root: raiz do projeto pra resolver
-            `.claude/memory/L1/proposed-evolutions/`.
+            `.claude/forge/state/lifecycle/proposed-evolutions/`.
 
     Returns:
         Dict com:

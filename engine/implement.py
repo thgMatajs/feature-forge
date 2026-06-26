@@ -963,7 +963,7 @@ def _maybe_run_qa_pre_retrospective(
         - `run_qa` (engine.qa) — import lazy pra evitar circular dep
           (engine.qa importa nada de implement, mas chain de imports
           do package qa puxa engine.cards/graph que indiretamente toca
-          este módulo via memory/L1; lazy import é defesa idiomática).
+          este módulo via forge/state/lifecycle; lazy import é defesa idiomática).
     """
     cfg = read_yaml_or_default(active_config_path(project_root), {})
     if not isinstance(cfg, dict):

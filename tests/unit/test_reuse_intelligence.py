@@ -366,7 +366,7 @@ def test_apply_writes_intake_and_status(tmp_path: Path, monkeypatch):
     assert "FirebaseAnalytics.logEventSafely" in contents
 
     status_path = (
-        claude / "memory/L1" / "refactor-firebase-analytics-log-event-safely" / "status.json"
+        claude / "forge" / "state" / "lifecycle" / "refactor-firebase-analytics-log-event-safely" / "status.json"
     )
     assert status_path.exists()
     status = json.loads(status_path.read_text(encoding="utf-8"))

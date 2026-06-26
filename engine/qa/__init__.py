@@ -1523,11 +1523,11 @@ def _print_verdict_block(
         print(
             "\n  ⚠ emit falhou (disk full ou perm error). "
             "Findings nao foram persistidos em "
-            ".claude/memory/L1/proposed-evolutions/proposed.yaml."
+            ".claude/forge/state/lifecycle/proposed-evolutions/proposed.yaml."
         )
     else:
         print(
             f"\n  emitted: {written} actionable findings -> "
-            f".claude/memory/L1/proposed-evolutions/proposed.yaml ({skipped} skipped)"
+            f".claude/forge/state/lifecycle/proposed-evolutions/proposed.yaml ({skipped} skipped)"
         )
     print("  Sem auto-fix — escolha humana via `forge evolve`.")

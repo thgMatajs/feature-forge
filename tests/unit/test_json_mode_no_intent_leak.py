@@ -36,7 +36,7 @@ def _seed_config(project_root: Path) -> None:
 
 
 def _seed_active_feature(project_root: Path, slug: str) -> None:
-    (project_root / ".claude" / "memory" / "L1" / slug).mkdir(
+    (project_root / ".claude" / "forge" / "state" / "lifecycle" / slug).mkdir(
         parents=True, exist_ok=True
     )
     write_l1_status(

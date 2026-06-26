@@ -128,7 +128,7 @@ def test_canonical_paths(tmp_path):
     assert paths.cards_dir(tmp_path) == tmp_path / ".claude" / "cards"
     assert paths.inventory_dir(tmp_path) == tmp_path / ".claude" / "inventory"
     assert paths.memory_dir(tmp_path) == tmp_path / ".claude" / "memory"
-    assert paths.memory_l1_path(tmp_path, "slug-x") == tmp_path / ".claude" / "memory" / "L1" / "slug-x"
+    assert paths.memory_l1_path(tmp_path, "slug-x") == tmp_path / ".claude" / "forge" / "state" / "lifecycle" / "slug-x"
     assert paths.memory_l2_path(tmp_path) == tmp_path / ".claude" / "memory" / "L2-project.yaml"
     assert paths.graph_db_path(tmp_path) == tmp_path / ".claude" / "graph.db"
     assert paths.hooks_dir(tmp_path) == tmp_path / ".claude" / "hooks"

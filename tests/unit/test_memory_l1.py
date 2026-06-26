@@ -112,7 +112,7 @@ def test_archive_feature_moves_dir(tmp_path):
 
     assert "done-feat" not in l1.list_active_features(tmp_path)
     assert "done-feat" in l1.list_archived_features(tmp_path)
-    archive_file = tmp_path / ".claude" / "memory" / "L1" / "archived" / "done-feat.summary.yaml"
+    archive_file = tmp_path / ".claude" / "forge" / "state" / "lifecycle" / "archived" / "done-feat.summary.yaml"
     assert archive_file.is_file()
 
 
@@ -137,8 +137,8 @@ def test_yaml_helpers_round_trip(tmp_path):
 
 def test_list_active_features_skips_archived_and_dotfiles(tmp_path):
     l1.acquire_phase_lock("real", tmp_path, "lock")
-    (tmp_path / ".claude" / "memory" / "L1" / ".hidden").mkdir(parents=True)
-    (tmp_path / ".claude" / "memory" / "L1" / "archived").mkdir(exist_ok=True)
+    (tmp_path / ".claude" / "forge" / "state" / "lifecycle" / ".hidden").mkdir(parents=True)
+    (tmp_path / ".claude" / "forge" / "state" / "lifecycle" / "archived").mkdir(exist_ok=True)
     active = l1.list_active_features(tmp_path)
     assert active == ["real"]
 

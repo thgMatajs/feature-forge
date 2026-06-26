@@ -39,7 +39,7 @@ def _write_status(
     every field — letting us simulate pre-Gap-9 files (no extends-feature key)
     or files with deliberately bad types.
     """
-    d = project_root / ".claude" / "memory" / "L1" / slug
+    d = project_root / ".claude" / "forge" / "state" / "lifecycle" / slug
     d.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema-version": 1,
@@ -58,7 +58,7 @@ def _write_status(
 
 def _write_hypothesis(project_root: Path, slug: str, *, scope: str | None = None) -> None:
     """Helper — write hypothesis.yaml with optional extension-scope."""
-    d = project_root / ".claude" / "memory" / "L1" / slug
+    d = project_root / ".claude" / "forge" / "state" / "lifecycle" / slug
     d.mkdir(parents=True, exist_ok=True)
     data: dict = {"schema-version": 1, "feature-slug": slug}
     if scope is not None:
@@ -103,7 +103,7 @@ def test_l1state_round_trip_with_null_extends(tmp_forge_project: Path) -> None:
 
 def test_read_l1_status_forward_compat_no_fields(tmp_forge_project: Path) -> None:
     """Pre-Gap-9 status.json without extends/parent keys parses; defaults to None."""
-    d = tmp_forge_project / ".claude" / "memory" / "L1" / "legacy-feature"
+    d = tmp_forge_project / ".claude" / "forge" / "state" / "lifecycle" / "legacy-feature"
     d.mkdir(parents=True)
     # No extends-feature / parent-feature in the payload — pre-Gap-9 shape.
     (d / "status.json").write_text(
@@ -127,7 +127,7 @@ def test_read_l1_status_forward_compat_no_fields(tmp_forge_project: Path) -> Non
 
 def test_read_l1_status_rejects_non_string_extends(tmp_forge_project: Path) -> None:
     """Type-safety: extends-feature as a dict / list is rejected (MemoryError)."""
-    d = tmp_forge_project / ".claude" / "memory" / "L1" / "corrupt"
+    d = tmp_forge_project / ".claude" / "forge" / "state" / "lifecycle" / "corrupt"
     d.mkdir(parents=True)
     (d / "status.json").write_text(
         json.dumps(
@@ -344,7 +344,7 @@ def test_validator_returns_structured_message(tmp_forge_project: Path) -> None:
 
 
 def test_validator_no_l1_dir_passes(tmp_project_root: Path) -> None:
-    """Sem .claude/memory/L1/ ainda — validator pass silencioso."""
+    """Sem .claude/forge/state/lifecycle/ ainda — validator pass silencioso."""
     result = ve.validate(tmp_project_root)
     assert result["status"] == "pass"
     assert "L1 ausente" in result["message"]

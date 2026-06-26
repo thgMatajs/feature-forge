@@ -52,15 +52,17 @@ def tmp_forge_project(tmp_path: Path) -> Path:
 
         .git/
         .claude/
-          memory/L1/
-          memory/L1/archived/
+          forge/state/lifecycle/
+          forge/state/lifecycle/archived/
+          memory/          ← L2 still lives here (only L1 moved to forge/state)
           cards/
           inventory/
           hooks/
     """
     (tmp_path / ".git").mkdir()
     claude = tmp_path / ".claude"
-    (claude / "memory" / "L1" / "archived").mkdir(parents=True)
+    (claude / "forge" / "state" / "lifecycle" / "archived").mkdir(parents=True)
+    (claude / "memory").mkdir()
     (claude / "cards").mkdir()
     (claude / "inventory").mkdir()
     (claude / "hooks").mkdir()
@@ -140,6 +142,6 @@ def tmp_forge_project_with_feature(tmp_forge_project: Path, forge_home: Path) ->
                 encoding="utf-8",
             )
 
-    memory_l1 = tmp_forge_project / ".claude" / "memory" / "L1" / slug
+    memory_l1 = tmp_forge_project / ".claude" / "forge" / "state" / "lifecycle" / slug
     memory_l1.mkdir(parents=True, exist_ok=True)
     return tmp_forge_project

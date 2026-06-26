@@ -42,15 +42,15 @@ def test_progress_phrase_by_stage():
 
 def test_pause_message_includes_slug_and_resume(tmp_path):
     msg = mentor_calmo.pause_message("my-slug", project_root=tmp_path)
-    # lifecycle_root(tmp_path) resolves to tmp_path/.claude/memory/L1 in this wave
-    assert "L1/my-slug/status.json" in msg
+    # lifecycle_root(tmp_path) resolves to tmp_path/.claude/forge/state/lifecycle
+    assert "lifecycle/my-slug/status.json" in msg
     assert "forge" in msg
 
 
 def test_pause_message_without_slug_uses_lifecycle_root(tmp_path):
     msg = mentor_calmo.pause_message(project_root=tmp_path)
-    # lifecycle_root still resolves memory/L1 in this wave (behavior-preserving)
-    assert ".claude/memory/L1/" in msg
+    # lifecycle_root resolves to forge/state/lifecycle after Task 2 flip
+    assert ".claude/forge/state/lifecycle/" in msg
 
 
 def test_drilldown_rounds_1_and_2():

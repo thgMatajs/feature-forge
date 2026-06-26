@@ -1,4 +1,4 @@
-"""L1 — per-feature memory (.claude/memory/L1/{feature_slug}/).
+"""L1 — per-feature memory (.claude/forge/state/lifecycle/{feature_slug}/).
 
 L1 is the feature logbook: status, history, hypotheses, ambiguities, elicitation,
 rationale, sub-agent dispatches. Lives gitignored as WIP; compresses to

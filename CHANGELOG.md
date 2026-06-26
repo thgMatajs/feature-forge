@@ -16,6 +16,14 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Changed
 
+- State-machine de lifecycle migrada de `.claude/memory/L1/` →
+  `.claude/forge/state/lifecycle/` (Decisão #1 da integração mem). Consolidada
+  numa fonte única `paths.lifecycle_root`. `.claude/memory/` deixa de hospedar
+  lifecycle (caminho pra ser 100% do mem). ADR-note Decisão 20 (persistence):
+  o espírito se mantém — lifecycle continua arquivos + SQLite; só muda o
+  sub-namespace de `memory/` pra `forge/state/`. Sem revisita formal (não
+  contradiz a decisão locked).
+
 - Renomeado o path de artefatos de feature `docs/feature-implementation-workflow`
   → `docs/forge-specs` (clean break, sem alias). Consolidados os 11 literais
   hardcoded numa fonte única `paths.FEATURE_WORKFLOW_DIRNAME`. `docs/superpowers/specs/`

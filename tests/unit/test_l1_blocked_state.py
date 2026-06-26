@@ -65,7 +65,7 @@ def test_invalid_state_still_rejected(tmp_path: Path) -> None:
 
 def test_legacy_status_without_blocked_state_still_parses(tmp_path: Path) -> None:
     """Forward-compat: status.json from pre-Gap-8 engines reads cleanly."""
-    l1_dir = tmp_path / ".claude" / "memory" / "L1" / "legacy"
+    l1_dir = tmp_path / ".claude" / "forge" / "state" / "lifecycle" / "legacy"
     l1_dir.mkdir(parents=True)
     legacy_payload = {
         "schema-version": 1,

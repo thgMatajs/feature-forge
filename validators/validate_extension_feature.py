@@ -2,10 +2,10 @@
 """validate_extension_feature.py — Extension feature mechanic enforcement (Gap 9).
 
 For every L1 feature that declares ``extends-feature`` (non-null) in
-``.claude/memory/L1/{slug}/status.json``, verifies four invariants:
+``.claude/forge/state/lifecycle/{slug}/status.json``, verifies four invariants:
 
 - ``EXT-001`` parent slug exists as a sibling L1 directory
-  ``.claude/memory/L1/{parent}/``.
+  ``.claude/forge/state/lifecycle/{parent}/``.
 - ``EXT-002`` parent's ``state == "done"`` — extensions of in-flight features
   (planning / implementing / verifying / paused / blocked-on-external) are
   rejected. Estender uma feature ainda viva polui a L1 da pai e quebra a
@@ -111,7 +111,7 @@ def _check_one_extension(
     if not parent_dir.is_dir():
         fails.append(
             f"{slug}: EXT-001 parent {parent_slug!r} não existe em "
-            f".claude/memory/L1/{parent_slug}/"
+            f".claude/forge/state/lifecycle/{parent_slug}/"
         )
         return fails
 
@@ -198,7 +198,7 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
             f"{len(failures)} violação(ões) em {len(extensions)} extension(s)",
             what_failed="; ".join(failures[:3])
             + (f" (+{len(failures)-3} more)" if len(failures) > 3 else ""),
-            where=".claude/memory/L1/*/status.json (+ hypothesis.yaml pra scope)",
+            where=".claude/forge/state/lifecycle/*/status.json (+ hypothesis.yaml pra scope)",
             why=[
                 "EXT-001..004 protegem a invariante de extension (Gap 9, discipline §10).",
                 "Parent deve existir e estar 'done'; sem self-loop; sem dedupe de scope.",

@@ -283,7 +283,7 @@ def run_scope(
       restoring the previous status on pass; on fail leaves the previous
       status untouched but appends ``verify-failed`` to ``raw.notes``.
     - Appends one record per invocation to
-      ``.claude/memory/L1/{feature_slug}/verify-log.jsonl`` (schema
+      ``.claude/forge/state/lifecycle/{feature_slug}/verify-log.jsonl`` (schema
       MEM-L1-VL-001..005).
     """
     if scope_type not in ("task", "feature"):
@@ -595,7 +595,7 @@ def _write_verify_log_entry(
     hard_fails: list[str],
     warnings_list: list[str],
 ) -> None:
-    """Append one line to ``.claude/memory/L1/{slug}/verify-log.jsonl``.
+    """Append one line to ``.claude/forge/state/lifecycle/{slug}/verify-log.jsonl``.
 
     Silently no-ops when there is no resolvable feature slug — the log is
     per-feature by design (schema MEM-L1-VL-001..005).

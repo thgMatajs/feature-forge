@@ -45,7 +45,7 @@ def _seed_parent_done(
     state=done, hypothesis.yaml with the parent's structural read, and
     a stub feature folder (so _import_parent_context can resolve it).
     """
-    l1_dir = project_root / ".claude" / "memory" / "L1" / slug
+    l1_dir = project_root / ".claude" / "forge" / "state" / "lifecycle" / slug
     l1_dir.mkdir(parents=True, exist_ok=True)
     payload: dict = {
         "schema-version": 1,
@@ -204,8 +204,9 @@ def test_create_extension_l1_no_orphan_status_on_hypothesis_failure(
     child_status_path = (
         tmp_forge_project
         / ".claude"
-        / "memory"
-        / "L1"
+        / "forge"
+        / "state"
+        / "lifecycle"
         / "lembrete-rega-push"
         / "status.json"
     )
@@ -245,7 +246,7 @@ def _seed_parent_state(project_root: Path, slug: str, state: str) -> None:
 
     Usado pra exercitar o guard de EXT-002 no nível do helper write-time.
     """
-    l1_dir = project_root / ".claude" / "memory" / "L1" / slug
+    l1_dir = project_root / ".claude" / "forge" / "state" / "lifecycle" / slug
     l1_dir.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema-version": 1,
@@ -401,7 +402,7 @@ def test_handle_done_feature_branch_inactive_on_non_done(
     """Parent in state != done → no-op (returns parent slug, no prompt)."""
     # Seed parent in state=implementing instead of done.
     l1_dir = (
-        tmp_forge_project / ".claude" / "memory" / "L1" / "in-flight-feature"
+        tmp_forge_project / ".claude" / "forge" / "state" / "lifecycle" / "in-flight-feature"
     )
     l1_dir.mkdir(parents=True, exist_ok=True)
     (l1_dir / "status.json").write_text(
@@ -437,7 +438,7 @@ def test_handle_done_feature_branch_duplicate_slug_abort(
     _seed_parent_done(tmp_forge_project, "lembrete-rega")
     # Seed an existing L1 the user will accidentally collide with.
     other_dir = (
-        tmp_forge_project / ".claude" / "memory" / "L1" / "lembrete-rega-push"
+        tmp_forge_project / ".claude" / "forge" / "state" / "lifecycle" / "lembrete-rega-push"
     )
     other_dir.mkdir(parents=True, exist_ok=True)
     (other_dir / "status.json").write_text(
@@ -494,7 +495,7 @@ def test_handle_done_feature_branch_duplicate_slug_abort_message_interpolates_ca
     _seed_parent_done(tmp_forge_project, "lembrete-rega")
     # Seed um L1 existente que vai colidir com o slug derivado escolhido.
     other_dir = (
-        tmp_forge_project / ".claude" / "memory" / "L1" / "lembrete-rega-push"
+        tmp_forge_project / ".claude" / "forge" / "state" / "lifecycle" / "lembrete-rega-push"
     )
     other_dir.mkdir(parents=True, exist_ok=True)
     (other_dir / "status.json").write_text(
@@ -542,7 +543,7 @@ def test_handle_done_feature_branch_duplicate_slug_retry(
     """User picks caminho 3, duplicate collision, picks path a (try again)."""
     _seed_parent_done(tmp_forge_project, "lembrete-rega")
     other_dir = (
-        tmp_forge_project / ".claude" / "memory" / "L1" / "lembrete-rega-push"
+        tmp_forge_project / ".claude" / "forge" / "state" / "lifecycle" / "lembrete-rega-push"
     )
     other_dir.mkdir(parents=True, exist_ok=True)
     (other_dir / "status.json").write_text(

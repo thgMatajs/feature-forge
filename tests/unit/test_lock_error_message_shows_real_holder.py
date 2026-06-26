@@ -69,7 +69,7 @@ def _seed_ready_feature(project_root: Path, slug: str = "lembrete-rega") -> Path
         "status: pending\n",
         encoding="utf-8",
     )
-    memory_l1 = project_root / ".claude" / "memory" / "L1" / slug
+    memory_l1 = project_root / ".claude" / "forge" / "state" / "lifecycle" / slug
     memory_l1.mkdir(parents=True, exist_ok=True)
     (memory_l1 / "status.json").write_text(
         json.dumps(
@@ -131,7 +131,7 @@ def test_plan_lock_denied_shows_real_holder(
     # Seed an L1 in 'planned' (active, non-done) with a stale None mirror so
     # the collision path resolves to "retomar" (same slug), then the lock
     # acquire is denied by the foreign sentinel.
-    memory_l1 = tmp_forge_project / ".claude" / "memory" / "L1" / slug
+    memory_l1 = tmp_forge_project / ".claude" / "forge" / "state" / "lifecycle" / slug
     memory_l1.mkdir(parents=True, exist_ok=True)
     (memory_l1 / "status.json").write_text(
         json.dumps(

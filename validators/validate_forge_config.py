@@ -317,7 +317,7 @@ def _check_readiness_strictness(data: dict[str, Any]) -> list[str]:
 def _check_l1_mutation_lock(project_root: Path) -> list[str]:
     """RULE-018: nenhuma feature L1 pode estar em phase ativa.
 
-    Lê `.claude/memory/L1/*/status.json` e procura `state` ∈ {planning,
+    Lê `.claude/forge/state/lifecycle/*/status.json` e procura `state` ∈ {planning,
     implementing, verifying}. Se houver, mutação de cards (este validator é
     chamado antes de reconfigure ops mutantes) deve bloquear.
     """

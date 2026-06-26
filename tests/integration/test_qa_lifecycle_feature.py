@@ -119,7 +119,7 @@ def test_qa_feature_scope_end_to_end_pass_verdict(tmp_path: Path) -> None:
     assert exit2 == 0, "verdict PASS espera exit 0"
 
     # proposed.yaml nunca foi criado (sem findings actionable)
-    proposed = proj / ".claude" / "memory" / "L1" / "proposed-evolutions" / "proposed.yaml"
+    proposed = proj / ".claude" / "forge" / "state" / "lifecycle" / "proposed-evolutions" / "proposed.yaml"
     assert not proposed.exists(), "PASS verdict não deveria emitir entries"
 
 
@@ -215,12 +215,13 @@ def test_synthesis_emit_block_verdict_with_critical_finding(tmp_path: Path) -> N
     assert emit_summary["written"] == 1, "emit deveria gravar 1 entry"
     assert emit_summary["write_failed"] is False
 
-    # proposed.yaml escrito atomicamente em .claude/memory/L1/...
+    # proposed.yaml escrito atomicamente em .claude/forge/state/lifecycle/...
     proposed = (
         proj
         / ".claude"
-        / "memory"
-        / "L1"
+        / "forge"
+        / "state"
+        / "lifecycle"
         / "proposed-evolutions"
         / "proposed.yaml"
     )

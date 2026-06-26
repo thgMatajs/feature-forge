@@ -624,7 +624,7 @@ def _pick_feature(project_root: Path, prompt: str) -> Optional[str]:
     features = list_active_features(project_root)
     if not features:
         renderer.write(renderer.colored(
-            "  Nenhuma feature ativa em .claude/memory/L1/.", "yellow"
+            "  Nenhuma feature ativa em .claude/forge/state/lifecycle/.", "yellow"
         ))
         return None
     options = {str(i): slug for i, slug in enumerate(features, start=1)}

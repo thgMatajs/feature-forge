@@ -44,12 +44,13 @@ def _write_config(project: Path, qa_block: dict[str, Any]) -> Path:
 
 
 def _read_history(project: Path, feature_slug: str) -> list[dict[str, Any]]:
-    """Lê `.claude/memory/L1/<slug>/history.jsonl` linha-a-linha."""
+    """Lê `.claude/forge/state/lifecycle/<slug>/history.jsonl` linha-a-linha."""
     path = (
         project
         / ".claude"
-        / "memory"
-        / "L1"
+        / "forge"
+        / "state"
+        / "lifecycle"
         / feature_slug
         / "history.jsonl"
     )
