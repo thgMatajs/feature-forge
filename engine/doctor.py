@@ -44,6 +44,7 @@ from engine.memory.l1 import list_active_features, list_archived_features
 from engine.memory.l2 import l2_size_bytes
 from engine.ui import output_mode, question, renderer
 from engine.ui.question import PromptAbortedError
+from engine.integrations.mem import mem_call
 from engine.utils.paths import (
     ProjectRootNotFoundError,
     active_config_path,
@@ -58,6 +59,8 @@ from engine.utils.paths import (
     lifecycle_root,
     memory_dir,
     memory_l2_path,
+    mem_asset_version_path,
+    vendored_mem_path,
 )
 from engine.utils.yaml_io import (
     YamlIOError,
@@ -243,6 +246,7 @@ def _all_categories(
                 _check_secrets_tools(project_root),
                 _check_qa_coherence(project_root, config),
                 _check_gradle_catalogs(project_root),
+                _check_mem(project_root),
             ]
         )
     return categories
@@ -1222,6 +1226,74 @@ def _check_cc_gate_tools(project_root: Path) -> _CategoryReport:
                 )
             )
     return _CategoryReport("cc-gate-tools", checks)
+
+
+def _check_mem(project_root: Path) -> _CategoryReport:
+    """Categoria 'mem': vendorização + saúde (mem doctor) + drift do pin.
+
+    Reusa a fronteira mem_call — nunca replica lógica do mem em Python.
+
+    H-001: `mem doctor` (cmd_doctor) retorna exit 0 SEMPRE — exit_code não é
+    sinal de saúde. A saúde é derivada do PIOR check do JSON `--json`, não do
+    exit code. Trata 3 modos de falha sem crash: binário não encontrado, JSON
+    inválido, lista vazia.
+    """
+    vendored = vendored_mem_path(project_root)
+    if not vendored.is_file():
+        return _CategoryReport("mem", [_Check(
+            name="vendored",
+            status=_STATUS_FAIL,
+            message="mem não vendorizado em .claude/bin/mem",
+            remediation="rode `forge init` pra vendorizar o mem",
+        )])
+
+    checks: list[_Check] = [_Check("vendored", _STATUS_OK, "mem vendorizado em .claude/bin/mem")]
+
+    # H-001: `mem doctor` retorna exit 0 SEMPRE — derivar saúde do JSON, não do exit_code.
+    res = mem_call(project_root, ["doctor"])  # json=True por default
+    if not res.found:
+        checks.append(_Check("health", _STATUS_WARN, "mem doctor não executou"))
+    else:
+        try:
+            report = json.loads(res.stdout or "[]")
+            # mem doctor --json → lista de {"check","status","detail"};
+            # status do mem ∈ {"ok", e não-ok (ex.: "fail"/"error"/"stale")}.
+            bad = [c for c in report if isinstance(c, dict) and c.get("status") != "ok"]
+            if bad:
+                names = ", ".join(str(c.get("check")) for c in bad)
+                checks.append(_Check(
+                    "health",
+                    _STATUS_WARN,
+                    f"mem doctor reportou checks não-ok: {names}",
+                ))
+            else:
+                checks.append(_Check("health", _STATUS_OK, "mem doctor: todos os checks ok"))
+        except (ValueError, TypeError):
+            checks.append(_Check(
+                "health",
+                _STATUS_WARN,
+                f"mem doctor saída ininteligível: {(res.stderr or res.stdout or '')[:120]}",
+            ))
+
+    # Drift do pin: VERSION vendorizada vs asset embutido neste forge.
+    pin = vendored.parent / "mem.version"
+    asset_v = mem_asset_version_path()
+    if pin.is_file() and asset_v.is_file():
+        vp = pin.read_text().strip()
+        va = asset_v.read_text().strip()
+        if vp != va:
+            # M-001: `forge reconfigure` NÃO re-vendoriza nesta onda;
+            # `forge init` é idempotente e re-vendoriza. Remediation honesta.
+            checks.append(_Check(
+                "pin",
+                _STATUS_WARN,
+                f"drift: vendorizado {vp} vs asset {va}",
+                remediation="rode `forge init` pra re-vendorizar o asset mais novo",
+            ))
+        else:
+            checks.append(_Check("pin", _STATUS_OK, f"pin alinhado ({vp})"))
+
+    return _CategoryReport("mem", checks)
 
 
 # ── Gradle catalog scope (DET-3 M-4) ─────────────────────────────────────────
