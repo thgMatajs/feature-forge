@@ -338,8 +338,12 @@ Reescreva `tests/unit/test_commands_memory.py` inteiro:
 """W-ROUTE 6a — testes do `forge memory` arg-driven (substitui o smoke de menu).
 
 Cobre: dispatch por ação (equivalência — cada ação chama o wrapper certo),
-usage em ação ausente/desconhecida, e a PROVA estrutural de BUG-M1 (zero
-prompt pausável / zero checkpoint no módulo reescrito).
+usage em ação ausente/desconhecida, contrato pré-init (exit 1), e a PROVA
+estrutural de BUG-M1 (zero prompt pausável / zero checkpoint no módulo).
+
+Os testes de dispatch monkeypatcham `memory_cli.find_project_root` pra isolar
+a unidade do resolver de projeto (find_project_root exige marker forge, não só
+.git/ — não é o que estes testes exercitam).
 """
 from __future__ import annotations
 
@@ -349,33 +353,38 @@ import pytest
 
 from engine import memory_cli
 from engine.integrations.mem import MemQuery
+from engine.utils.paths import ProjectRootNotFoundError
+
+
+def _patch_root(monkeypatch, tmp_path):
+    monkeypatch.setattr(memory_cli, "find_project_root", lambda: tmp_path)
 
 
 def test_module_imports() -> None:
     assert callable(memory_cli.run)
 
 
-def test_empty_argv_is_usage(monkeypatch, tmp_project_root) -> None:
-    monkeypatch.chdir(tmp_project_root)
+def test_pre_init_returns_exit_1(monkeypatch) -> None:
+    def _raise():
+        raise ProjectRootNotFoundError("sem projeto forge")
+    monkeypatch.setattr(memory_cli, "find_project_root", _raise)
+    assert memory_cli.run([]) == 1
+
+
+def test_empty_argv_is_usage(monkeypatch, tmp_path) -> None:
+    _patch_root(monkeypatch, tmp_path)
     assert memory_cli.run([]) == 2
 
 
-def test_unknown_action_is_usage(monkeypatch, tmp_project_root) -> None:
-    monkeypatch.chdir(tmp_project_root)
+def test_unknown_action_is_usage(monkeypatch, tmp_path) -> None:
+    _patch_root(monkeypatch, tmp_path)
     assert memory_cli.run(["bogus"]) == 2
-
-
-def test_pre_init_returns_exit_1(monkeypatch, tmp_path) -> None:
-    # dir bare (sem .git/.claude) → find_project_root levanta → exit 1
-    # (contrato Bug U1), ANTES de qualquer parse de ação.
-    monkeypatch.chdir(tmp_path)
-    assert memory_cli.run([]) == 1
 
 
 # ── Equivalência: cada ação delega ao wrapper correto ────────────────────
 
-def test_search_calls_mem_find(monkeypatch, tmp_project_root) -> None:
-    monkeypatch.chdir(tmp_project_root)
+def test_search_calls_mem_find(monkeypatch, tmp_path) -> None:
+    _patch_root(monkeypatch, tmp_path)
     seen: dict = {}
 
     def _fake_find(root, query, **kw):
@@ -387,13 +396,13 @@ def test_search_calls_mem_find(monkeypatch, tmp_project_root) -> None:
     assert seen["query"] == "reuse first"
 
 
-def test_search_without_query_is_usage(monkeypatch, tmp_project_root) -> None:
-    monkeypatch.chdir(tmp_project_root)
+def test_search_without_query_is_usage(monkeypatch, tmp_path) -> None:
+    _patch_root(monkeypatch, tmp_path)
     assert memory_cli.run(["search"]) == 2
 
 
-def test_inspect_with_id_calls_mem_get(monkeypatch, tmp_project_root) -> None:
-    monkeypatch.chdir(tmp_project_root)
+def test_inspect_with_id_calls_mem_get(monkeypatch, tmp_path) -> None:
+    _patch_root(monkeypatch, tmp_path)
     seen: dict = {}
 
     def _fake_get(root, note_id):
@@ -405,8 +414,8 @@ def test_inspect_with_id_calls_mem_get(monkeypatch, tmp_project_root) -> None:
     assert seen["id"] == "01ABC"
 
 
-def test_inspect_without_id_calls_mem_stats(monkeypatch, tmp_project_root) -> None:
-    monkeypatch.chdir(tmp_project_root)
+def test_inspect_without_id_calls_mem_stats(monkeypatch, tmp_path) -> None:
+    _patch_root(monkeypatch, tmp_path)
     called: dict = {}
 
     def _fake_stats(root):
@@ -418,8 +427,8 @@ def test_inspect_without_id_calls_mem_stats(monkeypatch, tmp_project_root) -> No
     assert called.get("hit") is True
 
 
-def test_export_calls_mem_brief(monkeypatch, tmp_project_root) -> None:
-    monkeypatch.chdir(tmp_project_root)
+def test_export_calls_mem_brief(monkeypatch, tmp_path) -> None:
+    _patch_root(monkeypatch, tmp_path)
     seen: dict = {}
 
     def _fake_brief(root, *, budget=None):
@@ -431,8 +440,8 @@ def test_export_calls_mem_brief(monkeypatch, tmp_project_root) -> None:
     assert seen["budget"] == 200
 
 
-def test_distill_calls_mem_evolve(monkeypatch, tmp_project_root) -> None:
-    monkeypatch.chdir(tmp_project_root)
+def test_distill_calls_mem_evolve(monkeypatch, tmp_path) -> None:
+    _patch_root(monkeypatch, tmp_path)
     seen: dict = {}
 
     def _fake_evolve(root, *, apply=False):
@@ -444,13 +453,56 @@ def test_distill_calls_mem_evolve(monkeypatch, tmp_project_root) -> None:
     assert seen["apply"] is True
 
 
-def test_degraded_mem_returns_1(monkeypatch, tmp_project_root) -> None:
-    monkeypatch.chdir(tmp_project_root)
+def test_degraded_mem_returns_1(monkeypatch, tmp_path) -> None:
+    _patch_root(monkeypatch, tmp_path)
     monkeypatch.setattr(
         memory_cli, "mem_find",
         lambda root, q, **kw: MemQuery(ok=False, data=None, message="mem indisponível. Três caminhos: ..."),
     )
     assert memory_cli.run(["search", "x"]) == 1
+
+
+# ── C-002: --json não polui os args posicionais do dispatch ──────────────
+
+def test_json_flag_stripped_from_query(monkeypatch, tmp_path) -> None:
+    _patch_root(monkeypatch, tmp_path)
+    seen: dict = {}
+
+    def _fake_find(root, query, **kw):
+        seen["query"] = query
+        return MemQuery(ok=True, data=[])
+
+    monkeypatch.setattr(memory_cli, "mem_find", _fake_find)
+    assert memory_cli.run(["search", "reuse", "--json"]) == 0
+    assert seen["query"] == "reuse"  # --json removido, não poluiu a query
+
+
+# ── C-001: JSON-mode emite o JSON do mem (substitui test_memory_json) ────
+
+def test_inspect_json_mode_emits_stats_json(monkeypatch, tmp_path, capsys) -> None:
+    import json as _json
+    _patch_root(monkeypatch, tmp_path)
+    monkeypatch.setattr(memory_cli.output_mode, "is_json_mode", lambda: True)
+    monkeypatch.setattr(
+        memory_cli, "mem_stats",
+        lambda root: MemQuery(ok=True, data={"total": 2, "live": 2}),
+    )
+    assert memory_cli.run(["inspect", "--json"]) == 0
+    out = capsys.readouterr().out
+    assert _json.loads(out) == {"total": 2, "live": 2}
+
+
+def test_search_json_mode_emits_hits_json(monkeypatch, tmp_path, capsys) -> None:
+    import json as _json
+    _patch_root(monkeypatch, tmp_path)
+    monkeypatch.setattr(memory_cli.output_mode, "is_json_mode", lambda: True)
+    monkeypatch.setattr(
+        memory_cli, "mem_find",
+        lambda root, q, **kw: MemQuery(ok=True, data=[{"id": "X", "title": "t"}]),
+    )
+    assert memory_cli.run(["search", "reuse", "--json"]) == 0
+    out = capsys.readouterr().out
+    assert _json.loads(out) == [{"id": "X", "title": "t"}]
 
 
 # ── Prova estrutural de BUG-M1: ausência de estado multi-passo ───────────
@@ -470,49 +522,6 @@ def test_checkpoint_machinery_removed() -> None:
         "_memory_snapshot",
     ):
         assert not hasattr(memory_cli, name), f"{name} deveria ter sumido"
-
-
-# ── C-002: --json não polui os args posicionais do dispatch ──────────────
-
-def test_json_flag_stripped_from_query(monkeypatch, tmp_project_root) -> None:
-    monkeypatch.chdir(tmp_project_root)
-    seen: dict = {}
-
-    def _fake_find(root, query, **kw):
-        seen["query"] = query
-        return MemQuery(ok=True, data=[])
-
-    monkeypatch.setattr(memory_cli, "mem_find", _fake_find)
-    assert memory_cli.run(["search", "reuse", "--json"]) == 0
-    assert seen["query"] == "reuse"  # --json removido, não poluiu a query
-
-
-# ── C-001: JSON-mode emite o JSON do mem (substitui test_memory_json) ────
-
-def test_inspect_json_mode_emits_stats_json(monkeypatch, tmp_project_root, capsys) -> None:
-    import json as _json
-    monkeypatch.chdir(tmp_project_root)
-    monkeypatch.setattr(memory_cli.output_mode, "is_json_mode", lambda: True)
-    monkeypatch.setattr(
-        memory_cli, "mem_stats",
-        lambda root: MemQuery(ok=True, data={"total": 2, "live": 2}),
-    )
-    assert memory_cli.run(["inspect", "--json"]) == 0
-    out = capsys.readouterr().out
-    assert _json.loads(out) == {"total": 2, "live": 2}
-
-
-def test_search_json_mode_emits_hits_json(monkeypatch, tmp_project_root, capsys) -> None:
-    import json as _json
-    monkeypatch.chdir(tmp_project_root)
-    monkeypatch.setattr(memory_cli.output_mode, "is_json_mode", lambda: True)
-    monkeypatch.setattr(
-        memory_cli, "mem_find",
-        lambda root, q, **kw: MemQuery(ok=True, data=[{"id": "X", "title": "t"}]),
-    )
-    assert memory_cli.run(["search", "reuse", "--json"]) == 0
-    out = capsys.readouterr().out
-    assert _json.loads(out) == [{"id": "X", "title": "t"}]
 ```
 
 > Se a Task 1 deu `REPRO-FOUND`, adicione AQUI também o teste de regressão histórico descrito no veredito (red→green), além da prova estrutural acima.
@@ -943,3 +952,4 @@ novo forge memory <ação>."
 - **Decisão aberta resolvida:** `forget` dropado (sem primitivo de archive por-id no mem) — curadoria via `distill`→`mem evolve`. Documentado no commit da Task 3 e no doc-sync.
 - **C-001/C-002 do plan-audit r1 endereçados:** `--json` filtrado no `run()` + testes de strip e JSON-mode; `test_memory_json.py` removido junto do resume; `forget` dropado e `l3.py` órfão anotados em 04-pending.
 - **Round 2 fechou o footprint observável inteiro (varredura completa de tests/):** test_exit_codes (run reorder, find_project_root no topo→exit 1 pré-init), test_callsites_smoke (remove smoke_memory_emits_intent), test_subnamespace_paths (drop memory_cli da assertion active_config_path), test_help_json_manifest + _COMMAND_META (prompts_by_default→False, manifest honesto), 04-pending linha stale. Lanes: 6a roda unit+integration (não só rapid), por ser mudança de signature de comando.
+- **Round 3 (ESCALATE→fold):** N-005 — testes de dispatch monkeypatcham `memory_cli.find_project_root` (find_project_root exige marker forge, não só .git/; isola a unidade). N-007 — `test_bug_regressions.py:411` (2º teste pre-init) coberto pelo mesmo contrato exit-1. Plan-audit encerrado em 3 rodadas; gate final = pytest real na implementação (TDD).

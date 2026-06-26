@@ -118,6 +118,28 @@ demais para clean-break; 6a declara escopo expandido explícito:
   `supersede`/`evolve`/`inbox`) + testes de dispatch (argv por ação) +
   teste-prova de BUG-M1 (D4).
 
+### Footprint observável completo (descoberto via plan-audit r1-r3)
+
+Além de `memory_cli` e seus testes diretos, a reescrita toca o contrato
+OBSERVÁVEL em:
+- **Removidos** (testam comportamento que some): `test_engine_memory_cli_resume.py`,
+  `test_memory_json.py`, e `test_smoke_memory_emits_intent` (em
+  `test_callsites_smoke.py`).
+- **Atualizados** (asserções estáticas/metadata): `test_subnamespace_paths.py`
+  (drop de `memory_cli` da assertion `active_config_path`),
+  `test_help_json_manifest.py` + `_COMMAND_META["memory"]`
+  (`prompts_by_default` → False, manifest honesto).
+- **Contrato preservado** (passam sem mudança após o fix): `test_exit_codes.py`
+  e `test_bug_regressions.py` (pre-init → exit 1, garantido por
+  `find_project_root()` no topo do `run()`).
+- **Fixture:** testes de dispatch monkeypatcham `find_project_root` (ele exige
+  marker forge, não basta `.git/`).
+
+Lição: num clean-break rewrite, o footprint de teste é todo teste que assere
+o contrato observável (exit codes, intent emission, manifest metadata,
+asserções estáticas sobre o source), não só quem importa o módulo. Varrer
+por contrato, não por import.
+
 ## Doc-sync (mesmo commit da implementação)
 
 - `docs/design/06-command-surface.md` — nova superfície arg-driven de
