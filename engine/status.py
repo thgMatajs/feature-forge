@@ -210,7 +210,7 @@ def _render_memory(project_root: Path, config: dict) -> None:  # noqa: ARG001
         by_type_parts = "  ".join(f"{t}={n}" for t, n in sorted(by_type.items()))
         mem_detail = f"  ({by_type_parts})" if by_type_parts else ""
     else:
-        mem_line = "mem: indisponível (rode `forge init` pra vendorizar `.claude/bin/mem`)"
+        mem_line = "mem: indisponível"
         mem_detail = ""
 
     body = [

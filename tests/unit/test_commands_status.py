@@ -68,3 +68,28 @@ def test_render_memory_degrades_soft_when_mem_unavailable(monkeypatch, tmp_proje
     out = capsys.readouterr().out
     # Deve ainda renderizar L1 counts (não crashar)
     assert "L1 active" in out or "l1" in out.lower()
+
+
+def test_render_memory_degrade_does_not_nag_forge_init(monkeypatch, tmp_project_root, capsys):
+    """No degrade de mem, forge status NÃO deve mencionar 'forge init'.
+
+    Regressão: _render_memory exibia a mensagem raw do _degraded_message
+    (que continha 'rode forge init') quebrando o e2e
+    test_status_resolves_root_from_forge_config_marker linha 126.
+    """
+    from engine import status
+    from engine.integrations.mem import MemQuery
+
+    monkeypatch.chdir(tmp_project_root)
+    monkeypatch.setattr(
+        status, "mem_stats",
+        lambda root: MemQuery(ok=False, data=None, message="mem binary not found. rode `forge init` pra vendorizar."),
+    )
+    status._render_memory(tmp_project_root, {})
+    out = capsys.readouterr().out
+    # Guard: "forge init" não deve aparecer no output de forge status
+    assert "forge init" not in out, (
+        f"forge status não deve recomendar 'forge init' no output de mem-degrade; got:\n{out}"
+    )
+    # Placeholder neutro deve estar presente
+    assert "indisponível" in out or "mem:" in out

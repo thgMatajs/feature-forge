@@ -267,7 +267,7 @@ $ forge doctor
 │  ✅ config              workflow-config.yaml OK      │
 │  ✅ cards               8 cards ativos, 0 conflitos  │
 │  ✅ inventory           DS + i18n + conventions OK   │
-│  ✅ memory L2           12KB / 256KB (4% usado)      │
+│  ✅ mem                 45 notas · 32 live            │
 │  ✅ memory L1           2 features ativas            │
 │  ✅ graph               graph.db: 2140 nós, OK       │
 │  ⚠️  reuse findings      3 propostas pendentes       │
@@ -482,7 +482,7 @@ $ forge undo
 │ 1. last                — reverter ação mais recente  │
 │ 2. reconfigure {date}  — restaurar config do .bak    │
 │ 3. task commit (feat)  — git revert <sha>            │
-│ 4. evolve apply (id)   — restaurar L2 e remover entry│
+│ 4. evolve apply (id)   — reverte apply: remove entry │
 │ 5. abort feature       — marcar feature como aborted │
 │ 6. delete feature      — rm -rf dos artefatos        │
 │                                                       │
