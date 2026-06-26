@@ -54,6 +54,8 @@ from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import quoteattr
 
+from datetime import datetime, timezone
+
 from engine.host.adapter import (
     AskKind,
     AskResult,
@@ -66,6 +68,17 @@ from engine.host.adapter import (
 from engine.ui import intent_state
 from engine.ui.question import stable_intent_id
 from engine.utils.paths import forge_state_dir
+
+
+# Wire-format version mirror — must match intent_state._SCHEMA_VERSION.
+# Defined locally to avoid lateral coupling to intent_file internals;
+# kept in sync by contract (both sides must bump together).
+_SCHEMA_VERSION = 1
+
+
+def _now_iso() -> str:
+    """UTC timestamp in the same format ``question._now_iso`` uses."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class ClaudeCodeAdapter(HostAdapter):
@@ -191,8 +204,8 @@ class ClaudeCodeAdapter(HostAdapter):
         ``IntentFileAdapter`` path — same ``intent_state.read_response``
         chokepoint, same ``_SCHEMA_VERSION``.
         """
-        from engine.host.adapters.intent_file import _SCHEMA_VERSION, _now_iso as _if_now_iso
-
+        # IM-02: _SCHEMA_VERSION and _now_iso defined locally above (no lateral
+        # coupling to intent_file). The wire-format version is the same value.
         command, command_args = self._resolve_command_context()
         intent_id = stable_intent_id(
             kind=AskKind.CLASSIFY.value,
@@ -225,7 +238,7 @@ class ClaudeCodeAdapter(HostAdapter):
             "command-args": list(command_args),
             "fragments": fragments,
             "classification-schema": schema,
-            "created-at": _if_now_iso(),
+            "created-at": _now_iso(),
             "pid": _os.getpid(),
         }
         from engine.utils.paths import forge_state_dir as _fsd
