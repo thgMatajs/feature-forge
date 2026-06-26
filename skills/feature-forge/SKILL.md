@@ -43,6 +43,92 @@ Legenda de exit: **0**=ok · **1**=erro · **2**=pausado (responda) · **130**=c
 
 Atributos, kinds e shape da response em detalhe: `docs/schemas/intent-protocol.md`.
 
+## Fulfillment do intent `kind:"classify"`
+
+Quando o engine pausa pra uma classificação de rules (`kind:"classify"`), o
+fluxo difere do loop padrão: não há `AskUserQuestion` — você, como host-LLM,
+FAZ a classificação e escreve a response diretamente.
+
+### Como reconhecer
+
+O pending tem `"kind": "classify"` e carrega `"fragments"` (lista de
+fragmentos de texto das rules do consumidor) mais `"classification-schema"`.
+
+**ClaudeCodeAdapter** (CLAUDECODE=1): o marker stdout `<FORGE_INTENT kind="classify" .../>` sinaliza o pending; os fragments grandes vivem em
+`forge-pending.json` — leia-o pra obter o payload completo.
+
+**IntentFileAdapter** (FORGE_FORCE_INTENT_MODE=1): apenas `forge-pending.json`;
+sem marker stdout. Leia o arquivo pra obter fragments + schema.
+
+**TtyAdapter** (host sem LLM): o engine retorna `None` diretamente; sem
+pending, sem pausa. `_reduce_rules` pula com aviso — nenhuma ação do host.
+
+### Como classificar
+
+Para cada fragment em `fragments`:
+
+- **`tier: 0`** — invariante sempre-on: gates, enforcement, regras com
+  "NUNCA/sempre", bloqueadores hard, cerimônias obrigatórias. Permanece no
+  arquivo de rule inline.
+- **`tier: 1`** — referência, exemplo, detalhe recuperável, contexto de
+  consulta. Vai pro mem (você gerará o `mem_note`).
+
+Gere `mem_note` **somente para tier 1**:
+```json
+{
+  "type": "reference",
+  "title": "<título conciso do conteúdo>",
+  "body": "<texto do fragmento — corpo acionável>",
+  "tags": ["<tema-a>", "<tema-b>"]
+}
+```
+
+`tier` é sempre **int** (`0` ou `1`), nunca string.
+
+### Revisão (revise — M-202)
+
+Se `classification-schema` traz `"revise": true` + campo `"prior"` (a
+classificação anterior que o humano pediu pra ajustar), re-classifique
+considerando o `prior` como feedback: o humano discordou do split anterior —
+devolva um split revisado no MESMO formato. Um fragment pode mudar de tier;
+gere `mem_note` pra qualquer tier 1 resultante. O `intent-id` será novo
+(schema mudou) — a resposta vai pro novo pending, não ao anterior.
+
+### Response a escrever
+
+Escreva `.claude/forge/state/forge-response.json` com:
+```json
+{
+  "schema-version": 1,
+  "intent-id": "<mesmo intent-id do pending>",
+  "classification": [
+    {
+      "fragment_id": "<id do fragmento — campo 'id' do pending>",
+      "tier": 0,
+      "rationale": "<por que tier 0: é invariante always-on>"
+    },
+    {
+      "fragment_id": "<id do outro fragmento>",
+      "tier": 1,
+      "rationale": "<por que tier 1: detalhe recuperável>",
+      "mem_note": {
+        "type": "reference",
+        "title": "<título>",
+        "body": "<texto do fragmento>",
+        "tags": ["<tag>"]
+      }
+    }
+  ],
+  "answered-at": "<ISO-8601 UTC>"
+}
+```
+
+Todo fragment recebido em `fragments` deve aparecer em `classification`
+(um-pra-um). Não omita fragments; não invente fragment_ids.
+
+Re-invoque o `forge` com argv idêntico ao que pausou. O engine consume a
+response, move tier-1 pro mem, e exibe a proposta de 3-caminhos (G1/G2).
+
 ## Workflow — mapa de verbos
 
 | Verbo | O que dirige |

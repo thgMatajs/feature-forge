@@ -25,6 +25,47 @@ Ao rodar um `forge` que sai com **exit 2** + linha `<FORGE_INTENT .../>`:
 
 Atributos, kinds e shape da response em detalhe: `docs/schemas/intent-protocol.md`.
 
+## Fulfillment do intent `kind:"classify"`
+
+Quando o engine pausa pra classificação de rules (`kind:"classify"`), você
+faz a classificação e escreve a response — sem `AskUserQuestion`.
+
+**Como reconhecer:** pending com `"kind": "classify"`. Leia
+`forge-pending.json` pra obter `fragments` + `classification-schema`.
+(ClaudeCode também emite marker stdout, mas os fragments vivem no arquivo.)
+
+**Como classificar** cada fragment em `fragments`:
+
+- **`tier: 0`** — invariante always-on: gates, enforcement, "NUNCA/sempre",
+  bloqueadores hard, cerimônias obrigatórias. Permanece no arquivo de rule.
+- **`tier: 1`** — referência, exemplo, detalhe recuperável. Vai pro mem.
+
+`tier` é **int** (`0` ou `1`). Gere `mem_note` somente pra tier 1:
+```json
+{"type": "reference", "title": "...", "body": "...", "tags": ["..."]}
+```
+
+**Revisão (revise — M-202):** se `classification-schema` traz `"revise": true`
++ `"prior"` (split anterior), re-classifique considerando o `prior` como
+feedback do humano — devolva split revisado no mesmo formato.
+
+**Response** em `.claude/forge/state/forge-response.json`:
+```json
+{
+  "schema-version": 1,
+  "intent-id": "<mesmo do pending>",
+  "classification": [
+    {"fragment_id": "...", "tier": 0, "rationale": "..."},
+    {"fragment_id": "...", "tier": 1, "rationale": "...",
+     "mem_note": {"type": "reference", "title": "...", "body": "...", "tags": ["..."]}}
+  ],
+  "answered-at": "<ISO-8601 UTC>"
+}
+```
+
+Todo fragment de `fragments` deve aparecer em `classification` (um-pra-um).
+Re-invoque o `forge` com argv idêntico — o engine consome a response.
+
 ## Workflow
 
 `forge plan` é interativo wave-a-wave — duas coisas interleaved:

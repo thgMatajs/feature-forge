@@ -1,3 +1,48 @@
+<!-- >>> forge-classify-driver >>> -->
+## Fulfillment do intent `kind:"classify"` (feature-forge)
+
+Quando `forge init` pausa com `kind:"classify"`, você classifica os fragments
+das rules do consumidor e escreve a response — sem interação com o usuário.
+
+**Como reconhecer:** pending com `"kind": "classify"`. Leia sempre
+`forge-pending.json` pra obter os `fragments` completos (campo `id`,
+`source`, `heading`, `text`) + `classification-schema`.
+
+**Classificação:**
+
+- **`tier: 0`** — invariante always-on: gates, enforcement, "NUNCA/sempre",
+  bloqueadores hard, cerimônias obrigatórias. Permanece no arquivo de rule.
+- **`tier: 1`** — referência, exemplo, detalhe recuperável, consulta guiada.
+  Vai pro mem — gere `mem_note` com `type`, `title`, `body`, `tags`.
+
+`tier` é **int** (0 ou 1). Gere `mem_note` **somente** pra tier 1:
+```json
+{"type": "reference", "title": "...", "body": "...", "tags": ["<tema>"]}
+```
+
+**Revisão (M-202):** se `classification-schema` traz `"revise": true` +
+`"prior"`, o humano pediu ajuste do split anterior — re-classifique
+considerando o `prior` como feedback. O `intent-id` do novo pending é
+diferente (schema mudou); escreva a response pra esse novo `intent-id`.
+
+**Response** em `.claude/forge/state/forge-response.json`:
+```json
+{
+  "schema-version": 1,
+  "intent-id": "<mesmo do pending>",
+  "classification": [
+    {"fragment_id": "<id>", "tier": 0, "rationale": "..."},
+    {"fragment_id": "<id>", "tier": 1, "rationale": "...",
+     "mem_note": {"type": "reference", "title": "...", "body": "...", "tags": []}}
+  ],
+  "answered-at": "<ISO-8601 UTC>"
+}
+```
+
+Todo fragment em `fragments` deve aparecer em `classification` (um-pra-um).
+Re-invoque `forge init` com argv idêntico — o engine consome a response.
+<!-- <<< forge-classify-driver <<< -->
+
 <!-- >>> mem >>> -->
 ## Project memory (`mem`)
 
