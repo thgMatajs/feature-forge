@@ -93,8 +93,11 @@ from engine.utils.paths import (
     graph_db_path,
     inventory_dir,
     lifecycle_root,
+    mem_asset_path,
+    mem_asset_version_path,
     memory_dir,
     memory_l2_path,
+    vendored_mem_path,
 )
 from engine.utils.sha256 import file_sha256
 from engine.utils.yaml_io import read_yaml_or_default, write_yaml
@@ -103,6 +106,7 @@ from engine.utils.checkpoint_io import (
     save_yaml_checkpoint as _save_yaml_checkpoint_io,
 )
 from engine.utils.iso import utc_now_iso as _utc_now_iso_shared
+from engine.integrations.mem import mem_call
 
 PRESET_NAME = "kmp-mobile"
 LATENT_CAPS = ["android-platform", "ios-platform", "swift-language"]
@@ -919,6 +923,31 @@ def _install_git_hooks(project_root: Path) -> None:
                 user_backup.chmod(0o755)  # preserva exec bit
             except OSError:
                 pass
+
+
+def _vendor_mem(project_root: Path) -> bool:
+    """Vendoriza o mem no consumidor: copia o asset → .claude/bin/mem (755) +
+    a VERSION (pin), e roda o scaffold do mem (gitignore mem.db*, índice no
+    AGENTS.md) via a fronteira mem_call. Reusa o scaffold do próprio mem
+    (Decisão #2) em vez de replicá-lo. Idempotente."""
+    asset = mem_asset_path()
+    if not asset.is_file():
+        return False
+    dst = vendored_mem_path(project_root)
+    ensure_dir(dst.parent)
+    shutil.copy2(asset, dst)
+    dst.chmod(0o755)
+    version = mem_asset_version_path()
+    if version.is_file():
+        shutil.copy2(version, dst.parent / "mem.version")
+    # Scaffold idempotente via a fronteira (mem init não aceita --json).
+    # M-002: NÃO descartar o resultado — se o scaffold falhar, o binário foi
+    # copiado mas o estado (.claude/memory, gitignore, AGENTS.md) pode estar
+    # incompleto. Retorna o sucesso REAL (cópia + scaffold), pra não afirmar
+    # vendorização completa quando o scaffold falhou. O init segue gracioso
+    # (não crasha), e a categoria `mem` do doctor pega o estado depois.
+    res = mem_call(project_root, ["init"], json=False)
+    return res.found and res.exit_code == 0
 
 
 def _merge_forge_hooks_into_settings(project_root: Path) -> None:
@@ -2225,6 +2254,9 @@ def _run_pipeline(project_root: Path) -> int:
     # Task 0.8 (v1.3 pilot-ready): hooks live under .claude/forge/ sub-namespace.
     ensure_dir(forge_hooks_dir(project_root))
     try:
+        # W-VENDOR Task 1: vendoriza o mem ANTES dos hooks/driver (que podem
+        # usar mem internamente em ondas futuras).
+        _vendor_mem(project_root)
         n_hooks = _install_hooks(project_root)
         _install_git_hooks(project_root)
         # Wave 1 Fix #1: register forge CC hooks in .claude/settings.json

@@ -305,3 +305,18 @@ def forge_cards_local_dir(project_root: Path) -> Path:
 
 def forge_hooks_dir(project_root: Path) -> Path:
     return forge_dir(project_root) / "hooks"
+
+
+def mem_asset_path() -> Path:
+    """Asset embutido do mem (binário) dentro do FORGE_HOME."""
+    return forge_home() / "engine" / "assets" / "mem" / "mem"
+
+
+def mem_asset_version_path() -> Path:
+    """VERSION do asset embutido do mem."""
+    return forge_home() / "engine" / "assets" / "mem" / "VERSION"
+
+
+def vendored_mem_path(project_root: Path) -> Path:
+    """Binário do mem vendorizado no consumidor — .claude/bin/mem."""
+    return claude_dir(project_root) / "bin" / "mem"
