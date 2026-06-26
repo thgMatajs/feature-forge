@@ -17,6 +17,7 @@
 - Invariante de prova: o módulo `memory_cli` reescrito tem ZERO `question.ask*` e ZERO checkpoint helper.
 - Doc-sync no MESMO commit da mudança de comportamento (Mandamento #6).
 - `--json` é meta-flag global (resolvida em `cli.main` via contextvar antes do dispatch); o handler arg-driven DEVE filtrá-la do argv pra não poluir os args posicionais. `cli.main` passa `argv[1:]` sem strip.
+- 6a roda unit + integration lanes (mudança de signature de comando exige full-lane, não só rapid).
 - Design de referência: `docs/superpowers/specs/2026-06-26-w-route-6a-design.md` (refina a spec congelada `2026-06-25-mem-integration-design.md`).
 
 ---
@@ -354,12 +355,21 @@ def test_module_imports() -> None:
     assert callable(memory_cli.run)
 
 
-def test_empty_argv_is_usage() -> None:
+def test_empty_argv_is_usage(monkeypatch, tmp_project_root) -> None:
+    monkeypatch.chdir(tmp_project_root)
     assert memory_cli.run([]) == 2
 
 
-def test_unknown_action_is_usage() -> None:
+def test_unknown_action_is_usage(monkeypatch, tmp_project_root) -> None:
+    monkeypatch.chdir(tmp_project_root)
     assert memory_cli.run(["bogus"]) == 2
+
+
+def test_pre_init_returns_exit_1(monkeypatch, tmp_path) -> None:
+    # dir bare (sem .git/.claude) → find_project_root levanta → exit 1
+    # (contrato Bug U1), ANTES de qualquer parse de ação.
+    monkeypatch.chdir(tmp_path)
+    assert memory_cli.run([]) == 1
 
 
 # ── Equivalência: cada ação delega ao wrapper correto ────────────────────
@@ -707,10 +717,17 @@ _ACTIONS = {
 def run(argv: list[str]) -> int:
     """Dispatcher arg-driven do `forge memory` (stateless, sem prompt).
 
-    `--json` é meta-flag global já resolvida em `cli.main` (contextvar via
+    `find_project_root()` vem PRIMEIRO: pré-init (dir sem projeto) → exit 1
+    (contrato Bug U1/SPEC §3 A.1), antes de qualquer parse de ação. `--json`
+    é meta-flag global já resolvida em `cli.main` (contextvar via
     `output_mode.is_json_mode()`); filtramos do argv aqui pra não poluir os
     args posicionais — `cli.main` repassa `argv[1:]` sem strip.
     """
+    try:
+        project_root = find_project_root()
+    except ProjectRootNotFoundError as exc:
+        sys.stderr.write(f"forge memory: {exc}\n")
+        return 1
     argv = [a for a in argv if a != "--json"]
     if not argv:
         sys.stderr.write(_USAGE)
@@ -721,11 +738,6 @@ def run(argv: list[str]) -> int:
         sys.stderr.write(f"forge memory: ação desconhecida '{action}'.\n")
         sys.stderr.write(_USAGE)
         return 2
-    try:
-        project_root = find_project_root()
-    except ProjectRootNotFoundError as exc:
-        sys.stderr.write(f"forge memory: {exc}\n")
-        return 1
     return handler(project_root, rest, output_mode.is_json_mode())
 
 
@@ -763,7 +775,80 @@ JSON-mode da superfície nova."
 
 ---
 
-### Task 4: Doc-sync (mesmo ciclo da mudança de superfície)
+### Task 4: Reconciliar o footprint de testes do contrato observável
+
+**Files:**
+- Delete: (já feito na Task 3 — `test_engine_memory_cli_resume.py`, `test_memory_json.py`)
+- Modify: `tests/integration/test_callsites_smoke.py`
+- Modify: `tests/integration/test_subnamespace_paths.py`
+- Modify: `tests/unit/test_help_json_manifest.py`
+- Modify: `engine/cli.py` (`_COMMAND_META["memory"]`)
+
+**Interfaces:**
+- Consumes: a superfície stateless da Task 3.
+- Produces: suíte verde nas lanes unit+integration; manifest honesto.
+
+- [ ] **Step 1: Remover `test_smoke_memory_emits_intent`**
+
+Remova de `tests/integration/test_callsites_smoke.py` a função `test_smoke_memory_emits_intent` inteira (≈ linhas 294-309). Ela assere que `forge memory` pausa no menu e emite pending JSON — comportamento que a cura do BUG-M1 elimina (handler stateless não emite intent). Remoção correta, não regressão.
+
+- [ ] **Step 2: Tirar `memory_cli` da assertion de active_config_path**
+
+Em `tests/integration/test_subnamespace_paths.py` (`test_all_active_config_consumers_resolve_via_resolver`, ≈ linhas 106-136), remova `memory_cli` da tupla de módulos que devem conter `"active_config_path"` no source. O módulo reescrito é stateless e não carrega config ativa. Os demais consumidores (cli/raw/evolve/ingest/undo/implement/doctor) permanecem na assertion.
+
+- [ ] **Step 3: Flip `prompts_by_default` de memory pra False**
+
+Em `engine/cli.py`, na entrada `_COMMAND_META["memory"]` (≈ linha 296), mude `"prompts_by_default": True` → `"prompts_by_default": False` e atualize o summary pra refletir a superfície nova:
+```python
+    "memory":      {"summary": "Wrapper sobre o mem: search/inspect/export/distill.", "prompts_by_default": False, "machine_readable": True,  "flags": ["--json"], "args": ["search|inspect|export|distill"]},
+```
+O handler stateless nunca prompta — `prompts_by_default: True` seria o manifest mentindo sobre a superfície (detection finding).
+
+- [ ] **Step 4: Atualizar `test_help_json_manifest.py`**
+
+Em `tests/unit/test_help_json_manifest.py` (≈ linhas 50-57), remova `memory` da tupla de read-cmds que promptam por default e adicione a asserção de non-prompting. Substitua o bloco:
+```python
+    # Os 4 read-cmds que promptam no default: prompts_by_default=True E --json.
+    for name in ("verify", "doctor", "graph", "memory"):
+        assert by_name[name]["prompts_by_default"] is True, name
+        assert by_name[name]["machine_readable"] is True, name
+
+    # status: único genuinamente non-prompting, mas machine_readable.
+    assert by_name["status"]["prompts_by_default"] is False
+    assert by_name["status"]["machine_readable"] is True
+```
+por:
+```python
+    # Read-cmds que promptam no default: prompts_by_default=True E --json.
+    for name in ("verify", "doctor", "graph"):
+        assert by_name[name]["prompts_by_default"] is True, name
+        assert by_name[name]["machine_readable"] is True, name
+
+    # status e memory: non-prompting, mas machine_readable (--json).
+    for name in ("status", "memory"):
+        assert by_name[name]["prompts_by_default"] is False, name
+        assert by_name[name]["machine_readable"] is True, name
+```
+
+- [ ] **Step 5: Rodar unit + integration das áreas tocadas**
+
+Run: `.venv/bin/pytest tests/unit/test_exit_codes.py tests/unit/test_help_json_manifest.py tests/unit/test_output_mode.py tests/integration/test_callsites_smoke.py tests/integration/test_subnamespace_paths.py -v`
+Expected: PASS (todos). Depois a lane integration inteira: `.venv/bin/pytest -m "integration" -q | tail -3` — verde.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add tests/integration/test_callsites_smoke.py tests/integration/test_subnamespace_paths.py tests/unit/test_help_json_manifest.py engine/cli.py
+git commit -m "test(w-route): reconcilia footprint observável do forge memory (6a)
+
+Remove test_smoke_memory_emits_intent (handler stateless não emite intent),
+tira memory_cli da assertion de active_config_path, flip prompts_by_default
+de memory pra False (manifest honesto) + atualiza test_help_json_manifest."
+```
+
+---
+
+### Task 5: Doc-sync (mesmo ciclo da mudança de superfície)
 
 **Files:**
 - Modify: `docs/design/06-command-surface.md`
@@ -816,9 +901,11 @@ Adicione em `### Changed`:
   `forge status`; L3 e `forget` por-id removidos (W-ROUTE 6a).
 ```
 
-- [ ] **Step 6: Anotar gaps em `docs/design/04-pending.md`**
+- [ ] **Step 6: Anotar gaps + atualizar linha stale em `docs/design/04-pending.md`**
 
-Adicione duas entradas a `docs/design/04-pending.md`:
+Primeiro, atualize a linha stale (≈ linha 1145) que ainda lista a superfície antiga (`forge memory ... forget`) pra refletir a superfície nova (`search`/`inspect`/`export`/`distill`).
+
+Depois, adicione duas entradas a `docs/design/04-pending.md`:
 
 ```markdown
 - **`forge memory forget` removido (W-ROUTE 6a)** — o mem não tem primitivo
@@ -850,8 +937,9 @@ novo forge memory <ação>."
 
 ## Self-Review
 
-- **Cobertura da spec/design 6a:** D1 (arg-driven, zero question.ask) → Task 3 + prova estrutural. D2 (lifecycle sai) → Task 3 (sem L1 inspect) + doc-sync. D3 (camada típica só do que 6a usa) → Task 2 (5 wrappers). D4 (prova BUG-M1 via investigação) → Task 1 + Task 3 (prova estrutural + regressão condicional). Footprint de teste (remove resume, reescreve smoke, adiciona wrapper+equivalência) → Task 2/3. Doc-sync → Task 4.
+- **Cobertura da spec/design 6a:** D1 (arg-driven, zero question.ask) → Task 3 + prova estrutural. D2 (lifecycle sai) → Task 3 (sem L1 inspect) + doc-sync. D3 (camada típica só do que 6a usa) → Task 2 (5 wrappers). D4 (prova BUG-M1 via investigação) → Task 1 + Task 3 (prova estrutural + regressão condicional). Footprint de teste (remove resume, reescreve smoke, adiciona wrapper+equivalência) → Task 2/3. Reconciliação do footprint observável → Task 4. Doc-sync → Task 5.
 - **Sem placeholder:** todo step de código tem o código real; comandos têm output esperado.
 - **Consistência de tipos:** `MemQuery(ok, data, message)` definido na Task 2 e consumido com os mesmos campos na Task 3 e nos testes. Assinaturas dos 5 wrappers idênticas entre Task 2 (Produces), Task 3 (chamadas) e os testes.
 - **Decisão aberta resolvida:** `forget` dropado (sem primitivo de archive por-id no mem) — curadoria via `distill`→`mem evolve`. Documentado no commit da Task 3 e no doc-sync.
 - **C-001/C-002 do plan-audit r1 endereçados:** `--json` filtrado no `run()` + testes de strip e JSON-mode; `test_memory_json.py` removido junto do resume; `forget` dropado e `l3.py` órfão anotados em 04-pending.
+- **Round 2 fechou o footprint observável inteiro (varredura completa de tests/):** test_exit_codes (run reorder, find_project_root no topo→exit 1 pré-init), test_callsites_smoke (remove smoke_memory_emits_intent), test_subnamespace_paths (drop memory_cli da assertion active_config_path), test_help_json_manifest + _COMMAND_META (prompts_by_default→False, manifest honesto), 04-pending linha stale. Lanes: 6a roda unit+integration (não só rapid), por ser mudança de signature de comando.
