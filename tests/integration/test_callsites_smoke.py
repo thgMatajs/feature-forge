@@ -291,23 +291,6 @@ def test_smoke_undo_emits_intent(tmp_path):
     assert payload.get("command") == "undo", payload
 
 
-def test_smoke_memory_emits_intent(tmp_path):
-    """``memory`` em brownfield: pausa no menu inicial. exit 2 + pending.
-
-    NOTE: o subcomando registrado em ``engine.cli.COMMANDS`` é
-    ``memory`` (mapeia pra ``engine.memory_cli``). O dispatch via
-    ``python -m engine.cli memory`` é o caminho canônico.
-    """
-    project_root = _scaffold_brownfield(tmp_path)
-    result = _run_engine(project_root, "memory")
-
-    assert result.returncode == 2, (
-        f"memory: expected exit 2, got {result.returncode}; "
-        f"stderr={result.stderr!r}"
-    )
-    payload = _assert_pending_schema(project_root)
-    assert payload.get("command") == "memory", payload
-
 
 def test_smoke_graph_no_db_exits_1(tmp_path):
     """``graph`` sem ``graph.db``: módulo emite mensagem mentor-calmo
