@@ -176,6 +176,28 @@ class TtyAdapter(HostAdapter):
         renderer.write(f"aviso: {message}", stream=sys.stderr)
 
     # ------------------------------------------------------------------
+    # classify — retorna None (host TTY nao tem LLM)
+    # ------------------------------------------------------------------
+
+    def classify(
+        self,
+        *,
+        fragments: list[dict],
+        schema: dict,
+    ) -> list[dict] | None:
+        """Host TTY nao tem LLM para classificar — retorna None.
+
+        ``None`` e distinto de ``[]``: significa "host incapaz de
+        classificar" (sem LLM), nao "sem fragmentos a classificar".
+        Callers como ``_reduce_rules`` devem tratar None pulando a
+        reducao com aviso claro (fallback honesto H-101).
+        """
+        self.emit_warn(
+            message="reducao de rules pulada: host TTY nao tem LLM para classificar"
+        )
+        return None
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 

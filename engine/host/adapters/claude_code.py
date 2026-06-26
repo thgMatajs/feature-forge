@@ -173,6 +173,84 @@ class ClaudeCodeAdapter(HostAdapter):
         return None
 
     # ------------------------------------------------------------------
+    # classify — intent-kind classify (pending file + stdout marker)
+    # ------------------------------------------------------------------
+
+    def classify(
+        self,
+        *,
+        fragments: list[dict],
+        schema: dict,
+    ) -> list[dict] | None:
+        """Classify rule fragments via CC's pending file + stdout marker.
+
+        Because ``fragments`` can be a large payload, classify writes the
+        full pending file (so the host can read the fragments from disk)
+        AND emits a compact stdout marker (so CC's line-oriented consumer
+        knows a pending is waiting). Re-entry is identical to the
+        ``IntentFileAdapter`` path — same ``intent_state.read_response``
+        chokepoint, same ``_SCHEMA_VERSION``.
+        """
+        from engine.host.adapters.intent_file import _SCHEMA_VERSION, _now_iso as _if_now_iso
+
+        command, command_args = self._resolve_command_context()
+        intent_id = stable_intent_id(
+            kind=AskKind.CLASSIFY.value,
+            question_text="classify-rules",
+            options={},
+            extra={"fragments": fragments, "schema": schema},
+            command=command,
+            command_args=command_args,
+        )
+        existing = intent_state.read_response(
+            self.project_root, intent_id, state_dir=self._state_dir
+        )
+        if existing is not None:
+            from engine.host.adapter import UserCancelledError as _UC, UserPausedError as _UP
+            if existing.get("cancelled") is True:
+                raise _UC(f"user cancelled (intent-id={intent_id})")
+            if existing.get("paused") is True:
+                raise _UP(f"user paused (intent-id={intent_id})")
+            return existing.get("classification")
+        # First entry: write the pending file (fragments are too large for
+        # the marker alone) and emit a compact stdout marker so CC knows
+        # to read the pending file.
+        import os as _os
+        from engine.ui import intent_state as _is
+        intent = {
+            "schema-version": _SCHEMA_VERSION,
+            "kind": AskKind.CLASSIFY.value,
+            "intent-id": intent_id,
+            "command": command,
+            "command-args": list(command_args),
+            "fragments": fragments,
+            "classification-schema": schema,
+            "created-at": _if_now_iso(),
+            "pid": _os.getpid(),
+        }
+        from engine.utils.paths import forge_state_dir as _fsd
+        state_dir = _fsd(self.project_root)
+        with _is.pending_lock(self.project_root, state_dir=state_dir):
+            _is.detect_race(
+                self.project_root,
+                new_intent_id=intent_id,
+                state_dir=state_dir,
+            )
+            _is.write_pending(intent, self.project_root, state_dir=state_dir)
+        # Compact stdout marker — CC reads the pending file for fragments.
+        self._emit_marker(
+            intent_id=intent_id,
+            kind=AskKind.CLASSIFY,
+            question="classify-rules",
+            options={},
+            default=None,
+            allow_pause=True,
+        )
+        raise PausedForInputError(
+            f"forge paused awaiting classify (intent-id={intent_id})"
+        )
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 

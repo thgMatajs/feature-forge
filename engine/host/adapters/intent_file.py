@@ -175,6 +175,79 @@ class IntentFileAdapter(HostAdapter):
         return None
 
     # ------------------------------------------------------------------
+    # classify — intent-kind classify (reusa primitivos, NAO _ask_loop)
+    # ------------------------------------------------------------------
+
+    def classify(
+        self,
+        *,
+        fragments: list[dict],
+        schema: dict,
+    ) -> list[dict] | None:
+        """Classify rule fragments via the DRIFT-1 pending/response loop.
+
+        Reuses the low-level primitives (``stable_intent_id``,
+        ``intent_state.read_response``, ``pending_lock``,
+        ``detect_race``, ``write_pending``) but NOT ``_ask_loop`` —
+        classify has a richer payload (fragments + classification-schema)
+        and a structured return (``list[dict]``) that does not fit the
+        ``AskResult(value: str|list[str])`` contract of the ask-shaped
+        methods.
+
+        Re-entry: the same ``(fragments, schema)`` tuple produces the
+        same ``intent_id`` across re-invocations, so a re-run after the
+        host writes the response will consume via the log and return the
+        ``classification`` list directly.
+        """
+        command, command_args = self._resolve_command_context()
+        intent_id = stable_intent_id(
+            kind=AskKind.CLASSIFY.value,
+            question_text="classify-rules",
+            options={},
+            extra={"fragments": fragments, "schema": schema},
+            command=command,
+            command_args=command_args,
+        )
+        existing = intent_state.read_response(
+            self.project_root, intent_id, state_dir=self._state_dir
+        )
+        if existing is not None:
+            if existing.get("cancelled") is True:
+                raise UserCancelledError(
+                    f"user cancelled (intent-id={intent_id})"
+                )
+            if existing.get("paused") is True:
+                raise UserPausedError(
+                    f"user paused (intent-id={intent_id})"
+                )
+            return existing.get("classification")
+        intent = {
+            "schema-version": _SCHEMA_VERSION,
+            "kind": AskKind.CLASSIFY.value,
+            "intent-id": intent_id,
+            "command": command,
+            "command-args": list(command_args),
+            "fragments": fragments,
+            "classification-schema": schema,
+            "created-at": _now_iso(),
+            "pid": os.getpid(),
+        }
+        with intent_state.pending_lock(
+            self.project_root, state_dir=self._state_dir
+        ):
+            intent_state.detect_race(
+                self.project_root,
+                new_intent_id=intent_id,
+                state_dir=self._state_dir,
+            )
+            intent_state.write_pending(
+                intent, self.project_root, state_dir=self._state_dir
+            )
+        raise PausedForInputError(
+            f"forge paused awaiting classify (intent-id={intent_id})"
+        )
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 

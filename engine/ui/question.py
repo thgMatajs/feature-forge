@@ -889,3 +889,51 @@ def confirm(question: str, *, default: bool = False, allow_pause: bool = True) -
     raise ValueError(
         f"confirm response value {value!r} is not a bool or recognised yes/no token"
     )
+
+
+# --- classify ---------------------------------------------------------------
+
+
+def classify(
+    fragments: list[dict],
+    *,
+    schema: dict | None = None,
+    project_root: Path | None = None,
+) -> list[dict] | None:
+    """Classify rule fragments via the host LLM.
+
+    Entrypoint para a engine invocar o intent-kind ``classify``. O host
+    (Claude Code, intent-file) recebe o pending com ``fragments`` +
+    ``classification-schema``, classifica cada fragmento em tier 0/1 e
+    escreve a response com ``classification: [...]``.
+
+    Returns:
+    - ``list[dict]`` com a classificacao (um item por fragmento), quando
+      o host tem LLM e respondeu. Cada item: ``{fragment_id, tier: int,
+      rationale, mem_note?}``.
+    - ``None`` quando o host nao tem LLM (TtyAdapter) — o caller deve
+      pular a reducao com aviso claro. ``None`` e distinto de ``[]``
+      (fallback honesto H-101).
+
+    ``PausedForInputError`` propaga ate ``cli.py`` (exit 2); o host
+    re-invoca o forge com a response e a 2a invocacao consome via log.
+    """
+    project_root = project_root if project_root is not None else _project_root_for_io()
+    schema = schema if schema is not None else {"tiers": [0, 1]}
+
+    from engine.host.adapter import (
+        PausedForInputError as _AdapterPaused,
+        UserPausedError as _AdapterUserPaused,
+        UserCancelledError as _AdapterUserCancelled,
+    )
+
+    try:
+        return _resolve_adapter(project_root).classify(
+            fragments=fragments, schema=schema
+        )
+    except _AdapterPaused:
+        raise  # cli.py -> exit 2; host fulfilla + re-invoca
+    except _AdapterUserPaused:
+        raise UserPausedError("user paused via response")
+    except _AdapterUserCancelled:
+        raise UserCancelledError("user cancelled via response")

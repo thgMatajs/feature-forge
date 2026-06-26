@@ -96,7 +96,7 @@ response is on disk. The engine then raises `PausedForInputError` and
 | `intent-id` | str (uuid4) | sim | Identifica este prompt; a response deve referenciar |
 | `command` | str | sim | Subcomando em execução (ex.: `init`, `reconfigure`) |
 | `command-args` | list[str] | sim | argv passado pro comando (pra re-invocação fiel) |
-| `kind` | str | sim | `ask` \| `ask_text` \| `ask_multi` \| `confirm` \| `ask_three_paths` |
+| `kind` | str | sim | `ask` \| `ask_text` \| `ask_multi` \| `confirm` \| `ask_three_paths` \| `classify` |
 | `question` | str | sim | Texto da pergunta (já formatado pelo engine) |
 | `options` | dict[str,str] | quando `kind in {ask, ask_multi, confirm, ask_three_paths}` | `{key: human_label}` |
 | `default` | str \| null | optional | Default key (apenas `ask`/`ask_text`) |
@@ -225,6 +225,36 @@ campos `label` + `motive` de `paths-detail`. Sem esse campo, o renderer
 do host ficaria anêmico — só com `options` (label) e sem o "motivo
 provável" exigido pelo template de gate-resolution.
 
+**`classify` (ADITIVO — kind W-RULES, host-LLM classifica fragmentos de rules):**
+
+```json
+{
+  "schema-version": 1,
+  "intent-id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "command": "init",
+  "command-args": [],
+  "kind": "classify",
+  "fragments": [
+    {"id": ".claude/rules/reuso.md::Reuso", "source": ".claude/rules/reuso.md",
+     "heading": "## Reuso", "text": "consulte o graph antes de criar helper"}
+  ],
+  "classification-schema": {"tiers": [0, 1]},
+  "created-at": "2026-06-26T10:00:00Z",
+  "pid": 12345
+}
+```
+
+Campos exclusivos de `classify`:
+
+| Campo | Tipo | Significado |
+|---|---|---|
+| `fragments` | list[dict] | Fragmentos a classificar: `[{"id", "source", "heading", "text"}]` |
+| `classification-schema` | dict | Esquema de tiers, ex.: `{"tiers": [0, 1]}`. Quando `revise: true` presente, inclui `prior` (split anterior) para revisão |
+
+Kinds existentes (`ask`, `ask_text`, `ask_multi`, `confirm`, `ask_three_paths`) permanecem intocados — esta extensão é ADITIVA.
+
+Para `classify`, o `ClaudeCodeAdapter` escreve `forge-pending.json` (fragments podem ser grandes) E emite o marker stdout. No `IntentFileAdapter`, apenas `forge-pending.json`. O `TtyAdapter` retorna `None` diretamente (sem pending) — host sem LLM nao classifica (fallback honesto H-101).
+
 ---
 
 ## Response file — `forge-response.json`
@@ -240,7 +270,8 @@ the start of the re-invocation.
 | `schema-version` | int | sim | `1` |
 | `intent-id` | str | sim | Deve bater com o `intent-id` do pending; senão engine raise |
 | `kind` | str | sim | Mesmo do pending (echo, double-check) |
-| `value` | str \| list[str] \| bool | sim quando não `paused`/`cancelled` | Resposta. `list[str]` apenas pra `ask_multi`; `bool` apenas pra `confirm` |
+| `value` | str \| list[str] \| bool | sim quando não `paused`/`cancelled` e kind != `classify` | Resposta. `list[str]` apenas pra `ask_multi`; `bool` apenas pra `confirm` |
+| `classification` | list[dict] | sim para kind `classify` (substitui `value`) | `[{"fragment_id", "tier": int, "rationale", "mem_note"?}]`. `tier` é int (0 ou 1). `mem_note` só para tier 1: `{"type", "title", "body", "tags"}` |
 | `paused` | bool | optional | `true` se user disse `para`/`pausa` (substitui `value`) |
 | `cancelled` | bool | optional | `true` se user explicitamente cancelou (exit 130 next) |
 | `answered-at` | str (ISO-8601 UTC) | sim | Timestamp |
@@ -306,6 +337,31 @@ the start of the re-invocation.
   "answered-at": "2026-06-10T18:43:00Z"
 }
 ```
+
+**Resposta a `classify`:**
+
+```json
+{
+  "schema-version": 1,
+  "intent-id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "classification": [
+    {
+      "fragment_id": ".claude/rules/reuso.md::Reuso",
+      "tier": 1,
+      "rationale": "detalhe recuperavel via mem find — nao e invariante always-on",
+      "mem_note": {
+        "type": "reference",
+        "title": "Reuso — consulte o graph antes de criar helper",
+        "body": "consulte o graph antes de criar helper",
+        "tags": ["reuso", "graph"]
+      }
+    }
+  ],
+  "answered-at": "2026-06-26T10:01:00Z"
+}
+```
+
+`tier` e int (0 = invariante always-on; 1 = detalhe → pro mem). `mem_note` presente apenas para tier 1.
 
 ---
 
