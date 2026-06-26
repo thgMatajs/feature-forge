@@ -60,7 +60,7 @@ reference` no schema do mem (ponteiros/convenções curadas). Mapeamento de camp
 | `title` | `-t` | direto |
 | `description` | body (posicional) | direto |
 | `provenance` (slugs) | `--tags` | comma-join |
-| `confidence` (0.0–1.0) | `--importance` | `round(confidence × 5)`, clamp 1–5 |
+| `confidence` (0.0–1.0) | `--importance` | `max(1, min(5, round(confidence × 4) + 1))` |
 | `id` | `--source` | `forge-evolve:<proposal-id>` (rastreabilidade) |
 | (gate "a" = humano aprovou) | `--origin manual` | captura curada por humano |
 | `payload` | — | meta de reuse; irrelevante pro mem |
