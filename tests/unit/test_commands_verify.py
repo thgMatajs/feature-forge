@@ -54,3 +54,61 @@ def test_run_empty_args_returns_nonzero_on_non_forge_project(
     assert ".claude" in combined, (
         f"expected message referencing '.claude' to guide user, got: {combined!r}"
     )
+
+
+# ── Task 3 (6c): read em verify + degrade-soft ────────────────────────────────
+
+
+def test_verify_imports_mem_context_hint() -> None:
+    """engine.verify importa mem_context_hint sem erro de import."""
+    from engine import verify
+    from engine.integrations.mem import mem_context_hint
+    assert callable(mem_context_hint)
+
+
+def test_verify_run_degrades_soft_when_mem_unavailable(
+    monkeypatch: pytest.MonkeyPatch, tmp_forge_project, capsys
+) -> None:
+    """verify.run_scope com mem indisponível não crasha — degrade soft, não-vacuoso.
+
+    Lição Task 1/2: (a) patch em engine.verify.mem_context_hint (namespace do handler,
+    pós-import from); (b) fixture válida + validators mockados garantem que o caminho
+    do hint é alcançado (spy prova); (c) assertion pura sem 'forge init' nag.
+    """
+    import engine.verify as _verify
+
+    hint_called: list[bool] = []
+
+    def _fake_hint(*a: object, **kw: object) -> None:
+        hint_called.append(True)
+        return None
+
+    # Patch no namespace do handler (pós 'from engine.integrations.mem import mem_context_hint').
+    monkeypatch.setattr(_verify, "mem_context_hint", _fake_hint, raising=False)
+
+    # Mock _discover_validators → retorna 1 validator fake pra passar o early-return
+    # "sem validators" e alcançar o bloco do hint.
+    fake_validator = _verify._ValidatorSpec(
+        name="fake-validator",
+        script_path=tmp_forge_project / "fake.py",
+        severity="warn",
+    )
+    monkeypatch.setattr(_verify, "_discover_validators", lambda *a, **kw: [fake_validator])
+
+    # Mock _run_cascade → retorna resultado pass sem execução real.
+    fake_result = _verify._ValidatorResult(name="fake-validator", status="pass")
+    monkeypatch.setattr(_verify, "_run_cascade", lambda *a, **kw: [fake_result])
+
+    rc = _verify.run_scope(
+        "feature",
+        "test-feature",
+        tmp_forge_project,
+        interactive=True,
+    )
+
+    # Degrade soft: sem crash e sem nag "forge init".
+    assert rc == 0
+    assert hint_called, "mem_context_hint nunca foi chamado — caminho do hint não atingido"
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+    assert "forge init" not in combined

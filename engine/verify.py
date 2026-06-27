@@ -41,6 +41,7 @@ from engine.memory.l1 import (
     read_l1_status,
     write_l1_status,
 )
+from engine.integrations.mem import mem_context_hint
 from engine.persona import mentor_calmo
 from engine.ui import output_mode, question, renderer
 from engine.ui.exit_codes import ERR_PROJECT_NOT_FOUND, fail_with_tag
@@ -372,6 +373,18 @@ def run_scope(
             }
             print(json.dumps(payload, indent=2, default=str))
         return 0
+
+    # W-ROUTE 6c: hint educacional pré-cascade — renderizado pro usuário ANTES
+    # dos validators rodarem. NÃO passado pra _run_cascade (determinismo: validators
+    # nunca recebem contexto de mem — invariante enforçado por test_validators_determinism).
+    # Degrade soft: mem ausente → hint None → omitido silenciosamente, sem nag.
+    if interactive:
+        _hint_query = feature_slug or scope_target or scope_type
+        _verify_hint = mem_context_hint(project_root, _hint_query, limit=5)
+        if _verify_hint is not None:
+            renderer.write("")
+            renderer.write(renderer.dim(_verify_hint))
+            renderer.write("")
 
     fail_fast = _resolve_fail_fast(config)
     results = _run_cascade(
