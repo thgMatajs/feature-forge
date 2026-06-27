@@ -77,6 +77,7 @@ from engine.utils.checkpoint_io import (
     save_yaml_checkpoint as _save_yaml_checkpoint_io,
 )
 from engine.utils.iso import utc_now_iso
+from engine.integrations.mem import mem_context_hint
 
 _SLUG_PATTERN = re.compile(r"^[a-z][a-z0-9-]{1,48}[a-z0-9]$")
 _TASK_ID_PATTERN = re.compile(r"^TASK-(\d{4})$")
@@ -456,8 +457,17 @@ def _print_blocked_refusal(
 
 
 def _print_plan_mode(task: TaskContract, project_root: Path) -> None:
+    # W-ROUTE 6c: lê memória relevante antes de renderizar o Plan Mode.
+    # O resultado alimenta o context-pack que o host vê na tela de confirmação.
+    # Degrade soft: mem ausente → hint é None → bloco omitido silenciosamente.
+    _hint = mem_context_hint(
+        project_root, task.description or task.task_id, limit=5
+    )
     renderer.write("")
     renderer.write(renderer.bold(f"📋 Plan Mode · {task.task_id}"))
+    if _hint is not None:
+        renderer.write("")
+        renderer.write(renderer.dim(_hint))
     renderer.write("")
     if task.description:
         renderer.write(f"  {task.description}")

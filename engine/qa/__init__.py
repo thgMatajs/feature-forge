@@ -83,6 +83,7 @@ from engine.qa.synthesis import (
     synthesize,
 )
 from engine.utils.paths import forge_home
+from engine.integrations.mem import mem_context_hint
 
 # Alias local pra preservar uso interno (`_utc_iso_z()`) sem espalhar a
 # importacao publica em cada call-site. O helper canonico vive em
@@ -265,6 +266,12 @@ def run_qa(
             )
             return 0
 
+    # W-ROUTE 6c: lê memória relevante antes de escrever o handoff.
+    # Query = scope.target (slug/screen/task-id); degrade soft retorna None.
+    # Calculado aqui uma única vez — reutilizado em ambos os call-sites de
+    # _write_conductor_handoff (stale-cleanup e fresh-run).
+    _mem_ctx = mem_context_hint(project_root, scope.target, limit=5)
+
     if resumed_checkpoint is not None and resumable_dir is not None:
         # Phase 5 ja completa — checkpoint nao devia existir, defensivo:
         # apaga + segue pra fresh run. Voz mentor calmo: avisa o user
@@ -298,6 +305,7 @@ def run_qa(
                 allowed_extras=allowed_extras,
                 snapshot_paths=snapshot_copied,
                 workflow_config=workflow_config,
+                mem_context=_mem_ctx,
             )
             resumed_checkpoint = None
         else:
@@ -341,6 +349,7 @@ def run_qa(
             allowed_extras=allowed_extras,
             snapshot_paths=snapshot_copied,
             workflow_config=workflow_config,
+            mem_context=_mem_ctx,
         )
 
         # F-2 (B.2) — checkpoint na fronteira de Phase 0. Veredito do
@@ -1414,6 +1423,7 @@ def _write_conductor_handoff(
     allowed_extras: tuple[str, ...] = (),
     snapshot_paths: Iterable[Path] = (),
     workflow_config: dict[str, Any] | None = None,
+    mem_context: str | None = None,
 ) -> None:
     """Escreve ``<run_tree.root>/conductor-handoff.json``.
 
@@ -1479,6 +1489,9 @@ def _write_conductor_handoff(
             # filtradas no engine; lista aqui e tudo seguro pra repassar.
             "allowed_env_extras": list(allowed_extras),
         },
+        # W-ROUTE 6c: memória relevante pro conductor (mem find pré-audit).
+        # None quando mem indisponível (degrade soft) — conductor ignora.
+        "mem_context": mem_context,
     }
     (run_tree.root / "conductor-handoff.json").write_text(
         json.dumps(handoff, indent=2, ensure_ascii=False),
