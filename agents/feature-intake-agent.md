@@ -49,6 +49,10 @@ The conductor sends a YAML pack containing:
   artefact paths read-only), and `delta-intent` (the user's answer to
   Cena 2 of the extension run). Absent → feature is standalone; the
   §Extension context block in the template MUST be removed (see below).
+- `memory-mem-hint` (W-ROUTE 6c, optional) — bloco compacto de gotchas/convenções
+  relevantes do acervo de memória (`mem find` sobre o slug da feature), injetado
+  pelo engine no `{{mem_context_hint}}` da §Source of truth. Read-only, best-effort:
+  ausente quando mem indisponível. NÃO é fonte da verdade — é dica de contexto.
 
 You read the pack. You do NOT fetch new sources (no Atlassian MCP, no graph
 queries). Missing field → open question, never a guess.

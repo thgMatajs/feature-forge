@@ -91,6 +91,7 @@ from engine.utils.checkpoint_io import (
     save_yaml_checkpoint as _save_yaml_checkpoint_io,
 )
 from engine.utils.iso import utc_now_iso
+from engine.integrations.mem import mem_context_hint
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -2047,6 +2048,16 @@ def run(argv: list[str]) -> int:
             "{{screenshots_relative_paths_csv_or_none}}": _ss_paths,
         }
     )
+
+    # W-ROUTE 6c: consulta o acervo de memória por gotchas/convenções relevantes
+    # ANTES de redigir os artefatos. O resultado alimenta o context-pack que o
+    # subagente de planejamento recebe (token {{mem_context_hint}}). Degrade soft:
+    # mem ausente → hint é None → token fica em branco (sem nag "forge init").
+    _mem_hint = mem_context_hint(project_root, slug, limit=5)
+    if _mem_hint is not None:
+        intake_tokens["{{mem_context_hint}}"] = _mem_hint
+    else:
+        intake_tokens.setdefault("{{mem_context_hint}}", "")
 
     # Wave dispatch loop (subtype-aware; bugfix branches on wave_b_required).
     try:

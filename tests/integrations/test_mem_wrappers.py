@@ -294,3 +294,108 @@ def test_apply_proposal_to_l2_knowledge_real_mem_roundtrip(tmp_path):
     assert "real-mem-knowledge-roundtrip" in titles, (
         f"nota não aparece no inbox list: {titles}"
     )
+
+
+# ── Task 1 (6c): mem_context_hint ────────────────────────────────────────────
+
+
+def test_mem_context_hint_formats_hits(tmp_path, monkeypatch):
+    """Quando mem_find retorna hits, formata texto compacto não-None."""
+    from engine.integrations import mem
+
+    _stub(tmp_path / ".claude" / "bin" / "mem")
+    _patch_run(
+        monkeypatch,
+        0,
+        stdout='[{"id":"X1","score":0.9,"type":"feedback","title":"use-stateflow","author":"a"},'
+               '{"id":"X2","score":0.7,"type":"reference","title":"mvvm-pattern","author":"b"}]',
+    )
+    result = mem.mem_context_hint(tmp_path, "pattern de arquitetura", limit=5)
+    assert result is not None
+    assert "use-stateflow" in result
+    assert "mvvm-pattern" in result
+
+
+def test_mem_context_hint_returns_none_on_empty_hits(tmp_path, monkeypatch):
+    """Lista vazia → None (sem bloco em branco no context-pack)."""
+    from engine.integrations import mem
+
+    _stub(tmp_path / ".claude" / "bin" / "mem")
+    _patch_run(monkeypatch, 0, stdout="[]")
+    result = mem.mem_context_hint(tmp_path, "qualquer coisa", limit=5)
+    assert result is None
+
+
+def test_mem_context_hint_degrades_soft_when_binary_missing(tmp_path, monkeypatch):
+    """Binário ausente → None sem crash, sem propagação de exceção."""
+    from engine.integrations import mem
+
+    monkeypatch.setattr(mem.shutil, "which", lambda _t: None)
+    result = mem.mem_context_hint(tmp_path, "query", limit=5)
+    assert result is None
+
+
+def test_mem_context_hint_degrades_soft_on_error_exit(tmp_path, monkeypatch):
+    """Exit não-zero → None sem crash."""
+    from engine.integrations import mem
+
+    _stub(tmp_path / ".claude" / "bin" / "mem")
+    _patch_run(monkeypatch, 1, stdout="", stderr="erro interno")
+    result = mem.mem_context_hint(tmp_path, "query", limit=5)
+    assert result is None
+
+
+def test_mem_context_hint_respects_limit(tmp_path, monkeypatch):
+    """O argv enviado ao mem inclui -k <limit> correto."""
+    from engine.integrations import mem
+
+    _stub(tmp_path / ".claude" / "bin" / "mem")
+    cap = _patch_run(
+        monkeypatch,
+        0,
+        stdout='[{"id":"Y","score":0.8,"type":"reference","title":"t","author":"a"}]',
+    )
+    mem.mem_context_hint(tmp_path, "minha query", limit=3)
+    cmd = cap["cmd"]
+    # Deve delegar pra mem_find que monta: --json find <query> -k <limit>
+    assert "find" in cmd
+    assert "-k" in cmd and cmd[cmd.index("-k") + 1] == "3"
+
+
+# ── Teste real-mem (MOCK-BLINDNESS): mem_context_hint contra binário real ─────
+
+
+import os as _os
+
+
+@pytest.mark.skipif(
+    not (
+        _os.path.isfile(
+            str(Path(__file__).resolve().parents[2] / ".claude" / "bin" / "mem")
+        )
+    ),
+    reason="binário mem vendorizado não encontrado — pule em CI sem vendorização",
+)
+def test_mem_context_hint_real_mem_returns_str_or_none(tmp_path):
+    """Teste real-mem: mem_context_hint contra o binário vendorizado do repo.
+
+    Copia o binário pra tmp_path/.claude/bin/mem (banco isolado).
+    A query pode não ter hits no banco vazio — o invariante é:
+    retorna str ou None sem crash, sem exceção.
+    """
+    import shutil as _shutil
+    from engine.integrations import mem
+
+    repo_root = Path(__file__).resolve().parents[2]
+    src_bin = repo_root / ".claude" / "bin" / "mem"
+    dest_bin = tmp_path / ".claude" / "bin" / "mem"
+    dest_bin.parent.mkdir(parents=True, exist_ok=True)
+    _shutil.copy2(str(src_bin), str(dest_bin))
+    dest_bin.chmod(0o755)
+
+    result = mem.mem_context_hint(tmp_path, "padrão de arquitetura kotlin", limit=3)
+    # Banco vazio → None; banco com hits → str com títulos.
+    assert result is None or isinstance(result, str)
+    if isinstance(result, str):
+        # Se retornou algo, deve ser não-vazio e não um dump de erro.
+        assert len(result.strip()) > 0

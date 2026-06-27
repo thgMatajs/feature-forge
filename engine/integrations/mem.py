@@ -281,3 +281,49 @@ def mem_inbox_add(
     args += ["--origin", origin]
     args += ["--", body]
     return _run_or_degrade(project_root, args)
+
+
+def mem_context_hint(
+    project_root: Path,
+    query: str,
+    *,
+    limit: int = 5,
+) -> str | None:
+    """Consulta o acervo mem e formata resultado compacto pra context-pack/hint.
+
+    Compõe sobre ``mem_find`` (de 6a) — sem subprocess novo, sem degrade própria.
+    Retorna ``None`` em degrade (mem ausente, timeout, erro, lista vazia) pra que
+    os callers omitam o bloco silenciosamente — sem crash, sem "forge init" nag.
+
+    O formato de saída é texto plano multi-linha, adequado pra injeção direta em
+    context-pack ou renderização como hint educacional:
+
+        Memória relevante (mem find):
+        · [feedback] use-stateflow — Use MutableStateFlow para screen state
+        · [reference] mvvm-pattern — Padrão MVVM consistente nos ViewModels
+
+    Args:
+        project_root: raiz do projeto consumidor (resolve o binário vendorizado).
+        query: termo de busca derivado do tema da feature/task.
+        limit: máx. de hits a incluir no bloco (default 5 — bounded por design D1).
+
+    Returns:
+        Bloco de texto (str) quando há hits; ``None`` em degrade ou lista vazia.
+    """
+    res = mem_find(project_root, query, limit=limit)
+    if not res.ok or not res.data:
+        return None
+    hits = res.data if isinstance(res.data, list) else []
+    if not hits:
+        return None
+    lines: list[str] = ["Memória relevante (mem find):"]
+    for hit in hits:
+        if not isinstance(hit, dict):
+            continue
+        kind = hit.get("type") or hit.get("kind") or "note"
+        title = hit.get("title") or hit.get("id") or "?"
+        lines.append(f"  · [{kind}] {title}")
+    if len(lines) == 1:
+        # Nenhum hit válido após parse.
+        return None
+    return "\n".join(lines)
