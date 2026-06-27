@@ -432,15 +432,6 @@ def write_l2(
     write_yaml(memory_l2_path(project_root), doc, atomic=True, backup=backup)
 
 
-def add_entry(project_root: Path, entry: L2Entry) -> None:
-    """Add a new entry. Fails (MemoryError) on duplicate id."""
-    current = read_l2(project_root)
-    if any(e.id == entry.id for e in current):
-        raise MemoryError(f"L2 entry id already exists: {entry.id}")
-    current.append(entry)
-    write_l2(project_root, current, backup=True)
-
-
 def remove_entry(project_root: Path, entry_id: str) -> None:
     """Remove an entry by id. No-op if absent."""
     current = read_l2(project_root)
@@ -501,7 +492,6 @@ __all__ = [
     "L2Entry",
     "read_l2",
     "write_l2",
-    "add_entry",
     "remove_entry",
     "find_entry",
     "filter_entries",

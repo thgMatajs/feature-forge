@@ -219,39 +219,13 @@ def test_apply_consolidate_l2_calls_mem_inbox_add(tmp_path, monkeypatch):
 
 
 def test_apply_knowledge_does_not_call_l2_add_entry(tmp_path, monkeypatch):
-    """Nenhum dos 3 branches de conhecimento deve chamar l2.add_entry."""
-    import engine.memory.distiller as _dist
+    """6c: a invariante de 6b ('conhecimento não chama l2.add_entry') vira mais
+    forte — add_entry nem existe mais em l2 após o orphan-cleanup."""
     import engine.memory.l2 as _l2
-
-    add_entry_calls: list = []
-    original_add_entry = _l2.add_entry
-
-    def _spy_add_entry(*args, **kwargs):
-        add_entry_calls.append(args)
-        return original_add_entry(*args, **kwargs)
-
-    monkeypatch.setattr(_l2, "add_entry", _spy_add_entry)
-
-    def _fake_inbox_add(project_root, title, body, mem_type, **kw):
-        from engine.integrations.mem import MemQuery
-        return MemQuery(ok=True, data="01GHI")
-
-    monkeypatch.setattr(_dist, "mem_inbox_add", _fake_inbox_add)
-
-    for kind in ("promote-to-l2", "l1-to-l2-promotion", "consolidate-l2"):
-        _dist.apply_proposal_to_l2(
-            tmp_path,
-            DistillationProposal(
-                id=f"P-{kind[:3]}",
-                kind=kind,
-                title="t",
-                description="d",
-                provenance=["feat-a"],
-                confidence=0.6,
-            ),
-        )
-
-    assert add_entry_calls == [], f"l2.add_entry foi chamado: {add_entry_calls}"
+    assert not hasattr(_l2, "add_entry"), (
+        "add_entry deveria ter sido removida de l2 em 6c — a invariante de 6b "
+        "('conhecimento não escreve L2 direto') é garantida por inexistência."
+    )
 
 
 def test_apply_knowledge_raises_on_mem_inbox_add_failure(tmp_path, monkeypatch):
@@ -310,6 +284,63 @@ def test_apply_knowledge_importance_clamp(tmp_path, monkeypatch):
         )
 
     assert importances == [1, 5, 3]
+
+
+# ── Task 4 (6c): cleanup de órfãos ────────────────────────────────────────────
+
+
+def test_apply_consolidate_l2_does_not_exist() -> None:
+    """_apply_consolidate_l2 foi deletada em 6c — não deve existir mais."""
+    import engine.memory.distiller as _dist
+    assert not hasattr(_dist, "_apply_consolidate_l2"), (
+        "_apply_consolidate_l2 ainda existe em distiller.py; "
+        "deveria ter sido removida na Task 4 de 6c (W-ROUTE orphan-cleanup)."
+    )
+
+
+def test_distiller_does_not_import_add_entry() -> None:
+    """distiller.py não deve importar add_entry de l2 (import órfão removido em 6c)."""
+    import ast
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[2]
+    distiller_src = (repo_root / "engine" / "memory" / "distiller.py").read_text(
+        encoding="utf-8"
+    )
+    tree = ast.parse(distiller_src)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.module and "l2" in node.module:
+                imported_names = [alias.name for alias in node.names]
+                assert "add_entry" not in imported_names, (
+                    f"distiller.py ainda importa 'add_entry' de l2 "
+                    f"(linha {node.lineno}); deveria ter sido removido em 6c."
+                )
+
+
+def test_distiller_does_not_import_l2entry() -> None:
+    """WR-01: distiller.py não deve importar L2Entry (morto após deletar _apply_consolidate_l2).
+
+    L2Entry era usado APENAS em _apply_consolidate_l2 (instanciação + anotações locais).
+    Após a deleção da função, o import fica órfão.
+    """
+    import ast
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[2]
+    distiller_src = (repo_root / "engine" / "memory" / "distiller.py").read_text(
+        encoding="utf-8"
+    )
+    tree = ast.parse(distiller_src)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.module and "l2" in node.module:
+                imported_names = [alias.name for alias in node.names]
+                assert "L2Entry" not in imported_names, (
+                    f"distiller.py ainda importa 'L2Entry' de l2 "
+                    f"(linha {node.lineno}); import morto após remover "
+                    f"_apply_consolidate_l2 — deveria ter sido removido em 6c."
+                )
 
 
 def test_apply_forget_l1_unchanged_no_mem_call(tmp_path, monkeypatch):

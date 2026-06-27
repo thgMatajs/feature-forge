@@ -21,11 +21,8 @@ from typing import Any, Iterator, Optional
 from engine.integrations.mem import mem_inbox_add
 from engine.memory import MemoryError
 from engine.memory.l2 import (
-    L2Entry,
-    add_entry,
     l2_overflow_check,
     read_l2,
-    remove_entry,
     write_l2,
 )
 from engine.utils.iso import utc_now_iso
@@ -540,73 +537,6 @@ def apply_proposal_to_l2(
     )
 
 
-def _apply_consolidate_l2(
-    project_root: Path,
-    proposal: DistillationProposal,
-) -> None:
-    """Mescla entries L2 com mesmo `kind` cujo title sofre substring-match.
-
-    Algoritmo:
-    1. Lê todos os entries L2.
-    2. Identifica `target_kind` (do payload, ou "pattern" como default).
-    3. Encontra entries cujo `kind == target_kind` E `proposal.title` ocorre
-       em (ou contém) `entry.title` (substring case-insensitive).
-    4. Cria um novo entry consolidado preservando provenance unificado.
-    5. Remove os entries antigos e marca-os no `raw` do novo como
-       `obsoleted-by`.
-
-    Sem matches → cria entry novo direto (equivalente a promote).
-    """
-    target_kind = str(proposal.payload.get("target-kind") or "pattern")
-    needle = proposal.title.strip().lower()
-
-    current = read_l2(project_root)
-    matches: list[L2Entry] = []
-    keep: list[L2Entry] = []
-    for entry in current:
-        title_l = entry.title.strip().lower()
-        is_match = (
-            entry.kind == target_kind
-            and needle
-            and (needle in title_l or title_l in needle)
-        )
-        if is_match:
-            matches.append(entry)
-        else:
-            keep.append(entry)
-
-    new_provenance: list[str] = list(proposal.provenance)
-    for m in matches:
-        for slug in m.provenance:
-            if slug not in new_provenance:
-                new_provenance.append(slug)
-
-    new_id = (
-        proposal.id.replace("P-", "L2-")
-        if proposal.id.startswith("P-")
-        else proposal.id
-    )
-
-    consolidated = L2Entry(
-        id=new_id,
-        kind=target_kind,
-        title=proposal.title,
-        body=proposal.description,
-        provenance=new_provenance,
-        promoted_at=utc_now_iso(),
-        promoted_from=(
-            new_provenance[0] if new_provenance else proposal.provenance[0]
-            if proposal.provenance
-            else ""
-        ),
-        confidence=proposal.confidence or 1.0,
-        raw={"obsoleted-by": [m.id for m in matches]} if matches else {},
-    )
-
-    keep.append(consolidated)
-    write_l2(project_root, keep, backup=True)
-
-
 def _apply_forget_l1(
     project_root: Path,
     proposal: DistillationProposal,
@@ -636,7 +566,6 @@ def _apply_forget_l1(
     from engine.memory.l1 import archive_feature as _archive_feature
 
     _archive_feature(str(target), project_root, summary)
-    _ = remove_entry  # silenciar lint sobre import reservado
 
 
 # ── Fingerprint passthrough ──────────────────────────────────────────────────
