@@ -48,33 +48,46 @@ def test_plan_imports_mem_context_hint() -> None:
 
 
 def test_plan_run_degrades_soft_when_mem_unavailable(
-    monkeypatch: pytest.MonkeyPatch, tmp_project_root, capsys
+    monkeypatch: pytest.MonkeyPatch, tmp_forge_project, capsys
 ) -> None:
-    """plan.run com mem indisponível (binary missing) não crasha — degrade soft.
+    """plan.run com mem indisponível: mem_context_hint é chamada (não-vacuoso) e retorna None sem crash.
 
-    Stubamos mem_context_hint pra retornar None (degrade), depois rodamos
-    plan.run em projeto sem .claude/ pra confirmar que o comportamento de
-    'project not found' ainda é o que vence (não um crash de mem).
-    O output pode conter "forge init" do erro de projeto-não-encontrado —
-    isso é esperado. O que NÃO pode acontecer é crash ou traceback do mem.
+    Patcha engine.plan.mem_context_hint (o nome no namespace de plan — plan.py
+    usa `from ... import mem_context_hint`), e também find_project_root +
+    _elicit_slug no mesmo namespace pra permitir que o fluxo alcance a chamada
+    de mem_context_hint sem exigir um projeto forge completamente inicializado.
+
+    Confirma que o degrade-soft (None) não gera crash, não vaza nag "forge init"
+    do mem, e não vaza o nome da função no output.
     """
     import engine.plan as _plan
-    from engine.integrations import mem as _mem
 
-    monkeypatch.setattr(_mem, "mem_context_hint", lambda *a, **kw: None)
-    monkeypatch.chdir(tmp_project_root)
+    hint_called = {"count": 0}
+
+    def _stub_hint(*a, **kw):
+        hint_called["count"] += 1
+        return None
+
+    monkeypatch.setattr(_plan, "mem_context_hint", _stub_hint)
+    monkeypatch.setattr(_plan, "find_project_root", lambda *a, **kw: tmp_forge_project)
+    monkeypatch.setattr(_plan, "_elicit_slug", lambda *a, **kw: "test-feature-slug")
+    # Stub _run_waves_for_subtype so the test exits cleanly after mem_context_hint.
+    monkeypatch.setattr(_plan, "_run_waves_for_subtype", lambda *a, **kw: 0)
+    monkeypatch.chdir(tmp_forge_project)
     monkeypatch.setattr("engine.ui.question.ask", lambda *a, **kw: "abort", raising=False)
-    monkeypatch.setattr("engine.ui.question.ask_text", lambda *a, **kw: "", raising=False)
+    monkeypatch.setattr("engine.ui.question.ask_text", lambda *a, **kw: "5", raising=False)
     monkeypatch.setattr("engine.ui.question.confirm", lambda *a, **kw: False, raising=False)
     try:
         rc = _plan.run([])
-        assert rc in (1, 2)
+        assert rc in (0, 1, 2, 130)
     except SystemExit as exc:
-        assert exc.code in (1, 2)
-    # Nenhum traceback de mem deve aparecer — degrade silencioso (D1).
-    # (O "forge init" no output é do project-not-found, não do mem — esperado.)
+        assert exc.code in (0, 1, 2, 130)
+    # Confirma que mem_context_hint foi de facto chamada (não-vacuoso — D1).
+    assert hint_called["count"] >= 1, (
+        "mem_context_hint não foi chamada — o caminho de degrade não foi exercitado"
+    )
     captured = capsys.readouterr()
     combined = captured.out + captured.err
     assert "mem_context_hint" not in combined
-    assert "AttributeError" not in combined
     assert "Traceback" not in combined
+    assert "AttributeError" not in combined

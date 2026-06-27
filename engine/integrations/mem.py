@@ -299,8 +299,8 @@ def mem_context_hint(
     context-pack ou renderização como hint educacional:
 
         Memória relevante (mem find):
-        · [feedback] use-stateflow — Use MutableStateFlow para screen state
-        · [reference] mvvm-pattern — Padrão MVVM consistente nos ViewModels
+        · [feedback] use-stateflow
+        · [reference] mvvm-pattern
 
     Args:
         project_root: raiz do projeto consumidor (resolve o binário vendorizado).

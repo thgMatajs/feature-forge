@@ -2057,7 +2057,7 @@ def run(argv: list[str]) -> int:
     if _mem_hint is not None:
         intake_tokens["{{mem_context_hint}}"] = _mem_hint
     else:
-        intake_tokens.setdefault("{{mem_context_hint}}", "")
+        intake_tokens["{{mem_context_hint}}"] = ""
 
     # Wave dispatch loop (subtype-aware; bugfix branches on wave_b_required).
     try:
