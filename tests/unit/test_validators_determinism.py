@@ -11,7 +11,6 @@ que nenhum módulo importa ou chama funções do substrato mem.
 from __future__ import annotations
 
 import ast
-import sys
 from pathlib import Path
 
 import pytest
@@ -39,7 +38,11 @@ _FORBIDDEN_NAMES = {
 
 
 def _collect_validator_sources() -> list[Path]:
-    """Retorna todos os .py de validators/ exceto __init__ e _common/_diff/_gate_infra."""
+    """Retorna todos os .py de validators/ exceto __init__.py.
+
+    Inclui INTENCIONALMENTE _common/_diff/_gate_infra: são shared infra do
+    cascade e devem igualmente não tocar mem (determinismo). NÃO afrouxar.
+    """
     return sorted(
         p for p in _VALIDATORS_DIR.glob("*.py")
         if p.name not in {"__init__.py"}
