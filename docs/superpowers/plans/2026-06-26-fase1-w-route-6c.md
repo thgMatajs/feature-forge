@@ -63,8 +63,13 @@ wrappers de alto nível sobre o binário.
 **Files:**
 - Modify: `engine/integrations/mem.py` (adiciona `mem_context_hint` ao fim)
 - Modify: `engine/plan.py` (adiciona import + read antes de `_run_static_wave("A", ...)`)
+- Modify: `templates/feature-intake.template.md` (placeholder `{{mem_context_hint}}` na §Source of truth)
+- Modify: `templates/feature-intake-bugfix.template.md` (idem)
+- Modify: `templates/feature-intake-refactor.template.md` (idem)
+- Modify: `agents/feature-intake-agent.md` (input `memory-mem-hint` no context-pack §What you receive)
 - Test: `tests/integrations/test_mem_wrappers.py` (adiciona testes de `mem_context_hint`)
 - Test: `tests/unit/test_commands_plan.py` (adiciona testes do read em plan)
+- Test: `tests/unit/test_engine_plan_mem_hint.py` (NOVO — asserta que o template RENDERIZADO contém o hint)
 
 **Interfaces:**
 - Consumes: `mem_find(project_root, query, *, limit=10, mem_type=None) -> MemQuery` (6a,
@@ -87,6 +92,20 @@ padrão verbatim dos wrappers existentes (usa `_run_or_degrade` via `mem_find`, 
 subprocess diretamente). O helper vive em `engine/integrations/mem.py` junto dos outros
 wrappers. O read em `engine/plan.py` COMPÕE sobre esse helper — nenhum import adicional de
 subprocess nem de `_run_or_degrade` diretamente em plan.py.
+
+**Consumidor real do token (D1 — crítico):** o `_render_template` faz um único `re.sub`
+sobre os tokens do dict de substituição e DESCARTA silenciosamente qualquer token sem
+placeholder correspondente no template. Injetar `{{mem_context_hint}}` em `intake_tokens`
+NÃO basta — sem um placeholder `{{mem_context_hint}}` físico nos templates de Wave A, o
+read roda (custo de subprocess) mas o hint NUNCA chega ao artefato que o subagente lê. Por
+isso esta task ADICIONA o placeholder `{{mem_context_hint}}` aos 3 templates de Wave A
+(`feature-intake.template.md`, `feature-intake-bugfix.template.md`,
+`feature-intake-refactor.template.md`) numa seção de contexto (§Source of truth) + documenta
+o input no `agents/feature-intake-agent.md` (§What you receive). O teste de prova
+(`tests/unit/test_engine_plan_mem_hint.py`) asserta que o ARTEFATO RENDERIZADO contém o hint
+quando mem retorna resultado — não só que o token está em `intake_tokens`. Templates são
+load-bearing; a edição é entrega de D1 + doc-sync da feature — NÃO revisita de decisão (nenhuma
+decisão de `01-decisions.md` muda).
 
 - [ ] **Step 1: Escrever os testes (falhando)**
 
@@ -235,11 +254,105 @@ def test_plan_run_degrades_soft_when_mem_unavailable(
         assert rc in (1, 2)
     except SystemExit as exc:
         assert exc.code in (1, 2)
-    # Nenhuma mensagem de erro de mem deve ter aparecido.
+    # Nenhuma mensagem de "forge init" do degrade-soft de mem deve vazar.
+    # (O degrade do read NÃO surfa a _degraded_message do mem — D1.)
     captured = capsys.readouterr()
     combined = captured.out + captured.err
-    assert "forge init" not in combined or ".claude" in combined  # OK se menciona .claude pra project-not-found
+    assert "forge init" not in combined
 ```
+
+Crie `tests/unit/test_engine_plan_mem_hint.py` (prova do CONSUMIDOR REAL exigido por D1 —
+o hint chega ao ARTEFATO renderizado, não só ao dict `intake_tokens`):
+
+```python
+"""W-ROUTE 6c Task 1 — prova que o hint de mem chega ao artefato renderizado.
+
+D1 exige consumidor real: não basta o token estar em intake_tokens; o
+_render_template faz re.sub e descarta tokens sem placeholder no template. Estes
+testes renderizam o template de Wave A passando o hint via extra_tokens e assertam
+que o texto renderizado contém o hint (ou fica em branco no degrade — sem o token
+cru vazando).
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from engine import plan
+
+
+def _render_intake(
+    tmp_project_root: Path, template_name: str, extra_tokens: dict[str, str]
+) -> str:
+    """Renderiza um template de intake e devolve o texto resultante."""
+    target = tmp_project_root / "feature-intake.md"
+    plan._render_template(
+        template_name,
+        target,
+        "minha-feature",
+        tmp_project_root,
+        extra_tokens=extra_tokens,
+    )
+    return target.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "template_name",
+    [
+        "feature-intake.template.md",
+        "feature-intake-bugfix.template.md",
+        "feature-intake-refactor.template.md",
+    ],
+)
+def test_mem_hint_reaches_rendered_artifact(template_name, tmp_project_root):
+    """O placeholder {{mem_context_hint}} existe no template e recebe o hint.
+
+    Prova que o token NÃO é descartado pelo re.sub — chega ao artefato que o
+    subagente lê.
+    """
+    hint = "Memória relevante (mem find):\n  · [feedback] use-stateflow"
+    # extra_tokens deve cobrir os tokens de source obrigatórios pra não deixar
+    # placeholders crus de source (irrelevante pro assert do hint, mas evita ruído).
+    rendered = _render_intake(
+        tmp_project_root,
+        template_name,
+        {"{{mem_context_hint}}": hint},
+    )
+    assert "use-stateflow" in rendered, (
+        f"hint não chegou ao artefato renderizado de {template_name}; "
+        "o placeholder {{mem_context_hint}} provavelmente está ausente no template."
+    )
+    # E o token cru NÃO deve sobreviver (foi substituído).
+    assert "{{mem_context_hint}}" not in rendered
+
+
+@pytest.mark.parametrize(
+    "template_name",
+    [
+        "feature-intake.template.md",
+        "feature-intake-bugfix.template.md",
+        "feature-intake-refactor.template.md",
+    ],
+)
+def test_mem_hint_blank_when_degraded(template_name, tmp_project_root):
+    """Degrade (hint vazio): token vira string vazia, sem token cru no artefato."""
+    rendered = _render_intake(
+        tmp_project_root,
+        template_name,
+        {"{{mem_context_hint}}": ""},
+    )
+    # Sem o token cru vazando — substituído por vazio.
+    assert "{{mem_context_hint}}" not in rendered
+```
+
+Nota sobre resolução de template: `_render_template` busca o arquivo via
+`_resolve_template(project_root, name)`, que para um `project_root` sem
+`.claude/forge/templates/` materializado cai pro global `FORGE_HOME/templates/`. O
+`tests/conftest.py` já faz `os.environ.setdefault("FORGE_HOME", str(_ROOT))` (raiz do repo),
+então `tmp_project_root` (greenfield bare) resolve os templates de `<repo>/templates/` sem
+ajuste. Se a lane falhar com FileNotFoundError de template, confirme que `FORGE_HOME` está
+setado no ambiente da run (é o default do conftest).
 
 - [ ] **Step 2: Rodar pra confirmar que falham**
 
@@ -346,7 +459,76 @@ Insira entre o `intake_tokens.update(...)` e o `# Wave dispatch loop`:
         intake_tokens.setdefault("{{mem_context_hint}}", "")
 ```
 
-- [ ] **Step 5: Rodar pra confirmar verde**
+- [ ] **Step 5: Adicionar o placeholder `{{mem_context_hint}}` aos templates + doc do agent**
+
+Sem este step o token de 4b é DESCARTADO no `re.sub` de `_render_template` (tokens sem
+placeholder físico no template não chegam ao artefato). Este step entrega o consumidor real
+exigido por D1.
+
+**5a.** Em `templates/feature-intake.template.md`, na §Source of truth (após o bloco
+`- description origin: {{description_origin}}`, ~L55), adicione uma linha de hint de memória.
+O comentário acima da seção já explica que a fonte é citada — o hint é input read-only do
+acervo, renderizado como nota de contexto:
+
+Localize (linhas ~L53–55):
+```markdown
+- ticket: {{ticket_link_or_none}}
+- screenshots: {{screenshots_count}} file(s) — {{screenshots_relative_paths_csv}}
+- description origin: {{description_origin}}
+```
+
+E adicione logo abaixo (antes do bloco de comentário `EXTENSION-CONTEXT-BLOCK`):
+
+```markdown
+
+<!--
+  MEM-CONTEXT (W-ROUTE 6c) — gotchas/convenções relevantes do acervo de memória
+  (`mem find`), injetadas pelo engine ANTES do dispatch. Quando vazio (mem
+  indisponível ou sem hits), a linha abaixo fica em branco — sem ruído. NÃO é
+  fonte da verdade; é dica de contexto pro autor consultar.
+-->
+{{mem_context_hint}}
+```
+
+**5b.** Em `templates/feature-intake-bugfix.template.md`, na §Source of truth (após
+`- related commits: {{related_commits_csv_or_none}}`, ~L73), adicione o MESMO bloco:
+
+```markdown
+
+<!--
+  MEM-CONTEXT (W-ROUTE 6c) — gotchas/convenções relevantes do acervo de memória
+  (`mem find`), injetadas pelo engine ANTES do dispatch. Quando vazio (mem
+  indisponível ou sem hits), a linha abaixo fica em branco — sem ruído. NÃO é
+  fonte da verdade; é dica de contexto pro autor consultar.
+-->
+{{mem_context_hint}}
+```
+
+**5c.** Em `templates/feature-intake-refactor.template.md`, na §Source of truth (após
+`- description origin: {{description_origin}}`, ~L62), adicione o MESMO bloco:
+
+```markdown
+
+<!--
+  MEM-CONTEXT (W-ROUTE 6c) — gotchas/convenções relevantes do acervo de memória
+  (`mem find`), injetadas pelo engine ANTES do dispatch. Quando vazio (mem
+  indisponível ou sem hits), a linha abaixo fica em branco — sem ruído. NÃO é
+  fonte da verdade; é dica de contexto pro autor consultar.
+-->
+{{mem_context_hint}}
+```
+
+**5d.** Em `agents/feature-intake-agent.md`, na §What you receive (context pack) (~L30),
+documente o novo input (junto da lista que já cita `memory-L2-slice`):
+
+```markdown
+- `memory-mem-hint` (W-ROUTE 6c, optional) — bloco compacto de gotchas/convenções
+  relevantes do acervo de memória (`mem find` sobre o slug da feature), injetado
+  pelo engine no `{{mem_context_hint}}` da §Source of truth. Read-only, best-effort:
+  ausente quando mem indisponível. NÃO é fonte da verdade — é dica de contexto.
+```
+
+- [ ] **Step 6: Rodar pra confirmar verde**
 
 ```bash
 .venv/bin/pytest tests/integrations/test_mem_wrappers.py -v
@@ -356,9 +538,9 @@ de context_hint). O `test_mem_context_hint_real_mem_returns_str_or_none` pode se
 em ambientes sem o vendorizado.
 
 ```bash
-.venv/bin/pytest tests/unit/test_commands_plan.py -v
+.venv/bin/pytest tests/unit/test_commands_plan.py tests/unit/test_engine_plan_mem_hint.py -v
 ```
-Expected: PASS (todos).
+Expected: PASS (todos — incluindo o teste de render que prova que o hint chega ao artefato).
 
 Lane rápida completa:
 ```bash
@@ -366,19 +548,22 @@ Lane rápida completa:
 ```
 Expected: verde sem regressão.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add engine/integrations/mem.py engine/plan.py tests/integrations/test_mem_wrappers.py tests/unit/test_commands_plan.py
-git commit -m "feat(mem): mem_context_hint helper + read em plan (6c Task 1)
+git add engine/integrations/mem.py engine/plan.py templates/feature-intake.template.md templates/feature-intake-bugfix.template.md templates/feature-intake-refactor.template.md agents/feature-intake-agent.md tests/integrations/test_mem_wrappers.py tests/unit/test_commands_plan.py tests/unit/test_engine_plan_mem_hint.py
+git commit -m "feat(mem): mem_context_hint helper + read em plan + token nos templates (6c Task 1)
 
 W-ROUTE 6c Task 1. Helper mem_context_hint em engine/integrations/mem.py:
 compõe sobre mem_find de 6a, retorna str|None (degrade soft silencioso).
 engine/plan.py: import + read antes de _run_waves_for_subtype; resultado
-injetado em intake_tokens['{{mem_context_hint}}'] pra context-pack do
-subagente de planejamento. Degrade: mem ausente → token vazio, sem crash,
-sem nag forge-init. Real-mem test: test_mem_context_hint_real_mem_returns_str_or_none
-(SKIPPED sem vendorizado). Testes de mock: argv correto, None em vazio/degrade."
+injetado em intake_tokens['{{mem_context_hint}}']. CONSUMIDOR REAL (D1):
+placeholder {{mem_context_hint}} adicionado aos 3 templates de Wave A
+(§Source of truth) + input documentado em feature-intake-agent.md — sem isso
+o re.sub de _render_template descartaria o token. Degrade: mem ausente →
+token vazio, sem crash, sem nag forge-init. Testes: argv correto, None em
+vazio/degrade, real-mem (SKIPPED sem vendorizado), e render-prova
+(test_engine_plan_mem_hint: artefato renderizado contém o hint)."
 ```
 
 ---
@@ -885,8 +1070,10 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _VALIDATORS_DIR = _REPO_ROOT / "validators"
 
-# Padrões proibidos: nomes de módulos e funções do substrato mem.
-_FORBIDDEN_IMPORTS = {"engine.integrations.mem", "engine.integrations"}
+# Padrões proibidos: módulo do substrato mem + nomes de funções/tipos do mem.
+# IN-02: escopo é "validator não toca mem" — bloqueamos só engine.integrations.mem,
+# NÃO toda a package engine.integrations (validators podem usar outros submódulos).
+_FORBIDDEN_IMPORTS = {"engine.integrations.mem"}
 _FORBIDDEN_NAMES = {
     "mem_find",
     "mem_context_hint",
@@ -898,7 +1085,6 @@ _FORBIDDEN_NAMES = {
     "mem_inbox_add",
     "MemQuery",
     "MemResult",
-    "mem_context_hint",
 }
 
 
@@ -925,8 +1111,7 @@ def _check_source(path: Path) -> list[str]:
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             if isinstance(node, ast.ImportFrom) and node.module:
-                # from engine.integrations.mem import ...
-                # from engine.integrations import mem
+                # Caso 1 — from engine.integrations.mem import ...
                 if any(
                     node.module == forbidden or node.module.startswith(f"{forbidden}.")
                     for forbidden in _FORBIDDEN_IMPORTS
@@ -934,7 +1119,18 @@ def _check_source(path: Path) -> list[str]:
                     violations.append(
                         f"L{node.lineno}: import proibido 'from {node.module} import ...'"
                     )
-                # Verifica se os nomes importados são funções do mem.
+                # Caso 2 — from engine.integrations import mem (submódulo por nome).
+                # IN-02: como a deny-list de módulos foi estreitada pra só
+                # `engine.integrations.mem`, esta forma escaparia o caso 1 — então
+                # checamos o nome do submódulo importado explicitamente.
+                if node.module == "engine.integrations":
+                    for alias in node.names:
+                        if alias.name == "mem":
+                            violations.append(
+                                f"L{node.lineno}: import proibido "
+                                f"'from engine.integrations import mem'"
+                            )
+                # Caso 3 — nomes de funções/tipos do mem importados diretamente.
                 for alias in node.names:
                     if alias.name in _FORBIDDEN_NAMES:
                         violations.append(
@@ -1057,10 +1253,12 @@ o invariante handler-only (D1)."
 **Files:**
 - Modify: `engine/memory/distiller.py` (deleta `_apply_consolidate_l2` + import de
   `add_entry` + linha `_ = remove_entry` se ficar sem uso)
+- Modify: `engine/memory/distiller.py` (remove import de `L2Entry` órfão — WR-01)
 - Modify: `engine/memory/l2.py` (deleta `add_entry` + remove entrada em `__all__`)
-- Modify: `tests/unit/test_memory_distiller.py` (reconcilia testes que testavam
-  `_apply_consolidate_l2` diretamente, se existirem)
-- Modify: `tests/unit/test_memory_l2.py` (reconcilia testes de `add_entry` se precisar)
+- Modify: `tests/unit/test_memory_distiller.py` (reconcilia `test_apply_knowledge_does_not_call_l2_add_entry`
+  — BL-02: `_l2.add_entry` vira `AttributeError` após deleção; reescrever pra `not hasattr`)
+- Modify: `tests/unit/test_memory_l2.py` (deleta `test_add_entry_succeeds_then_duplicate_fails`
+  + adapta setups que usavam `add_entry` pra `write_l2`)
 - Modify: `docs/design/04-pending.md` (resolve as entradas de órfão de 6b)
 
 **Interfaces:**
@@ -1136,6 +1334,31 @@ def test_distiller_does_not_import_add_entry() -> None:
                     f"distiller.py ainda importa 'add_entry' de l2 "
                     f"(linha {node.lineno}); deveria ter sido removido em 6c."
                 )
+
+
+def test_distiller_does_not_import_l2entry() -> None:
+    """WR-01: distiller.py não deve importar L2Entry (morto após deletar _apply_consolidate_l2).
+
+    L2Entry era usado APENAS em _apply_consolidate_l2 (instanciação + anotações locais).
+    Após a deleção da função, o import fica órfão.
+    """
+    import ast
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[2]
+    distiller_src = (repo_root / "engine" / "memory" / "distiller.py").read_text(
+        encoding="utf-8"
+    )
+    tree = ast.parse(distiller_src)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.module and "l2" in node.module:
+                imported_names = [alias.name for alias in node.names]
+                assert "L2Entry" not in imported_names, (
+                    f"distiller.py ainda importa 'L2Entry' de l2 "
+                    f"(linha {node.lineno}); import morto após remover "
+                    f"_apply_consolidate_l2 — deveria ter sido removido em 6c."
+                )
 ```
 
 Adicione ao FINAL de `tests/unit/test_memory_l2.py` (ou em arquivo separado se a
@@ -1191,8 +1414,18 @@ from engine.memory.l2 import (
 )
 ```
 
-Substitua por (sem `add_entry` e sem `L2Entry` se ela só era usada em `_apply_consolidate_l2`
-— verifique antes; `L2Entry` pode ter outros usos como type annotation):
+**WR-01 — remova também `L2Entry`:** o sweep do Step 1 confirma que `L2Entry` em
+`distiller.py` é usado APENAS dentro de `_apply_consolidate_l2` (instanciação do entry
+consolidado + as anotações `list[L2Entry]` locais da função). Após deletar a função (Step 4b),
+o import de `L2Entry` fica morto. Rode o grep de confirmação:
+
+```bash
+grep -n "L2Entry" /Users/thg.inchurch/Documents/feature-forge/engine/memory/distiller.py
+```
+Expected após o Step 4b: ZERO ocorrências fora da linha de import. Se o grep mostrar uso de
+`L2Entry` em outra função (type annotation fora de `_apply_consolidate_l2`), PARE e reporte —
+o sweep contradiz a premissa; nesse caso mantenha `L2Entry`. Caso confirme zero uso (esperado),
+remova `L2Entry` E `add_entry` do bloco de import:
 
 ```python
 from engine.memory.l2 import (
@@ -1202,11 +1435,6 @@ from engine.memory.l2 import (
     write_l2,
 )
 ```
-
-Atenção: `L2Entry` é usado em `_apply_consolidate_l2` (que será deletada) e possivelmente
-em type annotations. Verifique com `grep -n "L2Entry" engine/memory/distiller.py` antes de
-remover — se só aparecia na função deletada, remove; se há type annotation em outra função,
-mantém.
 
 **4b.** Delete a função `_apply_consolidate_l2` completa (~L543–L607 em distiller.py):
 
@@ -1279,9 +1507,44 @@ Para cada FAIL:
 - Se o teste testa outra coisa que incidentalmente usava `add_entry` como setup → ADAPTE
   o setup pra usar `write_l2` diretamente (que FICA).
 
-**Importante:** `tests/unit/test_memory_l2.py` contém `test_add_entry_succeeds_then_duplicate_fails`
-(~L57). Esse teste testa `l2.add_entry` diretamente — DELETE. Não substitua por um teste de
-`mem_inbox_add` aqui (isso é coberto em `test_mem_wrappers.py` pela Task 1 de 6b).
+**Testes a reconciliar — lista explícita (varra antes de deletar):**
+
+1. **BL-02 — `tests/unit/test_memory_distiller.py:227` `test_apply_knowledge_does_not_call_l2_add_entry`**
+   (introduzido em 6b). Esse teste faz `original_add_entry = _l2.add_entry` no corpo →
+   `AttributeError` assim que `add_entry` for deletada de `l2.py`. A invariante que ele
+   provava ("os 3 branches de conhecimento não chamam `l2.add_entry`") agora é provada de
+   forma MAIS FORTE pelo cleanup: `add_entry` nem existe mais. **Substitua o corpo do teste**
+   pela invariante reforçada (não delete o teste — a intenção semântica permanece válida):
+
+   ```python
+   def test_apply_knowledge_does_not_call_l2_add_entry(tmp_path, monkeypatch):
+       """6c: a invariante de 6b ('conhecimento não chama l2.add_entry') vira mais
+       forte — add_entry nem existe mais em l2 após o orphan-cleanup."""
+       import engine.memory.l2 as _l2
+       assert not hasattr(_l2, "add_entry"), (
+           "add_entry deveria ter sido removida de l2 em 6c — a invariante de 6b "
+           "('conhecimento não escreve L2 direto') é garantida por inexistência."
+       )
+   ```
+
+   (Alternativa equivalente: mesclar a asserção no `test_l2_add_entry_removed_from_module` e
+   deletar `test_apply_knowledge_does_not_call_l2_add_entry`. Preferir a substituição acima
+   pra preservar o nome/contrato que rastreava a invariante de conhecimento.)
+
+2. **`tests/unit/test_memory_l2.py:57` `test_add_entry_succeeds_then_duplicate_fails`** —
+   testa `l2.add_entry` diretamente → DELETE (a função não existe mais). Não substitua por
+   teste de `mem_inbox_add` aqui (coberto em `test_mem_wrappers.py` pela Task 1 de 6b).
+
+3. **`tests/unit/test_memory_l2.py:67`** (`l2.add_entry` usado como setup, no MESMO teste ou
+   adjacente) — se houver uso de `add_entry` como setup de outro teste, ADAPTE pra `write_l2`.
+   Confirme com `grep -n "add_entry" tests/unit/test_memory_l2.py` quais linhas restam após
+   deletar o teste do item 2.
+
+Confirme a varredura completa com:
+```bash
+grep -rn "add_entry\|_apply_consolidate_l2" tests/ --include="*.py" | grep -v __pycache__
+```
+Reconcilie TODOS os call-sites antes de rodar a lane verde do Step 8.
 
 - [ ] **Step 7: Atualizar `docs/design/04-pending.md`**
 
@@ -1421,9 +1684,16 @@ Adicione em `### Added`:
   de agir; resultado alimenta context-pack/handoff/hint educacional por handler
   (D1 do design 6c). Handler-only: validators nunca recebem contexto de mem.
   Degrade soft em todos os handlers: mem ausente → sem crash, sem "forge init" nag.
+- Placeholder `{{mem_context_hint}}` nos 3 templates de Wave A
+  (`feature-intake.template.md`, `feature-intake-bugfix.template.md`,
+  `feature-intake-refactor.template.md`) + input `memory-mem-hint` documentado em
+  `agents/feature-intake-agent.md` — consumidor real do read de `forge plan` (sem
+  o placeholder o token seria descartado no `re.sub`) (W-ROUTE 6c).
 - `tests/unit/test_validators_determinism.py`: teste estático parametrizado que
   garante que nenhum módulo em `validators/` importa ou chama funções de
   `engine.integrations.mem` (W-ROUTE 6c — invariante de determinismo).
+- `tests/unit/test_engine_plan_mem_hint.py`: prova que o hint chega ao artefato
+  RENDERIZADO da Wave A (não só ao dict de tokens) (W-ROUTE 6c).
 ```
 
 Adicione em `### Removed`:
@@ -1435,7 +1705,9 @@ Adicione em `### Removed`:
 - `engine/memory/l2.add_entry` — write-path órfão de conhecimento após 6b.
   Nenhum engine code chamava a função após o re-roteamento dos 3 branches de
   L2-knowledge pro mem inbox. Removida de `l2.py` e de `__all__` (W-ROUTE 6c).
-- Import de `add_entry` em `engine/memory/distiller.py` — órfão correspondente.
+- Imports órfãos de `add_entry` e `L2Entry` em `engine/memory/distiller.py` —
+  `add_entry` perdeu o call-site em 6b; `L2Entry` era usado apenas em
+  `_apply_consolidate_l2` (deletada). Ambos removidos (W-ROUTE 6c).
 ```
 
 - [ ] **Step 4: Atualizar `docs/guides/daily-workflow.md` (se aplicável)**
@@ -1487,7 +1759,11 @@ Full-lane RUN_E2E=1: verde nas 3 lanes pré-commit."
 
 - **D1 (reads nos 4 handlers, degrade-soft, handler-only):**
   - `plan`: Task 1 insere read em `run()` antes de `_run_waves_for_subtype`; resultado
-    em `intake_tokens["{{mem_context_hint}}"]` → context-pack do subagente de Wave A.
+    em `intake_tokens["{{mem_context_hint}}"]`. **CONSUMIDOR REAL (BL-01 fix):** o token
+    só chega ao subagente porque a Task 1 (Step 5) adiciona o placeholder
+    `{{mem_context_hint}}` físico aos 3 templates de Wave A — sem isso o `re.sub` de
+    `_render_template` descartaria o token. `test_engine_plan_mem_hint.py` prova que o
+    ARTEFATO RENDERIZADO contém o hint (não só o dict de tokens).
   - `implement`: Task 2 insere read em `_print_plan_mode`; resultado renderizado como
     `renderer.dim(_hint)` antes do prompt de confirmação.
   - `qa`: Task 2 insere read em `run_qa` antes de `_write_conductor_handoff`; resultado
@@ -1495,10 +1771,14 @@ Full-lane RUN_E2E=1: verde nas 3 lanes pré-commit."
   - `verify`: Task 3 insere read antes de `_run_cascade`; resultado renderizado em modo
     interativo, NÃO passado a `_run_cascade` (determinismo).
   - Degrade soft em todos: `mem_context_hint` retorna `None` → handler omite bloco
-    silenciosamente. A `_degraded_message` do mem NÃO é surfada ao usuário.
+    silenciosamente. A `_degraded_message` do mem NÃO é surfada ao usuário. O teste de
+    degrade do plan asserta `"forge init" not in combined` puro (WR-02 fix — sem cláusula
+    vacuosa).
   - Determinismo enforçado por teste estático (Task 3): `test_validators_determinism.py`
     varre todos os .py de `validators/` e garante zero import/call a
-    `engine.integrations.mem`.
+    `engine.integrations.mem`. Deny-list estreita a `engine.integrations.mem` apenas
+    (IN-02 fix — não bloqueia toda a package `engine.integrations`); `_FORBIDDEN_NAMES`
+    sem duplicata de `mem_context_hint` (IN-01 fix).
 
 - **D2 (reuso — helper compartilhado):**
   - `mem_context_hint` é extraído em `engine/integrations/mem.py` (Task 1).
@@ -1510,7 +1790,15 @@ Full-lane RUN_E2E=1: verde nas 3 lanes pré-commit."
   - Task 4 Step 1 exige grep-confirm ANTES de deletar. Expected outputs documentados.
   - `_apply_consolidate_l2`: definida mas irrastreável (dead-code desde 6b).
   - Import de `add_entry` em distiller: zero call-site de produção após 6b.
+  - Import de `L2Entry` em distiller (WR-01 fix): usado APENAS em `_apply_consolidate_l2`;
+    removido junto com a função. Step 4a confirma por grep antes de remover;
+    `test_distiller_does_not_import_l2entry` guarda a invariante.
   - `l2.add_entry`: zero caller em engine/ (confirmado por grep externo ao arquivo).
+  - **BL-02 fix:** `test_apply_knowledge_does_not_call_l2_add_entry` (de 6b) faz
+    `original_add_entry = _l2.add_entry` → quebraria com `AttributeError` após a deleção.
+    Step 6 reescreve o corpo pra `assert not hasattr(_l2, "add_entry")` (invariante mais
+    forte — a função nem existe), preservando o nome/contrato. Explicitamente listado no
+    reconcile.
   - `04-pending`: entradas de l2.add_entry e _apply_consolidate_l2 marcadas RESOLVIDO;
     misnomer `apply_proposal_to_l2` permanece pendente (6d+).
   - FICAM: `remove_entry`, `write_l2`, `read_l2`, `export_for_context_pack` (undo.py +
@@ -1551,11 +1839,18 @@ exceção. SKIPPED quando vendorizado ausente. Disciplina: paths de read (como o
 
 ### Footprint por contrato (não por import)
 
-Task 4 Step 6 varre explicitamente: `test_memory_distiller.py` (reconcilia testes de
-`_apply_consolidate_l2` diretamente), `test_memory_l2.py` (`test_add_entry_succeeds_then_duplicate_fails`
-deletado — testa função inexistente). O implementer confirma quais quebram rodando a lane
-antes de editar. `test_memory_l2.py` testes de `remove_entry`, `write_l2`, `read_l2` ficam
-intactos.
+Task 4 Step 6 varre explicitamente e lista por nome os testes a reconciliar:
+`test_apply_knowledge_does_not_call_l2_add_entry` (BL-02 — reescrito pra `not hasattr`),
+`test_add_entry_succeeds_then_duplicate_fails` (deletado — testa função inexistente), e os
+demais usos de `add_entry` como setup (adaptados pra `write_l2`). O grep
+`grep -rn "add_entry\|_apply_consolidate_l2" tests/` confirma cobertura completa antes da lane
+verde. `test_memory_l2.py` testes de `remove_entry`, `write_l2`, `read_l2` ficam intactos.
+
+Lado dos reads: o consumidor real do `plan` (token no artefato) é coberto por
+`test_engine_plan_mem_hint.py` (render-prova, BL-01); o `qa` por `test_run_qa_mem_hint.py`
+(campo no handoff JSON); `implement`/`verify` por degrade + import nos seus
+`test_commands_*`. Footprint observado por CONTRATO (artefato renderizado / handoff / hint),
+não por import.
 
 ### Full-lane RUN_E2E=1
 
