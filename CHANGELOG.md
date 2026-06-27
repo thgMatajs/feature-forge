@@ -45,6 +45,42 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   anterior); máximo 3 rodadas. Greenfield sem rules e consumidor com sentinel
   `.rules-reduced` (sem `--force`) pulam sem efeito.
 
+- `mem_context_hint(project_root, query, *, limit) -> str | None` — helper
+  compartilhado em `engine/integrations/mem.py`. Compõe sobre `mem_find` de 6a;
+  retorna bloco de texto compacto com hits ou `None` em degrade (W-ROUTE 6c).
+
+- `forge plan` / `implement` / `verify` / `qa`: leem `mem_context_hint` antes
+  de agir; resultado alimenta context-pack/handoff/hint educacional por handler
+  (D1 do design 6c). Handler-only: validators nunca recebem contexto de mem.
+  Degrade soft em todos os handlers: mem ausente → sem crash, sem "forge init" nag.
+
+- Placeholder `{{mem_context_hint}}` nos 3 templates de Wave A
+  (`feature-intake.template.md`, `feature-intake-bugfix.template.md`,
+  `feature-intake-refactor.template.md`) + input `memory-mem-hint` documentado em
+  `agents/feature-intake-agent.md` — consumidor real do read de `forge plan` (sem
+  o placeholder o token seria descartado no `re.sub`) (W-ROUTE 6c).
+
+- `tests/unit/test_validators_determinism.py`: teste estático parametrizado que
+  garante que nenhum módulo em `validators/` importa ou chama funções de
+  `engine.integrations.mem` (W-ROUTE 6c — invariante de determinismo).
+
+- `tests/unit/test_engine_plan_mem_hint.py`: prova que o hint chega ao artefato
+  RENDERIZADO da Wave A (não só ao dict de tokens) (W-ROUTE 6c).
+
+### Removed
+
+- `engine/memory/distiller._apply_consolidate_l2` — dead code após 6b (branch
+  `consolidate-l2` roteado via `_KNOWLEDGE_KINDS → mem_inbox_add`). Removido
+  em 6c após grep-confirm de zero caller (W-ROUTE 6c orphan-cleanup).
+
+- `engine/memory/l2.add_entry` — write-path órfão de conhecimento após 6b.
+  Nenhum engine code chamava a função após o re-roteamento dos 3 branches de
+  L2-knowledge pro mem inbox. Removida de `l2.py` e de `__all__` (W-ROUTE 6c).
+
+- Imports órfãos de `add_entry` e `L2Entry` em `engine/memory/distiller.py` —
+  `add_entry` perdeu o call-site em 6b; `L2Entry` era usado apenas em
+  `_apply_consolidate_l2` (deletada). Ambos removidos (W-ROUTE 6c).
+
 ### Changed
 
 - `forge evolve` (knowledge proposals): aprovação de `promote-to-l2` /

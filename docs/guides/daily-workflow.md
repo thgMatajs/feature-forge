@@ -79,6 +79,12 @@ Wave E — Readiness
 Próximo passo: forge implement login-screen
 ```
 
+**Memória automática (W-ROUTE 6c):** Antes de redigir os artefatos da Wave A,
+o `forge plan` consulta automaticamente o acervo de memória (`mem find`)
+por gotchas e convenções relevantes ao slug da feature. O resultado é injetado
+no context-pack do subagente de planejamento. Sem intervenção do usuário —
+degrade soft quando mem ausente.
+
 **Fluxograma:**
 
 ```
@@ -225,6 +231,11 @@ $ forge verify
 > pelos cards ativos no projeto. O cascade real depende do preset — N é determinado
 > em tempo de execução. O diretório `validators/` tem 21 validators canônicos no
 > total; cards selecionam o subset relevante via `contributes.validators`.
+
+**Memória automática (W-ROUTE 6c):** Antes do cascade de validators, o
+`forge verify` exibe um hint educacional com memória relevante ao scope (só
+em modo interativo — omitido em `--json`). O hint NÃO é passado pra validators,
+preservando o determinismo da cascade.
 
 **Quando um gate forte falha:**
 
