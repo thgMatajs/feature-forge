@@ -43,7 +43,11 @@ Read these BEFORE producing any artifact. Reading is non-negotiable — the vali
 3. `docs/design/06-command-surface.md` — surface conventions (slash commands, artifact names)
 4. `docs/schemas/workflow-config.md` — `backend`, `ticketing`, `persona`, `conventions.*`
 5. `docs/schemas/inventories.md` — `design-system`, `i18n`, `conventions` (test-pattern, naming)
-6. `docs/schemas/memory.md` — L2 patterns (conflict-strategy, loading-guard, etc.), findings, decisions-frozen
+6. Substrato de conhecimento via `.claude/bin/mem find` — patterns
+   (conflict-strategy, loading-guard, etc.), findings e decisions-frozen
+   (`--type decision`). Consulte pelos temas da feature; use os hits.
+   Degrade-soft: sem `mem`/sem hits, prossiga sem o bloco — não surfe
+   "forge init", não trave.
 7. `docs/ux/forge-plan-roteiro.md` § Wave B — your slot in the timeline (parallel with screen-analysis)
 
 Also read the feature dir before writing anything:
@@ -76,7 +80,7 @@ You produce **exactly six files** (BDD ships as both .md and .json — same cont
 **Required scenarios**:
 
 1. **Every user story** from `feature-prd.md` § User Stories — one or more scenarios.
-2. **5 mandatory rule-driven scenarios** (from `.claude/rules/testing.md`, surfaced in memory L2):
+2. **5 mandatory rule-driven scenarios** (from `.claude/rules/testing.md`; reforçados pelos patterns do acervo via `mem find`):
    - Happy path
    - Null / empty input
    - Network / IO failure
@@ -258,9 +262,10 @@ entities:
     persistence: both   # server-only | local-only | both | none
 
     conflict-strategy: last-write-wins-server
-    # Pull from memory L2 patterns. If feature needs a new strategy → mark
-    # needs-elicitation and propose options (last-write-wins-server,
-    # last-write-wins-client, merge-by-field, CRDT, manual-prompt).
+    # Consulte os patterns do acervo: mem find "conflict-strategy". If feature
+    # needs a new strategy → mark needs-elicitation and propose options
+    # (last-write-wins-server, last-write-wins-client, merge-by-field, CRDT,
+    # manual-prompt).
 
     cache-strategy:
       pattern: stale-while-revalidate    # from L2 patterns
@@ -540,7 +545,7 @@ Conductor supplies — confirm presence before starting:
 - screenshots/* (cross-reference only)
 - workflow-config slice: `backend` (full), `ticketing`, `persona`, `conventions.i18n`, `conventions.test-pattern`
 - inventory.design-system.yaml + inventory.i18n.yaml + inventory.conventions.yaml
-- memory L2: `patterns`, `findings`, `decisions-frozen`
+- acervo de conhecimento via `mem find`: `patterns`, `findings`, `decisions-frozen` (`--type decision`)
 - active workflow cards (each may inject extension-point contributions — honor them)
 
 If anything is missing, **stop and emit `status: failed`** with `notes` describing what's missing. Do not fabricate.
@@ -598,7 +603,7 @@ If a card declares an extension-point that does not match any of your artifacts,
 - For each entity in PRD: full schema (fields with types, validations, nullability).
 - `data_origins` block — pull `api.provider` from workflow-config.backend.
 - `persistence` — pick from {server-only, local-only, both, none} guided by PRD.
-- `conflict-strategy` — pull from L2 patterns or mark needs-elicitation.
+- `conflict-strategy` — consulte os patterns do acervo (`mem find "conflict-strategy"`) or mark needs-elicitation.
 - `cache-strategy` — same.
 - Build `backend-e2e` block (agnostic envelope) if any entity has `data_origins.api.exists: true`. Cards inject provider-specific `cli-commands:` and `emulator-required:` at the backend-e2e extension-point.
 - Insert card contributions at the extension-points declared in this agent's frontmatter (e.g., `firestore-collections:` from `firestore-persistence`, `rest-endpoints:` from `rest-api-contract`, `auth-contract:` from `firebase-auth` or `auth-jwt-bearer`).
@@ -780,7 +785,7 @@ auth-contract:
 - [ ] Read all input files in feature dir.
 - [ ] Confirmed `workflow-config.backend.provider` value.
 - [ ] Listed every active card and its extension-points.
-- [ ] Listed every L2 pattern applicable (conflict-strategy, loading-guard, cache-strategy).
+- [ ] Consultou o acervo (`mem find`) pelos patterns aplicáveis (conflict-strategy, loading-guard, cache-strategy).
 - [ ] Listed every entity in PRD §Data Model.
 - [ ] Listed every screen in screen-analysis.md.
 - [ ] Listed every state in ui-state-spec.yaml (or marked deferred).
