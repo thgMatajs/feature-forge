@@ -677,7 +677,7 @@ Agentes que hoje instruem leitura de L2/inventory/memória → re-roteiam pra
 
 | Agente | O que muda |
 |---|---|
-| `agents/memory-distiller.md` | era o agente que destila L1→L2; vira o que gera **candidatos de inbox** do mem (`mem inbox add --origin haiku`). A skill `mem-consolidate` que o mem instala cobre o caso genérico de captura; o `memory-distiller` do forge permanece como o destilador *específico do lifecycle* (lê hypothesis/rationale-trace/elicitation da feature e emite candidatos). Não duplicar a captura genérica — delegar a parte genérica à skill, manter só o que é forge-specific. |
+| `agents/memory-distiller.md` | era o agente que destila L1→L2; vira o que gera **candidatos de inbox** do mem (`mem inbox add --origin haiku`). A skill `mem-consolidate` que o mem instala cobre o caso genérico de captura; o `memory-distiller` do forge permanece como o destilador *específico do lifecycle* (lê hypothesis/rationale-trace/elicitation da feature e emite candidatos). Não duplicar a captura genérica — delegar a parte genérica à skill, manter só o que é forge-specific. **[Onda 7, 2026-06-29: o repurpose foi DESCARTADO — o agente foi REMOVIDO. Job de compressão morto pós-mem; repurpose duplicaria retrospective-agent + mem-consolidate. Ver CHANGELOG ### Removed.]** |
 | `agents/feature-prd-agent.md` | onde lê memória de convenções/decisões passadas → `mem find "<tema>" --type decision`/`--type reference` antes de redigir PRD |
 | `agents/planning-conductor.md` | onde consulta L2/inventory pra contexto → `mem find` por área antes de planejar (além do graph pra estrutura) |
 | `agents/contract-planner-agent.md` | idem — consulta de convenções/decisões → `mem find` |

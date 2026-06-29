@@ -90,6 +90,26 @@ checklist for next sessions.
   o candidato já foi promovido ou o mem está indisponível (não finge sucesso).
   O path L2 legado fica intacto pros kinds não-conhecimento e eventos pré-6d.
 
+## W-AGENTS — gaps pós re-rota dos conductor prompts (2026-06-29)
+
+- **Re-rota de leitura fechada (Onda 7 / W-AGENTS)** — RESOLVIDO: os quatro
+  conductor prompts (`feature-prd-agent`, `planning-conductor`,
+  `contract-planner-agent`, `retrospective-agent`) deixaram de instruir leitura
+  do `.claude/memory/L2-project.yaml` abandonado e passaram a consultar o acervo
+  via `.claude/bin/mem find` (degrade-soft). O write-path não mudou — os prompts
+  seguem propondo via `proposed-evolutions.yaml`, que o `forge evolve` já roteia
+  pro `mem inbox add`. O `agents/memory-distiller.md` foi removido (órfão; a
+  curadoria/compressão do acervo é do `mem evolve`).
+
+- **`_KNOWLEDGE_KINDS` cobre só 3 dos kinds do retrospective (limitação
+  PRÉ-EXISTENTE v1.1)** — o `_KNOWLEDGE_KINDS` do engine roteia pro mem inbox
+  apenas `promote-to-l2` / `l1-to-l2-promotion` / `consolidate-l2`. Os demais
+  kinds que o retrospective-agent pode emitir — `convention-refinement` /
+  `decay-signal` / `question-elimination` — seguem em `NotImplementedError`. Essa
+  é uma limitação herdada da v1.1 (NÃO introduzida pela Onda 7); a re-rota de
+  leitura não a toca. *Reentrar* quando o roteamento de knowledge kinds for
+  ampliado pra cobrir os três restantes.
+
 ## W-MIGRATE (migrador L2→mem) — DEFERIDO até brownfield real (2026-06-26)
 
 O migrador forge-side L2→mem (spec §Migração: kind→type, field-preservation,

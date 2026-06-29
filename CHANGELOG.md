@@ -72,6 +72,12 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Removed
 
+- `agents/memory-distiller.md` — agente órfão; a compressão de L2 perdeu sentido
+  pós-mem (o `mem evolve` gere o tamanho do acervo) e nada o despachava. Desvio
+  consciente da spec §Re-roteamento (que previa repurpose pra gerador de inbox —
+  descartado por duplicar o retrospective-agent + a skill mem-consolidate)
+  (Onda 7 / W-AGENTS).
+
 - `engine/memory/distiller._apply_consolidate_l2` — dead code após 6b (branch
   `consolidate-l2` roteado via `_KNOWLEDGE_KINDS → mem_inbox_add`). Removido
   em 6c após grep-confirm de zero caller (W-ROUTE 6c orphan-cleanup).
@@ -85,6 +91,11 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   `_apply_consolidate_l2` (deletada). Ambos removidos (W-ROUTE 6c).
 
 ### Changed
+
+- Conductor prompts (feature-prd-agent, planning-conductor, contract-planner-agent,
+  retrospective-agent) consultam o acervo via `mem find` em vez do `L2-project.yaml`
+  abandonado (Onda 7 / W-AGENTS). Write-path inalterado — proposals seguem via
+  `proposed-evolutions.yaml` → `forge evolve` → `mem inbox add` (knowledge kinds).
 
 - `forge evolve` (knowledge proposals): aprovação de `promote-to-l2` /
   `l1-to-l2-promotion` / `consolidate-l2` agora emite `mem inbox add` em vez

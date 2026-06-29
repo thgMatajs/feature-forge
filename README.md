@@ -114,7 +114,7 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 | Categoria | Conteúdo |
 |---|---|
 | Schemas | 14 schemas (inclui `intent-protocol.md` novo em v1.2-dev / Phase A DRIFT-1 + `backend-axes.md` v1.2-dev Phase B) + capability-labels catalog + schema v2 (reuse_findings, module_deps) |
-| Agent prompts | 10 (planning-conductor + 9 sub-agents) |
+| Agent prompts | 9 (planning-conductor + 8 sub-agents) |
 | UX roteiros | 7 (init, plan, implement, verify, doctor, reconfigure, evolve) — todos cobrem subtypes + reuse intelligence |
 | Templates canônicos | 18 (16 produto + feature-intake-bugfix + feature-intake-refactor) |
 | Cards canônicos | 29 (8 stack + 5 Firebase + firebase-crashlytics + 4 REST + retrofit-client + room-database + sqldelight + datastore-prefs + shared-preferences-prefs com `legacy-marker` + firebase-analytics + posthog-analytics + fcm + onesignal + firebase-remote-config + posthog-flags); overlay local em `.claude/cards/local/<name>/` desde Gap 5 (2026-06-02). Phase B DET-6 acresceu 6 cards de analytics/notifications/flags + sqldelight (axis persistence/kmp) + rename `crashlytics → firebase-crashlytics`. |
@@ -189,7 +189,7 @@ explicitamente.
     memory/                             L1/L2/L3 + distiller (16 proposal kinds)
     cards/  inventory/  ui/  persona/   utils/ (sqlite_io + template_render)
   docs/                                 design + schemas + UX roteiros + lifecycle
-  agents/                               agent prompts (10 prompts)
+  agents/                               agent prompts (9 prompts)
   templates/                            18 canonical templates (16 + bugfix + refactor)
   cards/                                29 canonical cards (+ overlay em consumidor)
   presets/kmp-mobile/                   canonical preset v1
