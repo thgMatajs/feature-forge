@@ -52,7 +52,7 @@ Query as needed:
 - Vision analysis on screenshots passed by user
 
 Write to:
-- `.claude/memory/L1/{feature_slug}/` — per-feature working state
+- `.claude/forge/state/lifecycle/{feature_slug}/` — per-feature working state
 - `docs/forge-specs/features/{feature_slug}/` — the package
 
 ---
@@ -96,7 +96,7 @@ technical stays technical.
    escalating.
 
 6. **Always trace decisions.** Every non-trivial inference goes into
-   `.claude/memory/L1/{slug}/rationale-trace.yaml`.
+   `.claude/forge/state/lifecycle/{slug}/rationale-trace.yaml`.
 
 7. **Never ask the same question twice.** If the user contradicts a previous
    answer, surface the contradiction explicitly and ask which holds.
@@ -175,10 +175,10 @@ Read everything available BEFORE opening your mouth. Order:
 
      **What to read from the parent (read-only, never edit):**
 
-     - `.claude/memory/L1/{parent}/status.json` → `shipped-at`, `subtype`
-     - `.claude/memory/L1/{parent}/hypothesis.yaml` → `shape`, `screens`,
+     - `.claude/forge/state/lifecycle/{parent}/status.json` → `shipped-at`, `subtype`
+     - `.claude/forge/state/lifecycle/{parent}/hypothesis.yaml` → `shape`, `screens`,
        `persistence`, `identified-components`, `new-components-needed`
-     - `.claude/memory/L1/{parent}/elicitation.yaml` → resolved Q/A pairs
+     - `.claude/forge/state/lifecycle/{parent}/elicitation.yaml` → resolved Q/A pairs
        (especially `external-deps` if any propagate)
      - `docs/forge-specs/features/{parent}/data-contract-spec.yaml`
        → entities, validations, persistence layers
@@ -186,7 +186,7 @@ Read everything available BEFORE opening your mouth. Order:
        → modeled states + transitions
      - `docs/forge-specs/features/{parent}/tech-spec.md`
        → layers touched, naming conventions, helper references
-     - `.claude/memory/L1/{parent}/existing-helpers.yaml` → reusable helpers
+     - `.claude/forge/state/lifecycle/{parent}/existing-helpers.yaml` → reusable helpers
        already identified in the parent's Wave 4.5
 
      **What to populate in the child's context-pack:**
@@ -266,7 +266,7 @@ Compose a working hypothesis: "This feature is structurally a [list+detail|form|
 flow|dashboard|refactor|bugfix|spike|chore|...], using [persistence|network|both],
 with [N screens], requiring [these capabilities]."
 
-Write `.claude/memory/L1/{slug}/hypothesis.yaml`:
+Write `.claude/forge/state/lifecycle/{slug}/hypothesis.yaml`:
 
 ```yaml
 hypothesis:
@@ -409,7 +409,7 @@ task-contract-writer (Wave D) via the context pack field
 `external-deps` so the writer emits `depends_on_external` entries on
 the affected tasks.
 
-Save to `.claude/memory/L1/{slug}/ambiguity-map.yaml`. Anything with confidence
+Save to `.claude/forge/state/lifecycle/{slug}/ambiguity-map.yaml`. Anything with confidence
 < 0.85 is unresolved.
 
 ### Phase 2.5 — Grounded challenge (confronta o pedido)
@@ -498,7 +498,7 @@ user genuinely cannot answer and the question must go to async resolution.
 something is wrong with detection. Re-examine sources before opening
 AskUserQuestion.
 
-Save responses to `.claude/memory/L1/{slug}/elicitation.yaml`.
+Save responses to `.claude/forge/state/lifecycle/{slug}/elicitation.yaml`.
 
 ### Phase 4 — Delegate Execution (waves, parallel where safe)
 
@@ -656,7 +656,7 @@ Steps:
    `docs/schemas/graph.md`) passing the entity types as inputs.
    Invocation: `forge graph` interactive menu → option `reusable-helpers`,
    OR programmatic via `engine.graph.queries.find_reusable_helpers()`.
-3. Write the result to `.claude/memory/L1/{slug}/existing-helpers.yaml`:
+3. Write the result to `.claude/forge/state/lifecycle/{slug}/existing-helpers.yaml`:
 
 ```yaml
 generated-at: 2026-05-30T14:23:11Z
@@ -686,7 +686,7 @@ either way. Never skip writing the file.
 
 **Wave C — after Phase 4.5:**
 - `tech-spec-agent` → `tech-spec.md`
-- Context pack includes `.claude/memory/L1/{slug}/existing-helpers.yaml`
+- Context pack includes `.claude/forge/state/lifecycle/{slug}/existing-helpers.yaml`
   so the agent can flag "reuse existing" candidates in §14 instead of
   proposing duplicate new helpers.
 
@@ -762,7 +762,7 @@ Once everything is clean:
 
 1. Generate `plan-feature-handoff.json` (uses template, fills in feature
    metadata + ready-to-implement task list).
-2. Update `.claude/memory/L1/{slug}/` with final state.
+2. Update `.claude/forge/state/lifecycle/{slug}/` with final state.
 3. Promote L1 insights → L2 candidates (write to `proposed-evolutions.yaml`,
    do NOT auto-merge).
 4. If Jira: ask "post comment to BONSAI-XXXX with plan summary? [Y/n]"
@@ -952,7 +952,7 @@ docs/forge-specs/features/{slug}/
   ├ plan-feature-handoff.json
   └ evals/evals.json
 
-.claude/memory/L1/{slug}/
+.claude/forge/state/lifecycle/{slug}/
   ├ hypothesis.yaml
   ├ ambiguity-map.yaml
   ├ elicitation.yaml
@@ -1008,7 +1008,7 @@ variant reflects the leaner artifact set per discipline §8.
    Open questions: 0 blocking
    Readiness:     ready
    
-   Decisions traced: {M} (.claude/memory/L1/{slug}/rationale-trace.yaml)
+   Decisions traced: {M} (.claude/forge/state/lifecycle/{slug}/rationale-trace.yaml)
    
    Próximo:
      forge implement TASK-0001

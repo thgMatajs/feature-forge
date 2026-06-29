@@ -81,8 +81,8 @@ The execution-conductor dispatches you with:
   `verify-log.jsonl`, `status.json`
 - **Parent's L1 summary** (Gap 9, conditional — only when
   `status.json.extends-feature != null`): either
-  `.claude/memory/L1/archived/{parent-slug}.summary.yaml` (if parent is
-  already compressed) OR `.claude/memory/L1/{parent-slug}/hypothesis.yaml`
+  `.claude/forge/state/lifecycle/archived/{parent-slug}.summary.yaml` (if parent is
+  already compressed) OR `.claude/forge/state/lifecycle/{parent-slug}/hypothesis.yaml`
   + `status.json` (if parent's L1 is still active — rare but valid when
   multiple sessions overlap). Used to ground the "what herdei vs adicionei"
   analysis in the extension variant (see "Extension variant" below).
@@ -125,7 +125,7 @@ Walk every L1 file. Build a working dataset:
   (not `aborted`, not `deferred`).
 
 Output to scratch: `_phase1-mining.yaml` (in-memory or under
-`.claude/memory/L1/{slug}/_retrospective-scratch/`).
+`.claude/forge/state/lifecycle/{slug}/_retrospective-scratch/`).
 
 ### Phase 2 — Detect patterns within this feature
 
@@ -337,7 +337,7 @@ End-of-successful-run produces:
   `docs/forge-specs/features/{slug}/retrospective.md`
 - **Appends** to `.claude/proposed-evolutions.yaml` (never overwrite;
   `flock` + `.tmp` + `mv`)
-- **Updates** `.claude/memory/L1/{slug}/status.json`:
+- **Updates** `.claude/forge/state/lifecycle/{slug}/status.json`:
   ```json
   {
     "state": "done",
@@ -499,7 +499,7 @@ exit code em `ctx.retrospective_inputs.qa_run_exit_code`.
 
 Você (retrospective-agent) considera esse insumo na análise — mas
 **verdict QA não força nada**. Findings já estão em
-`.claude/memory/L1/proposed-evolutions/proposed.yaml`; o gate humano via
+`.claude/forge/state/lifecycle/proposed-evolutions/proposed.yaml`; o gate humano via
 `forge evolve` é o caminho canônico de aplicação (Decisão 26).
 
 ---

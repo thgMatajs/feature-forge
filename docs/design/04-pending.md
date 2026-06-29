@@ -3868,6 +3868,20 @@ greenfield) fica deferida. Quando implementar: `_run_per_axis_prompts` +
 `_apply_axis_overrides` (já existem no módulo, usados pelo greenfield) são a
 base reusável.
 
+## W-STATE — drift residual do path L1 em templates (sweep de fechamento)
+
+O W-STATE moveu a state-machine de lifecycle de `.claude/memory/L1/` pra
+`.claude/forge/state/lifecycle/` (fonte de verdade:
+`engine/utils/paths.py::lifecycle_root`). Os conductor prompts
+(`agents/planning-conductor.md`, `agents/retrospective-agent.md`) já foram
+atualizados, mas o path antigo `.claude/memory/L1/` ainda persiste em
+artefatos operacionais não cobertos naquela passada — os templates
+`tech-spec.template.md`, `evals.template.json`, `feature-intake.template.md`,
+`plan-feature-handoff.template.json`. São candidatos a um sweep de fechamento
+do W-STATE (mesmo mapeamento de prefixo, preservando tudo após `L1/`). Docs
+históricos (plans/specs/reports, `08-session-handoff.md`) ficam de fora — são
+registros point-in-time.
+
 ---
 
 **For a fresh session retomando o projeto, use o handoff:**
