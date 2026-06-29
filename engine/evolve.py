@@ -274,13 +274,19 @@ def _apply_proposal(
     project_root: Path,
     p: DistillationProposal,
     cfg: dict[str, Any],
-) -> bool:
-    """Apply with overflow guard. Returns True on success, False on overflow pause.
+) -> tuple[bool, str | None]:
+    """Apply with overflow guard. Returns ``(success, inbox_id)``.
 
     W-ROUTE 6b (D5): kinds de conhecimento (``_KNOWLEDGE_KINDS``) vão pro mem
     inbox em vez de escrever L2 — o overflow-guard (`detect_l2_overflow`) não
     se aplica a eles e seria incorreto bloqueá-los por "L2 cheia". Os demais
     kinds (forget-l1, reuse-intelligence, etc.) mantêm o guard legacy.
+
+    W-ROUTE 6d: no sucesso de um knowledge kind, ``inbox_id`` é o id do
+    candidato no mem inbox (capturado em ``apply_proposal_to_l2``) — o
+    call-site grava esse id no evento ``evolve-apply`` pra o ``forge undo``
+    re-rotar pro ``mem inbox reject``. ``(True, None)`` no sucesso L2/reuse;
+    ``(False, None)`` na pausa por overflow.
     """
     if p.kind not in _KNOWLEDGE_KINDS:
         max_mb = _l2_max_mb(cfg)
@@ -292,11 +298,11 @@ def _apply_proposal(
                     "yellow",
                 )
             )
-            return False
+            return False, None
 
-    apply_proposal_to_l2(project_root, p)
+    inbox_id = apply_proposal_to_l2(project_root, p)
     renderer.write(renderer.colored(f"  ✓ Aplicado {p.id}.", "green"))
-    return True
+    return True, inbox_id
 
 
 def _three_paths_overflow(project_root: Path) -> str:
@@ -509,7 +515,7 @@ def run(argv: list[str]) -> int:
             continue
 
         if action == "a":
-            success = _apply_proposal(project_root, p, cfg)
+            success, inbox_id = _apply_proposal(project_root, p, cfg)
             if not success:
                 remaining = [pp.id for pp in proposals[cursor:]]
                 _write_checkpoint(
@@ -528,11 +534,18 @@ def run(argv: list[str]) -> int:
                 else:
                     renderer.write("  Abortado pelo usuário.")
                 return 0
+            # M-001 (plan-audit r1): um apply de conhecimento NÃO toca L2 —
+            # não carregar l2-size-after-bytes nesse branch (evita um evento
+            # evolve-apply que mistura semântica de dois substratos).
+            if inbox_id:
+                extras = {"routed-to": "mem-inbox", "mem-inbox-id": inbox_id}
+            else:
+                extras = {"l2-size-after-bytes": l2_size_bytes(project_root)}
             _record_history_event(
                 project_root,
                 "evolve-apply",
                 p.id,
-                extras={"l2-size-after-bytes": l2_size_bytes(project_root)},
+                extras=extras,
             )
             cursor += 1
             continue

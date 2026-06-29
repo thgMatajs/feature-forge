@@ -217,8 +217,9 @@ def test_apply_proposal_skips_overflow_for_knowledge_kind(tmp_path, monkeypatch)
         provenance=["auth"],
         confidence=0.7,
     )
-    result = _evolve._apply_proposal(tmp_path, p, {})
-    assert result is True, "knowledge proposal foi bloqueado pelo overflow-guard (D5 falhou)"
+    # W-ROUTE 6d: _apply_proposal agora retorna (success, inbox_id).
+    success, _inbox_id = _evolve._apply_proposal(tmp_path, p, {})
+    assert success is True, "knowledge proposal foi bloqueado pelo overflow-guard (D5 falhou)"
     assert applied == ["P-know"]
 
 
@@ -242,6 +243,32 @@ def test_apply_proposal_keeps_overflow_guard_for_non_knowledge_kind(tmp_path, mo
         provenance=["auth"],
         payload={"target": "auth"},
     )
-    result = _evolve._apply_proposal(tmp_path, p, {})
-    assert result is False, "forget-l1 deveria ser pausado por overflow (guard preservado)"
+    # W-ROUTE 6d: pausa por overflow retorna (False, None).
+    success, inbox_id = _evolve._apply_proposal(tmp_path, p, {})
+    assert success is False, "forget-l1 deveria ser pausado por overflow (guard preservado)"
+    assert inbox_id is None, "pausa por overflow não carrega inbox-id"
     assert applied == [], "apply não deveria rodar sob overflow para kind não-conhecimento"
+
+
+# ── Task 2 (6d): _apply_proposal propaga o mem-inbox-id ───────────────────────
+
+
+def test_evolve_apply_records_mem_inbox_id(tmp_path, monkeypatch):
+    """W-ROUTE 6d: aplicar um knowledge proposal devolve o inbox-id na tupla."""
+    import engine.evolve as _evolve
+    from engine.memory.distiller import DistillationProposal
+
+    monkeypatch.setattr(_evolve, "apply_proposal_to_l2", lambda root, p: "01INBOXID")
+    monkeypatch.setattr(_evolve, "detect_l2_overflow", lambda root, cfg: False)
+
+    p = DistillationProposal(
+        id="P-know",
+        kind="promote-to-l2",
+        title="t",
+        description="d",
+        provenance=["auth"],
+        confidence=0.7,
+    )
+    ok, inbox_id = _evolve._apply_proposal(tmp_path, p, cfg={})
+    assert ok is True
+    assert inbox_id == "01INBOXID"

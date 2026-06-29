@@ -460,7 +460,7 @@ def is_fingerprint_rejected(project_root: Path, fingerprint: str) -> bool:
 def apply_proposal_to_l2(
     project_root: Path,
     proposal: DistillationProposal,
-) -> None:
+) -> str | None:
     """Apply a single proposal to L2 — discipline §5 (no batch).
 
     Behavior depends on `proposal.kind`:
@@ -474,6 +474,11 @@ def apply_proposal_to_l2(
       `new-card-suggestion`, `question-elimination`, `convention-refinement`):
       ainda não implementados em v1 — `NotImplementedError` para evitar
       silent no-op (a queue NÃO é drenada).
+
+    Retorno (W-ROUTE 6d): o `mem-inbox-id` (de `result.data["id"]`) no branch de
+    knowledge kinds; `None` em TODOS os outros branches (forget-l1, reuse-
+    intelligence). O caller (`evolve`) grava esse id no evento `evolve-apply`
+    pra o `forge undo` re-rotar pro `mem inbox reject`.
     """
     _validate_kind(proposal.kind)
 
@@ -506,12 +511,17 @@ def apply_proposal_to_l2(
                 f"{result.message} — queue não drenada (raise-não-drena)."
             )
         remove_from_queue(project_root, proposal.id)
-        return
+        # W-ROUTE 6d: devolve o mem-inbox-id capturado (de `mem --json inbox add`)
+        # pra o caller gravar no evento `evolve-apply` — o `forge undo` lê de volta.
+        inbox_id = None
+        if isinstance(result.data, dict):
+            inbox_id = result.data.get("id")
+        return inbox_id
 
     if proposal.kind == "forget-l1":
         _apply_forget_l1(project_root, proposal)
         remove_from_queue(project_root, proposal.id)
-        return
+        return None
 
     if proposal.kind in {
         "consolidate-duplicate-helper",
@@ -528,7 +538,7 @@ def apply_proposal_to_l2(
 
         apply_reuse_intelligence_proposal(project_root, proposal)
         remove_from_queue(project_root, proposal.id)
-        return
+        return None
 
     # Demais kinds: explicitamente não implementados em v1.
     # NÃO drenar a queue — usuário precisa saber que NÃO foi aplicado.

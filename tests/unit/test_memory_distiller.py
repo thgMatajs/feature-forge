@@ -286,6 +286,58 @@ def test_apply_knowledge_importance_clamp(tmp_path, monkeypatch):
     assert importances == [1, 5, 3]
 
 
+# ── Task 2 (6d): apply captura o mem-inbox-id ─────────────────────────────────
+
+
+def _make_knowledge_proposal(id_: str = "P-know") -> DistillationProposal:
+    """Proposal de conhecimento mínimo (kind em _KNOWLEDGE_KINDS, fingerprint limpo)."""
+    return DistillationProposal(
+        id=id_,
+        kind="promote-to-l2",
+        title="use-stateflow",
+        description="Use MutableStateFlow for screen state",
+        provenance=["auth"],
+        confidence=0.8,
+        fingerprint="",
+    )
+
+
+def test_apply_proposal_to_l2_returns_inbox_id_for_knowledge(tmp_path, monkeypatch):
+    """W-ROUTE 6d: knowledge proposal → mem inbox add → retorna o id capturado."""
+    import engine.memory.distiller as _dist
+    from engine.integrations import mem as mem_mod
+
+    def fake_inbox_add(project_root, **kwargs):
+        return mem_mod.MemQuery(ok=True, data={"id": "01INBOXID", "status": "pending"})
+
+    monkeypatch.setattr(_dist, "mem_inbox_add", fake_inbox_add)
+    monkeypatch.setattr(_dist, "remove_from_queue", lambda *a, **k: None)
+    monkeypatch.setattr(_dist, "is_fingerprint_rejected", lambda *a, **k: False)
+
+    p = _make_knowledge_proposal()
+    inbox_id = _dist.apply_proposal_to_l2(tmp_path, p)
+    assert inbox_id == "01INBOXID"
+
+
+def test_apply_proposal_to_l2_returns_none_for_forget_l1(tmp_path, monkeypatch):
+    """Branch não-conhecimento retorna None explícito (contrato -> str | None)."""
+    import engine.memory.distiller as _dist
+
+    monkeypatch.setattr(_dist, "_apply_forget_l1", lambda *a, **k: None)
+    monkeypatch.setattr(_dist, "remove_from_queue", lambda *a, **k: None)
+    monkeypatch.setattr(_dist, "is_fingerprint_rejected", lambda *a, **k: False)
+
+    p = DistillationProposal(
+        id="P-forget",
+        kind="forget-l1",
+        title="archive auth",
+        description="feature obsoleta",
+        provenance=["auth"],
+        payload={"target": "auth"},
+    )
+    assert _dist.apply_proposal_to_l2(tmp_path, p) is None
+
+
 # ── Task 4 (6c): cleanup de órfãos ────────────────────────────────────────────
 
 
