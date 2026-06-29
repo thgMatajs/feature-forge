@@ -3902,6 +3902,31 @@ do W-STATE (mesmo mapeamento de prefixo, preservando tudo após `L1/`). Docs
 históricos (plans/specs/reports, `08-session-handoff.md`) ficam de fora — são
 registros point-in-time.
 
+## Onda 7 — re-rota de leitura-de-L2 → `mem find`: cobertura PENDENTE em 4 agentes
+
+A Onda 7 (W-AGENTS) re-rotou as leituras-de-conhecimento (L2) pro `mem find`
+nos 5 conductor prompts do escopo-spec da onda (`planning-conductor.md`,
+`feature-prd-agent.md`, `contract-planner-agent.md`, `readiness-reviewer`,
+`retrospective-agent.md`) e deletou o `memory-distiller.md`. Esse escopo está
+fechado e revisado.
+
+Fica de fora — cobertura PENDENTE, follow-on explícito — QUATRO outros agentes
+que ainda leem L2 como conhecimento e NÃO foram tocados nesta onda (estavam
+fora do escopo-spec):
+
+- `agents/screen-analysis-agent.md`
+- `agents/feature-intake-agent.md`
+- `agents/task-contract-writer.md`
+- `agents/tech-spec-agent.md`
+
+Sem registrar isto, o "gate global sobre `agents/`"
+(`grep -rniE "memory[ /-]?L2|L2[.) ](patterns|findings|frozen|decisions)|L2-project\.yaml" agents/`)
+fica falsamente verde na próxima leitura — esses 4 ainda emitem hits de
+leitura-de-conhecimento órfã. Candidatos a uma onda dedicada de re-rota (mesmo
+padrão: comentário/instrução de "ler L2" → "consulte o acervo: `mem find
+\"<tema>\"`" com degrade-soft). Distinguir, como na Onda 7, write-path
+target-files e schema-refs (que FICAM) das leituras acionáveis (que migram).
+
 ---
 
 **For a fresh session retomando o projeto, use o handoff:**

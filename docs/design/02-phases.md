@@ -98,12 +98,14 @@ Agents need schemas first, otherwise their prompts are vague.
     - task-contract-writer ✅
     - readiness-reviewer ✅
     - retrospective-agent ✅
-    - memory-distiller ✅
+    - memory-distiller ✅ (removido na Onda 7 — ver CHANGELOG)
 
 → **Output:** system thinks completely on paper.
 
 These 9 sub-agents can be designed in parallel (independent once
-planning-conductor exists, which it does).
+planning-conductor exists, which it does). _(Ledger histórico da Phase 2;
+o memory-distiller foi removido na Onda 7 — ver CHANGELOG. O count "9"
+reflete o snapshot de fase, não o inventário vivo.)_
 
 ### Phase 3 — Conteúdo (templates + cards canônicos) ✅ done
 
