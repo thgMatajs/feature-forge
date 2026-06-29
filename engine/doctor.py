@@ -585,7 +585,7 @@ def _check_memory_l2(project_root: Path, config: dict) -> _CategoryReport:
             "L2 size",
             status,
             f"{size_kb:.1f} KB / {max_mb} MB ({pct:.0f}%)",
-            "memory-distiller roda automático no próximo verify",
+            "se o acervo crescer, rode `forge memory distill` (curadoria via mem evolve)",
         )
     )
     return _CategoryReport("Memory L2", checks)
