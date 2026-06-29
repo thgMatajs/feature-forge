@@ -75,7 +75,32 @@ try:
         print("")
     else:
         # Passo 4: maior created_at (ISO-8601 Z → comparação lexicográfica ok).
-        newest = max(sessions, key=lambda o: o.get("created_at", ""))
+        #
+        # Resiliência (cross-AI bot PR#32): este hook é o caminho de
+        # continuidade entre sessões — escolher a sessão errada surfa o
+        # handoff errado no SessionStart. O JSONL é editável à mão, então
+        # um `created_at` corrompido (não-ISO) ou ausente NÃO pode quebrar
+        # nem mis-ordenar a seleção. A chave de ordenação valida que o
+        # valor é uma string ISO parseável ANTES de usá-lo; entradas com
+        # `created_at` ausente OU malformado caem pra um sentinela vazio
+        # ("") que as ordena pro FIM — nunca são escolhidas como "mais
+        # recente". O caso feliz (datas ISO válidas) mantém o comportamento
+        # atual: comparação lexicográfica direta da string ISO-8601 Z.
+        from datetime import datetime
+
+        def created_at_key(o):
+            raw = o.get("created_at")
+            if not isinstance(raw, str) or not raw:
+                return ""  # ausente / não-string → ordena pro fim
+            try:
+                # Normaliza o sufixo Z (ISO-8601 UTC), que fromisoformat só
+                # aceita a partir do 3.11; valida que é uma data parseável.
+                datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except (ValueError, TypeError):
+                return ""  # malformado ("abc", lixo) → ordena pro fim
+            return raw  # ISO válido → comparação lexicográfica (caso feliz)
+
+        newest = max(sessions, key=created_at_key)
         print(newest.get("body", "").strip())
 except Exception:
     print("")

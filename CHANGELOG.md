@@ -149,6 +149,14 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Fixed
 
+- Hook SessionStart (`.claude/hooks/session-start-orientation.sh`) resiliente
+  a `created_at` malformado no JSONL do mem (cross-AI bot PR #32): a seleção
+  da sessão mais recente agora valida que `created_at` é uma string ISO
+  parseável antes de usá-la como chave; entradas ausentes OU corrompidas (não
+  derivam de date válida) caem pra um sentinela que as ordena pro fim — nunca
+  são mis-selecionadas como "mais recente" (caminho de continuidade entre
+  sessões). Caso feliz (datas ISO válidas) preserva o comportamento atual.
+
 - `forge undo` de evolve-apply de conhecimento agora reverte de fato via
   `mem inbox reject` (W-ROUTE 6d) — antes era no-op silencioso pós-6b (o
   candidato persistia no inbox do mem). O id é capturado no apply e gravado
