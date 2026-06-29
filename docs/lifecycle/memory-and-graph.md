@@ -87,7 +87,7 @@ event router (engine/ingest.py)
 | Event | Trigger | Updates | Strategy |
 |---|---|---|---|
 | `forge doctor` | manual / weekly cron | `workflow-config.yaml.doctor` | Health checks + status |
-| L2 distillation | when `L2` > max-size | `L2-project.yaml` | `memory-distiller` agent compresses |
+| L2 distillation | when `L2` > max-size | `L2-project.yaml` | `forge memory distill` → `mem evolve` cura/comprime o acervo |
 | Stale external docs cache | TTL expired | `inventory/external-docs-cache/` | Re-fetch via Context7 |
 | Cards snapshot drift | weekly | compare sha256 | Suggest rodar `forge reconfigure` e escolher "verificar updates de cards do canonical" no menu |
 
@@ -160,9 +160,9 @@ Retrospective agent compares L1 of just-finished feature with current L2
 Trigger 2: distillation (when L2 > max-size)
    │
    ▼
-memory-distiller agent
+forge memory distill → mem evolve
    │
-   ├──→ Reads full L2
+   ├──→ O acervo (mem) gere o tamanho — cura/compressão é do `mem evolve`
    ├──→ Identifies redundant / superseded entries
    ├──→ Compresses keeping what killed real ambiguity
    └──→ Rewrites L2 (with backup at .claude/memory/L2-project.yaml.bak)

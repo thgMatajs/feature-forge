@@ -662,7 +662,7 @@ promotion-candidates:
 max-size-mb: 0.5
 
 When exceeded:
-  memory-distiller agent runs
+  forge memory distill → mem evolve (o acervo gere o tamanho)
   ↓
   Reads full L2
   ↓

@@ -651,7 +651,7 @@ push through, but the skill is honest about the signal.
 | 4 | `$EDITOR` não setado | Fallback inline (Cena 8 variação) |
 | 5 | Empty queue mas user esperava itens | Variação A explica por que e como auditar |
 | 6 | Proposta stale (arquivo sumiu) | Auto-reject com reason "stale" (Cena 13) |
-| 7 | L2 ultrapassa max-size-mb durante apply | Pausa o apply, sugere `memory-distiller` antes de seguir |
+| 7 | L2 ultrapassa max-size-mb durante apply | Pausa o apply, sugere `forge memory distill` (→ `mem evolve`) antes de seguir |
 | 8 | Duas propostas conflitantes | Cena 12 bundle + merge/pick |
 | 9 | User Ctrl+C no meio do loop | Estado da fila preservado; já-aplicadas ficam aplicadas; não-aplicadas permanecem como pendentes |
 | 10 | rejected-evolutions.yaml corrompido | evolve avisa, oferece backup vazio, segue (não bloqueia) |

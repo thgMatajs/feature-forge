@@ -98,7 +98,7 @@ prompt criado tem **um lugar pré-definido**, sem improviso.
 │   │   ├── l1.py                          per-feature reader/writer
 │   │   ├── l2.py                          project layer
 │   │   ├── l3.py                          read-only proxy to auto-memory
-│   │   └── distiller.py                   memory-distiller agent driver
+│   │   └── distiller.py                   L2 distillation driver (cura via mem evolve)
 │   │
 │   ├── cards/
 │   │   ├── __init__.py
@@ -151,8 +151,7 @@ prompt criado tem **um lugar pré-definido**, sem improviso.
 │   ├── tech-spec-agent.md
 │   ├── task-contract-writer.md
 │   ├── readiness-reviewer.md
-│   ├── retrospective-agent.md
-│   └── memory-distiller.md
+│   └── retrospective-agent.md
 │
 ├── cards/                                 Canonical card library (12 in v1)
 │   ├── kotlin-language/

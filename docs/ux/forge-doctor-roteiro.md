@@ -559,10 +559,9 @@ bloqueia trabalho por causa de rede.
          Não é bug; é ineficiência.
        
        Como resolver
-         memory-distiller roda automaticamente quando a última task
-         da feature corrente é verificada (retrospective auto-trigger).
-         Não há comando manual — distilação não tem entrypoint próprio
-         por design (ver `docs/design/06-command-surface.md`).
+         se o acervo crescer, rode `forge memory distill` (curadoria
+         via mem evolve). O `mem evolve` gere o tamanho do acervo —
+         a compressão deixou de ser de um agente dedicado.
        
        Risco: baixo — degrada com o tempo, nunca quebra.
 ```
