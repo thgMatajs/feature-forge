@@ -43,8 +43,9 @@ def test_mem_find_builds_find_argv(tmp_path, monkeypatch):
     res = mem.mem_find(tmp_path, "reuse", limit=3)
     assert res.ok is True
     assert res.data == [{"id": "X", "score": 0.5, "type": "feedback", "title": "t", "author": "a"}]
-    # argv: <bin> --json find reuse -k 3
-    assert cap["cmd"][1:] == ["--json", "find", "reuse", "-k", "3"]
+    # P5 (cross-AI PR#32): flags ANTES, `--` separa, query POSICIONAL por último.
+    # argv: <bin> --json find -k 3 -- reuse
+    assert cap["cmd"][1:] == ["--json", "find", "-k", "3", "--", "reuse"]
 
 
 def test_mem_find_type_filter(tmp_path, monkeypatch):
@@ -52,7 +53,30 @@ def test_mem_find_type_filter(tmp_path, monkeypatch):
     _stub(tmp_path / ".claude" / "bin" / "mem")
     cap = _patch_run(monkeypatch, 0, stdout="[]")
     mem.mem_find(tmp_path, "q", mem_type="decision")
+    # P5: `--type` é flag e vem ANTES do separador `--`; a query depois dele.
     assert "--type" in cap["cmd"] and "decision" in cap["cmd"]
+    sep = cap["cmd"].index("--")
+    assert cap["cmd"].index("--type") < sep
+    assert sep < cap["cmd"].index("q")
+
+
+def test_mem_find_leading_dash_query_protected(tmp_path, monkeypatch):
+    """P5 (cross-AI PR#32): query iniciada por `-` não é parseada como flag.
+
+    Verificado empiricamente contra o mem vendorizado: `find "-test" -k 2` falha
+    com "required: query". O separador `--` (flags antes, query por último)
+    protege o positional sem quebrar os flags.
+    """
+    from engine.integrations import mem
+    _stub(tmp_path / ".claude" / "bin" / "mem")
+    cap = _patch_run(monkeypatch, 0, stdout="[]")
+    mem.mem_find(tmp_path, "-test", limit=2)
+    # argv: <bin> --json find -k 2 -- -test
+    assert cap["cmd"][1:] == ["--json", "find", "-k", "2", "--", "-test"]
+    # O `--` vem por último, ANTES do query; os flags todos ANTES do `--`.
+    sep = cap["cmd"].index("--")
+    assert cap["cmd"][sep + 1] == "-test"  # query é o ÚLTIMO token
+    assert cap["cmd"].index("-k") < sep    # flag protegida (antes do separador)
 
 
 def test_mem_get_returns_note(tmp_path, monkeypatch):

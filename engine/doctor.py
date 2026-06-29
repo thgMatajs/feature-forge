@@ -44,7 +44,7 @@ from engine.memory.l1 import list_active_features, list_archived_features
 from engine.memory.l2 import l2_size_bytes
 from engine.ui import output_mode, question, renderer
 from engine.ui.question import PromptAbortedError
-from engine.integrations.mem import mem_call
+from engine.integrations.mem import MEM_PINNED_VERSION, mem_call
 from engine.utils.paths import (
     ProjectRootNotFoundError,
     active_config_path,
@@ -1301,19 +1301,45 @@ def _check_mem(project_root: Path) -> _CategoryReport:
     pin = vendored.parent / "mem.version"
     asset_v = mem_asset_version_path()
     if pin.is_file() and asset_v.is_file():
-        vp = pin.read_text().strip()
-        va = asset_v.read_text().strip()
-        if vp != va:
-            # M-001: `forge reconfigure` NÃO re-vendoriza nesta onda;
-            # `forge init` é idempotente e re-vendoriza. Remediation honesta.
+        # As leituras ficam DENTRO do try: o `is_file()` acima não garante a
+        # leitura — um EACCES ou um delete-em-corrida (TOCTOU) entre o guard e
+        # o `read_text()` levantaria OSError cru, e `doctor` é o comando de
+        # health-check que NUNCA deve crashar. Degrada pra um check WARN.
+        try:
+            vp = pin.read_text().strip()
+            va = asset_v.read_text().strip()
+        except OSError as exc:
             checks.append(_Check(
                 "pin",
                 _STATUS_WARN,
-                f"drift: vendorizado {vp} vs asset {va}",
-                remediation="rode `forge init` pra re-vendorizar o asset mais novo",
+                f"não consegui ler o pin/asset de versão: {exc}",
             ))
         else:
-            checks.append(_Check("pin", _STATUS_OK, f"pin alinhado ({vp})"))
+            if vp != va:
+                # M-001: `forge reconfigure` NÃO re-vendoriza nesta onda;
+                # `forge init` é idempotente e re-vendoriza. Remediation honesta.
+                checks.append(_Check(
+                    "pin",
+                    _STATUS_WARN,
+                    f"drift: vendorizado {vp} vs asset {va}",
+                    remediation="rode `forge init` pra re-vendorizar o asset mais novo",
+                ))
+            elif va != MEM_PINNED_VERSION:
+                # P7 (cross-AI PR#32): o asset embutido e o pin vendorizado
+                # concordam entre si, mas divergem da constante de pin do forge
+                # (a fonte-da-verdade em código). Drift silencioso entre o
+                # `MEM_PINNED_VERSION` e o asset — sinaliza pra re-pinar.
+                checks.append(_Check(
+                    "pin",
+                    _STATUS_WARN,
+                    f"drift: asset {va} vs pin do forge {MEM_PINNED_VERSION}",
+                    remediation=(
+                        f"realinhe `MEM_PINNED_VERSION` ({MEM_PINNED_VERSION}) "
+                        f"com o asset embutido ({va})"
+                    ),
+                ))
+            else:
+                checks.append(_Check("pin", _STATUS_OK, f"pin alinhado ({vp})"))
 
     return _CategoryReport("mem", checks)
 

@@ -155,6 +155,35 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   no evento `evolve-apply`; report honesto quando o candidato já virou nota
   ativa ou o mem está indisponível.
 
+- `mem_call` degrada soft em `OSError`/`PermissionError`, não só em
+  `TimeoutExpired` (cross-AI PR #32, P1). Um binário mem resolvido por
+  `is_file()` mas não-executável (bit de exec ausente / shebang ruim /
+  delete em corrida) levantava `OSError` cru que escapava a fronteira e
+  crashava o caller, furando o contrato de degrade-soft de plan/implement/
+  verify/qa. Agora mapeia pro mesmo `MemResult` degradado (`found=True`,
+  exit `_BINARY_NOT_FOUND`).
+
+- `forge doctor` não crasha mais no check de pin do mem (cross-AI PR #32,
+  P3). `pin.read_text()`/`asset_v.read_text()` rodavam fora de try/except
+  logo após `is_file()` — um EACCES ou delete-em-corrida (TOCTOU) propagava
+  traceback cru do comando de health-check que nunca deve crashar. Agora
+  degrada pra um check WARN ("não consegui ler o pin/asset").
+
+- `mem_find` protege a `query` posicional com o separador `--` (cross-AI
+  PR #32, P5). Uma busca cujo tema começa por `-` (derivada de slug/
+  `scope.target`/descrição de task) era parseada como flag pelo argparse do
+  mem → exit≠0 → falha silenciosa do hint. Argv corrigido com a ordem
+  verificada empiricamente: flags ANTES, `--` separa, query por ÚLTIMO
+  (`find -k N [--type T] -- query`).
+
+### Changed
+
+- `MEM_PINNED_VERSION` (`engine/integrations/mem.py`) deixou de ser dead
+  constant (cross-AI PR #32, P7): o pin-check de `forge doctor` agora valida
+  o asset embutido contra a constante (fonte-da-verdade do pin do forge em
+  código), pegando drift silencioso entre a constante Python e o asset
+  `engine/assets/mem/VERSION`.
+
 ## [1.6.1] - 2026-06-24
 
 Remediação do piloto: rodar `forge qa` end-to-end contra o consumer real MeoBonsai-qa expôs um bug no `forge doctor` que rejeitava o `schema-version` canônico que o próprio `forge init` escreve — todo consumer recém-inicializado falhava o primeiro `doctor`. Junto, alinhamentos de consistência entre os templates/agents do fluxo qa e o que o engine de fato lê.

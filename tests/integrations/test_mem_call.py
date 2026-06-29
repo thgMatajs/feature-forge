@@ -182,6 +182,49 @@ def test_timeout_fail_soft(tmp_path, monkeypatch):
     assert result.stderr  # mensagem de timeout descritiva
 
 
+# 7b — OSError/PermissionError do subprocess → fail-soft, sem propagar.
+#      P1 (cross-AI PR#32): binário existe mas é não-executável / shebang ruim /
+#      delete em corrida entre o is_file() e o run → OSError cru escapava a
+#      fronteira e crashava o caller, furando o degrade-soft.
+def test_oserror_fail_soft(tmp_path, monkeypatch):
+    from engine.integrations import mem as mem_mod
+
+    vendored = tmp_path / ".claude" / "bin" / "mem"
+    _write_stub_binary(vendored)
+
+    def _fake_run(cmd, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    # Não deve propagar exceção — degrade-soft como o timeout.
+    result = mem_mod.mem_call(tmp_path, ["doctor"])
+
+    assert result.found is True  # binário existe; só não pôde ser executado
+    assert result.exit_code == mem_mod._BINARY_NOT_FOUND
+    assert result.stdout == ""
+    assert result.stderr  # mensagem descritiva presente
+
+
+# 7c — OSError genérico (não só PermissionError) também degrada soft.
+def test_generic_oserror_fail_soft(tmp_path, monkeypatch):
+    from engine.integrations import mem as mem_mod
+
+    vendored = tmp_path / ".claude" / "bin" / "mem"
+    _write_stub_binary(vendored)
+
+    def _fake_run(cmd, **kwargs):
+        raise OSError("Exec format error")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    result = mem_mod.mem_call(tmp_path, ["doctor"])
+
+    assert result.found is True
+    assert result.exit_code == mem_mod._BINARY_NOT_FOUND
+    assert result.stderr
+
+
 # 8 — env do subprocesso é scrubado de sinais de host agêntico.
 def test_env_scrubbed(tmp_path, monkeypatch):
     from engine.integrations import mem as mem_mod

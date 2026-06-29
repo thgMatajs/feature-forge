@@ -140,6 +140,18 @@ def mem_call(
             stderr=f"mem timeout (>{timeout}s)",
             timed_out=True,
         )
+    except OSError as exc:
+        # Binário resolveu por `is_file()` mas não pôde ser executado: bit de
+        # exec ausente / shebang ruim (PermissionError, Exec format error) ou
+        # delete em corrida entre o `is_file()` e o `run` (FileNotFoundError).
+        # `OSError` cobre PermissionError e FileNotFoundError — degrada soft,
+        # como o timeout, em vez de propagar e furar o contrato de degrade.
+        return MemResult(
+            found=True,
+            exit_code=_BINARY_NOT_FOUND,
+            stdout="",
+            stderr=f"mem não executável: {exc}",
+        )
 
     # Binário rodou: found=True independente do exit-code. exit 2 (not-found)
     # é contrato do mem, não falha de execução — o caller interpreta a
@@ -211,10 +223,23 @@ def mem_find(
     limit: int = 10,
     mem_type: str | None = None,
 ) -> MemQuery:
-    """`mem find` — busca ranqueada (títulos only). data = list de hits."""
-    args = ["find", query, "-k", str(limit)]
+    """`mem find` — busca ranqueada (títulos only). data = list de hits.
+
+    O separador ``"--"`` antes da ``query`` posicional protege uma busca cujo
+    tema comece por ``-`` (derivada de slug / ``scope.target`` / descrição de
+    task): sem ele, o argparse do mem trata ``-test`` como flag e a busca
+    legítima FALHA SILENCIOSA (degrade-soft cobre, mas o hint some).
+
+    Nuance verificada empiricamente contra o mem vendorizado (2026-06-29): os
+    flags (``-k``/``--type``) vêm ANTES, o ``--`` separa, a ``query`` fica por
+    ÚLTIMO. O ``--`` no fim (estilo ``inbox_add``, onde só há um positional)
+    NÃO serve aqui — os flags depois dele virariam positional
+    (``unrecognized arguments: -k 2``).
+    """
+    args = ["find", "-k", str(limit)]
     if mem_type:
         args += ["--type", mem_type]
+    args += ["--", query]
     return _run_or_degrade(project_root, args)
 
 
