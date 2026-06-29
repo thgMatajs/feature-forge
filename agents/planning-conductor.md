@@ -42,7 +42,7 @@ Read on entry:
 - `.claude/inventory/conventions.yaml` — folder layout, state pattern, DI pattern
 - `.claude/inventory/design-system.yaml` — components, tokens, status, paths
 - `.claude/inventory/i18n.yaml` — source of truth, locales, naming pattern
-- `.claude/memory/L2-project.yaml` — patterns established across features
+- O acervo de conhecimento do projeto via `.claude/bin/mem find "<tema da feature>"` — patterns/decisões/findings estabelecidos entre features (sem filtro pra patterns/findings; `--type decision` pra decisões travadas). Degrade-soft: se o `mem` está ausente/vazio, prossiga sem o bloco — nunca surfe "forge init", nunca trave.
 - `~/.claude/memory/MEMORY.md` — user-global preferences (L3)
 - `.claude/cards/*/agent-contributions.md` — instructions cards inject into you
 
@@ -114,7 +114,7 @@ technical stays technical.
 
 Read everything available BEFORE opening your mouth. Order:
 
-1. Load workflow-config + all inventories + memory L2/L3
+1. Load workflow-config + all inventories + L3 (user prefs); consulta o acervo do projeto via `.claude/bin/mem find` pelos temas da feature (degrade-soft se ausente)
 2. Resolve feature slug (from arg, or ask once at start)
 3. If `forge plan` was called with no input, ask once: ticket? screenshots? description?
 4. **Subtype detection (discipline §8 — non-product feature track).** Read
@@ -328,7 +328,7 @@ in order, for each node:
 1. Ticket fields (description, AC)
 2. Screenshots (vision)
 3. Codebase graph (similar features)
-4. Memory L2 (project patterns) and L3 (user prefs)
+4. Acervo do projeto (`.claude/bin/mem find "<tema>"` — patterns; `--type decision` pra decisões travadas) e L3 (user prefs)
 5. Active cards' defaults
 
 For each decision node, record:
@@ -420,7 +420,7 @@ humano decide). Inputs (reuso do que você já carregou na Phase 1):
 
 - Grafo **Q1** (similar-features) + **Q11-Q17** (reuse-intelligence)
 - `engine/inventory/` — design-system, i18n, conventions
-- L2 `decisions-frozen` + memory L2/L3
+- Decisões travadas do acervo (`.claude/bin/mem find "<tema>" --type decision`) + L3 (user prefs); degrade-soft se o `mem` está ausente
 
 Confronte em 4 frentes. Pra cada conflito, registre um item `challenge:` com
 `rationale-trace`:
@@ -428,7 +428,7 @@ Confronte em 4 frentes. Pra cada conflito, registre um item `challenge:` com
 | Frente | Exemplo de confronto |
 |---|---|
 | **Duplicação** | "Q1 mostra `bonsai-list` já persiste `starred` — reusar / estender / novo?" |
-| **Terminologia** | "o termo X conflita com a entidade Y da L2 — alinhar nomenclatura?" |
+| **Terminologia** | "o termo X conflita com a entidade Y do acervo (`mem find`) — alinhar nomenclatura?" |
 | **Decisão frozen** | "isso contraria a decisão D-N (frozen) — revisitar ou ajustar o pedido?" |
 | **Fora do design-system** | "o componente Z não está no design-system do projeto — usar o equivalente W?" |
 
@@ -453,7 +453,7 @@ Esta tela vai ser planejada sem nenhuma referência visual. Três caminhos:
   2) Descrever a tela em texto
      os estados viram `confirmed` com `source: prd/intake`.
 
-  3) Reusar a screen-analysis de uma feature similar da L2
+  3) Reusar a screen-analysis de uma feature similar (acervo via `mem find`)
      herda a extração de uma tela parecida (Q1 mostra candidatos).
 
 Abortar continua um caminho honesto só se nenhum dos três rolar.
@@ -461,7 +461,7 @@ Abortar continua um caminho honesto só se nenhum dos três rolar.
 
 #### Degradação graciosa
 
-Grafo/inventory/L2 ausente (projeto sem bootstrap) → pule o que não tem e
+Grafo/inventory/acervo (`mem`) ausente (projeto sem bootstrap) → pule o que não tem e
 anote no `rationale-trace` ("grafo ausente — confronto de duplicação pulado").
 NUNCA crashe o grill por falta de fonte.
 
@@ -728,7 +728,7 @@ dispatch:
     - screenshots/*.png
     - inventory/design-system.yaml (filtered to components used)
     - inventory/i18n.yaml (filtered to relevant keys)
-    - memory/L2-project.yaml (filtered to screen patterns)
+    - hits de `mem find "<tema> screen patterns"` (acervo; degrade-soft se ausente)
     - resolved-decisions.yaml (from Phase 3)
   expected-output:
     - screen-analysis.md (template at templates/screen-analysis.template.md)
@@ -893,7 +893,7 @@ verified (decision 11). The retrospective scope varies by subtype:
 - A gate would be violated by proceeding
 
 **When NOT to ask:**
-- The answer is in memory L2/L3 with confidence > 0.85
+- The answer is in the project knowledge acervo (`mem find`) or L3 with confidence > 0.85
 - The codebase graph shows a clear convention
 - It's an implementation detail (sub-agents will handle within constraints)
 - An active card defines the default
@@ -976,10 +976,10 @@ decisions:
   - id: D-001
     timestamp: 2026-05-28T14:23:11Z
     decision: "Persistence: local cache + server with last-write-wins"
-    source: user-elicitation        # or: memory-L2 | codebase-graph | card-default | inference
+    source: user-elicitation        # or: mem | codebase-graph | card-default | inference
     rationale: |
       User confirmed offline-read but online-only-write in Q3.
-      L2 shows project always uses last-write-wins (3/3 features).
+      O acervo (`mem find`) mostra projeto sempre usando last-write-wins (3/3 features).
     confidence: 1.0
     influences-artifacts:
       - data-contract-spec.yaml
@@ -1196,8 +1196,8 @@ screen-analysis-agent returned ui-state-spec.yaml with 'empty' state empty.
 Re-dispatch with correction:
   "Your previous output left the 'empty' state field blank. The screenshots
    don't show this state, but it's required. Either:
-   (a) Infer from data flow: what UI shows when the list is empty? Look at
-       memory L2 — this project uses MeoFeedbackState for empty states.
+   (a) Infer from data flow: what UI shows when the list is empty? Consulte
+       o acervo (`mem find "empty state"`) — this project uses MeoFeedbackState for empty states.
    (b) Mark it as open question in open-questions.yaml with reasoning
        AND propose a default empty-state component to use.
    Do not leave the field blank. Return the corrected ui-state-spec.yaml."
