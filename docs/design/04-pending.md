@@ -84,6 +84,11 @@ checklist for next sessions.
   de memória. `undo.py` ficou fora do escopo de 6b (não foi tocado). *Tratar em
   6c (re-rota de undo pra knowledge kinds) ou via `mem inbox reject` como
   alternativa operacional enquanto o fix não chega.*
+  RESOLVIDO em 6d: o apply captura o `mem-inbox-id` (de `mem --json inbox add`)
+  e grava em `routed-to: mem-inbox` + `mem-inbox-id` no evento `evolve-apply`;
+  `_undo_evolve` lê de volta e chama `mem inbox reject <id>`. Report honesto se
+  o candidato já foi promovido ou o mem está indisponível (não finge sucesso).
+  O path L2 legado fica intacto pros kinds não-conhecimento e eventos pré-6d.
 
 ## W-MIGRATE (migrador L2→mem) — DEFERIDO até brownfield real (2026-06-26)
 

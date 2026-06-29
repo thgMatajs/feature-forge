@@ -9,6 +9,9 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Added
 
+- `engine/integrations/mem.py::mem_inbox_reject` — wrapper degrade-soft sobre
+  `mem inbox reject <id>`.
+
 - `mem_inbox_add` — wrapper sobre `mem inbox add` na camada de integração
   (`engine/integrations/mem.py`). Argv: `inbox add --type mem_type -t title
   [opcionais] --origin origin -- body`. Separador `--` antes do body é
@@ -132,6 +135,14 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   Nenhuma das duas é revisitada — a substituição opera dentro do que ambas já endossam. (Por não editar `docs/design/01-decisions.md`, o hard-block do Mandamento #1 não dispara; ADR-note aqui é a documentação correta de "honra, não revisita".)
 
 - Handoff de sessão re-roteado pro `mem` (Fase 0.5 — dogfood). O `session-start-orientation.sh` passa a injetar o corpo do último `mem session` (dois passos: `mem --json find "" --type session -k 1` → `mem --json get <id>` → `.body`), com fallback gracioso pro grep dos dois campos do `08-session-handoff.md` quando o mem está vazio/ausente/falhando — o bloco hardcoded de Mandamento 0 + fluxo e o contrato exit-0 permanecem intactos em todos os caminhos. O `post-edit-doc-drift.sh` e o SOFT WARNING do `pre-commit-feature-forge.sh` deixam de exigir o handoff-arquivo no gate per-commit (fica `CHANGELOG`/`README`) e passam a apontar `mem session` como o trilho de fim-de-sessão; o HARD BLOCK do Mandamento #1 (`01-decisions.md`) não foi tocado. `CLAUDE.md` §6 e `.claude/rules/doc-sync.md` refletem o novo modelo (per-commit = CHANGELOG/README; handoff = `mem session`); as duas notas mem de doc-sync (matriz código→docs + checklist pré-commit) foram re-classificadas via `mem add` + `mem supersede` (antigas preservadas como superseded). O `docs/design/08-session-handoff.md` congelou — snapshot histórico + fallback de bootstrap do SessionStart, não mais editado a cada sessão (estado-final hybrid: não deletado). Nenhuma mudança de código Python.
+
+### Fixed
+
+- `forge undo` de evolve-apply de conhecimento agora reverte de fato via
+  `mem inbox reject` (W-ROUTE 6d) — antes era no-op silencioso pós-6b (o
+  candidato persistia no inbox do mem). O id é capturado no apply e gravado
+  no evento `evolve-apply`; report honesto quando o candidato já virou nota
+  ativa ou o mem está indisponível.
 
 ## [1.6.1] - 2026-06-24
 
