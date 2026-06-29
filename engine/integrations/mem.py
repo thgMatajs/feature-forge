@@ -283,6 +283,25 @@ def mem_inbox_add(
     return _run_or_degrade(project_root, args)
 
 
+def mem_inbox_reject(project_root: Path, inbox_id: str) -> MemQuery:
+    """`mem inbox reject <id>` — descarta um candidato do inbox do mem.
+
+    Usado pelo `forge undo` pra reverter um evolve-apply de conhecimento
+    (W-ROUTE 6d): o id do candidato foi capturado no apply e gravado no
+    evento `evolve-apply`. Reusa ``_run_or_degrade`` — degrade soft 3-caminhos,
+    sem surfar "forge init". Se o candidato já foi promovido a nota ativa ou
+    já não está no inbox, o mem retorna erro e ``MemQuery.ok`` vem False —
+    o caller (undo) reporta honesto, sem fingir sucesso.
+
+    Verificado empiricamente (2026-06-29) contra o mem vendorizado: o sucesso
+    com ``--json`` emite JSON limpo (``{"rejected": "<id>"}``, exit 0) e o
+    not-found emite texto em stderr com exit 2 — ambos tratados corretamente
+    por ``_run_or_degrade`` (parse no exit 0, ok=False no exit não-zero). Não
+    precisa de caminho non-json: o uso padrão, como em ``mem_inbox_add``, basta.
+    """
+    return _run_or_degrade(project_root, ["inbox", "reject", inbox_id])
+
+
 def mem_context_hint(
     project_root: Path,
     query: str,

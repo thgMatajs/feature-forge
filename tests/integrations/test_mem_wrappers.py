@@ -192,6 +192,26 @@ def test_inbox_add_degrades_soft_when_binary_missing(tmp_path, monkeypatch):
     assert res.message  # mensagem 3-caminhos presente
 
 
+# ── Task 1 (6d): mem_inbox_reject ─────────────────────────────────────────
+
+
+def test_mem_inbox_reject_invokes_reject_subcommand(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_run_or_degrade(project_root, args):
+        captured["args"] = args
+        from engine.integrations.mem import MemQuery
+        return MemQuery(ok=True, data={"status": "rejected"})
+
+    monkeypatch.setattr(
+        "engine.integrations.mem._run_or_degrade", fake_run_or_degrade
+    )
+    from engine.integrations.mem import mem_inbox_reject
+    res = mem_inbox_reject(tmp_path, "01ABCDEF")
+    assert res.ok is True
+    assert captured["args"] == ["inbox", "reject", "01ABCDEF"]
+
+
 # ── Teste real-mem (MOCK-BLINDNESS): path de escrita contra binário real ──
 
 
