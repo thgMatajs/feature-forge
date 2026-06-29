@@ -341,8 +341,18 @@ def _record_history_event(
         event.update(extras)
     try:
         append_history(_HISTORY_SLUG, project_root, event)
-    except Exception:
-        pass
+    except (OSError, ValueError) as exc:
+        # P6 (cross-AI PR#32): narrow do broad-except. Desde o 6d o evento
+        # `evolve-apply` carrega o `mem-inbox-id` load-bearing pro recovery — se
+        # o append falhar SILENCIOSAMENTE, o candidato no mem-inbox fica órfão e
+        # o `forge undo` nunca acha o evento pra re-rotar pro `mem inbox reject`.
+        # Espelha `undo.py::_append_undo_log` (avisa mentor-calmo, não propaga):
+        # OSError (filesystem/lock/permissions); ValueError se payload não
+        # serializar. Aviso visível em vez de swallow; não propaga (o apply já
+        # sucedeu — não dá pra desfazer o drain aqui).
+        renderer.write(renderer.dim(
+            f"  (aviso) não consegui registrar o evento evolve — {exc}"
+        ))
 
 
 def _filter_rejected(
@@ -426,7 +436,12 @@ def run(argv: list[str]) -> int:
         return 0
 
     # ── Pre-flight overflow ─────────────────────────────────────────────────
-    if detect_l2_overflow(project_root, cfg):
+    # P4 (cross-AI PR#32): só checa overflow se há proposta que de fato toca L2.
+    # Knowledge kinds roteiam pro mem-inbox e nunca escrevem L2 — uma L2 legada
+    # cheia não pode bloquear applies só-mem-inbox válidos (espelha o skip
+    # per-proposal de `_apply_proposal`). O guard per-proposta cobre os não-knowledge.
+    needs_l2 = any(p.kind not in _KNOWLEDGE_KINDS for p in proposals)
+    if needs_l2 and detect_l2_overflow(project_root, cfg):
         choice = _three_paths_overflow(project_root)
         _write_checkpoint(
             project_root,

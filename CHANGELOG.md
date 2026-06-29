@@ -155,6 +155,26 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   no evento `evolve-apply`; report honesto quando o candidato já virou nota
   ativa ou o mem está indisponível.
 
+- Hardening do recovery-path 6d (cross-AI review PR #32):
+  - **P2** (`engine/memory/distiller.py`): `apply_proposal_to_l2` valida o
+    `mem-inbox-id` (`result.data["id"]`, não-vazio) ANTES de drenar a fila.
+    Se o mem mudar o shape do `inbox add --json` (sem `id`, ou `id`
+    vazio/null), levanta `MemoryError` sem drenar (raise-não-drena, espelhando
+    o guard de `result.ok`). Antes, um shape mudado retornava `inbox_id=None`
+    silencioso com a proposta já drenada → o evento `evolve-apply` virava
+    L2-style, o guard L-02 de `undo.py` não disparava, e o `forge undo`
+    reportava falso sucesso sobre um candidato órfão.
+  - **P4** (`engine/evolve.py`): o preflight de overflow no topo de `run()` só
+    roda quando há proposta pendente que de fato toca L2. Uma fila só-knowledge
+    (que roteia pro mem-inbox) com L2 legada cheia não bloqueia mais applies
+    válidos — espelha o skip per-proposta de `_apply_proposal`.
+  - **P6** (`engine/evolve.py`): `_record_history_event` estreita o
+    `except Exception: pass` para `(OSError, ValueError)` e emite aviso visível
+    (`renderer.dim`) em vez de swallow silencioso — alinhado com
+    `undo.py::_append_undo_log`. O evento `evolve-apply` carrega o
+    `mem-inbox-id` load-bearing pro recovery; um append-fail silencioso
+    orfanaria o candidato (undo nunca acharia o id).
+
 - `mem_call` degrada soft em `OSError`/`PermissionError`, não só em
   `TimeoutExpired` (cross-AI PR #32, P1). Um binário mem resolvido por
   `is_file()` mas não-executável (bit de exec ausente / shebang ruim /

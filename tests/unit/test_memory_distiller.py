@@ -146,7 +146,7 @@ def test_apply_promote_to_l2_calls_mem_inbox_add(tmp_path, monkeypatch):
         called["source"] = kw.get("source")
         called["origin"] = kw.get("origin")
         from engine.integrations.mem import MemQuery
-        return MemQuery(ok=True, data="01ABC")
+        return MemQuery(ok=True, data={"id": "01ABC", "status": "pending"})
 
     monkeypatch.setattr(_dist, "mem_inbox_add", _fake_inbox_add)
 
@@ -178,7 +178,7 @@ def test_apply_l1_to_l2_promotion_calls_mem_inbox_add(tmp_path, monkeypatch):
     def _fake_inbox_add(project_root, title, body, mem_type, **kw):
         called.append(True)
         from engine.integrations.mem import MemQuery
-        return MemQuery(ok=True, data="01XYZ")
+        return MemQuery(ok=True, data={"id": "01XYZ", "status": "pending"})
 
     monkeypatch.setattr(_dist, "mem_inbox_add", _fake_inbox_add)
 
@@ -202,7 +202,7 @@ def test_apply_consolidate_l2_calls_mem_inbox_add(tmp_path, monkeypatch):
     def _fake_inbox_add(project_root, title, body, mem_type, **kw):
         called.append(True)
         from engine.integrations.mem import MemQuery
-        return MemQuery(ok=True, data="01DEF")
+        return MemQuery(ok=True, data={"id": "01DEF", "status": "pending"})
 
     monkeypatch.setattr(_dist, "mem_inbox_add", _fake_inbox_add)
 
@@ -267,7 +267,7 @@ def test_apply_knowledge_importance_clamp(tmp_path, monkeypatch):
     def _fake_inbox_add(project_root, title, body, mem_type, **kw):
         importances.append(kw.get("importance"))
         from engine.integrations.mem import MemQuery
-        return MemQuery(ok=True, data="01JKL")
+        return MemQuery(ok=True, data={"id": "01JKL", "status": "pending"})
 
     monkeypatch.setattr(_dist, "mem_inbox_add", _fake_inbox_add)
 
@@ -317,6 +317,43 @@ def test_apply_proposal_to_l2_returns_inbox_id_for_knowledge(tmp_path, monkeypat
     p = _make_knowledge_proposal()
     inbox_id = _dist.apply_proposal_to_l2(tmp_path, p)
     assert inbox_id == "01INBOXID"
+
+
+@pytest.mark.parametrize(
+    "bad_data",
+    [
+        {"status": "pending"},  # shape mudou: sem chave `id`
+        {"id": ""},  # `id` presente porém vazio
+        {"id": None},  # `id` presente porém null
+        {},  # payload vazio
+        None,  # data não-dict
+    ],
+    ids=["no-id", "empty-id", "null-id", "empty-dict", "non-dict"],
+)
+def test_apply_knowledge_raises_when_inbox_id_missing(tmp_path, monkeypatch, bad_data):
+    """P2 (cross-AI PR#32): se o mem inbox add devolve sucesso mas SEM um id
+    não-vazio, NÃO drena a fila e levanta MemoryError — consistente com o guard
+    de `result.ok`. Sem o id, o evento `evolve-apply` viraria L2-style e o
+    `forge undo` não rejeitaria o candidato já drenado (falso sucesso 6d)."""
+    import engine.memory.distiller as _dist
+    from engine.memory import MemoryError as _MemError
+    from engine.integrations import mem as mem_mod
+
+    def _fake_inbox_add(project_root, **kwargs):
+        return mem_mod.MemQuery(ok=True, data=bad_data)
+
+    monkeypatch.setattr(_dist, "mem_inbox_add", _fake_inbox_add)
+    monkeypatch.setattr(_dist, "is_fingerprint_rejected", lambda *a, **k: False)
+
+    p = _make_knowledge_proposal(id_="P-noid")
+    _dist.queue_proposal(tmp_path, p)
+
+    with pytest.raises(_MemError):
+        _dist.apply_proposal_to_l2(tmp_path, p)
+
+    # Raise-não-drena: a fila precisa preservar o candidato.
+    queue = _dist.read_proposals_queue(tmp_path)
+    assert any(q.id == "P-noid" for q in queue), "queue foi drenada sem inbox-id"
 
 
 def test_apply_proposal_to_l2_returns_none_for_forget_l1(tmp_path, monkeypatch):

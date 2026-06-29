@@ -510,12 +510,20 @@ def apply_proposal_to_l2(
                 f"apply_proposal_to_l2: mem_inbox_add falhou para {proposal.id} — "
                 f"{result.message} — queue não drenada (raise-não-drena)."
             )
+        # W-ROUTE 6d: captura o mem-inbox-id (de `mem --json inbox add`) ANTES de
+        # drenar a fila — o caller grava esse id no evento `evolve-apply` e o
+        # `forge undo` lê de volta. P2 (cross-AI PR#32): se o mem mudar o shape
+        # (sem `id`, ou `id` vazio/null), validar ANTES de remove_from_queue —
+        # senão o evento viraria L2-style e o candidato drenado ficaria órfão
+        # (undo não rejeita → falso sucesso). Raise-não-drena, espelhando o guard
+        # de `result.ok` logo acima.
+        inbox_id = result.data.get("id") if isinstance(result.data, dict) else None
+        if not inbox_id:
+            raise MemoryError(
+                f"apply_proposal_to_l2: mem inbox add não devolveu id para "
+                f"{proposal.id} — queue não drenada (raise-não-drena)."
+            )
         remove_from_queue(project_root, proposal.id)
-        # W-ROUTE 6d: devolve o mem-inbox-id capturado (de `mem --json inbox add`)
-        # pra o caller gravar no evento `evolve-apply` — o `forge undo` lê de volta.
-        inbox_id = None
-        if isinstance(result.data, dict):
-            inbox_id = result.data.get("id")
         return inbox_id
 
     if proposal.kind == "forget-l1":

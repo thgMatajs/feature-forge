@@ -272,3 +272,104 @@ def test_evolve_apply_records_mem_inbox_id(tmp_path, monkeypatch):
     ok, inbox_id = _evolve._apply_proposal(tmp_path, p, cfg={})
     assert ok is True
     assert inbox_id == "01INBOXID"
+
+
+# ── P4 (cross-AI PR#32): preflight overflow só quando há proposta que toca L2 ──
+
+
+def test_preflight_overflow_skipped_when_queue_is_all_knowledge(
+    tmp_forge_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P4: fila só-knowledge + L2 legada cheia → o preflight NÃO bloqueia.
+
+    `detect_l2_overflow` é forçado a True. Se o preflight ainda rodasse sobre a
+    fila inteira, `run()` abriria o gate de 3-caminhos e nunca processaria os
+    knowledge kinds (que só roteiam pro mem-inbox). Com o fix, o preflight é
+    pulado e o loop aplica normalmente.
+    """
+    from engine.memory.distiller import DistillationProposal
+
+    _seed_workflow_config(tmp_forge_project)
+    monkeypatch.chdir(tmp_forge_project)
+    forge_dir = tmp_forge_project / ".claude" / "forge"
+    forge_dir.mkdir(parents=True, exist_ok=True)
+    (forge_dir / "forge-config.yaml").write_text("host: intent-file\n", encoding="utf-8")
+    from engine.host import detect as _host_detect
+
+    _host_detect._clear_cache()
+
+    monkeypatch.setattr(evolve, "detect_l2_overflow", lambda root, cfg: True)
+
+    knowledge = [
+        DistillationProposal(
+            id="P-k1", kind="promote-to-l2", title="t1", description="d1",
+            provenance=["auth"], confidence=0.7, fingerprint="",
+        ),
+        DistillationProposal(
+            id="P-k2", kind="consolidate-l2", title="t2", description="d2",
+            provenance=["cart"], confidence=0.6, fingerprint="",
+        ),
+    ]
+    monkeypatch.setattr(
+        evolve, "read_proposals_queue", lambda root: list(knowledge)
+    )
+    monkeypatch.setattr(evolve, "_filter_rejected", lambda root, ps: (list(ps), 0))
+
+    # Se o preflight disparasse, _three_paths_overflow seria chamado — falha o teste.
+    def _boom(*a, **k):  # pragma: no cover - só dispara em regressão
+        raise AssertionError("preflight overflow disparou para fila só-knowledge (P4)")
+
+    monkeypatch.setattr(evolve, "_three_paths_overflow", _boom)
+
+    applied: list[str] = []
+
+    def _fake_apply(root, p, cfg):
+        applied.append(p.id)
+        return (True, "01INBOX")
+
+    monkeypatch.setattr(evolve, "_apply_proposal", _fake_apply)
+    # Auto-aprovar ("a") cada proposta no loop single-by-single.
+    monkeypatch.setattr(evolve, "_action_for", lambda p: "a")
+
+    rc = evolve.run([])
+    assert rc == 0
+    assert applied == ["P-k1", "P-k2"], "knowledge applies não prosseguiram sob L2 cheia (P4)"
+
+
+# ── P6 (cross-AI PR#32): _record_history_event avisa em vez de swallow ────────
+
+
+def test_record_history_event_warns_on_append_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    """P6: se `append_history` falhar (OSError), emite aviso visível e não propaga.
+
+    O evento `evolve-apply` carrega o `mem-inbox-id` load-bearing pro recovery —
+    swallow silencioso orfanaria o candidato. Espelha `undo._append_undo_log`.
+    """
+    def _boom(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(evolve, "append_history", _boom)
+
+    # Não deve propagar.
+    evolve._record_history_event(
+        tmp_path, "evolve-apply", "P-know",
+        extras={"routed-to": "mem-inbox", "mem-inbox-id": "01INBOX"},
+    )
+    out = capsys.readouterr().out
+    assert "evento evolve" in out, "P6: append-fail deveria emitir aviso visível"
+
+
+def test_record_history_event_does_not_swallow_unexpected_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P6: o narrow do except NÃO mascara bugs reais — uma exceção fora de
+    (OSError, ValueError) propaga em vez de virar swallow silencioso."""
+    def _boom(*a, **k):
+        raise RuntimeError("bug de serialização inesperado")
+
+    monkeypatch.setattr(evolve, "append_history", _boom)
+
+    with pytest.raises(RuntimeError):
+        evolve._record_history_event(tmp_path, "evolve-apply", "P-x")
