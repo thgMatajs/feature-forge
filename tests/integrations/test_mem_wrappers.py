@@ -363,6 +363,12 @@ def test_inbox_add_real_mem_roundtrip(tmp_path):
 # ── Task 2 (6b): apply_proposal_to_l2(knowledge) real-mem e2e ────────────────
 
 
+@pytest.mark.skipif(
+    not os.path.isfile(
+        str(Path(__file__).resolve().parents[2] / ".claude" / "bin" / "mem")
+    ),
+    reason="binário mem não disponível — pule em CI sem vendorização",
+)
 def test_apply_proposal_to_l2_knowledge_real_mem_roundtrip(tmp_path):
     """E2E: apply_proposal_to_l2(knowledge) → mem inbox REAL (MOCK-BLINDNESS).
 

@@ -640,6 +640,3 @@ __all__ = [
     "compute_proposal_fingerprint",
     "proposal_from_dict",
 ]
-
-# Optional dep tag (FOLLOWUP: portable filelock for Windows).
-_ = Optional

@@ -212,6 +212,19 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   código), pegando drift silencioso entre a constante Python e o asset
   `engine/assets/mem/VERSION`.
 
+- Limpeza de qualidade do power-review do PR #32 (Q-01..Q-06, sem mudança de
+  comportamento): docstring de `mentor_calmo` tira `pause_message` da lista
+  "bare" (exige `project_root`); categoria `Memory L2` do `forge doctor`
+  renomeada pra `Memory L2 (legacy)` com linguagem size-only (a curadoria do
+  conhecimento vive no `mem`, não no L2); novo helper
+  `paths.vendored_mem_version_path` centraliza o nome do pin do consumidor
+  (`mem.version`) — escrita (`_vendor_mem`) e leitura (pin-check do doctor)
+  passam por ele, removendo o literal duplicado (pin VALUE e drift-check
+  intactos); `_ = Optional` morto removido de `distiller.py`; docstring de
+  `engine/integrations/mem.py` referencia `MEM_PINNED_VERSION` em vez de
+  repetir o literal de versão; teste real-mem `apply_proposal_to_l2_knowledge`
+  alinhado ao guard `@pytest.mark.skipif` dos vizinhos.
+
 ## [1.6.1] - 2026-06-24
 
 Remediação do piloto: rodar `forge qa` end-to-end contra o consumer real MeoBonsai-qa expôs um bug no `forge doctor` que rejeitava o `schema-version` canônico que o próprio `forge init` escreve — todo consumer recém-inicializado falhava o primeiro `doctor`. Junto, alinhamentos de consistência entre os templates/agents do fluxo qa e o que o engine de fato lê.

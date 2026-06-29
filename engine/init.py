@@ -98,6 +98,7 @@ from engine.utils.paths import (
     memory_dir,
     memory_l2_path,
     vendored_mem_path,
+    vendored_mem_version_path,
 )
 from engine.utils.sha256 import file_sha256
 from engine.utils.yaml_io import read_yaml_or_default, write_yaml
@@ -939,7 +940,7 @@ def _vendor_mem(project_root: Path) -> bool:
     dst.chmod(0o755)
     version = mem_asset_version_path()
     if version.is_file():
-        shutil.copy2(version, dst.parent / "mem.version")
+        shutil.copy2(version, vendored_mem_version_path(project_root))
     # Scaffold idempotente via a fronteira (mem init não aceita --json).
     # M-002: NÃO descartar o resultado — se o scaffold falhar, o binário foi
     # copiado mas o estado (.claude/memory, gitignore, AGENTS.md) pode estar

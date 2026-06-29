@@ -4,8 +4,11 @@ All user-facing strings produced by the engine in its own voice (greetings,
 acknowledgements, gate violations, progress narration) come from here.
 
 Two flavours of public API:
-- Bare phrase functions: `greeting()`, `acknowledgment()`, `pause_message()`.
-  Each returns a single rendered string; randomness is local.
+- Bare phrase functions: `greeting()`, `acknowledgment()`. Each returns a
+  single rendered string; randomness is local.
+- `pause_message(..., project_root=...)`: like the bare phrases but requires
+  the keyword-only `project_root` to derive the lifecycle path via
+  `lifecycle_root`; not callable as a no-arg phrase.
 - Block formatters: `gate_violation_header()`, `three_paths_block()`,
   `drilldown_question()`. These produce multi-line strings that callers
   hand to `engine/ui/renderer.write()` verbatim.

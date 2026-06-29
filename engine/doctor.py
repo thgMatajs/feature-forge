@@ -61,6 +61,7 @@ from engine.utils.paths import (
     memory_l2_path,
     mem_asset_version_path,
     vendored_mem_path,
+    vendored_mem_version_path,
 )
 from engine.utils.yaml_io import (
     YamlIOError,
@@ -553,20 +554,24 @@ def _check_inventory(project_root: Path) -> _CategoryReport:
 
 
 def _check_memory_l2(project_root: Path, config: dict) -> _CategoryReport:
+    # L2 é legacy: o conhecimento curado vive no `mem` (acervo JSONL+SQLite),
+    # não mais no L2-project.yaml. Este check fica size-only — saúde do
+    # artefato legado, sem linguagem de curadoria. A curadoria do acervo é via
+    # `mem evolve`; veja a categoria "mem" pra a saúde do substrato vivo.
     checks: list[_Check] = []
     path = memory_l2_path(project_root)
     if not path.exists():
         checks.append(
             _Check("L2-project.yaml", _STATUS_WARN, "ainda não existe (ok pra projetos novos)")
         )
-        return _CategoryReport("Memory L2", checks)
+        return _CategoryReport("Memory L2 (legacy)", checks)
     try:
         data = read_yaml(path)
         if not isinstance(data, dict):
             raise YamlIOError("not a mapping")
     except YamlIOError as exc:
         checks.append(_Check("L2-project.yaml", _STATUS_FAIL, f"parse error: {exc}"))
-        return _CategoryReport("Memory L2", checks)
+        return _CategoryReport("Memory L2 (legacy)", checks)
     checks.append(_Check("L2-project.yaml", _STATUS_OK, "parseable"))
 
     size_bytes = l2_size_bytes(project_root)
@@ -585,10 +590,10 @@ def _check_memory_l2(project_root: Path, config: dict) -> _CategoryReport:
             "L2 size",
             status,
             f"{size_kb:.1f} KB / {max_mb} MB ({pct:.0f}%)",
-            "se o acervo crescer, rode `forge memory distill` (curadoria via mem evolve)",
+            "L2 é legacy: o conhecimento curado vive no `mem` (veja a categoria mem)",
         )
     )
-    return _CategoryReport("Memory L2", checks)
+    return _CategoryReport("Memory L2 (legacy)", checks)
 
 
 def _check_memory_l1(project_root: Path) -> _CategoryReport:
@@ -1298,7 +1303,10 @@ def _check_mem(project_root: Path) -> _CategoryReport:
                     checks.append(_Check("health", _STATUS_OK, "mem doctor: todos os checks ok"))
 
     # Drift do pin: VERSION vendorizada vs asset embutido neste forge.
-    pin = vendored.parent / "mem.version"
+    # O nome do arquivo de pin no consumidor (`mem.version`) vive em
+    # `vendored_mem_version_path` — mesma fonte que `_vendor_mem` usa pra
+    # escrever, então escrita e leitura nunca divergem de nome (Q-04).
+    pin = vendored_mem_version_path(project_root)
     asset_v = mem_asset_version_path()
     if pin.is_file() and asset_v.is_file():
         # As leituras ficam DENTRO do try: o `is_file()` acima não garante a

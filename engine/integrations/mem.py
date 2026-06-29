@@ -1,7 +1,8 @@
 """Fronteira shell pro `mem` — o substrato de memória do forge (Fase 0).
 
-O `mem` é embarcado como asset opaco (`engine/assets/mem/mem`, pinado em
-v0.8.1) e vendorizado em projetos consumidores como `.claude/bin/mem`. Esta
+O `mem` é embarcado como asset opaco (`engine/assets/mem/mem`, pinado — ver
+`MEM_PINNED_VERSION`) e vendorizado em projetos consumidores como
+`.claude/bin/mem`. Esta
 fronteira o invoca SEMPRE por subprocess — nunca `import mem` — preservando a
 disciplina de Decisão 22 (zero runtime dep em outra ferramenta) e o desenho
 de substituição L1/L2/L3.

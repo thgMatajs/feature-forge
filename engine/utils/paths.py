@@ -313,10 +313,31 @@ def mem_asset_path() -> Path:
 
 
 def mem_asset_version_path() -> Path:
-    """VERSION do asset embutido do mem."""
+    """VERSION do asset embutido do mem (lado do asset/source).
+
+    Nota de nomenclatura (Q-04): o pin tem DOIS nomes de arquivo de
+    propósito — `VERSION` no asset embutido (espelha a convenção do upstream
+    mem) e `mem.version` no consumidor vendorizado (ver
+    `vendored_mem_version_path`). A vendorização copia o conteúdo de
+    `VERSION` → `mem.version`; nunca `VERSION` → `VERSION`. Quem mantém deve
+    referenciar estes dois helpers em vez de hardcodar qualquer dos nomes,
+    pra escrita (init) e leitura (doctor pin-check) baterem sempre.
+    """
     return forge_home() / "engine" / "assets" / "mem" / "VERSION"
 
 
 def vendored_mem_path(project_root: Path) -> Path:
     """Binário do mem vendorizado no consumidor — .claude/bin/mem."""
     return claude_dir(project_root) / "bin" / "mem"
+
+
+def vendored_mem_version_path(project_root: Path) -> Path:
+    """Arquivo de pin do mem vendorizado no consumidor — .claude/bin/mem.version.
+
+    Fonte-da-verdade do NOME do pin no lado do consumidor. Deliberadamente
+    `mem.version` (não `VERSION`) pra não colidir com nada no `.claude/bin/`
+    e pra deixar o pin auto-descritivo. Tanto a escrita (`_vendor_mem`) quanto
+    a leitura (doctor pin-check) passam por aqui, então o nome vive num lugar
+    só — ver a nota em `mem_asset_version_path`.
+    """
+    return vendored_mem_path(project_root).parent / "mem.version"
