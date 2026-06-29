@@ -128,9 +128,19 @@ def memory_dir(project_root: Path) -> Path:
     return claude_dir(project_root) / "memory"
 
 
+def lifecycle_root(project_root: Path) -> Path:
+    """Raiz da state-machine de lifecycle — forge/state/lifecycle/ (Decisão #1).
+
+    Contém per-feature WIP (por slug), archived/ e proposed-evolutions/.
+    Vive em .claude/forge/state/lifecycle/, fora de .claude/memory/ (que é
+    100% do mem após a integração mem, Decisão 20).
+    """
+    return forge_state_dir(project_root) / "lifecycle"
+
+
 def memory_l1_path(project_root: Path, feature_slug: str) -> Path:
-    """L1 (per-feature WIP) directory for a given feature slug."""
-    return memory_dir(project_root) / "L1" / feature_slug
+    """Diretório de lifecycle (per-feature WIP) de uma feature."""
+    return lifecycle_root(project_root) / feature_slug
 
 
 def memory_l2_path(project_root: Path) -> Path:
@@ -148,13 +158,18 @@ def hooks_dir(project_root: Path) -> Path:
     return claude_dir(project_root) / "hooks"
 
 
+# Fonte unica do dirname dos artefatos de feature. Alterar este valor
+# e suficiente para renomear o diretorio em todo o codebase.
+FEATURE_WORKFLOW_DIRNAME = "forge-specs"
+
+
 def feature_workflow_root(project_root: Path) -> Path:
-    """Default feature-implementation-workflow root in the project."""
-    return project_root / "docs" / "feature-implementation-workflow"
+    """Default feature artifacts root in the project."""
+    return project_root / "docs" / FEATURE_WORKFLOW_DIRNAME
 
 
 def feature_dir(project_root: Path, feature_slug: str) -> Path:
-    """Per-feature directory under feature-implementation-workflow/features/."""
+    """Per-feature directory under forge-specs/features/."""
     return feature_workflow_root(project_root) / "features" / feature_slug
 
 
@@ -200,7 +215,7 @@ def _resolve_features_root(project_root: Path, *, subtype: str = "product") -> P
         return custom_root
 
     # Default per docs/design/05-filesystem-layout.md.
-    base = project_root / "docs" / "feature-implementation-workflow"
+    base = feature_workflow_root(project_root)
     if subtype != "product":
         return (base / "non-product").resolve()
     return (base / "features").resolve()
@@ -214,7 +229,7 @@ def feature_path(project_root: Path, slug: str, *, subtype: str = "product") -> 
     features because it hardcoded subtype="product".
 
     For `subtype="product"` the layout is the legacy v1.0 path
-    (`docs/feature-implementation-workflow/features/{slug}/`). For
+    (`docs/forge-specs/features/{slug}/`). For
     refactor/spike/chore/bugfix the directory lives under
     `non-product/{slug}/` — see filesystem-layout §3.5.
 
@@ -224,9 +239,7 @@ def feature_path(project_root: Path, slug: str, *, subtype: str = "product") -> 
     """
     root = _resolve_features_root(project_root, subtype=subtype)
     if subtype == "product":
-        default = (
-            project_root / "docs" / "feature-implementation-workflow" / "features"
-        ).resolve()
+        default = (feature_workflow_root(project_root) / "features").resolve()
         if root == default:
             return feature_dir(project_root, slug)
     return root / slug
@@ -292,3 +305,39 @@ def forge_cards_local_dir(project_root: Path) -> Path:
 
 def forge_hooks_dir(project_root: Path) -> Path:
     return forge_dir(project_root) / "hooks"
+
+
+def mem_asset_path() -> Path:
+    """Asset embutido do mem (binário) dentro do FORGE_HOME."""
+    return forge_home() / "engine" / "assets" / "mem" / "mem"
+
+
+def mem_asset_version_path() -> Path:
+    """VERSION do asset embutido do mem (lado do asset/source).
+
+    Nota de nomenclatura (Q-04): o pin tem DOIS nomes de arquivo de
+    propósito — `VERSION` no asset embutido (espelha a convenção do upstream
+    mem) e `mem.version` no consumidor vendorizado (ver
+    `vendored_mem_version_path`). A vendorização copia o conteúdo de
+    `VERSION` → `mem.version`; nunca `VERSION` → `VERSION`. Quem mantém deve
+    referenciar estes dois helpers em vez de hardcodar qualquer dos nomes,
+    pra escrita (init) e leitura (doctor pin-check) baterem sempre.
+    """
+    return forge_home() / "engine" / "assets" / "mem" / "VERSION"
+
+
+def vendored_mem_path(project_root: Path) -> Path:
+    """Binário do mem vendorizado no consumidor — .claude/bin/mem."""
+    return claude_dir(project_root) / "bin" / "mem"
+
+
+def vendored_mem_version_path(project_root: Path) -> Path:
+    """Arquivo de pin do mem vendorizado no consumidor — .claude/bin/mem.version.
+
+    Fonte-da-verdade do NOME do pin no lado do consumidor. Deliberadamente
+    `mem.version` (não `VERSION`) pra não colidir com nada no `.claude/bin/`
+    e pra deixar o pin auto-descritivo. Tanto a escrita (`_vendor_mem`) quanto
+    a leitura (doctor pin-check) passam por aqui, então o nome vive num lugar
+    só — ver a nota em `mem_asset_version_path`.
+    """
+    return vendored_mem_path(project_root).parent / "mem.version"

@@ -1,42 +1,40 @@
-# `.claude/rules/` — index
+# `.claude/rules/` — índice
 
-Operational rules for Claude Code sessions maintaining feature-forge. Each
-rule says **how to comply** with one of the mandamentos in `CLAUDE.md`.
+Regras operacionais pra sessões Claude Code mantendo feature-forge. Cada
+rule diz **como cumprir** um dos mandamentos de `CLAUDE.md`. Voz: mentor
+calmo.
 
-Voz: mentor calmo. Não duplica `docs/design/*` — adiciona camada operacional.
+> **Enxugue Fase 0 (mem dogfood, 2026-06-25):** o detalhe das rules migrou
+> pro acervo `mem` (recuperável via `.claude/bin/mem find "<tema>"`). Cada
+> arquivo aqui virou ponteiro + invariante de enforcement always-on. O
+> Tier-0 (Mandamento 0 + 6 mandamentos + fluxo único) vive em `CLAUDE.md` e
+> não depende do mem.
 
-## Map
+## Map (tema → consulta mem)
 
-| Rule | One-liner | Quando ler |
-|---|---|---|
-| [orchestrator-persona.md](orchestrator-persona.md) | Identidade do mantenedor, whitelist de ferramentas, workflow loops | sempre, no início de cada sessão |
-| [subagent-workflow.md](subagent-workflow.md) | Qual subagent_type pra quê, context-pack, trust-but-verify | antes de qualquer Agent dispatch |
-| [decisions.md](decisions.md) | 8 decisões load-bearing + protocolo "Revisita decisão N" | antes de editar `docs/design/01-decisions.md` |
-| [disciplines.md](disciplines.md) | 6 disciplinas universais + template 3-caminhos | em qualquer gate ou violação |
-| [testing.md](testing.md) | pytest, markers, validators, gates | antes de "pronto" |
-| [scope.md](scope.md) | Arquivos load-bearing, anti-padrões de scope creep | antes de edits que cruzam módulos |
-| [reuse.md](reuse.md) | `forge graph` antes de criar helper novo | antes de Write em código novo |
-| [superpowers.md](superpowers.md) | 10 skills com triggers e bloqueios | quando dúvida de skill ativar |
-| [doc-sync.md](doc-sync.md) | Matriz código→docs, checklist pré-commit | em todo commit que toca código "vivo" |
-| [plan-auditor.md](plan-auditor.md) | Prompt + 12 checks pra auditoria pós writing-plans | antes/depois de dispatch do auditor |
-| [project-anatomy.md](project-anatomy.md) | Mapa "se procura X, vai em Y" + smoke tests | navegação inicial |
-| [SMOKE-CHECKLIST.md](SMOKE-CHECKLIST.md) | 5 verificações manuais pós-bootstrap | one-time após instalar |
+| Rule | Consulta pra o detalhe |
+|---|---|
+| orchestrator-persona | `mem find "identidade orquestrador-mantenedor voz operacional"` · `mem find "5 casos legítimos de defer"` |
+| subagent-workflow | `mem find "qual subagent_type gsd-executor reviewer fixer"` · `mem find "despacho subagente context-pack"` |
+| decisions | `mem find "8 decisões load-bearing"` · `mem find "como revisitar decisão locked sem silent drift"` |
+| disciplines | `mem find "exatamente 3 caminhos em todo gate template"` · `mem find "6 disciplinas universais"` |
+| testing | `mem find "TDD pytest gates verde antes de pronto"` · `mem find "comandos de teste markers fixtures"` |
+| scope | `mem find "edite só o que a tarefa pede whitelist"` · `mem find "anti-padrões scope creep"` |
+| reuse | `mem find "reuso forge graph antes de criar helper"` · `mem find "infra compartilhada validators compor"` |
+| superpowers | `mem find "10 skills superpowers triggers"` · `mem find "skills não ativadas hierarquia prioridade"` |
+| doc-sync | `mem find "matriz código docs sincronizar ao tocar engine"` · `mem find "checklist pré-commit doc-sync"` |
+| plan-auditor | `mem find "12 checks auditoria de plano"` · `mem find "override inline verdict BLOCK"` |
+| project-anatomy | `mem find "onde cada coisa vive mapa de navegação"` · `mem find "smoke tests rápidos forge --version"` |
+| SMOKE-CHECKLIST | `mem find "5 verificações de smoke pós-bootstrap"` |
+
+Use `.claude/bin/mem get <id>` pra o corpo acionável de cada nota.
 
 ## Auditoria contínua (manual, ~mensal)
 
-Comandos pra você (humano) revisar como o sistema está segurando:
-
 ```bash
-# Mandamento 0 segura?
-git log --oneline -30 | head
-
-# Doc-sync rola?
-git log --since='30 days' --pretty=format:'%h %s' -- docs/design/08-session-handoff.md
-
-# Locked decisions caem em ceremony?
-git log --all -p -- docs/design/01-decisions.md | grep -c 'Revisita'
-
-# Audit log de load-bearing edits
+git log --oneline -30 | head                                          # Mandamento 0 segura?
+git log --since='30 days' --pretty=format:'%h %s' -- docs/design/08-session-handoff.md  # doc-sync rola?
+git log --all -p -- docs/design/01-decisions.md | grep -c 'Revisita'  # ceremony em locked?
 wc -l .claude/state/load-bearing-edits.jsonl 2>/dev/null || echo "(no audit log yet)"
 ```
 

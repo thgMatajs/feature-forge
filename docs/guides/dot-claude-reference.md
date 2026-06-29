@@ -34,8 +34,8 @@ e outros não, e o que acontece se você apagar algo.
 | `cards/local/` | Cards criados pelo time (overlay local) | Sim | Time adiciona manualmente |
 | `inventory/*.yaml` | Design system, i18n, convenções extraídos do código | Sim | `forge reconfigure` ou hooks automáticos |
 | `graph.db` | Base de conhecimento do código (SQLite) | Não (gitignorado) | `forge init` (cria), hooks (incremental), `forge reconfigure` (rebuild) |
-| `memory/L1/` | Memória por feature em andamento (WIP) | Não (gitignorado) | Durante `forge plan` e `forge implement` |
-| `memory/L1/archived/` | Sumário de features concluídas | Sim | Quando feature é finalizada |
+| `forge/state/lifecycle/` | Estado de lifecycle por feature em andamento (WIP) | Não (gitignorado) | Durante `forge plan` e `forge implement` |
+| `forge/state/lifecycle/archived/` | Sumário de features concluídas | Sim | Quando feature é finalizada |
 | `memory/L2-project.yaml` | Memória compartilhada do time | Sim | `forge evolve` (aceitar proposta) |
 | `hooks/*.sh` | Scripts que mantêm graph e memória atualizados | Sim | `forge init` (copia), `forge reconfigure` (atualiza) |
 | `proposed-evolutions.yaml` | Fila de propostas de melhoria | Sim | `forge evolve` modifica |
@@ -155,9 +155,9 @@ pós-edit. A reconstrução leva ~30s-2min em projetos de porte médio.
 
 ---
 
-### `memory/L1/`
+### `forge/state/lifecycle/`
 
-**O que contém:** A memória de **features em andamento**. Cada feature
+**O que contém:** O estado de lifecycle de **features em andamento**. Cada feature
 ativa tem uma subpasta com:
 - `status.json` — estado atual (planning, implementing, done, blocked...)
 - `hypothesis.yaml` — hipóteses e decisões iniciais
@@ -174,12 +174,12 @@ polui o histórico do git com dados que mudam a cada `forge implement`.
 **Se eu apagar:** Perde o estado das features em andamento. Dá pra
 recomeçar com `forge plan {slug}`, mas o histórico daquela feature se
 perde. **Importante:** os artefatos das features (intake, PRD, specs,
-task contracts) ficam em `docs/feature-implementation-workflow/`, não
+task contracts) ficam em `docs/forge-specs/`, não
 aqui — esses estão versionados e seguros.
 
 ---
 
-### `memory/L1/archived/`
+### `forge/state/lifecycle/archived/`
 
 **O que contém:** Um **sumário compacto** de cada feature concluída:
 decisões principais, métricas, aprendizados. É o que alimenta as queries
@@ -194,7 +194,7 @@ para `done` — o forge comprime o diretório L1 da feature em um arquivo
 `.summary.yaml` e o move para `archived/`.
 
 **Se eu apagar:** Perde o sumário, mas os artefatos completos da feature
-(em `docs/feature-implementation-workflow/`) continuam intactos e
+(em `docs/forge-specs/`) continuam intactos e
 versionados. O `forge graph` perde as queries de reuso relacionadas a
 essa feature — um rebuild do grafo não recupera o que foi apagado.
 
@@ -327,6 +327,9 @@ diferentes.
 
 ```
 .claude/
++-- bin/
+|   +-- mem                       versionado — CLI de memória persistente (acervo JSONL + índice SQLite)
+|   +-- mem.version               versionado — versão do binário mem vendorizado
 +-- workflow-config.yaml          versionado — time compartilha
 +-- cards/                        versionado — time compartilha
 +-- inventory/                    versionado — time compartilha
@@ -353,15 +356,15 @@ O `forge init` cria um `.claude/.gitignore` com as regras padrão. Você
 pode editá-lo à vontade — ele é versionado, e o forge nunca o sobrescreve
 em `forge reconfigure`.
 
-Se o seu time decidir que quer versionar `graph.db` ou `memory/L1/` por
+Se o seu time decidir que quer versionar `graph.db` ou `forge/state/lifecycle/` por
 algum motivo, basta remover as linhas correspondentes do `.gitignore`.
 
 **Antes de fazer isso, considere:**
 
 - `graph.db` é binário e muda a cada edição no código — versionar significa
   conflitos de merge frequentes
-- `memory/L1/` contém estado de WIP que varia por dev — versionar significa
-  que branches com features parciais vão ter dados de L1 conflitantes
+- `forge/state/lifecycle/` contém estado de WIP que varia por dev — versionar significa
+  que branches com features parciais vão ter dados de lifecycle conflitantes
 
 Se ainda assim fizer sentido pro seu time, combinem e ajustem o
 `.gitignore`. O forge não interfere.
@@ -372,7 +375,7 @@ Se ainda assim fizer sentido pro seu time, combinem e ajustem o
 
 | Característica | Versionados | Locais (gitignorados) |
 |---|---|---|
-| Exemplos | workflow-config.yaml, cards/, L2, hooks, inventory | graph.db, memory/L1/WIP |
+| Exemplos | workflow-config.yaml, cards/, L2, hooks, inventory | graph.db, forge/state/lifecycle/WIP |
 | Quem vê | Todo o time | Só você |
 | Protege contra perda? | Sim (git) | Não (reconstruível) |
 | Conflito de merge? | Potencial (raro) | Inexistente |

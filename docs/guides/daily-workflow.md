@@ -79,6 +79,12 @@ Wave E — Readiness
 Próximo passo: forge implement login-screen
 ```
 
+**Memória automática (W-ROUTE 6c):** Antes de redigir os artefatos da Wave A,
+o `forge plan` consulta automaticamente o acervo de memória (`mem find`)
+por gotchas e convenções relevantes ao slug da feature. O resultado é injetado
+no context-pack do subagente de planejamento. Sem intervenção do usuário —
+degrade soft quando mem ausente.
+
 **Fluxograma:**
 
 ```
@@ -165,7 +171,7 @@ $ forge status
 │  login-screen      ── planning (ready)     há 2h     │
 │  fix-crash-auth    ── implementing (WIP)   há 30min  │
 │                                                       │
-│ Memória: L2: 12KB / 256KB · L1: 2 ativas · 0 arch   │
+│ Memória: mem: 45 notas (32 live) · L1: 2 ativas · 0 arch │
 │ Evoluções pendentes: 3                                │
 │ Doctor: rodado há 15min (saudável ✅)                │
 │                                                       │
@@ -226,6 +232,11 @@ $ forge verify
 > em tempo de execução. O diretório `validators/` tem 21 validators canônicos no
 > total; cards selecionam o subset relevante via `contributes.validators`.
 
+**Memória automática (W-ROUTE 6c):** Antes do cascade de validators, o
+`forge verify` exibe um hint educacional com memória relevante ao scope (só
+em modo interativo — omitido em `--json`). O hint NÃO é passado pra validators,
+preservando o determinismo da cascade.
+
 **Quando um gate forte falha:**
 
 ```
@@ -267,7 +278,7 @@ $ forge doctor
 │  ✅ config              workflow-config.yaml OK      │
 │  ✅ cards               8 cards ativos, 0 conflitos  │
 │  ✅ inventory           DS + i18n + conventions OK   │
-│  ✅ memory L2           12KB / 256KB (4% usado)      │
+│  ✅ mem                 vendorizado · health ok · pin 0.8.1  │
 │  ✅ memory L1           2 features ativas            │
 │  ✅ graph               graph.db: 2140 nós, OK       │
 │  ⚠️  reuse findings      3 propostas pendentes       │
@@ -482,7 +493,7 @@ $ forge undo
 │ 1. last                — reverter ação mais recente  │
 │ 2. reconfigure {date}  — restaurar config do .bak    │
 │ 3. task commit (feat)  — git revert <sha>            │
-│ 4. evolve apply (id)   — restaurar L2 e remover entry│
+│ 4. evolve apply (id)   — reverte apply: remove entry │
 │ 5. abort feature       — marcar feature como aborted │
 │ 6. delete feature      — rm -rf dos artefatos        │
 │                                                       │
@@ -496,34 +507,31 @@ $ forge undo
 
 ---
 
-## forge memory — Gerenciar memória do time
+## forge memory — Gerenciar o acervo mem
 
-**O que faz:** Inspetor interativo das camadas de memória (L1/L2/L3).
-Read-only por padrão; operações de mutação (`forget`, `distill L2`) exigem
-confirmação dupla.
+**O que faz:** Wrapper fino arg-driven sobre o `mem` vendorizado (stateless).
+Sem menu interativo; cada ação é um subcomando direto.
 
-**Quando usar:** "Quero ver o que o time aprendeu até agora", "a L2 estourou o
-limite e preciso distilar", "quero exportar o context-pack pro agente".
+**Quando usar:** "Quero buscar o que o time aprendeu sobre autenticação",
+"preciso exportar o context-pack pro agente", "a L2 estourou e quero curar".
 
-**Exemplo:**
+**Subcomandos:**
 
 ```bash
-$ forge memory
+# Buscar no acervo (ranqueado por relevância)
+$ forge memory search "Firebase Auth timeout"
 
-┌─ forge memory ──────────────────────────────────────┐
-│ L1 (working — 2 ativas, 0 arquivadas)               │
-│   login-screen        planning → ready               │
-│   fix-crash-auth      implementing → TASK-0002 done  │
-│                                                       │
-│ L2 (committed — 12KB / 256KB)                       │
-│   • Decision: usar Koin para DI (2026-06-01)        │
-│   • Pattern: error handling com sealed class         │
-│   • Learning: Firebase Auth timeout no Brasil        │
-│   ... (8 entradas no total)                          │
-│                                                       │
-│ [i] Inspectar  [f] Forget  [d] Distill L2           │
-│ [e] Export context-pack                              │
-└──────────────────────────────────────────────────────┘
+# Inspecionar uma nota pelo id, ou ver stats do acervo
+$ forge memory inspect <id>
+$ forge memory inspect
+
+# Exportar índice de alto valor pro context-pack
+$ forge memory export
+$ forge memory export --budget 8000
+
+# Curadoria do acervo (dry-run por padrão; --apply persiste)
+$ forge memory distill
+$ forge memory distill --apply
 ```
 
 ---
@@ -674,7 +682,7 @@ Qual é o seu próximo passo?
 | `forge doctor` | Health check | Diagnóstico |
 | `forge reconfigure` | Muda configuração | Pós-init |
 | `forge graph` | Consulta o graph | Investigação |
-| `forge memory` | Gerencia memória do time | Aprendizado contínuo |
+| `forge memory <ação>` | Gerencia o acervo mem (search/inspect/export/distill) | Aprendizado contínuo |
 | `forge evolve` | Revisa propostas de melhoria | Quando há findings |
 | `forge undo` | Reverte última ação | Erro |
 | `forge raw` | Escape hatch | Raramente |

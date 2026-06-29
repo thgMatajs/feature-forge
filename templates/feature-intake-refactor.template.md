@@ -61,6 +61,14 @@ source-ref: "{{source_ref_or_none}}"
 - screenshots: {{screenshots_count}} file(s) — {{screenshots_relative_paths_csv_or_none}}
 - description origin: {{description_origin}}
 
+<!--
+  MEM-CONTEXT (W-ROUTE 6c) — gotchas/convenções relevantes do acervo de memória
+  (`mem find`), injetadas pelo engine ANTES do dispatch. Quando vazio (mem
+  indisponível ou sem hits), a linha abaixo fica em branco — sem ruído. NÃO é
+  fonte da verdade; é dica de contexto pro autor consultar.
+-->
+{{mem_context_hint}}
+
 ## Problem
 
 <!--

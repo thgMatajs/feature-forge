@@ -7,7 +7,7 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
-      - 'docs/feature-implementation-workflow/**'
+      - 'docs/forge-specs/**'
       - '.claude/**'
       - 'src/**'
 

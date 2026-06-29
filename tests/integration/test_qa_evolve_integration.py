@@ -58,8 +58,9 @@ def _proposed_path(project: Path) -> Path:
     return (
         project
         / ".claude"
-        / "memory"
-        / "L1"
+        / "forge"
+        / "state"
+        / "lifecycle"
         / "proposed-evolutions"
         / "proposed.yaml"
     )
@@ -69,8 +70,9 @@ def _rejected_path(project: Path) -> Path:
     return (
         project
         / ".claude"
-        / "memory"
-        / "L1"
+        / "forge"
+        / "state"
+        / "lifecycle"
         / "proposed-evolutions"
         / "rejected-fingerprints.yaml"
     )

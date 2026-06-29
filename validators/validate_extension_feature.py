@@ -2,10 +2,10 @@
 """validate_extension_feature.py — Extension feature mechanic enforcement (Gap 9).
 
 For every L1 feature that declares ``extends-feature`` (non-null) in
-``.claude/memory/L1/{slug}/status.json``, verifies four invariants:
+``.claude/forge/state/lifecycle/{slug}/status.json``, verifies four invariants:
 
 - ``EXT-001`` parent slug exists as a sibling L1 directory
-  ``.claude/memory/L1/{parent}/``.
+  ``.claude/forge/state/lifecycle/{parent}/``.
 - ``EXT-002`` parent's ``state == "done"`` — extensions of in-flight features
   (planning / implementing / verifying / paused / blocked-on-external) are
   rejected. Estender uma feature ainda viva polui a L1 da pai e quebra a
@@ -40,7 +40,7 @@ from _common import (
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from engine.memory.l1 import L1State, list_active_features, read_l1_status  # noqa: E402
-from engine.utils.paths import memory_dir  # noqa: E402
+from engine.utils.paths import lifecycle_root, memory_dir  # noqa: E402
 from engine.utils.yaml_io import YamlIOError, read_yaml_or_default  # noqa: E402
 
 
@@ -56,7 +56,7 @@ def _extension_scope(project_root: Path, slug: str) -> str:
     trip EXT-004 dedupe — mentor calmo nudges the user to declare scope
     instead of silently shipping ambiguous siblings.
     """
-    hyp_path = memory_dir(project_root) / "L1" / slug / "hypothesis.yaml"
+    hyp_path = lifecycle_root(project_root) / slug / "hypothesis.yaml"
     if not hyp_path.is_file():
         return ""
     try:
@@ -107,11 +107,11 @@ def _check_one_extension(
         return fails
 
     # EXT-001 — parent slug exists in L1.
-    parent_dir = memory_dir(project_root) / "L1" / parent_slug
+    parent_dir = lifecycle_root(project_root) / parent_slug
     if not parent_dir.is_dir():
         fails.append(
             f"{slug}: EXT-001 parent {parent_slug!r} não existe em "
-            f".claude/memory/L1/{parent_slug}/"
+            f".claude/forge/state/lifecycle/{parent_slug}/"
         )
         return fails
 
@@ -158,7 +158,7 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
     sees the full picture instead of fixing one at a time only to surface
     the next on re-run.
     """
-    l1_root = memory_dir(project_root) / "L1"
+    l1_root = lifecycle_root(project_root)
     if not l1_root.is_dir():
         # Sem L1 ainda — nada a validar (forge init não rodou).
         return result_pass("L1 ausente — nada a validar (extends-feature)")
@@ -198,7 +198,7 @@ def validate(project_root: Path, **kwargs: Any) -> dict[str, Any]:
             f"{len(failures)} violação(ões) em {len(extensions)} extension(s)",
             what_failed="; ".join(failures[:3])
             + (f" (+{len(failures)-3} more)" if len(failures) > 3 else ""),
-            where=".claude/memory/L1/*/status.json (+ hypothesis.yaml pra scope)",
+            where=".claude/forge/state/lifecycle/*/status.json (+ hypothesis.yaml pra scope)",
             why=[
                 "EXT-001..004 protegem a invariante de extension (Gap 9, discipline §10).",
                 "Parent deve existir e estar 'done'; sem self-loop; sem dedupe de scope.",

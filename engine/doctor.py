@@ -44,6 +44,7 @@ from engine.memory.l1 import list_active_features, list_archived_features
 from engine.memory.l2 import l2_size_bytes
 from engine.ui import output_mode, question, renderer
 from engine.ui.question import PromptAbortedError
+from engine.integrations.mem import MEM_PINNED_VERSION, mem_call
 from engine.utils.paths import (
     ProjectRootNotFoundError,
     active_config_path,
@@ -55,8 +56,12 @@ from engine.utils.paths import (
     graph_db_path,
     hooks_dir,
     inventory_dir,
+    lifecycle_root,
     memory_dir,
     memory_l2_path,
+    mem_asset_version_path,
+    vendored_mem_path,
+    vendored_mem_version_path,
 )
 from engine.utils.yaml_io import (
     YamlIOError,
@@ -242,6 +247,7 @@ def _all_categories(
                 _check_secrets_tools(project_root),
                 _check_qa_coherence(project_root, config),
                 _check_gradle_catalogs(project_root),
+                _check_mem(project_root),
             ]
         )
     return categories
@@ -548,20 +554,24 @@ def _check_inventory(project_root: Path) -> _CategoryReport:
 
 
 def _check_memory_l2(project_root: Path, config: dict) -> _CategoryReport:
+    # L2 é legacy: o conhecimento curado vive no `mem` (acervo JSONL+SQLite),
+    # não mais no L2-project.yaml. Este check fica size-only — saúde do
+    # artefato legado, sem linguagem de curadoria. A curadoria do acervo é via
+    # `mem evolve`; veja a categoria "mem" pra a saúde do substrato vivo.
     checks: list[_Check] = []
     path = memory_l2_path(project_root)
     if not path.exists():
         checks.append(
             _Check("L2-project.yaml", _STATUS_WARN, "ainda não existe (ok pra projetos novos)")
         )
-        return _CategoryReport("Memory L2", checks)
+        return _CategoryReport("Memory L2 (legacy)", checks)
     try:
         data = read_yaml(path)
         if not isinstance(data, dict):
             raise YamlIOError("not a mapping")
     except YamlIOError as exc:
         checks.append(_Check("L2-project.yaml", _STATUS_FAIL, f"parse error: {exc}"))
-        return _CategoryReport("Memory L2", checks)
+        return _CategoryReport("Memory L2 (legacy)", checks)
     checks.append(_Check("L2-project.yaml", _STATUS_OK, "parseable"))
 
     size_bytes = l2_size_bytes(project_root)
@@ -580,15 +590,15 @@ def _check_memory_l2(project_root: Path, config: dict) -> _CategoryReport:
             "L2 size",
             status,
             f"{size_kb:.1f} KB / {max_mb} MB ({pct:.0f}%)",
-            "memory-distiller roda automático no próximo verify",
+            "L2 é legacy: o conhecimento curado vive no `mem` (veja a categoria mem)",
         )
     )
-    return _CategoryReport("Memory L2", checks)
+    return _CategoryReport("Memory L2 (legacy)", checks)
 
 
 def _check_memory_l1(project_root: Path) -> _CategoryReport:
     checks: list[_Check] = []
-    l1_root = memory_dir(project_root) / "L1"
+    l1_root = lifecycle_root(project_root)
     if not l1_root.exists():
         checks.append(_Check("L1 root", _STATUS_OK, "ainda não criado"))
         return _CategoryReport("Memory L1", checks)
@@ -1221,6 +1231,125 @@ def _check_cc_gate_tools(project_root: Path) -> _CategoryReport:
                 )
             )
     return _CategoryReport("cc-gate-tools", checks)
+
+
+def _check_mem(project_root: Path) -> _CategoryReport:
+    """Categoria 'mem': vendorização + saúde (mem doctor) + drift do pin.
+
+    Reusa a fronteira mem_call — nunca replica lógica do mem em Python.
+
+    H-001: `mem doctor` (cmd_doctor) retorna exit 0 SEMPRE — exit_code não é
+    sinal de saúde. A saúde é derivada do PIOR check do JSON `--json`, não do
+    exit code. Trata 5 modos de falha sem crash:
+      - binário não encontrado (not-found → FAIL)
+      - JSON inválido (parse error → WARN)
+      - JSON não-lista, ex.: envelope de erro {"error":"..."} (não-lista → WARN)
+      - lista vazia [] — mem não executou checks (lista vazia → WARN)
+      - checks com status não-ok (WARN com nomes dos checks falhando)
+    Quando todos os checks reportam status "ok", health → OK.
+    """
+    vendored = vendored_mem_path(project_root)
+    if not vendored.is_file():
+        return _CategoryReport("mem", [_Check(
+            name="vendored",
+            status=_STATUS_FAIL,
+            message="mem não vendorizado em .claude/bin/mem",
+            remediation="rode `forge init` pra vendorizar o mem",
+        )])
+
+    checks: list[_Check] = [_Check("vendored", _STATUS_OK, "mem vendorizado em .claude/bin/mem")]
+
+    # H-001: `mem doctor` retorna exit 0 SEMPRE — derivar saúde do JSON, não do exit_code.
+    res = mem_call(project_root, ["doctor"])  # json=True por default
+    if not res.found:
+        checks.append(_Check("health", _STATUS_WARN, "mem doctor não executou"))
+    else:
+        try:
+            report = json.loads(res.stdout or "[]")
+        except (ValueError, TypeError):
+            checks.append(_Check(
+                "health",
+                _STATUS_WARN,
+                f"mem doctor saída ininteligível: {(res.stderr or res.stdout or '')[:120]}",
+            ))
+        else:
+            # mem doctor --json → lista de {"check","status","detail"};
+            # status do mem ∈ {"ok", e não-ok (ex.: "fail"/"error"/"stale")}.
+            # H-VENDOR-01: JSON não-lista (ex.: envelope de erro {"error":"..."})
+            #   → iterar keys de um dict é silencioso; detectar explicitamente.
+            # H-VENDOR-02: lista vazia [] → bad=[] → falso-OK; distinguir.
+            if not isinstance(report, list):
+                checks.append(_Check(
+                    "health",
+                    _STATUS_WARN,
+                    f"mem doctor saída em formato inesperado: {str(report)[:120]}",
+                ))
+            elif not report:
+                checks.append(_Check(
+                    "health",
+                    _STATUS_WARN,
+                    "mem doctor não reportou checks (mem inicializado?)",
+                ))
+            else:
+                bad = [c for c in report if isinstance(c, dict) and c.get("status") != "ok"]
+                if bad:
+                    names = ", ".join(str(c.get("check")) for c in bad)
+                    checks.append(_Check(
+                        "health",
+                        _STATUS_WARN,
+                        f"mem doctor reportou checks não-ok: {names}",
+                    ))
+                else:
+                    checks.append(_Check("health", _STATUS_OK, "mem doctor: todos os checks ok"))
+
+    # Drift do pin: VERSION vendorizada vs asset embutido neste forge.
+    # O nome do arquivo de pin no consumidor (`mem.version`) vive em
+    # `vendored_mem_version_path` — mesma fonte que `_vendor_mem` usa pra
+    # escrever, então escrita e leitura nunca divergem de nome (Q-04).
+    pin = vendored_mem_version_path(project_root)
+    asset_v = mem_asset_version_path()
+    if pin.is_file() and asset_v.is_file():
+        # As leituras ficam DENTRO do try: o `is_file()` acima não garante a
+        # leitura — um EACCES ou um delete-em-corrida (TOCTOU) entre o guard e
+        # o `read_text()` levantaria OSError cru, e `doctor` é o comando de
+        # health-check que NUNCA deve crashar. Degrada pra um check WARN.
+        try:
+            vp = pin.read_text().strip()
+            va = asset_v.read_text().strip()
+        except OSError as exc:
+            checks.append(_Check(
+                "pin",
+                _STATUS_WARN,
+                f"não consegui ler o pin/asset de versão: {exc}",
+            ))
+        else:
+            if vp != va:
+                # M-001: `forge reconfigure` NÃO re-vendoriza nesta onda;
+                # `forge init` é idempotente e re-vendoriza. Remediation honesta.
+                checks.append(_Check(
+                    "pin",
+                    _STATUS_WARN,
+                    f"drift: vendorizado {vp} vs asset {va}",
+                    remediation="rode `forge init` pra re-vendorizar o asset mais novo",
+                ))
+            elif va != MEM_PINNED_VERSION:
+                # P7 (cross-AI PR#32): o asset embutido e o pin vendorizado
+                # concordam entre si, mas divergem da constante de pin do forge
+                # (a fonte-da-verdade em código). Drift silencioso entre o
+                # `MEM_PINNED_VERSION` e o asset — sinaliza pra re-pinar.
+                checks.append(_Check(
+                    "pin",
+                    _STATUS_WARN,
+                    f"drift: asset {va} vs pin do forge {MEM_PINNED_VERSION}",
+                    remediation=(
+                        f"realinhe `MEM_PINNED_VERSION` ({MEM_PINNED_VERSION}) "
+                        f"com o asset embutido ({va})"
+                    ),
+                ))
+            else:
+                checks.append(_Check("pin", _STATUS_OK, f"pin alinhado ({vp})"))
+
+    return _CategoryReport("mem", checks)
 
 
 # ── Gradle catalog scope (DET-3 M-4) ─────────────────────────────────────────

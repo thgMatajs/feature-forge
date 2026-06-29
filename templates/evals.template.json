@@ -1,5 +1,5 @@
 {
-  "_template_description": "evals/evals.json — Wave pós-implementação · retrospective-agent. Resultado pós-feature: tasks completas, gates passados, fingerprints de propostas, métricas de coverage/parity. Consumido por: forge evolve (apresenta proposed-evolutions pro usuário), memory-distiller (input para L2 promotion), retrospective.md (mesma fonte). Chaves '_*' são guias para o agent e devem ser removidas no output final.",
+  "_template_description": "evals/evals.json — Wave pós-implementação · retrospective-agent. Resultado pós-feature: tasks completas, gates passados, fingerprints de propostas, métricas de coverage/parity. Consumido por: forge evolve (apresenta proposed-evolutions pro usuário e roteia knowledge kinds pro mem inbox), retrospective.md (mesma fonte). Chaves '_*' são guias para o agent e devem ser removidas no output final.",
 
   "_template_location": "Template canônico vive em templates/evals.template.json (single file, convenção do diretório templates/). Quando o engine renderiza para o feature package, o conteúdo é gravado em {features_root}/{feature_slug}/evals/evals.json (subpasta), conforme docs/design/05-filesystem-layout.md. Não mover o template — é o engine que materializa a subpasta no destino.",
 
@@ -102,7 +102,7 @@
 
   "l2_distill_candidates": [
     {
-      "_description": "Candidatos a destilação L2 (alimenta memory-distiller quando L2 passa de max-size-mb). Não é proposta — é signal pro distiller comprimir entries similares. confidence ≥ 0.85 + occurrence_count ≥ 3 são fortes candidatos.",
+      "_description": "Candidatos a destilação do acervo — viram entradas de `mem inbox` (a curadoria do acervo é gerida pelo mem). Não é proposta — é signal pra consolidar entries similares. confidence ≥ 0.85 + occurrence_count ≥ 3 são fortes candidatos.",
       "candidate_id": "L2D-{{NNN}}",
       "candidate_type": "{{pattern|finding|convention-refinement|question-elimination}}",
       "name": "{{candidate_name}}",

@@ -16,22 +16,23 @@ input agora emite intent ao invés de bloquear no stdin.
 
 Mapping (subcomando registrado em ``engine.cli.COMMANDS`` → módulo):
 
-  init        → engine.init       — greenfield: pipeline atinge primeiro ask
-  plan        → engine.plan       — brownfield (config presente): primeiro ask
-  implement   → engine.implement  — brownfield: primeiro ask
-  verify      → engine.verify     — read-only sem feature: exit 0 sem prompt
-  reconfigure → engine.reconfigure— brownfield: primeiro menu
-  evolve      → engine.evolve     — sem propostas pendentes: exit 0 sem prompt
-  undo        → engine.undo       — brownfield: menu inicial
-  memory      → engine.memory_cli — brownfield: menu inicial
-  graph       → engine.graph_cli  — sem graph.db: exit 1 sem prompt (mensagem
-                                    canônica de "rode forge reconfigure")
-  doctor      → engine.doctor     — brownfield: scope ask
+  init        → engine.init        — greenfield: pipeline atinge primeiro ask
+  plan        → engine.plan        — brownfield (config presente): primeiro ask
+  implement   → engine.implement   — brownfield: primeiro ask
+  verify      → engine.verify      — read-only sem feature: exit 0 sem prompt
+  reconfigure → engine.reconfigure — brownfield: primeiro menu
+  evolve      → engine.evolve      — sem propostas pendentes: exit 0 sem prompt
+  undo        → engine.undo        — brownfield: menu inicial
+  memory      → engine.memory      — stateless desde W-ROUTE 6a; NÃO emite
+                                     intent nem pausa (sem teste de smoke aqui)
+  graph       → engine.graph_cli   — sem graph.db: exit 1 sem prompt (mensagem
+                                     canônica de "rode forge reconfigure")
+  doctor      → engine.doctor      — brownfield: scope ask
 
-NOTE: ``status`` também existe no dispatcher mas NÃO entra no AC-8 — o
-spec lista ``init/plan/implement/verify/reconfigure/evolve/undo/
-memory_cli/graph_cli/doctor`` como os 10 callsites (``engine.status`` é
-read-only stateless e nunca pediu input). Os 10 acima são canônicos.
+NOTE: ``status`` e ``memory`` existem no dispatcher mas NÃO entram no
+AC-8 — ambos são stateless e nunca emitem intent. Os 9 callsites ativos
+que emitem intent (ou têm comportamento não-interativo documentado) são:
+``init/plan/implement/verify/reconfigure/evolve/undo/graph_cli/doctor``.
 
 Refs:
 - ``docs/superpowers/specs/drift-1-intent-protocol.md`` §5 + AC-8
@@ -289,24 +290,6 @@ def test_smoke_undo_emits_intent(tmp_path):
     )
     payload = _assert_pending_schema(project_root)
     assert payload.get("command") == "undo", payload
-
-
-def test_smoke_memory_emits_intent(tmp_path):
-    """``memory`` em brownfield: pausa no menu inicial. exit 2 + pending.
-
-    NOTE: o subcomando registrado em ``engine.cli.COMMANDS`` é
-    ``memory`` (mapeia pra ``engine.memory_cli``). O dispatch via
-    ``python -m engine.cli memory`` é o caminho canônico.
-    """
-    project_root = _scaffold_brownfield(tmp_path)
-    result = _run_engine(project_root, "memory")
-
-    assert result.returncode == 2, (
-        f"memory: expected exit 2, got {result.returncode}; "
-        f"stderr={result.stderr!r}"
-    )
-    payload = _assert_pending_schema(project_root)
-    assert payload.get("command") == "memory", payload
 
 
 def test_smoke_graph_no_db_exits_1(tmp_path):

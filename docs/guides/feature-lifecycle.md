@@ -53,7 +53,7 @@ captura a essência — sem detalhamento técnico nem de produto.
 
 **Artefato gerado:** `feature-intake.md`
 
-**Onde:** `docs/feature-implementation-workflow/features/{slug}/feature-intake.md`
+**Onde:** `docs/forge-specs/features/{slug}/feature-intake.md`
 
 **Comando:** `forge plan feature-slug` — Wave A
 

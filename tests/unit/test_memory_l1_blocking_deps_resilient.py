@@ -20,13 +20,13 @@ from engine.memory.l1 import blocking_deps
 def _seed_feature(project_root: Path, slug: str) -> Path:
     """Create the feature layout that ``_feature_tasks_dir`` looks up.
 
-    Mirrors the product-subtype path: ``docs/feature-implementation-workflow/
+    Mirrors the product-subtype path: ``docs/forge-specs/
     features/{slug}/tasks/``.
     """
     tasks = (
         project_root
         / "docs"
-        / "feature-implementation-workflow"
+        / "forge-specs"
         / "features"
         / slug
         / "tasks"

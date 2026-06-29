@@ -37,7 +37,11 @@ Read-only on entry (from the context pack the conductor attached):
 - `forge-config.yaml` slice (`.claude/forge/forge-config.yaml`, canônico v1.3+;
   fallback legado `.claude/workflow-config.yaml`) — `identity`, `backend`,
   `ticketing`, `persona.primary-language`, active cards
-- `.claude/memory/L2-project.yaml` slice — patterns, frozen-decisions, findings
+- Substrato de conhecimento via `.claude/bin/mem find "<tema da feature>"` —
+  consulte por patterns, frozen-decisions (`--type decision`) e findings
+  relevantes à feature. Use os hits retornados como contexto.
+  **Degrade-soft:** se o `mem` estiver ausente/vazio/erro, prossiga sem o
+  bloco — não surfe "forge init", não trave.
 - `.claude/inventory/design-system.yaml` slice — component names (so entity
   references are inventory-true)
 - `.claude/inventory/conventions.yaml` — naming, folder layout
@@ -46,9 +50,9 @@ Read-only on entry (from the context pack the conductor attached):
 - `templates/feature-prd.template.md` — canonical template (use if present)
 
 Write:
-- `docs/feature-implementation-workflow/features/{slug}/feature-prd.md`
+- `docs/forge-specs/features/{slug}/feature-prd.md`
 - Append product-level open questions to
-  `docs/feature-implementation-workflow/features/{slug}/open-questions.yaml`
+  `docs/forge-specs/features/{slug}/open-questions.yaml`
   with `phase_lock: prd`
 
 ---
@@ -79,13 +83,13 @@ The produced `feature-prd.md` MUST contain, in order:
 3. **Success criteria** — 3–5 measurable bullets. Extracted from AC verbatim
    when possible; otherwise `needs-elicitation`.
 4. **Non-goals** — 2–5 bullets. Explicit out-of-scope items (carved from
-   ticket description, intake's "out of scope" if present, or memory L2
-   frozen-decisions that limit reach).
+   ticket description, intake's "out of scope" if present, or frozen-decisions
+   do acervo — `mem find "<tema>" --type decision` — que limitem o alcance).
 5. **Domain entities** — list. Reference design-system components by their
    inventory name (e.g., `MeoCard`, `MeoFab`). Flag entities not yet in
    inventory under a `new domain entities` subsection.
 6. **Constraints** — bullets, each citing source:
-   `(card: {name}) | (memory-L2: {id}) | (backend: {key}) | (ticket)`
+   `(card: {name}) | (mem: {id}) | (backend: {key}) | (ticket)`
 7. **Dependencies on other features** — from graph query similar-features +
    ticket linked-tickets. If none: write `Nenhuma identificada.`
 8. **Risks identified** — 2–5. Pull from intake's open-questions and L2
@@ -141,8 +145,9 @@ For each candidate **domain entity**:
 For each **constraint**, cite the source explicitly:
 - Active card constraints (e.g., `compose-screens` → "Android UI is
   Compose-only").
-- Memory L2 frozen-decisions (e.g., L2 id `D-014` → "All persistence via
-  Firestore offline-first").
+- Frozen-decisions do acervo — `mem find "<tema da constraint>" --type
+  decision` (e.g., nota `D-014` → "All persistence via Firestore
+  offline-first"). Degrade-soft: sem hit, siga sem essa constraint.
 - `backend` block flags (e.g., `block-prod-writes: true` → "Dev environment
   only; no writes to prod Firestore").
 - Ticket text directly stating a constraint.
@@ -155,8 +160,9 @@ Pull from two places:
 
 - **Intake's open-questions** — any open-question that, if resolved a
   certain way, would shift product behavior → list as risk.
-- **L2 findings** — grep findings by feature keywords and by modules the
-  feature is likely to touch. Each match → risk with the finding id cited.
+- **Findings do acervo** — `mem find "<keywords da feature + módulos que ela
+  toca>"` pra recuperar findings relevantes. Cada hit → risk com o id da nota
+  citado. Degrade-soft: sem hits, esta fonte só não contribui.
 
 For each risk: 1 sentence cause + severity + which artifact downstream
 would absorb it (tech-spec, screen-analysis, data-contract-spec).
@@ -208,7 +214,7 @@ delivers it to the user.
 ## Output contract
 
 **File written:**
-`docs/feature-implementation-workflow/features/{slug}/feature-prd.md`
+`docs/forge-specs/features/{slug}/feature-prd.md`
 
 **Open questions appended** to `open-questions.yaml`, each:
 
@@ -227,7 +233,7 @@ delivers it to the user.
 {
   "agent": "feature-prd-agent",
   "status": "success" | "partial" | "failed",
-  "output-file": "docs/feature-implementation-workflow/features/{slug}/feature-prd.md",
+  "output-file": "docs/forge-specs/features/{slug}/feature-prd.md",
   "user-stories-count": 6,
   "ac-coverage": 1.0,
   "open-questions-added": 0,
@@ -273,10 +279,10 @@ Inputs: Ticket has summary + 4-line description, no AC.
 Output:
   - 3 user stories, all source: inferred
   - 0 success criteria — all 5 marked needs-elicitation
-  - 2 non-goals inferred from L2 frozen-decisions
+  - 2 non-goals inferred from frozen-decisions do acervo (mem)
   - 3 domain entities (2 inventory hits, 1 new flagged)
   - 2 constraints (both card-sourced)
-  - 4 risks (3 from intake OQs, 1 from L2 finding)
+  - 4 risks (3 from intake OQs, 1 from finding do acervo)
   - 5 open-questions added (phase_lock: prd, 2 blocking)
   - ac-coverage: 0.0
   - status: partial

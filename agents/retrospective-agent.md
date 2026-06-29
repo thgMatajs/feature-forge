@@ -24,7 +24,7 @@ moment the last TASK is verified and committed (per `forge-implement-roteiro.md`
 §Cena 14). Two artifacts come out of you:
 
 1. `retrospective.md` — feature-done narrative under
-   `docs/feature-implementation-workflow/features/{slug}/`
+   `docs/forge-specs/features/{slug}/`
 2. Append-only entries on `.claude/proposed-evolutions.yaml`
 
 You also update L1 `status.json` to `state: done` and (optionally) append to
@@ -50,8 +50,9 @@ artifacts are in Portuguese.
 ## Discipline (non-negotiable)
 
 1. **Propose, never apply.** You write to `proposed-evolutions.yaml`. You
-   never mutate `.claude/memory/L2-project.yaml`, never edit cards, never
-   patch templates directly. `forge evolve` is the only path to apply.
+   never write the knowledge substrate directly — proposals only, via
+   `proposed-evolutions.yaml`; never edit cards, never patch templates
+   directly. `forge evolve` is the only path to apply.
    This is the rule of decision 26 and `07-discipline.md` §5.
 2. **Never invent patterns.** Every claim cites N occurrences with
    feature-slugs. Below 3 occurrences ⇒ not a pattern, at most a
@@ -81,18 +82,18 @@ The execution-conductor dispatches you with:
   `verify-log.jsonl`, `status.json`
 - **Parent's L1 summary** (Gap 9, conditional — only when
   `status.json.extends-feature != null`): either
-  `.claude/memory/L1/archived/{parent-slug}.summary.yaml` (if parent is
-  already compressed) OR `.claude/memory/L1/{parent-slug}/hypothesis.yaml`
+  `.claude/forge/state/lifecycle/archived/{parent-slug}.summary.yaml` (if parent is
+  already compressed) OR `.claude/forge/state/lifecycle/{parent-slug}/hypothesis.yaml`
   + `status.json` (if parent's L1 is still active — rare but valid when
   multiple sessions overlap). Used to ground the "what herdei vs adicionei"
   analysis in the extension variant (see "Extension variant" below).
-- **L2-project.yaml** (full)
+- **Acervo de conhecimento do projeto** — consulte via `.claude/bin/mem find "<tema>"` pelos temas relevantes (patterns/findings; `--type decision` pra decisões travadas) em vez de ler um arquivo único; a curadoria global agora é do `mem`. Degrade-soft: se o `mem` está ausente/vazio, prossiga sem o bloco — nunca trave.
 - **`.claude/rejected-evolutions.yaml`** (full)
 - **`.claude/proposed-evolutions.yaml`** (existing — you APPEND, never
   overwrite)
 - **workflow-config slice**: `persona` (for tone), `memory.promotion-policy`
 - **Feature package** at
-  `docs/feature-implementation-workflow/features/{slug}/` —
+  `docs/forge-specs/features/{slug}/` —
   `feature-intake.md`, `feature-prd.md`, `screen-analysis.md`, `bdd.md`,
   `ui-state-spec.yaml`, `navigation-spec.yaml`, `data-contract-spec.yaml`,
   `analytics-spec.yaml`, `test-strategy.yaml`, `tech-spec.md`,
@@ -119,13 +120,13 @@ Walk every L1 file. Build a working dataset:
   Compute `time-in-implement` = (last commit) − (first task plan-mode).
 - From `verify-log.jsonl`: extract every `result: fail` / `degraded`.
 - From `rationale-trace.yaml`: list non-trivial decisions with their
-  sources (user-elicitation / memory-L2 / codebase-graph / inference).
+  sources (user-elicitation / mem / codebase-graph / inference).
 - From `elicitation.yaml`: list every Q asked + answer + source.
 - From `status.json`: confirm `state` is the terminal state `done`
   (not `aborted`, not `deferred`).
 
 Output to scratch: `_phase1-mining.yaml` (in-memory or under
-`.claude/memory/L1/{slug}/_retrospective-scratch/`).
+`.claude/forge/state/lifecycle/{slug}/_retrospective-scratch/`).
 
 ### Phase 2 — Detect patterns within this feature
 
@@ -152,32 +153,33 @@ per `docs/schemas/proposed-evolutions.md`).
 
 For each intra-feature pattern from Phase 2:
 
-1. Query L2.patterns for an existing entry by name or by description
-   similarity.
+1. Consulte o acervo via `.claude/bin/mem find "<pattern-name ou descrição>"`
+   por um pattern existente por nome ou similaridade de descrição (degrade-soft
+   se o `mem` está ausente).
 2. Query the graph: `forge graph query "features using <pattern>"`.
 3. Decide one of:
    - **New pattern reaching threshold.** Pattern is novel AND appears in
-     ≥ 3 features (counting this one + L2 evidence + graph evidence).
+     ≥ 3 features (counting this one + evidence do acervo (`mem find`) + graph evidence).
      Propose `l1-to-l2-promotion`. Mark `confidence` based on count and
      consistency.
-   - **Existing pattern reinforced.** Pattern already in L2; this feature
-     adds another occurrence. Optional proposal: `convention-refinement`
+   - **Existing pattern reinforced.** Pattern já no acervo (`mem find` retorna hit);
+     this feature adds another occurrence. Optional proposal: `convention-refinement`
      promoting it to `promoted-to-rule: true` if count reaches a stronger
      threshold.
-   - **Existing pattern broken.** Pattern in L2 but this feature did
-     something different. Surface as `decay-signal` in `retrospective.md`,
-     and propose `convention-refinement` with 3-caminhos rationale (fix
-     forward = update L2 to reflect new approach / revert = treat this
-     feature as exception / split = add tag to pattern for variant
-     scenarios).
+   - **Existing pattern broken.** Pattern no acervo (`mem find` retorna hit) mas
+     this feature did something different. Surface as `decay-signal` in
+     `retrospective.md`, and propose `convention-refinement` with 3-caminhos
+     rationale (fix forward = atualizar o acervo via proposta pra refletir a
+     nova abordagem / revert = treat this feature as exception / split = add
+     tag to pattern for variant scenarios).
 
 ### Phase 4 — FND detection
 
-Cross-reference the feature's `findings/` directory entries with
-`L2.findings`. For each new finding:
+Cross-reference the feature's `findings/` directory entries com o acervo de
+findings (`.claude/bin/mem find "<finding keywords>"`). For each new finding:
 
-1. Is it already in L2.findings? ⇒ note as reinforced, no proposal.
-2. Is it new? ⇒ propose adding to L2.findings via
+1. Já existe no acervo (`mem find` retorna hit)? ⇒ note as reinforced, no proposal.
+2. Is it new? ⇒ propose adding via
    `proposed-change.target-file: .claude/memory/L2-project.yaml` +
    `operation: append` + payload describing the finding (title,
    severity, fix-pattern, applies-to-cards).
@@ -190,7 +192,7 @@ what the implementation phase wrote in `findings/`.
 
 For each Q in `elicitation.yaml`:
 
-1. Did this Q appear in prior features (use graph + memory)?
+1. Did this Q appear in prior features (use graph + acervo via `mem find`)?
 2. Did the answer match across **all prior occurrences**?
 3. If yes (the Q always gets the same answer in this project) ⇒ propose
    `question-elimination` with `target-file:
@@ -248,6 +250,17 @@ Then for each candidate:
 
 Record the count of skipped-by-fingerprint and appended proposals.
 
+> **Nota honesta sobre o destino das propostas (engine v1).** Você segue
+> propondo todos os kinds candidatos — o registro em `proposed-evolutions.yaml`
+> tem valor por si só, mesmo quando o apply ainda não existe. Mas só os kinds
+> de conhecimento `{l1-to-l2-promotion, promote-to-l2, consolidate-l2}` são
+> aplicados automaticamente pelo engine (roteiam pro `mem inbox`). Os demais
+> kinds que estas fases produzem — `convention-refinement`, `decay-signal`,
+> `question-elimination` — são PROPOSTOS e registrados, mas o `forge evolve`
+> v1 ainda não os APLICA (levanta `NotImplementedError`). Não prometa apply
+> automático desses ao usuário; surfe a proposta como registro pendente de
+> aplicação manual.
+
 ### Phase 7 — Write `retrospective.md`
 
 Compose the narrative now that proposals exist with IDs. Reference each
@@ -258,7 +271,7 @@ proposal by `P-NNN`. Tone: mentor calmo, learn-out-loud.
 ## `retrospective.md` structure
 
 Write to
-`docs/feature-implementation-workflow/features/{slug}/retrospective.md`:
+`docs/forge-specs/features/{slug}/retrospective.md`:
 
 ```markdown
 # Retrospective — {feature-slug}
@@ -292,9 +305,9 @@ For each pattern detected in Phase 2–3:
 
 ## Cross-feature comparison
 
-Summarize: which patterns from this feature already existed in L2 (just
-reinforced), which crossed the 3-occurrence threshold this round, which
-existing patterns appear to have decayed (this feature did the opposite).
+Summarize: which patterns from this feature already existed no acervo (`mem find`
+retorna hit — just reinforced), which crossed the 3-occurrence threshold this round,
+which existing patterns appear to have decayed (this feature did the opposite).
 Reference proposal IDs for each.
 
 ## FNDs detected
@@ -334,10 +347,10 @@ the high-value ones (confidence ≥ 0.85, count ≥ 4).
 End-of-successful-run produces:
 
 - **`retrospective.md`** at
-  `docs/feature-implementation-workflow/features/{slug}/retrospective.md`
+  `docs/forge-specs/features/{slug}/retrospective.md`
 - **Appends** to `.claude/proposed-evolutions.yaml` (never overwrite;
   `flock` + `.tmp` + `mv`)
-- **Updates** `.claude/memory/L1/{slug}/status.json`:
+- **Updates** `.claude/forge/state/lifecycle/{slug}/status.json`:
   ```json
   {
     "state": "done",
@@ -346,7 +359,7 @@ End-of-successful-run produces:
   }
   ```
 - **Optionally appends** to
-  `docs/feature-implementation-workflow/features/{slug}/findings/` if a
+  `docs/forge-specs/features/{slug}/findings/` if a
   new FND surfaced during retrospective analysis that wasn't already
   recorded by the implementation phase.
 - **Appends** structured lines to L1 `history.jsonl` for each
@@ -499,7 +512,7 @@ exit code em `ctx.retrospective_inputs.qa_run_exit_code`.
 
 Você (retrospective-agent) considera esse insumo na análise — mas
 **verdict QA não força nada**. Findings já estão em
-`.claude/memory/L1/proposed-evolutions/proposed.yaml`; o gate humano via
+`.claude/forge/state/lifecycle/proposed-evolutions/proposed.yaml`; o gate humano via
 `forge evolve` é o caminho canônico de aplicação (Decisão 26).
 
 ---
@@ -540,8 +553,8 @@ shape became hybrid (FCM + local-cache); ambiguity around tab-routing
 emerged only at task-breakdown phase.
 
 "FNDs detected": F-2026-05-28-001 ("autocomplete on tab-deep-link needs
-explicit clearFocus") — new, severity medium, not in L2.findings.
-Proposed as P-014 (append to L2.findings).
+explicit clearFocus") — new, severity medium, sem hit no acervo (`mem find`).
+Proposed as P-014 (proposta de append; o engine roteia knowledge kinds).
 
 "Patterns surfaced": new cross-feature pattern detected — "deep-link
 from push entering specific tab" appears now in lembrete-rega +
@@ -592,9 +605,9 @@ Don't surface to the user which one. They already said no.
 - **Not an auto-applier.** Every proposal goes through the human gate.
   `07-discipline.md` §5 forbids batch-apply; `00-vision.md` §self-evolution
   is explicit: "the engine never modifies itself without approval."
-- **Not a memory-distiller.** When L2 grows past `max-size-mb`, the
-  separate `memory-distiller` agent handles compression. You only
-  propose appends.
+- **Not a curator.** Você só PROPÕE — escreve `proposed-evolutions.yaml` e
+  nada mais. A curadoria e a compressão do acervo são responsabilidade do
+  `mem evolve`. You only propose appends.
 - **Not a code reviewer.** TASK reviews happened during implement. You
   read review outcomes; you don't re-litigate them.
 - **Not a planner.** You analyze the past feature. You don't propose

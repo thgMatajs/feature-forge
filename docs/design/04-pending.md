@@ -3,6 +3,135 @@
 What still needs to be drafted, in dependency order. Use this as the
 checklist for next sessions.
 
+## W-VENDOR — gaps pós Fase 1 Onda 3 (2026-06-25)
+
+- **M-001 (forge reconfigure/upgrade não re-vendoriza o mem)** — `forge init`
+  é idempotente e re-vendoriza o asset (overwrite de `.claude/bin/mem` + rerun
+  do scaffold). `forge reconfigure` e `forge upgrade` NÃO re-vendorizam o mem
+  nesta onda — o pin drift é sinalizado pelo `forge doctor` categoria `mem`
+  (check `pin` → WARN), mas o remédio hoje é rodar `forge init` manualmente.
+  Gap: adicionar ao `forge reconfigure` → opção "re-vendorizar mem" (ou ao
+  `forge upgrade`) pra cobrir o fluxo de atualização sem re-init full.
+  *Reentrar* quando W-MIGRATE/W-ROUTE fizerem do mem o substrato padrão de todos
+  os consumidores — nesse ponto o drift de pin passa de cosmético a funcional e o
+  custo do "force `forge init`" vira fricção real.
+
+## W-RULES — gaps pós Fase 1 Onda 5 (2026-06-26)
+
+- **W-RULES-OC (opencode adapter `classify` não coberto)** — o `ClaudeCodeAdapter`
+  e o `IntentFileAdapter` implementam `classify` com pending/response via
+  `forge-pending.json`. O `OpencodeAdapter` (quando implementado — gap
+  MCP-dormant acima) precisará de um `classify` próprio no mesmo padrão.
+  Até lá, opencode usa `IntentFileAdapter` como fallback (Veredito B), que já
+  suporta `classify` corretamente. Sem impacto funcional imediato.
+  *Reentrar* quando `OpencodeAdapter` for implementado (critério: ver §MCP-dormant).
+
+- **W-RULES-PAUSE (round-trip de pause do `ask_three_paths` dentro do loop de
+  ajuste sem teste dedicado)** — a sequência G2 (ajustar) no `_reduce_rules`
+  re-emite `classify` (novo `intent-id`) e depois exibe novo `ask_three_paths`
+  (outro `intent-id`). O mecanismo de pause/resume do `ask_three_paths`
+  nessa posição — onde dois intents encadeados podem pausar em ordens diferentes
+  entre re-runs — não tem teste de integração dedicado. O mecanismo é
+  determinístico (mesmo padrão provado no classify e em outros multi-intent),
+  mas a cobertura do encadeamento específico G2 falta. Risco: baixo (lógica
+  idêntica a outros caminhos cobertos).
+  *Reentrar* quando suite de integração do init for ampliada.
+
+- **W-RULES-RESUME (checkpoint pré-existente re-roda `_reduce_rules`)** — o
+  init usa `_InitCheckpoint` (checkpoint de etapas). O passo `_reduce_rules`
+  está inserido após o vendoring, mas o checkpoint não salva a posição interna
+  do `_reduce_rules` (etapa de classify já consumida vs. ainda pendente). Numa
+  re-invocação pós-pausa no `ask_three_paths`, o `_reduce_rules` recalcula os
+  fragments (determinístico — H-101 garante o mesmo `intent-id` pra classify)
+  e re-consome a response cacheada corretamente. No entanto, se o checkpoint de
+  etapa posicionar o resume ANTES do `_reduce_rules` em vez de dentro dele, os
+  steps anteriores do pipeline do init são re-executados — operações idempotentes,
+  não incorretas, mas custosas. Não é incorreção: o idempotent-by-design do
+  pipeline absorve o re-run.
+  *Reentrar* se o custo de re-run virar fricção real em inits longos.
+
+## W-ROUTE 6a — gaps pós reescrita do forge memory (2026-06-26)
+
+- **`forge memory forget` removido (W-ROUTE 6a)** — o mem não tem primitivo
+  de archive-por-id (`supersede` exige NEW+OLD; `evolve --apply` arquiva por
+  standing, não por alvo). Curadoria de archive passa a ser `forge memory
+  distill` → `mem evolve`. Candidato a `mem-report` upstream: um `mem archive
+  <id>`.
+
+- **`engine/memory/l3.py` órfão (W-ROUTE 6a)** — perdeu o único consumidor de
+  produção (`memory_cli` parou de inspecionar L3). Slated pra remoção num
+  passo clean-break posterior; mantido agora pra não expandir o escopo de 6a.
+
+## W-ROUTE 6b/6c — gaps pós re-roteamento de knowledge proposals (2026-06-26)
+
+- **`l2.add_entry` órfão-pra-conhecimento (W-ROUTE 6b)** — RESOLVIDO em 6c:
+  `add_entry` deletada de `engine/memory/l2.py` (e de `__all__`) e import
+  removido de `distiller.py`. Write-path órfão de conhecimento eliminado.
+
+- **`_apply_consolidate_l2` órfã (W-ROUTE 6c)** — RESOLVIDO em 6c: função
+  deletada de `engine/memory/distiller.py`. O branch `consolidate-l2` já
+  era roteado via `_KNOWLEDGE_KINDS → mem_inbox_add` desde 6b; a função era
+  dead code confirmado por grep.
+
+- **`apply_proposal_to_l2` misnomer (W-ROUTE 6b)** — PENDENTE: misnomer mantido.
+  O rename ripplaria em callers/tests — candidato a sweep semântico posterior (6d+).
+
+- **`forge undo` de evolve-apply é no-op pra knowledge kinds (W-ROUTE 6b)**
+  — após 6b, proposals de conhecimento vão pro inbox do mem (não pro L2), mas
+  `engine/undo.py::_undo_evolve` só reverte L2 (`l2.remove_entry`). O resultado
+  é um no-op silencioso: o candidato persiste no inbox do mem e o usuário acredita
+  ter desfeito o evolve-apply quando, na prática, nada foi revertido no substrato
+  de memória. `undo.py` ficou fora do escopo de 6b (não foi tocado). *Tratar em
+  6c (re-rota de undo pra knowledge kinds) ou via `mem inbox reject` como
+  alternativa operacional enquanto o fix não chega.*
+  RESOLVIDO em 6d: o apply captura o `mem-inbox-id` (de `mem --json inbox add`)
+  e grava em `routed-to: mem-inbox` + `mem-inbox-id` no evento `evolve-apply`;
+  `_undo_evolve` lê de volta e chama `mem inbox reject <id>`. Report honesto se
+  o candidato já foi promovido ou o mem está indisponível (não finge sucesso).
+  O path L2 legado fica intacto pros kinds não-conhecimento e eventos pré-6d.
+
+## W-AGENTS — gaps pós re-rota dos conductor prompts (2026-06-29)
+
+- **Re-rota de leitura fechada (Onda 7 / W-AGENTS)** — RESOLVIDO: os quatro
+  conductor prompts (`feature-prd-agent`, `planning-conductor`,
+  `contract-planner-agent`, `retrospective-agent`) deixaram de instruir leitura
+  do `.claude/memory/L2-project.yaml` abandonado e passaram a consultar o acervo
+  via `.claude/bin/mem find` (degrade-soft). O write-path não mudou — os prompts
+  seguem propondo via `proposed-evolutions.yaml`, que o `forge evolve` já roteia
+  pro `mem inbox add`. O `agents/memory-distiller.md` foi removido (órfão; a
+  curadoria/compressão do acervo é do `mem evolve`).
+
+- **`_KNOWLEDGE_KINDS` cobre só 3 dos kinds do retrospective (limitação
+  PRÉ-EXISTENTE v1.1)** — o `_KNOWLEDGE_KINDS` do engine roteia pro mem inbox
+  apenas `promote-to-l2` / `l1-to-l2-promotion` / `consolidate-l2`. Os demais
+  kinds que o retrospective-agent pode emitir — `convention-refinement` /
+  `decay-signal` / `question-elimination` — seguem em `NotImplementedError`. Essa
+  é uma limitação herdada da v1.1 (NÃO introduzida pela Onda 7); a re-rota de
+  leitura não a toca. *Reentrar* quando o roteamento de knowledge kinds for
+  ampliado pra cobrir os três restantes.
+
+## W-MIGRATE (migrador L2→mem) — DEFERIDO até brownfield real (2026-06-26)
+
+O migrador forge-side L2→mem (spec §Migração: kind→type, field-preservation,
+sentinel `.migrated-from-l2`, `--source migrate:L2:<id>`, idempotência,
+`--force`) foi DEFERIDO na Fase 1. Razão: pré-produção — nenhum consumidor
+brownfield com `.claude/memory/L2-project.yaml` existe; projetos greenfield
+nascem diretamente no mem (sem dados a migrar); o próprio repo feature-forge
+migrou seu conhecimento na Fase 0 (W-VENDOR já entregue). Implementar o
+migrador agora é YAGNI sem evidência de brownfield real.
+
+Critério de reentrada: quando ≥1 projeto brownfield (com `L2-project.yaml`
+povoado) for adotar a integração mem. O design completo está congelado na
+spec `docs/superpowers/specs/2026-06-25-mem-integration-design.md §Migração`
+— implementar a partir dele quando o gatilho ocorrer.
+
+Decisão em aberto (não resolvida nesta deferral): reconfigure opt-in vs
+comando dedicado (`forge migrate-l2`?) — `forge raw` é read-only e não serve
+como ponto de entrada. Resolução na reentrada.
+
+Ordem efetiva de execução da Fase 1: W-RENAME → W-STATE → W-VENDOR →
+W-RULES → W-ROUTE → W-AGENTS (W-MIGRATE pulado; W-RULES avança pra posição 4).
+
 ## Pilot R7 — qa flow fixes (2026-06-19)
 
 Os fixes de `forge qa` (F-1..F-5 + CR-01) estão em CHANGELOG `## [Unreleased]
@@ -569,7 +698,7 @@ auditoria consolidada (§6 item 11) + `auditoria-llm-first` §7-8:
   Regression test fecha o gap de cobertura (testes anteriores semeavam o
   marker legacy à mão). Legacy compat mantido — não é breaking change.
 - **`.gitignore` semantic narrowing** — `.gitignore` que `forge init` cria
-  ainda usa paths v1.x (`.claude/memory/L1/*`, `.claude/graph.db`). v1.3 move
+  ainda usa paths v1.x (`.claude/forge/state/lifecycle/*`, `.claude/graph.db`). v1.3 move
   esses pra `.claude/forge/state/` e `.claude/graph.db` (caminho inalterado).
   Sem impacto funcional imediato (paths antigos também existem por compatibilidade),
   mas narrowing pra `.claude/forge/state/` ficou fora do W5. Critério:
@@ -1073,7 +1202,7 @@ Motivação: Fase 3 inicial calcificou Firebase como o backend canônico. Projet
 - [x] `engine/evolve.py` — review proposed evolutions single-by-single
 - [x] `engine/undo.py` — 7 targets menu
 - [x] `engine/graph_cli.py` — Q1-Q10 read-only CLI
-- [x] `engine/memory_cli.py` — inspect/search/forget/distill/export
+- [x] `engine/memory_cli.py` — search/inspect/export/distill (arg-driven; forget/L3 removidos — W-ROUTE 6a)
 - [x] `engine/utils/{paths,yaml_io,sha256,sqlite_io}.py`
 - [x] `engine/ui/{renderer,progress,tree,question}.py`
 - [x] `engine/persona/mentor_calmo.py`
@@ -1360,7 +1489,7 @@ internos (no caso de A4).
       `spike + chore` ficam como stub via 3-caminhos discipline §1 (caminhos
       legítimos: treat as product / wait v1.1+ / abort) — sem improviso.
 - [x] **Filesystem-layout extension:**
-      `docs/feature-implementation-workflow/non-product/{slug}/` paralelo a
+      `docs/forge-specs/non-product/{slug}/` paralelo a
       `features/{slug}/`. Tabela em `docs/design/05-filesystem-layout.md §3`
       mostra quais artefatos existem por subtipo. Não entra na
       similarity-graph automática (conductor §Phase 1 skipa Q1 quando
@@ -1849,7 +1978,7 @@ overlay local, não via canon expansion.
       "{parent-slug}"` (reverse pointer pra otimizar queries L1).
       `docs/schemas/memory.md` documenta + MEM-L1-008 ganha rule: se
       `extends-feature != null` → parent existe em
-      `.claude/memory/L1/{parent-slug}/` E `parent.state == "done"`.
+      `.claude/forge/state/lifecycle/{parent-slug}/` E `parent.state == "done"`.
       Forward-compat: status.json pré-Gap 9 carregam normais (default null).
 - [x] **`L1State` em `engine/memory/l1.py` ganha 2 fields + helpers** —
       `extends_feature`, `parent_feature`, `parent_state(slug, root)` +
@@ -2315,7 +2444,7 @@ existentes.
       interactive prompt pra tipos de entidade.
 - [x] **`planning-conductor.md` Phase 4.5** (entre Wave B e Wave C):
       conductor parseia entities do data-contract-spec, roda Q11, persiste
-      resultado em `.claude/memory/L1/{slug}/existing-helpers.yaml`. Empty
+      resultado em `.claude/forge/state/lifecycle/{slug}/existing-helpers.yaml`. Empty
       result é normal — sempre escreve arquivo.
 - [x] **`tech-spec-agent.md` context pack** atualizado para incluir
       `existing-helpers.yaml`. Phase 5 (CFR scan) reescrita em 2 steps:
@@ -3758,6 +3887,45 @@ honesto; a implementação real dos paths b/c (multi-select per-cell, picker
 greenfield) fica deferida. Quando implementar: `_run_per_axis_prompts` +
 `_apply_axis_overrides` (já existem no módulo, usados pelo greenfield) são a
 base reusável.
+
+## W-STATE — drift residual do path L1 em templates (sweep de fechamento)
+
+O W-STATE moveu a state-machine de lifecycle de `.claude/memory/L1/` pra
+`.claude/forge/state/lifecycle/` (fonte de verdade:
+`engine/utils/paths.py::lifecycle_root`). Os conductor prompts
+(`agents/planning-conductor.md`, `agents/retrospective-agent.md`) já foram
+atualizados, mas o path antigo `.claude/memory/L1/` ainda persiste em
+artefatos operacionais não cobertos naquela passada — os templates
+`tech-spec.template.md`, `evals.template.json`, `feature-intake.template.md`,
+`plan-feature-handoff.template.json`. São candidatos a um sweep de fechamento
+do W-STATE (mesmo mapeamento de prefixo, preservando tudo após `L1/`). Docs
+históricos (plans/specs/reports, `08-session-handoff.md`) ficam de fora — são
+registros point-in-time.
+
+## Onda 7 — re-rota de leitura-de-L2 → `mem find`: cobertura PENDENTE em 4 agentes
+
+A Onda 7 (W-AGENTS) re-rotou as leituras-de-conhecimento (L2) pro `mem find`
+nos 5 conductor prompts do escopo-spec da onda (`planning-conductor.md`,
+`feature-prd-agent.md`, `contract-planner-agent.md`, `readiness-reviewer`,
+`retrospective-agent.md`) e deletou o `memory-distiller.md`. Esse escopo está
+fechado e revisado.
+
+Fica de fora — cobertura PENDENTE, follow-on explícito — QUATRO outros agentes
+que ainda leem L2 como conhecimento e NÃO foram tocados nesta onda (estavam
+fora do escopo-spec):
+
+- `agents/screen-analysis-agent.md`
+- `agents/feature-intake-agent.md`
+- `agents/task-contract-writer.md`
+- `agents/tech-spec-agent.md`
+
+Sem registrar isto, o "gate global sobre `agents/`"
+(`grep -rniE "memory[ /-]?L2|L2[.) ](patterns|findings|frozen|decisions)|L2-project\.yaml" agents/`)
+fica falsamente verde na próxima leitura — esses 4 ainda emitem hits de
+leitura-de-conhecimento órfã. Candidatos a uma onda dedicada de re-rota (mesmo
+padrão: comentário/instrução de "ler L2" → "consulte o acervo: `mem find
+\"<tema>\"`" com degrade-soft). Distinguir, como na Onda 7, write-path
+target-files e schema-refs (que FICAM) das leituras acionáveis (que migram).
 
 ---
 

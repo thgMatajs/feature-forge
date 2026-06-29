@@ -24,7 +24,7 @@ from typing import Iterable, Optional
 
 from engine.graph._body_text import jaccard_similarity, tokens_from_json
 from engine.graph.gradle_deps import build_dependency_closure, infer_suggested_target
-from engine.utils.paths import graph_db_path
+from engine.utils.paths import FEATURE_WORKFLOW_DIRNAME, graph_db_path
 from engine.utils.sqlite_io import open_db
 
 # Mapping from internal detection category to the proposal ``kind`` value
@@ -932,7 +932,7 @@ def queue_proposals_from_table(project_root: Path) -> int:
             # proposed-change.payload — keep them populated so `forge evolve`
             # surfaces a non-empty title when listing proposals.
             payload = {
-                "target-file": f"docs/feature-implementation-workflow/non-product/(generated)",
+                "target-file": f"docs/{FEATURE_WORKFLOW_DIRNAME}/non-product/(generated)",
                 "operation": "refactor-plan",
                 "payload": {
                     "name": title,

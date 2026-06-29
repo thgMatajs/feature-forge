@@ -80,8 +80,8 @@ You read the pack. You do NOT fetch new sources. Missing field →
 
 ## What you produce
 
-1. `docs/feature-implementation-workflow/features/{slug}/task-breakdown.yaml`
-2. One `docs/feature-implementation-workflow/features/{slug}/tasks/TASK-NNNN.yaml`
+1. `docs/forge-specs/features/{slug}/task-breakdown.yaml`
+2. One `docs/forge-specs/features/{slug}/tasks/TASK-NNNN.yaml`
    per task (zero-padded, sequential starting at 0001)
 3. Structured JSON return to the conductor (see Output contract)
 
@@ -357,7 +357,7 @@ Missing coverage → 3-caminhos fail.
 Files written:
 
 ```
-docs/feature-implementation-workflow/features/{slug}/
+docs/forge-specs/features/{slug}/
   task-breakdown.yaml
   tasks/TASK-0001.yaml
   tasks/TASK-0002.yaml

@@ -11,7 +11,7 @@ Five layers; three implemented in v1.
 ```
 ┌────────────────────────────────────────────────────────┐
 │ L1 — Per-feature                                       │
-│   location: .claude/memory/L1/{feature-slug}/          │
+│   location: .claude/forge/state/lifecycle/{feature-slug}/  │
 │   scope:    one feature lifecycle                      │
 │   write:    yes (during forge plan / implement)        │
 │   git:      ❌ (work-in-progress, archived on done)    │
@@ -54,11 +54,11 @@ The feature logbook. Created by `forge plan`, updated throughout
 
 ### Files in L1
 
-L1 owns **8 files**, all under `.claude/memory/L1/{feature-slug}/`. This is
+L1 owns **8 files**, all under `.claude/forge/state/lifecycle/{feature-slug}/`. This is
 the full scope — no subdirectories, no sibling artifacts.
 
 ```
-.claude/memory/L1/{feature-slug}/
+.claude/forge/state/lifecycle/{feature-slug}/
 ├── hypothesis.yaml          working hypothesis from Phase 1 of planning-conductor
 ├── ambiguity-map.yaml       decision tree with resolution sources
 ├── elicitation.yaml         user-answered questions
@@ -70,8 +70,8 @@ the full scope — no subdirectories, no sibling artifacts.
 ```
 
 > **What is NOT L1.** The following directories belong to the **feature
-> package**, not to memory L1, and live under
-> `docs/feature-implementation-workflow/features/{slug}/` per
+> package**, not to lifecycle state L1, and live under
+> `docs/forge-specs/features/{slug}/` per
 > `docs/design/05-filesystem-layout.md`:
 >
 > - `findings/` — FNDs raised during planning / implementation
@@ -429,7 +429,7 @@ never carry `blocked-on-external` and parse without modification.
 | `chore` | Stub in v1.0 — conductor surfaces 3-caminhos and asks user how to proceed | n/a (stub) | n/a (stub) |
 
 When `subtype != "product"`, feature artifacts live under
-`docs/feature-implementation-workflow/non-product/{slug}/` instead of
+`docs/forge-specs/non-product/{slug}/` instead of
 `features/{slug}/` — see `docs/design/05-filesystem-layout.md`. This
 applies to `refactor`, `bugfix`, and the (stubbed) `spike`/`chore` —
 all share the non-product subtree so the product feature folder stays
@@ -456,7 +456,7 @@ below).
 
 ### L1 lifecycle
 
-- **Created** on `forge plan` start
+- **Created** on `forge plan` start — dir under `.claude/forge/state/lifecycle/{slug}/`
 - **Updated** throughout plan and implement
 - **Archived** on feature-done → compressed to `summary.yaml` (1 file)
 - **Retention** until feature is archived (then becomes summary)
@@ -488,8 +488,8 @@ MEM-L1-008  status.json must exist and:
                 external dependencies)
               · extends-feature must be a slug string or null (default null
                 when absent — forward compat for pre-Gap-9 files); when non-
-                null, parent slug must exist as a sibling L1 directory
-                `.claude/memory/L1/{parent-slug}/` AND parent.state == "done"
+                null, parent slug must exist as a sibling lifecycle directory
+                `.claude/forge/state/lifecycle/{parent-slug}/` AND parent.state == "done"
                 (Gap 9 — extends-feature mechanic; enforced by
                 `validate_extension_feature`)
               · parent-feature must be a slug string or null and must equal
@@ -501,14 +501,14 @@ MEM-L1-008  status.json must exist and:
 
 ## L1 as a lock mechanism
 
-`status.json` doubles as the per-feature lock signal. Any L1 with
+`status.json` doubles as the per-feature lock signal. Any lifecycle directory with
 `state ∈ {planning, implementing, verifying}` constitutes an **active feature
 lock**: at least one forge command is currently mutating that feature's
 package or memory, and concurrent mutation of shared state would corrupt the
 workspace.
 
 Operations that mutate shared state (cards, workflow-config, inventory) MUST
-scan `.claude/memory/L1/*/status.json` and refuse to run if any feature is
+scan `.claude/forge/state/lifecycle/*/status.json` and refuse to run if any feature is
 active. The current scope:
 
 | Command | Why it must check |
@@ -662,7 +662,7 @@ promotion-candidates:
 max-size-mb: 0.5
 
 When exceeded:
-  memory-distiller agent runs
+  forge memory distill → mem evolve (o acervo gere o tamanho)
   ↓
   Reads full L2
   ↓

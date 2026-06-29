@@ -2,7 +2,7 @@
 
 A standalone CLI skill that orchestrates end-to-end planning + implementation of mobile features across Android, iOS, KMP, and Web. Backend-agnostic (Firebase, REST, GraphQL, local-only).
 
-> **State:** 1.6.1 cortado · qa-pilot remediation + doctor schema-version fix · 2026-06-24 · rapid 2012 / integration 233 / e2e 31 passed (pilot R1-R8: unblock AI-first + fluxo `forge qa` agêntico + hardening do sandbox Decisão 30 + e2e do secrets-gate. W-DEBT dívida residual: PHANTOM-STATES removido + CARDS-DISCONNECT + ABORTED-DEADEND + PLACEHOLDER-VERIFY + SCHEMA/STALE guards + readiness non-product + FORGE_HOME driver doctor + cleanup; W3 token economy: output-mode + read-commands `--json` + `--help --json` manifesto + workflow router, Revisita Decisão 10; W2 protocol robustness; camada de interação AI-first Wave 1: driver `SKILL.md`/`AGENTS.md` + front-door ticket/frase + grounded-challenge Phase 2.5 + readiness enforce + CASING-BUG fix; remediação cross-AI review PR #17; install.sh curl one-liner + forge upgrade + bash 3.2 portável; Wave 3 bug-fix sprint; Wave 2 host-aware execution; graph-ia-evolution ✅ shipped; PR #16 master review fix-pack Wave A+B+C aplicado integralmente) · 22 validators · 14 comandos · 29 cards · 4 bundles · 6 parsers (kotlin/swift/typescript + java/xml/objc) · driver `skills/feature-forge/SKILL.md` + `templates/AGENTS.md.template` · ~400 arquivos · ~52.5K LOC
+> **State:** feat/mem-integration em progresso · W-ROUTE 6d: re-rota do `forge undo` de conhecimento pra `mem inbox reject` (encerra o no-op silencioso do undo); 6b: forge evolve (knowledge proposals) → mem inbox; forge status → mem stats · 2026-06-29 · rapid 2126 / integration 234 / e2e 31 (3 default + 28 gated RUN_E2E=1) (pilot R1-R8: unblock AI-first + fluxo `forge qa` agêntico + hardening do sandbox Decisão 30 + e2e do secrets-gate. W-DEBT dívida residual: PHANTOM-STATES removido + CARDS-DISCONNECT + ABORTED-DEADEND + PLACEHOLDER-VERIFY + SCHEMA/STALE guards + readiness non-product + FORGE_HOME driver doctor + cleanup; W3 token economy: output-mode + read-commands `--json` + `--help --json` manifesto + workflow router, Revisita Decisão 10; W2 protocol robustness; camada de interação AI-first Wave 1: driver `SKILL.md`/`AGENTS.md` + front-door ticket/frase + grounded-challenge Phase 2.5 + readiness enforce + CASING-BUG fix; remediação cross-AI review PR #17; install.sh curl one-liner + forge upgrade + bash 3.2 portável; Wave 3 bug-fix sprint; Wave 2 host-aware execution; graph-ia-evolution ✅ shipped; PR #16 master review fix-pack Wave A+B+C aplicado integralmente) · 22 validators · 14 comandos · 29 cards · 4 bundles · 6 parsers (kotlin/swift/typescript + java/xml/objc) · driver `skills/feature-forge/SKILL.md` + `templates/AGENTS.md.template` · ~400 arquivos · ~52.5K LOC
 
 ## What it is
 
@@ -107,14 +107,14 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 3. **Memory** — L1 per-feature (WIP) + L2 project (committed) + L3 read-only (auto-memory)
 4. **Graph** — SQLite com 17 queries canônicas (Q1–Q10 estruturais, Q11 reusable-helpers, Q12–Q17 reuse-intelligence: duplicates within/cross-module, KMP-migration, near-duplicates, redundant-platform, TS-helpers)
 5. **Inventory** — DS components + i18n + conventions extraídos do projeto
-6. **Engine Python** — Bash dispatcher + 14 commands + foundation + state + integrations + reuse-intelligence pipeline (parsers, body-hash, gradle modules/deps, detection, apply) + host-aware execution layer (`engine/host/` — 4 adapters: claude_code / opencode-fallback / tty / intent_file)
+6. **Engine Python** — Bash dispatcher + 14 commands + foundation + state + integrations (`engine/integrations/` — mem boundary: fronteira shell pro `mem` vendorizado) + reuse-intelligence pipeline (parsers, body-hash, gradle modules/deps, detection, apply) + host-aware execution layer (`engine/host/` — 4 adapters: claude_code / opencode-fallback / tty / intent_file)
 
 ## Stats
 
 | Categoria | Conteúdo |
 |---|---|
 | Schemas | 14 schemas (inclui `intent-protocol.md` novo em v1.2-dev / Phase A DRIFT-1 + `backend-axes.md` v1.2-dev Phase B) + capability-labels catalog + schema v2 (reuse_findings, module_deps) |
-| Agent prompts | 10 (planning-conductor + 9 sub-agents) |
+| Agent prompts | 9 (planning-conductor + 8 sub-agents) |
 | UX roteiros | 7 (init, plan, implement, verify, doctor, reconfigure, evolve) — todos cobrem subtypes + reuse intelligence |
 | Templates canônicos | 18 (16 produto + feature-intake-bugfix + feature-intake-refactor) |
 | Cards canônicos | 29 (8 stack + 5 Firebase + firebase-crashlytics + 4 REST + retrofit-client + room-database + sqldelight + datastore-prefs + shared-preferences-prefs com `legacy-marker` + firebase-analytics + posthog-analytics + fcm + onesignal + firebase-remote-config + posthog-flags); overlay local em `.claude/cards/local/<name>/` desde Gap 5 (2026-06-02). Phase B DET-6 acresceu 6 cards de analytics/notifications/flags + sqldelight (axis persistence/kmp) + rename `crashlytics → firebase-crashlytics`. |
@@ -122,10 +122,10 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 | Validators Python | 22 + 3 helpers (`_gate_infra`, `_diff`, `_common`) — inclui `check_cyclomatic_complexity` (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon), `check_secrets` (gitleaks + trufflehog), `check_no_behavior_change` (refactor), `validate_extension_feature` (extends-feature cross-cutting), `validate_presets` (Phase B DET-6 — bundle YAML schema) |
 | Hooks | 9 + 1 reuse incremental (`post-edit-detect-duplications.sh`) |
 | Graph parsers | 6 (Kotlin / Swift / TypeScript + Java / XML / Objective-C — Java/XML/ObjC novos em v1.3.0 graph-ia-evolution). Body extraction (`symbols.body`) cobre brace-delimited bodies (5 linguagens; XML é NULL). |
-| Tests | rapid **2012 passed** / integration **233 passed** / e2e **31 passed** (1.6.1 — qa-pilot remediation + doctor schema-version fix). Histórico: 2003/233/31 em 1.6.0 (release de piloto); 1946/222/31 em pilot R8; 1937/222/31 em pilot R7; 1915/216/31 em pilot R6; 1885/215/31 em pilot R4; 1863/204/30 em 1.5.0; 1797/190/30 na série AI-first; 1611/168/30 em 1.4.0 pilot-ready. Baseline histórico em CHANGELOG.md. |
-| LOC total | ~52.500 |
-| Engine LOC | ~33.500 (Python; engine/ apenas — validators/ adicional ~7.300) |
-| Files total | ~400 |
+| Tests | rapid **2126 passed** (11 skipped) / integration **234 passed** (10 falhas pré-existentes de test_claude_rules_system — débito Fase 0) / e2e **31 (3 default + 28 gated RUN_E2E=1)** (W-ROUTE 6d — re-rota do undo de conhecimento pra mem inbox reject; +2 testes do review holístico 6d: reject real-mem roundtrip + honest-failure de mem-inbox sem id). Histórico: 2124/234/31 em 6d (re-rota undo); 2068/234/31 em Fase 0 mem dogfood; 2067/234/31 em 6b T3 (status→mem stats); 2020/233/31 em Fase 0 dogfood; 2012/233/31 em 1.6.1 (qa-pilot remediation + doctor schema-version fix); 2003/233/31 em 1.6.0 (release de piloto); 1946/222/31 em pilot R8; 1863/204/30 em 1.5.0; 1797/190/30 na série AI-first; 1611/168/30 em 1.4.0 pilot-ready. Baseline histórico em CHANGELOG.md. |
+| LOC total | ~52.500 (Python) |
+| Engine LOC | ~42.500 (Python; engine/ apenas — validators/ adicional ~7.700). O asset `engine/assets/mem/mem` (2.363 linhas, shell) é vendorizado/pinado e fica FORA da contagem de LOC Python do engine. |
+| Files total | ~404 (inclui `engine/integrations/mem.py`, `engine/integrations/__init__.py`, `engine/assets/mem/mem`, `engine/assets/mem/VERSION`) |
 | Decisões locked | 27 + 7 direcionais (Fase 3.5) |
 | Subtypes feature | 5 (product / refactor / bugfix / spike / chore) |
 | Reuse finding categories | 6 (consolidate-within / promote-to-shared / redundant-platform / near-duplicate / kmp-migration / consolidate-ts) |
@@ -177,9 +177,11 @@ explicitamente.
 ~/.local/share/feature-forge/           canonical install (XDG default; $XDG_DATA_HOME)
   bin/forge                             Bash dispatcher
   scripts/install.sh                    curl one-liner installer (bash 3.2)
-  engine/                               Python engine (~33.500 LOC)
+  engine/                               Python engine (~42.500 LOC; asset mem vendorizado fora da contagem)
     host/                               host-aware execution — 4 adapters:
                                           claude_code / opencode-fallback / tty / intent_file
+    integrations/                       mem boundary — fronteira shell pro mem vendorizado
+    assets/mem/                         mem vendorizado (binário pinado + VERSION) — fora da LOC Python
     graph/                              parsers (Kotlin/Swift/TS/Java/XML/ObjC) + builder +
                                         gradle_modules + gradle_deps +
                                         _body_text + duplicates + reuse_apply +
@@ -187,7 +189,7 @@ explicitamente.
     memory/                             L1/L2/L3 + distiller (16 proposal kinds)
     cards/  inventory/  ui/  persona/   utils/ (sqlite_io + template_render)
   docs/                                 design + schemas + UX roteiros + lifecycle
-  agents/                               agent prompts (10 prompts)
+  agents/                               agent prompts (9 prompts)
   templates/                            18 canonical templates (16 + bugfix + refactor)
   cards/                                29 canonical cards (+ overlay em consumidor)
   presets/kmp-mobile/                   canonical preset v1
@@ -234,7 +236,7 @@ forge graph          query graph (Q1-Q17, "r" combined view)
                      · `forge graph --json <query> [args...]` — non-interactive JSON
                        (entrypoint pra IA/automação; aceita aliases/keys/labels);
                        combina com `--no-auto-build` em CI determinístico (v1.3.0+)
-forge memory         inspect L1/L2/L3
+forge memory         search/inspect/export/distill (wrapper mem, arg-driven)
 forge evolve         review propostas (single-by-single) — 16 kinds
                      · 10 retrospective + 6 reuse-intelligence
 forge undo           reverter última ação
@@ -310,7 +312,7 @@ Documentados em `docs/design/08-session-handoff.md § Conhecidos limites v1` + `
 
 ## Origin
 
-Extraído de `MeoBonsai/.agents/skills/feature-implementation-workflow/` em maio 2026 e generalizado pra portabilidade cross-project. Ver `INFLUENCES.md` pra atribuições.
+Extraído de `MeoBonsai/.agents/skills/forge-specs/` em maio 2026 e generalizado pra portabilidade cross-project. Ver `INFLUENCES.md` pra atribuições.
 
 ## License
 

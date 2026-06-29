@@ -55,21 +55,21 @@ event router (engine/ingest.py)
 | Event | Hook surface | Updates | Strategy |
 |---|---|---|---|
 | File saved | Claude Code `post-edit` | `graph.db` (incremental) | Reindex only the file + its reverse-deps |
-| Feature artifact saved | Claude Code `post-edit` | `memory/L1/{slug}/` | Update timestamp + summary |
+| Feature artifact saved | Claude Code `post-edit` | `forge/state/lifecycle/{slug}/` | Update timestamp + summary |
 | Pre-commit | Git `pre-commit` | nothing (read-only) | Validates gates, doesn't write |
-| Local commit | Git `post-commit` | `graph.db` (feature↔commit edge) + `L1/{slug}/history.jsonl` | Append-only log |
+| Local commit | Git `post-commit` | `graph.db` (feature↔commit edge) + `forge/state/lifecycle/{slug}/history.jsonl` | Append-only log |
 | Push to remote | Git `pre-push` | nothing (read-only) | Final validation gate |
 
 ### Feature lifecycle events
 
 | Event | Hook surface | Updates | Strategy |
 |---|---|---|---|
-| `forge plan` starts | forge native | `L1/{slug}/hypothesis.yaml`, `ambiguity-map.yaml` | Create dir, write initial state |
-| Sub-agent dispatch | forge native | `L1/{slug}/dispatch-log.jsonl` | Append-only |
-| Sub-agent returns | forge native | `L1/{slug}/dispatch-log.jsonl` + validates output | Append + validation result |
-| Question answered | forge native | `L1/{slug}/elicitation.yaml` + `rationale-trace.yaml` | Update with confidence |
+| `forge plan` starts | forge native | `forge/state/lifecycle/{slug}/hypothesis.yaml`, `ambiguity-map.yaml` | Create dir, write initial state |
+| Sub-agent dispatch | forge native | `forge/state/lifecycle/{slug}/dispatch-log.jsonl` | Append-only |
+| Sub-agent returns | forge native | `forge/state/lifecycle/{slug}/dispatch-log.jsonl` + validates output | Append + validation result |
+| Question answered | forge native | `forge/state/lifecycle/{slug}/elicitation.yaml` + `rationale-trace.yaml` | Update with confidence |
 | Readiness=ready | forge native | `status.json`, proposes L1→L2 candidates | Writes `proposed-evolutions.yaml` |
-| Task complete | forge native | `L1/{slug}/history.jsonl`, `graph.db` (task→commits edge) | Append + edges |
+| Task complete | forge native | `forge/state/lifecycle/{slug}/history.jsonl`, `graph.db` (task→commits edge) | Append + edges |
 | Feature done | forge native | Triggers retrospective | Spawn retrospective-agent |
 | Retrospective complete | forge native | `proposed-evolutions.yaml` + L2 candidates | Queue for `forge evolve` |
 
@@ -87,7 +87,7 @@ event router (engine/ingest.py)
 | Event | Trigger | Updates | Strategy |
 |---|---|---|---|
 | `forge doctor` | manual / weekly cron | `workflow-config.yaml.doctor` | Health checks + status |
-| L2 distillation | when `L2` > max-size | `L2-project.yaml` | `memory-distiller` agent compresses |
+| L2 distillation | when `L2` > max-size | `L2-project.yaml` | `forge memory distill` → `mem evolve` cura/comprime o acervo |
 | Stale external docs cache | TTL expired | `inventory/external-docs-cache/` | Re-fetch via Context7 |
 | Cards snapshot drift | weekly | compare sha256 | Suggest rodar `forge reconfigure` e escolher "verificar updates de cards do canonical" no menu |
 
@@ -119,7 +119,7 @@ Concurrency: SQLite WAL mode + write lock
 There is no `forge graph rebuild` subcommand — full rebuild lives only inside
 `forge init` ou via menu de `forge reconfigure` → "rebuild do graph".
 
-### `memory/L1/{slug}/`
+### `forge/state/lifecycle/{slug}/`
 
 ```
 Trigger: planning-conductor writes a decision
@@ -131,8 +131,8 @@ forge native (doesn't come from hook, comes from inside agent)
    ├──→ elicitation.yaml: update ambiguity counter
    └──→ history.jsonl: append event line
    
-Concurrency: each feature has its own L1 dir, no collision
-Disposal: when feature.status == archived, compresses L1 → 1 summary file
+Concurrency: each feature has its own lifecycle dir, no collision
+Disposal: when feature.status == archived, compresses lifecycle dir → 1 summary file
 ```
 
 L1 is the **feature logbook**. Everything that happened is recorded. Never
@@ -160,9 +160,9 @@ Retrospective agent compares L1 of just-finished feature with current L2
 Trigger 2: distillation (when L2 > max-size)
    │
    ▼
-memory-distiller agent
+forge memory distill → mem evolve
    │
-   ├──→ Reads full L2
+   ├──→ O acervo (mem) gere o tamanho — cura/compressão é do `mem evolve`
    ├──→ Identifies redundant / superseded entries
    ├──→ Compresses keeping what killed real ambiguity
    └──→ Rewrites L2 (with backup at .claude/memory/L2-project.yaml.bak)
@@ -258,7 +258,7 @@ Points where things go wrong without care:
 
 | Risk | Mitigation |
 |---|---|
-| Two agents writing L1/{slug}/history.jsonl concurrently | append-only + OS-level flock per file |
+| Two agents writing forge/state/lifecycle/{slug}/history.jsonl concurrently | append-only + OS-level flock per file |
 | Graph incremental rebuild fails mid-flight | SQLite transaction with BEGIN/COMMIT/ROLLBACK |
 | Memory L2 corrupted by partial scribble | write to `.tmp` + atomic `mv` |
 | Hook locks up Claude Code (latency) | 5s timeout + silent failure (log warn, continue session) |
@@ -341,8 +341,8 @@ Total: **9 thin hooks**. All logic in `engine/ingest.py`.
               ┌────────────────────┼────────────────────┐
               ▼                    ▼                    ▼
       ┌──────────────┐   ┌──────────────────┐   ┌──────────────────┐
-      │  graph.db    │   │  memory/L1/L2    │   │ proposed-        │
-      │  (SQLite)    │   │  (YAML/JSONL)    │   │ evolutions.yaml  │
+      │  graph.db    │   │  forge/state/    │   │ proposed-        │
+      │  (SQLite)    │   │  lifecycle + L2  │   │ evolutions.yaml  │
       └──────┬───────┘   └──────────┬───────┘   └──────────┬───────┘
              │                      │                      │
              │                      │                      ▼

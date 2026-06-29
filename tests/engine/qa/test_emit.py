@@ -50,7 +50,7 @@ def _make_finding(
 
 
 def _claude_l1_dir(project_root: Path) -> Path:
-    return project_root / ".claude" / "memory" / "L1" / "proposed-evolutions"
+    return project_root / ".claude" / "forge" / "state" / "lifecycle" / "proposed-evolutions"
 
 
 # ── Constante canônica ───────────────────────────────────────────────────────

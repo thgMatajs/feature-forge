@@ -49,13 +49,17 @@ The conductor sends a YAML pack containing:
   artefact paths read-only), and `delta-intent` (the user's answer to
   Cena 2 of the extension run). Absent → feature is standalone; the
   §Extension context block in the template MUST be removed (see below).
+- `memory-mem-hint` (W-ROUTE 6c, optional) — bloco compacto de gotchas/convenções
+  relevantes do acervo de memória (`mem find` sobre o slug da feature), injetado
+  pelo engine no `{{mem_context_hint}}` da §Source of truth. Read-only, best-effort:
+  ausente quando mem indisponível. NÃO é fonte da verdade — é dica de contexto.
 
 You read the pack. You do NOT fetch new sources (no Atlassian MCP, no graph
 queries). Missing field → open question, never a guess.
 
 ## What you produce
 
-1. `docs/feature-implementation-workflow/features/{slug}/feature-intake.md`
+1. `docs/forge-specs/features/{slug}/feature-intake.md`
 2. Appended entries (if any) to `open-questions.yaml` in the same folder
 3. Structured JSON return to the conductor (see Output contract)
 
@@ -293,7 +297,7 @@ On success/partial, write the file and return:
 {
   "agent": "feature-intake-agent",
   "status": "success",
-  "output-file": "docs/feature-implementation-workflow/features/{slug}/feature-intake.md",
+  "output-file": "docs/forge-specs/features/{slug}/feature-intake.md",
   "open-questions-added": 0,
   "validation": "pass",
   "notes": "Source: ticket + 3 screenshots. Owner inferred from assignee."

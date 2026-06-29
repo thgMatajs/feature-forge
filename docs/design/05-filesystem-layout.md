@@ -30,7 +30,7 @@ prompt criado tem **um lugar pré-definido**, sem improviso.
 │    Versionado no git do projeto (com exceções).            │
 ├─────────────────────────────────────────────────────────────┤
 │ 3. FEATURE PACKAGES                                         │
-│    {project}/docs/feature-implementation-workflow/          │
+│    {project}/docs/forge-specs/          │
 │    O que `forge plan` e `forge implement` produzem.        │
 │    Versionado no git do projeto.                           │
 └─────────────────────────────────────────────────────────────┘
@@ -98,7 +98,7 @@ prompt criado tem **um lugar pré-definido**, sem improviso.
 │   │   ├── l1.py                          per-feature reader/writer
 │   │   ├── l2.py                          project layer
 │   │   ├── l3.py                          read-only proxy to auto-memory
-│   │   └── distiller.py                   memory-distiller agent driver
+│   │   └── distiller.py                   L2 distillation driver (cura via mem evolve)
 │   │
 │   ├── cards/
 │   │   ├── __init__.py
@@ -151,8 +151,7 @@ prompt criado tem **um lugar pré-definido**, sem improviso.
 │   ├── tech-spec-agent.md
 │   ├── task-contract-writer.md
 │   ├── readiness-reviewer.md
-│   ├── retrospective-agent.md
-│   └── memory-distiller.md
+│   └── retrospective-agent.md
 │
 ├── cards/                                 Canonical card library (12 in v1)
 │   ├── kotlin-language/
@@ -335,11 +334,20 @@ What `forge init` writes when run inside a project:
 │   │           ├── README.md
 │   │           └── detection/signals.yaml
 │   │
+│   ├── bin/                               executáveis vendorizados pelo forge init
+│   │   ├── mem                            mem CLI vendorizado (asset pinado — executável 755)
+│   │   └── mem.version                    pin de versão do asset (ex.: "0.8.1")
+│   │
+│   │   NOTE coexistência transitória (W-VENDOR): `.claude/memory/` hospeda o mem
+│   │   (JSONL commitado + mem.db SQLite derivado) e remanescentes L2/L3 enquanto
+│   │   as ondas W-MIGRATE e W-ROUTE não completam o roteamento. Após W-MIGRATE/
+│   │   W-ROUTE: `.claude/memory/` passa a ser exclusivamente do mem.
+│   │
 │   ├── settings.json                      APPEND-ONLY merge pelo forge (não sobrescreve)
 │   │                                      hook registrations adicionadas, não substituídas
 │   │
 │   ├── .gitignore                         auto-created in .claude/forge/
-│   │                                      ignores: state/, graph.db, memory/L1/, *.bak
+│   │                                      ignores: state/, graph.db, forge/state/lifecycle/, *.bak
 │   │
 │   ├── cards/                             snapshots from canonical
 │   │   │                                  (sha256 recorded in forge-config.yaml)
@@ -365,18 +373,22 @@ What `forge init` writes when run inside a project:
 │   │   ├── local-cards-manifest.yaml      ← gerado pelo loader (Gap 5)
 │   │   └── ignored-signals.yaml           ← gerado pelo init Step 7.5 (Gap 5)
 │   │
+│   ├── forge/
+│   │   ├── state/
+│   │   │   └── lifecycle/                 per-feature WIP — NOT committed
+│   │   │       ├── {feature-slug-A}/
+│   │   │       │   ├── hypothesis.yaml
+│   │   │       │   ├── ambiguity-map.yaml
+│   │   │       │   ├── elicitation.yaml
+│   │   │       │   ├── rationale-trace.yaml
+│   │   │       │   ├── dispatch-log.jsonl
+│   │   │       │   └── history.jsonl
+│   │   │       ├── {feature-slug-B}/...
+│   │   │       └── archived/              compressed summaries of done features
+│   │   │           └── {feature-slug-X}.summary.yaml
+│   │   └── (forge-config.yaml + hooks/ + state/ as documented above)
+│   │
 │   ├── memory/
-│   │   ├── L1/                            per-feature WIP — NOT committed
-│   │   │   ├── {feature-slug-A}/
-│   │   │   │   ├── hypothesis.yaml
-│   │   │   │   ├── ambiguity-map.yaml
-│   │   │   │   ├── elicitation.yaml
-│   │   │   │   ├── rationale-trace.yaml
-│   │   │   │   ├── dispatch-log.jsonl
-│   │   │   │   └── history.jsonl
-│   │   │   ├── {feature-slug-B}/...
-│   │   │   └── archived/                  compressed summaries of done features
-│   │   │       └── {feature-slug-X}.summary.yaml
 │   │   └── L2-project.yaml                team learning — committed
 │   │
 │   ├── graph.db                           SQLite — NOT committed (rebuildable)
@@ -408,19 +420,19 @@ state/
 graph.db
 graph.db-journal
 graph.db-wal
-memory/L1/**/!archived/
-memory/L1/**/!archived/**
+forge/state/lifecycle/**/!archived/
+forge/state/lifecycle/**/!archived/**
 *.bak
 ```
 
 ---
 
-## 3. Feature packages — `{project}/docs/feature-implementation-workflow/`
+## 3. Feature packages — `{project}/docs/forge-specs/`
 
 What `forge plan` and `forge implement` produce per feature:
 
 ```
-{project}/docs/feature-implementation-workflow/
+{project}/docs/forge-specs/
 ├── README.md                              workflow overview — copied on init
 ├── operating-policy.md                    rules of the road — copied
 ├── runtime-assets.md                      what runtime needs — copied
@@ -527,7 +539,7 @@ vs `refactor` → A·C·D·E (`non-product/{slug}/`). See
 ```
 planned → active → done → archived
    │        │       │        │
-   │        │       │        └─ L1 compressed to L1/archived/{slug}.summary.yaml
+   │        │       │        └─ L1 compressed to forge/state/lifecycle/archived/{slug}.summary.yaml
    │        │       │           feature folder remains in docs/
    │        │       │
    │        │       └─ retrospective.md written; L2 promotion candidates queued
@@ -554,20 +566,20 @@ Everything in `~/.local/share/feature-forge/` except `.bak`, `tests/_tmp/`,
 .claude/cards/                              entire snapshot
 .claude/inventory/
 .claude/memory/L2-project.yaml
-.claude/memory/L1/archived/                 only archived summaries
+.claude/forge/state/lifecycle/archived/     only archived summaries
 .claude/forge-version-lock.yaml
 .git/hooks/                                 git-managed; shims only
 .github/workflows/feature-forge-*.yml       if CI used
-docs/feature-implementation-workflow/        complete tree
+docs/forge-specs/        complete tree
 ```
 
 ### ❌ Never commit (per project)
 
 ```
-.claude/forge/state/                        runtime state files
+.claude/forge/state/                        runtime state files (includes lifecycle WIP)
 .claude/graph.db                            rebuildable
 .claude/graph.db-*                          SQLite working files
-.claude/memory/L1/{active-features}/        WIP, per-developer
+.claude/forge/state/lifecycle/{active}/     WIP per-feature, per-developer
 .claude/*.bak                               distillation backups
 ```
 
@@ -580,8 +592,7 @@ docs/feature-implementation-workflow/        complete tree
 .claude/forge/state/
 .claude/graph.db
 .claude/graph.db-*
-.claude/memory/L1/*
-!.claude/memory/L1/archived/
+!.claude/forge/state/lifecycle/archived/
 .claude/*.bak
 ```
 
@@ -608,8 +619,8 @@ policy.
 | `inventory/design-system.yaml` | `forge init` | hooks (incremental) | DS-related cards, screen-analysis-agent | ✅ |
 | `inventory/i18n.yaml` | `forge init` | hooks (i18n changes) | contract-planner-agent, validators | ✅ |
 | `inventory/conventions.yaml` | `forge init` | `forge reconfigure`, feature-done | tech-spec-agent, task-writer | ✅ |
-| `memory/L1/{slug}/*.yaml` | planning-conductor, sub-agents | throughout plan/implement | planning-conductor, retrospective-agent | ❌ |
-| `memory/L1/archived/*.yaml` | retrospective-agent (on done) | never | future planning-conductor for context | ✅ |
+| `forge/state/lifecycle/{slug}/*.yaml` | planning-conductor, sub-agents | throughout plan/implement | planning-conductor, retrospective-agent | ❌ |
+| `forge/state/lifecycle/archived/*.yaml` | retrospective-agent (on done) | never | future planning-conductor for context | ✅ |
 | `memory/L2-project.yaml` | `forge init` (seed) | retrospective-agent (proposes), `forge evolve` (applies) | planning-conductor, all agents | ✅ |
 | `graph.db` | `forge init` (full build) | hooks (incremental), `forge reconfigure` (rebuild) | `forge graph query` | ❌ |
 | `.claude/forge/hooks/*.sh` | `forge init` | `forge reconfigure` | git/Claude hooks/CI | ✅ |
@@ -690,7 +701,7 @@ Every card follows this pattern. New cards copy this structure.
 For reference, what `forge plan` produces for a feature called `lembrete-rega`:
 
 ```
-docs/feature-implementation-workflow/features/lembrete-rega/
+docs/forge-specs/features/lembrete-rega/
 ├── feature-intake.md
 ├── feature-prd.md
 ├── screen-analysis.md
@@ -740,7 +751,7 @@ Per-project install (after forge init) — v1.3 layout:
   • .claude/cards/*/{card.yaml, README, templates, ...}      ~80 files
   • .claude/inventory/*.yaml                                    3 files
   • .claude/memory/L2-project.yaml                              1 file
-  • .claude/memory/L1/{slug}/ (per active feature)          6/feature
+  • .claude/forge/state/lifecycle/{slug}/ (per active feature)  6/feature
   • .claude/graph.db                                            1 file (not committed)
   • .claude/forge-version-lock.yaml                             1 file
   • workflow-config-history.jsonl                               1 file

@@ -576,14 +576,14 @@ demanding.
        
        Se você esperava ver propostas e a fila está vazia, pode ser que:
          ├ a retrospectiva ainda não rodou nessa feature
-         │   (verifica `.claude/memory/L1/<slug>/status.json` — state == done?)
+         │   (verifica `.claude/forge/state/lifecycle/<slug>/status.json` — state == done?)
          ├ a retrospectiva rodou mas não detectou nada acima de
          │   confidence 0.5 (limiar mínimo pra enfileirar)
          └ um `forge undo` apagou propostas recentes
        
        💡 Pra forçar uma retrospectiva manual:
           (não recomendado — retro automática é mais limpa)
-          edita `.claude/memory/L1/<slug>/status.json` se necessário.
+          edita `.claude/forge/state/lifecycle/<slug>/status.json` se necessário.
        
        Sem nada pra fazer aqui. Volto depois.
 ```
@@ -651,7 +651,7 @@ push through, but the skill is honest about the signal.
 | 4 | `$EDITOR` não setado | Fallback inline (Cena 8 variação) |
 | 5 | Empty queue mas user esperava itens | Variação A explica por que e como auditar |
 | 6 | Proposta stale (arquivo sumiu) | Auto-reject com reason "stale" (Cena 13) |
-| 7 | L2 ultrapassa max-size-mb durante apply | Pausa o apply, sugere `memory-distiller` antes de seguir |
+| 7 | L2 ultrapassa max-size-mb durante apply | Pausa o apply, sugere `forge memory distill` (→ `mem evolve`) antes de seguir |
 | 8 | Duas propostas conflitantes | Cena 12 bundle + merge/pick |
 | 9 | User Ctrl+C no meio do loop | Estado da fila preservado; já-aplicadas ficam aplicadas; não-aplicadas permanecem como pendentes |
 | 10 | rejected-evolutions.yaml corrompido | evolve avisa, oferece backup vazio, segue (não bloqueia) |
@@ -719,7 +719,7 @@ e delegar o refactor real para `forge plan refactor-{slug}` (Gap 2 flow).
 > a
 
   ✓ feature-intake.md gerado em
-    docs/feature-implementation-workflow/non-product/
+    docs/forge-specs/non-product/
       refactor-modifier-on-focus-blur/feature-intake.md
   ✓ L1 status.json criado com subtype=refactor
   ✓ Próximo: forge plan refactor-modifier-on-focus-blur

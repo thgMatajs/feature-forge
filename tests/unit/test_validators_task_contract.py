@@ -27,7 +27,7 @@ def test_empty_tasks_dir_in_feature_returns_fail(tmp_forge_project: Path) -> Non
     (
         tmp_forge_project
         / "docs"
-        / "feature-implementation-workflow"
+        / "forge-specs"
         / "features"
         / slug
         / "tasks"
@@ -43,7 +43,7 @@ def test_template_task_yaml_returns_structured_result(
     tasks_dir = (
         tmp_forge_project_with_feature
         / "docs"
-        / "feature-implementation-workflow"
+        / "forge-specs"
         / "features"
         / "lembrete-rega"
         / "tasks"

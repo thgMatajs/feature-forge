@@ -50,3 +50,45 @@ def test_status_json_stdout_is_pure_json(tmp_forge_project, capsys, monkeypatch)
     _, payload = _run_json(capsys, tmp_forge_project, monkeypatch)
     # json.loads succeeded above; assert no cinematic prose leaked.
     assert isinstance(payload, dict)
+
+
+def test_status_json_memory_has_mem_block(tmp_forge_project, capsys, monkeypatch):
+    """O payload JSON deve ter memory.mem com total/by_type/live/stale."""
+    from engine.integrations.mem import MemQuery
+
+    import engine.status as _status
+    monkeypatch.setattr(
+        _status, "mem_stats",
+        lambda root: MemQuery(
+            ok=True,
+            data={"total": 2, "live": 2, "stale": 0, "by_type": {"decision": 1, "feedback": 1},
+                  "by_status": {}, "inbox_pending": 0, "inbox_promoted": 0, "inbox_rejected": 0,
+                  "top_accessed": []},
+        ),
+    )
+    code, payload = _run_json(capsys, tmp_forge_project, monkeypatch)
+    assert code == 0
+    mem_block = payload.get("memory", {}).get("mem")
+    assert mem_block is not None, "campo 'mem' ausente no bloco 'memory'"
+    assert "total" in mem_block
+    assert "by_type" in mem_block
+    assert "live" in mem_block
+    assert "stale" in mem_block
+
+
+def test_status_json_memory_mem_block_absent_when_degraded(tmp_forge_project, capsys, monkeypatch):
+    """Se mem_stats degrada, o bloco 'mem' pode ser None ou ausente — sem crash."""
+    from engine.integrations.mem import MemQuery
+
+    import engine.status as _status
+    monkeypatch.setattr(
+        _status, "mem_stats",
+        lambda root: MemQuery(ok=False, data=None, message="mem indisponível"),
+    )
+    code, payload = _run_json(capsys, tmp_forge_project, monkeypatch)
+    assert code == 0
+    # memory block ainda existe com L1 counts
+    assert "memory" in payload
+    # mem pode ser None ou estar ausente — não é erro
+    mem_block = payload.get("memory", {}).get("mem")
+    assert mem_block is None or isinstance(mem_block, dict)

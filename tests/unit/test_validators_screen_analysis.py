@@ -21,7 +21,7 @@ def test_missing_artefacts_returns_fail(tmp_forge_project: Path) -> None:
     (
         tmp_forge_project
         / "docs"
-        / "feature-implementation-workflow"
+        / "forge-specs"
         / "features"
         / slug
     ).mkdir(parents=True)

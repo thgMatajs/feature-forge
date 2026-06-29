@@ -18,13 +18,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
+from engine.integrations.mem import mem_inbox_add
 from engine.memory import MemoryError
 from engine.memory.l2 import (
-    L2Entry,
-    add_entry,
     l2_overflow_check,
     read_l2,
-    remove_entry,
     write_l2,
 )
 from engine.utils.iso import utc_now_iso
@@ -96,6 +94,10 @@ _VALID_KINDS = {
     "kmp-migration-candidate",
     "consolidate-ts-helper",
 }
+
+# W-ROUTE 6b: os 3 kinds de L2-knowledge que agora vão pro mem inbox em vez
+# de escrever L2. Compartilhado com engine/evolve.py (skip do overflow-guard).
+_KNOWLEDGE_KINDS = frozenset({"promote-to-l2", "l1-to-l2-promotion", "consolidate-l2"})
 
 
 # ── Dataclass ────────────────────────────────────────────────────────────────
@@ -458,20 +460,25 @@ def is_fingerprint_rejected(project_root: Path, fingerprint: str) -> bool:
 def apply_proposal_to_l2(
     project_root: Path,
     proposal: DistillationProposal,
-) -> None:
+) -> str | None:
     """Apply a single proposal to L2 — discipline §5 (no batch).
 
     Behavior depends on `proposal.kind`:
-    - `promote-to-l2` / `l1-to-l2-promotion` → adds a new L2Entry.
-    - `consolidate-l2` → mescla entries L2 de mesmo `kind` cujo `title` faz
-      substring-match com `proposal.title`, criando um novo entry consolidado
-      e marcando os fontes como `obsoleted-by`.
+    - `promote-to-l2` / `l1-to-l2-promotion` / `consolidate-l2` → enfileira no
+      mem inbox como candidato curado (`mem inbox add --type reference`). O merge-
+      semantic do consolidate-l2 é moot com L2 abandonado para conhecimento —
+      vira candidato inbox como os outros dois (anti-envenenamento G11).
     - `forget-l1` → arquiva a feature L1 indicada por `proposal.payload.target`
       (ou primeiro elemento de `provenance`).
     - Demais kinds (`distill-l2`, `template-patch`, `agent-prompt-addition`,
       `new-card-suggestion`, `question-elimination`, `convention-refinement`):
       ainda não implementados em v1 — `NotImplementedError` para evitar
       silent no-op (a queue NÃO é drenada).
+
+    Retorno (W-ROUTE 6d): o `mem-inbox-id` (de `result.data["id"]`) no branch de
+    knowledge kinds; `None` em TODOS os outros branches (forget-l1, reuse-
+    intelligence). O caller (`evolve`) grava esse id no evento `evolve-apply`
+    pra o `forge undo` re-rotar pro `mem inbox reject`.
     """
     _validate_kind(proposal.kind)
 
@@ -480,30 +487,49 @@ def apply_proposal_to_l2(
             f"refusing to apply proposal {proposal.id}: fingerprint is on the veto list"
         )
 
-    if proposal.kind in {"promote-to-l2", "l1-to-l2-promotion"}:
-        entry = L2Entry(
-            id=proposal.id.replace("P-", "L2-") if proposal.id.startswith("P-") else proposal.id,
-            kind="pattern",
+    if proposal.kind in _KNOWLEDGE_KINDS:
+        # W-ROUTE 6b: knowledge proposals vão pro mem inbox (anti-envenenamento G11).
+        # O merge-semantic do consolidate-l2 é moot com L2 abandonado para conhecimento
+        # — vira candidato inbox como os outros dois.
+        # round(confidence*4)+1 (não *5): evita banker's rounding de round(0.5*5)==2;
+        # 0.0→1, 0.5→3, 0.8→4, 1.0→5. clamp [1,5] para confidence fora de [0,1].
+        importance = max(1, min(5, round(proposal.confidence * 4) + 1))
+        tags = ",".join(proposal.provenance) if proposal.provenance else None
+        result = mem_inbox_add(
+            project_root,
             title=proposal.title,
             body=proposal.description,
-            provenance=list(proposal.provenance),
-            promoted_at=utc_now_iso(),
-            promoted_from=proposal.provenance[0] if proposal.provenance else "",
-            confidence=proposal.confidence,
+            mem_type="reference",
+            importance=importance,
+            tags=tags,
+            source=f"forge-evolve:{proposal.id}",
+            origin="manual",
         )
-        add_entry(project_root, entry)
+        if not result.ok:
+            raise MemoryError(
+                f"apply_proposal_to_l2: mem_inbox_add falhou para {proposal.id} — "
+                f"{result.message} — queue não drenada (raise-não-drena)."
+            )
+        # W-ROUTE 6d: captura o mem-inbox-id (de `mem --json inbox add`) ANTES de
+        # drenar a fila — o caller grava esse id no evento `evolve-apply` e o
+        # `forge undo` lê de volta. P2 (cross-AI PR#32): se o mem mudar o shape
+        # (sem `id`, ou `id` vazio/null), validar ANTES de remove_from_queue —
+        # senão o evento viraria L2-style e o candidato drenado ficaria órfão
+        # (undo não rejeita → falso sucesso). Raise-não-drena, espelhando o guard
+        # de `result.ok` logo acima.
+        inbox_id = result.data.get("id") if isinstance(result.data, dict) else None
+        if not inbox_id:
+            raise MemoryError(
+                f"apply_proposal_to_l2: mem inbox add não devolveu id para "
+                f"{proposal.id} — queue não drenada (raise-não-drena)."
+            )
         remove_from_queue(project_root, proposal.id)
-        return
-
-    if proposal.kind == "consolidate-l2":
-        _apply_consolidate_l2(project_root, proposal)
-        remove_from_queue(project_root, proposal.id)
-        return
+        return inbox_id
 
     if proposal.kind == "forget-l1":
         _apply_forget_l1(project_root, proposal)
         remove_from_queue(project_root, proposal.id)
-        return
+        return None
 
     if proposal.kind in {
         "consolidate-duplicate-helper",
@@ -520,80 +546,13 @@ def apply_proposal_to_l2(
 
         apply_reuse_intelligence_proposal(project_root, proposal)
         remove_from_queue(project_root, proposal.id)
-        return
+        return None
 
     # Demais kinds: explicitamente não implementados em v1.
     # NÃO drenar a queue — usuário precisa saber que NÃO foi aplicado.
     raise NotImplementedError(
         f"apply_proposal_to_l2: kind '{proposal.kind}' não implementado em v1 — FOLLOWUP v1.1"
     )
-
-
-def _apply_consolidate_l2(
-    project_root: Path,
-    proposal: DistillationProposal,
-) -> None:
-    """Mescla entries L2 com mesmo `kind` cujo title sofre substring-match.
-
-    Algoritmo:
-    1. Lê todos os entries L2.
-    2. Identifica `target_kind` (do payload, ou "pattern" como default).
-    3. Encontra entries cujo `kind == target_kind` E `proposal.title` ocorre
-       em (ou contém) `entry.title` (substring case-insensitive).
-    4. Cria um novo entry consolidado preservando provenance unificado.
-    5. Remove os entries antigos e marca-os no `raw` do novo como
-       `obsoleted-by`.
-
-    Sem matches → cria entry novo direto (equivalente a promote).
-    """
-    target_kind = str(proposal.payload.get("target-kind") or "pattern")
-    needle = proposal.title.strip().lower()
-
-    current = read_l2(project_root)
-    matches: list[L2Entry] = []
-    keep: list[L2Entry] = []
-    for entry in current:
-        title_l = entry.title.strip().lower()
-        is_match = (
-            entry.kind == target_kind
-            and needle
-            and (needle in title_l or title_l in needle)
-        )
-        if is_match:
-            matches.append(entry)
-        else:
-            keep.append(entry)
-
-    new_provenance: list[str] = list(proposal.provenance)
-    for m in matches:
-        for slug in m.provenance:
-            if slug not in new_provenance:
-                new_provenance.append(slug)
-
-    new_id = (
-        proposal.id.replace("P-", "L2-")
-        if proposal.id.startswith("P-")
-        else proposal.id
-    )
-
-    consolidated = L2Entry(
-        id=new_id,
-        kind=target_kind,
-        title=proposal.title,
-        body=proposal.description,
-        provenance=new_provenance,
-        promoted_at=utc_now_iso(),
-        promoted_from=(
-            new_provenance[0] if new_provenance else proposal.provenance[0]
-            if proposal.provenance
-            else ""
-        ),
-        confidence=proposal.confidence or 1.0,
-        raw={"obsoleted-by": [m.id for m in matches]} if matches else {},
-    )
-
-    keep.append(consolidated)
-    write_l2(project_root, keep, backup=True)
 
 
 def _apply_forget_l1(
@@ -625,7 +584,6 @@ def _apply_forget_l1(
     from engine.memory.l1 import archive_feature as _archive_feature
 
     _archive_feature(str(target), project_root, summary)
-    _ = remove_entry  # silenciar lint sobre import reservado
 
 
 # ── Fingerprint passthrough ──────────────────────────────────────────────────
@@ -682,6 +640,3 @@ __all__ = [
     "compute_proposal_fingerprint",
     "proposal_from_dict",
 ]
-
-# Optional dep tag (FOLLOWUP: portable filelock for Windows).
-_ = Optional

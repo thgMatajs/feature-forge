@@ -2,7 +2,7 @@
 
 > Guia operacional pra Claude Code mantendo este repo.
 > Voz: mentor calmo — firme nos gates, didático nos exemplos.
-> Última atualização: 2026-06-19 · Versão do projeto: v1.5.0
+> Última atualização: 2026-06-25 · Versão do projeto: v1.6.1
 
 ## Identidade rápida
 
@@ -50,8 +50,8 @@ Esta regra cobre o default automático.
 7. Despacha doc-sync (CHANGELOG + handoff + README)
 8. Despacha commit final
 
-Detalhe + edge cases: `.claude/rules/orchestrator-persona.md`.
-Como despachar: `.claude/rules/subagent-workflow.md`.
+Detalhe + edge cases: `.claude/bin/mem find "identidade orquestrador-mantenedor voz operacional"`.
+Como despachar: `.claude/bin/mem find "qual subagent_type gsd-executor reviewer fixer"`.
 
 ---
 
@@ -59,31 +59,28 @@ Como despachar: `.claude/rules/subagent-workflow.md`.
 
 ### 1. Decisões locked são imutáveis sem revisitar
 
-`docs/design/01-decisions.md` lista 27 locked + 7 direcionais. Mexer em
-alguma = passo explícito de "Revisita decisão N" no commit body + entrada
-em CHANGELOG. Nunca silent drift. O hook `.claude/hooks/pre-commit-feature-
-forge.sh` faz HARD BLOCK se este ritual não acontecer.
+Mexer numa decisão de `docs/design/01-decisions.md` = passo explícito de
+"Revisita decisão N" no commit body + entrada em CHANGELOG. Nunca silent
+drift. O hook `.claude/hooks/pre-commit-feature-forge.sh` faz HARD BLOCK
+se este ritual não acontecer.
 
-Detalhe: `.claude/rules/decisions.md`.
+Detalhe: `.claude/bin/mem find "como revisitar decisão locked sem silent drift"`.
 
 ### 2. Verde antes de "pronto"
 
-`pytest` (1113 tests baseline, v1.2-dev pós-PR #9) verde + `forge
-verify` verde + validators sem hard fail. Sem isso, não dizemos
-"implementado". Subagente que implementa SEMPRE recebe
+`pytest` verde + `forge verify` verde + validators sem hard fail. Sem
+isso, não dizemos "implementado". Subagente que implementa SEMPRE recebe
 `superpowers:verification-before-completion` como hard gate no context-pack.
 
-Detalhe: `.claude/rules/testing.md`.
+Detalhe: `.claude/bin/mem find "TDD pytest gates verde antes de pronto"`.
 
 ### 3. Reuso antes de criar
 
-Antes de escrever helper/função/template/card novo, consulte:
-- `forge graph` Q11 (reusable-helpers)
-- `forge graph` Q12–Q17 (reuse-intelligence)
-- `engine/inventory/` (DS components + i18n + conventions)
-- `cards/`, `templates/`, `validators/`
+Antes de escrever helper/função/template/card novo, consulte `forge graph`
+(Q11–Q17), `engine/inventory/`, e `cards/`/`templates/`/`validators/`.
+Inventar paralelo é falha.
 
-Inventar paralelo é falha. Detalhe: `.claude/rules/reuse.md`.
+Detalhe: `.claude/bin/mem find "reuso forge graph antes de criar helper"`.
 
 ### 4. Escopo contido na tarefa pedida
 
@@ -91,165 +88,69 @@ Não refator não solicitado, não editar arquivos não relacionados, não
 expandir feature além do pedido. Em dúvida, **pergunte ao usuário** via
 `AskUserQuestion` — não decida.
 
-Detalhe: `.claude/rules/scope.md`.
+Detalhe: `.claude/bin/mem find "edite só o que a tarefa pede whitelist"`.
 
 ### 5. Voz mentor calmo em tudo que gera artefato
 
-Templates, mensagens de gate, prompts de agent — todos seguem o tom
-estabelecido em `docs/design/07-discipline.md`. Sem voz corporativa, sem
-emoji decorativo.
+Templates, mensagens de gate, prompts de agent — todos seguem o tom de
+`docs/design/07-discipline.md`. Sem voz corporativa, sem emoji decorativo.
 
 ### 6. Doc-sync na mesma mudança
 
 Mexeu em `engine/`, `validators/`, `hooks/`, `templates/`, `cards/`,
 `presets/`, `docs/schemas/`, `docs/guides/`, `docs/diagrams/` → atualizou
-no MESMO commit:
-- `CHANGELOG.md` (Unreleased)
-- `docs/design/08-session-handoff.md` (Última atualização + Conhecidos
-  limites se aplicável)
-- `README.md` (se stats mudaram)
-- `docs/guides/` e `docs/diagrams/` (se a mudança afeta comportamento
-  documentado — ver matriz em `.claude/rules/doc-sync.md`)
+no MESMO commit: `CHANGELOG.md` (Unreleased) + `README.md` (se stats
+mudaram) + guides/diagrams (se comportamento mudou).
 
-Matriz código→docs: `.claude/rules/doc-sync.md`.
+O **estado de sessão** não é per-commit: no fim de trabalho significativo,
+rode `.claude/bin/mem session` (handoff curado, committed, com git_meta
+automático). O `docs/design/08-session-handoff.md` congelou — snapshot
+histórico + fallback de bootstrap do SessionStart, não mais editado a cada
+sessão.
 
----
-
-## Mentalidade operacional: não-procrastinação
-
-**Não procrastine:** endereça tudo dentro do escopo agora, defer só com
-razão concreta (over-engineering / YAGNI / falso positivo /
-cross-cutting / decisão do user). Default é IMPLEMENTAR, não defer.
-
-Antes de fechar triage com items "deferred", apresenta 3-caminhos ao
-user (✅ implementar / ⏭️ não implementar / 🤔 investigar) e espera
-veredito. Discussão > decisão unilateral.
-
-Detalhe + template: `.claude/rules/orchestrator-persona.md §Não-procrastinação`.
+Matriz código→docs: `.claude/bin/mem find "matriz código docs sincronizar ao tocar engine"`.
 
 ---
 
-## Workflow por verbo
+## Memória persistente (mem) — índice das rules
 
-| Vou… | Skills (orchestrator invoca) | Quem executa |
-|---|---|---|
-| Adicionar feature/recurso | `brainstorming` → `writing-plans` → plan-auditor (dispatched) → `subagent-driven-development` | `gsd-executor` + review subagent |
-| Resolver bug | `systematic-debugging` → `subagent-driven-development` | `gsd-executor` + review subagent |
-| Refatorar | `brainstorming` → `writing-plans` (no-behavior) → plan-auditor (dispatched) → `subagent-driven-development` | `gsd-executor` + review (check_no_behavior_change) |
-| Editar locked decision | `brainstorming` (revisitar N) | `gsd-executor` edita com histórico preservado |
-| Editar schema/template | `writing-plans` → plan-auditor (dispatched) → `subagent-driven-development` | `gsd-executor` + review |
-| Finalizar qualquer mudança | `verification-before-completion` + doc-sync | subagent verifica + subagent atualiza docs |
-| Typo / 1-char fix / espaço | — | `gsd-code-fixer` com prompt minimal (zero exceção inline) |
+Este repo tem memória persistente curada via `.claude/bin/mem` (123 notas:
+decisões, disciplinas, despacho de subagente, reuso, testing, doc-sync,
+plan-auditor, e learnings de sessão). As rules detalhadas de
+`.claude/rules/` foram enxugadas pra ponteiros — o detalhe vive no acervo
+e é recuperável por tema.
 
----
+**Consulte `.claude/bin/mem find "<tema>"` ANTES de:** despachar subagente,
+revisar código, decidir algo, ou tocar um tema que tem convenção. Recupere
+o corpo acionável com `.claude/bin/mem get <id>`.
 
-## Superpowers map (10 skills ativas)
+**Grave no acervo** (`.claude/bin/mem add` / `mem session`) em correções
+que viram lição, decisões, e ao fim de sessão. O `--json` é flag GLOBAL
+(vem antes do subcomando: `mem --json find "..."`).
 
-| Skill | Trigger | Bloqueia? |
-|---|---|---|
-| `superpowers:brainstorming` | qualquer creative work | sim — hard gate |
-| `superpowers:writing-plans` | task ≥3 passos OU cruza arquivos | sim para implementação não-trivial |
-| `superpowers:subagent-driven-development` | toda implementação não-trivial | sim — mandamento 0 |
-| `superpowers:dispatching-parallel-agents` | 2+ tarefas independentes | sim quando aplicável |
-| `superpowers:test-driven-development` | feature ou fix (subagent recebe via context-pack) | sim |
-| `superpowers:systematic-debugging` | bug, test failure (orchestrator guia) | sim |
-| `superpowers:requesting-code-review` | pós toda implementação | sim — mandamento 0 |
-| `superpowers:receiving-code-review` | reviewer retorna REVIEW.md | sim |
-| `superpowers:executing-plans` | quando há plan escrito | recomendado |
-| `superpowers:verification-before-completion` | antes de claim "pronto" | sim — hard gate |
+**Após `git clone` ou `git pull` que traga JSONL novo**, rode
+`.claude/bin/mem rebuild` pra reconstruir o índice (`mem.db` é gitignored —
+derivado do JSONL commitado).
 
-Skills são RECURSO humano + Claude Code, sem runtime import (Decision 22).
-Detalhe: `.claude/rules/superpowers.md`.
+Queries de partida (tema → consulta):
 
----
+| Vou… | Consulta |
+|---|---|
+| Despachar subagente | `.claude/bin/mem find "despacho subagente context-pack"` |
+| Escolher subagent_type | `.claude/bin/mem find "qual subagent_type gsd-executor reviewer fixer"` |
+| Reusar antes de criar | `.claude/bin/mem find "reuso forge graph antes de criar"` |
+| Conferir gates de teste | `.claude/bin/mem find "TDD pytest gates verde antes de pronto"` |
+| Sincronizar docs | `.claude/bin/mem find "matriz código docs sincronizar ao tocar engine"` |
+| Auditar um plano | `.claude/bin/mem find "12 checks auditoria de plano"` |
+| Revisitar decisão locked | `.claude/bin/mem find "como revisitar decisão locked sem silent drift"` |
+| Aplicar 3-caminhos num gate | `.claude/bin/mem find "exatamente 3 caminhos em todo gate template"` |
+| Escolher skill superpowers | `.claude/bin/mem find "10 skills superpowers triggers"` |
+| Navegar o repo | `.claude/bin/mem find "onde cada coisa vive mapa de navegação"` |
 
-## Anatomia rápida
-
-- `engine/` — Python core, 13 user-facing command handlers (+ `ingest` hook interno) + foundation + state + integrations
-- `validators/` — 21 validators + helpers (tests obrigatórios em `tests/validators/`)
-- `templates/`, `cards/`, `presets/` — composição declarativa, YAML/MD
-- `docs/design/` — fonte de verdade pra "por que" (quase tudo load-bearing)
-- `hooks/` — git + Claude Code hooks que `forge init` instala em **projetos consumidores** (diferente de `.claude/hooks/` que é deste repo)
-
-Mapa completo: `.claude/rules/project-anatomy.md`.
+O Tier-0 acima (Mandamento 0 + os 6 mandamentos + fluxo único) permanece
+sempre-on e não depende do mem.
 
 ---
-
-## Comandos úteis
-
-```bash
-pytest                              # ~1531 tests, default lane (consulte handoff pra count atual)
-pytest -m "not integration"         # rápido (rapid lane)
-forge verify                        # validators cascade (3 built-in + N contribuídos por cards ativos; 21 no diretório)
-forge doctor                        # health check 17 categorias
-./bin/forge --version               # smoke
-```
-
----
-
-## Codebase Graph — IA-ready
-
-O forge mantém um codebase graph em `.claude/graph.db` (SQLite, WAL mode)
-com símbolos, imports, body-text, e dependências do projeto. **Consulte
-o graph antes de ler arquivos fonte** — reduz tokens de contexto e acelera
-a compreensão do projeto.
-
-### Como consultar
-
-```bash
-# Listar símbolos de um módulo (Q4 = symbols; arg é MODULE name)
-forge graph --json q4 <module-name>           # ex: q4 :feature:auth
-
-# Encontrar features similares por slug (Q1 = similar-features)
-forge graph --json q1 <feature-slug>
-
-# Calcular blast radius de arquivos (Q2 = blast-radius; args posicionais — file paths)
-forge graph --json q2 path/to/Foo.kt
-
-# Encontrar orphan files (Q3 = orphan-files; sem args)
-forge graph --json q3
-
-# Listar dependências de DI (Q8 = di-deps; arg é class name)
-forge graph --json q8 <class-name>
-
-# Listar reuse-findings combinados (alias `r`)
-forge graph --json r
-```
-
-### Linguagens cobertas
-
-Kotlin, Swift, TypeScript, JavaScript, Java, XML (Android layouts +
-resources), Objective-C (`.m`, `.mm`).
-
-### Limitações conhecidas
-
-- Call graph para ObjC não implementado (regex-based, sem AST)
-- XML parser extrai apenas IDs de view, class refs, resource keys e binding vars
-- Body text preserva comentários (cru, sem stripping)
-- Primeira invocação `forge graph` em máquina sem bootstrap pode ser lenta
-  (~30s-2min de lazy rebuild); rode `bash .claude/bootstrap.sh` uma vez
-  após clone pra build inicial.
-
-### Quando ler arquivos fonte diretamente
-
-- Quando precisa do texto exato de uma string literal ou comentário fora
-  do escopo do `symbols.body`
-- Quando precisa de contexto de múltiplas linhas em torno de um símbolo
-- Quando o graph retorna stale data (raro — incremental hook mantém atualizado)
-- Quando o usuário pede explicitamente "leia o arquivo X"
-
-Caso contrário: **graph first**.
-
----
-
-## Pointers
-
-- Decisões: `docs/design/01-decisions.md` · `.claude/rules/decisions.md`
-- Disciplinas: `docs/design/07-discipline.md` · `.claude/rules/disciplines.md`
-- Estado/Handoff: `docs/design/08-session-handoff.md`
-- Pendências/Gaps: `docs/design/04-pending.md`
-- Filesystem: `docs/design/05-filesystem-layout.md`
-- Influences: `INFLUENCES.md` · `docs/design/03-influences.md`
 
 ## Bootstrap
 
@@ -259,5 +160,8 @@ Após clonar, rode **uma vez**:
 bash .claude/bootstrap.sh
 ```
 
-Idempotente. Liga git hooks ao delegator canônico, marca scripts executáveis.
-Detalhe + checklist pós-bootstrap: `.claude/rules/SMOKE-CHECKLIST.md`.
+Idempotente. Liga git hooks ao delegator canônico, marca scripts
+executáveis. Em seguida, `.claude/bin/mem rebuild` reconstrói o índice da
+memória a partir do JSONL commitado.
+
+Detalhe + checklist pós-bootstrap: `.claude/bin/mem find "5 verificações de smoke pós-bootstrap"`.

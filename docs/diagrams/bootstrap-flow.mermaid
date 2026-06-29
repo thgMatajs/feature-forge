@@ -4,7 +4,7 @@ flowchart TD
         DEV1["Dev 1 (pioneiro)"]
         INIT["forge init"]
         CRIACAO["Cria .claude/:"]
-        FILES_CREATED["workflow-config.yaml<br/>cards/ (snapshots)<br/>inventory/<br/>memory/L2-project.yaml<br/>hooks/<br/>memory/L1/*<br/>graph.db"]
+        FILES_CREATED["workflow-config.yaml<br/>cards/ (snapshots)<br/>inventory/<br/>memory/L2-project.yaml<br/>hooks/<br/>forge/state/lifecycle/*<br/>graph.db"]
     end
 
     INIT --> CRIACAO
@@ -13,7 +13,7 @@ flowchart TD
 
     subgraph GIT["Git"]
         VERSIONADO["✅ Versionado (commita):<br/>workflow-config.yaml<br/>cards/<br/>inventory/<br/>memory/L2-project.yaml<br/>hooks/"]
-        LOCAL["❌ Ignorado (.gitignore):<br/>graph.db<br/>memory/L1/ (features ativas)<br/>*.bak<br/>checkpoints .yaml"]
+        LOCAL["❌ Ignorado (.gitignore):<br/>graph.db<br/>forge/state/lifecycle/ (features ativas)<br/>*.bak<br/>checkpoints .yaml"]
     end
 
     FILES_CREATED --> GIT

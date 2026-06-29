@@ -19,6 +19,7 @@ from typing import Any, Optional
 
 from engine.memory.distiller import (
     DistillationProposal,
+    _KNOWLEDGE_KINDS,
     apply_proposal_to_l2,
     compute_proposal_fingerprint,
     detect_l2_overflow,
@@ -273,22 +274,35 @@ def _apply_proposal(
     project_root: Path,
     p: DistillationProposal,
     cfg: dict[str, Any],
-) -> bool:
-    """Apply with overflow guard. Returns True on success, False on overflow pause."""
-    max_mb = _l2_max_mb(cfg)
-    if detect_l2_overflow(project_root, cfg):
-        renderer.write(
-            renderer.colored(
-                f"  🛑 L2 cheia — {_format_kb(l2_size_bytes(project_root))} "
-                f"/ {max_mb * 1024:.0f} KB",
-                "yellow",
-            )
-        )
-        return False
+) -> tuple[bool, str | None]:
+    """Apply with overflow guard. Returns ``(success, inbox_id)``.
 
-    apply_proposal_to_l2(project_root, p)
+    W-ROUTE 6b (D5): kinds de conhecimento (``_KNOWLEDGE_KINDS``) vão pro mem
+    inbox em vez de escrever L2 — o overflow-guard (`detect_l2_overflow`) não
+    se aplica a eles e seria incorreto bloqueá-los por "L2 cheia". Os demais
+    kinds (forget-l1, reuse-intelligence, etc.) mantêm o guard legacy.
+
+    W-ROUTE 6d: no sucesso de um knowledge kind, ``inbox_id`` é o id do
+    candidato no mem inbox (capturado em ``apply_proposal_to_l2``) — o
+    call-site grava esse id no evento ``evolve-apply`` pra o ``forge undo``
+    re-rotar pro ``mem inbox reject``. ``(True, None)`` no sucesso L2/reuse;
+    ``(False, None)`` na pausa por overflow.
+    """
+    if p.kind not in _KNOWLEDGE_KINDS:
+        max_mb = _l2_max_mb(cfg)
+        if detect_l2_overflow(project_root, cfg):
+            renderer.write(
+                renderer.colored(
+                    f"  🛑 L2 cheia — {_format_kb(l2_size_bytes(project_root))} "
+                    f"/ {max_mb * 1024:.0f} KB",
+                    "yellow",
+                )
+            )
+            return False, None
+
+    inbox_id = apply_proposal_to_l2(project_root, p)
     renderer.write(renderer.colored(f"  ✓ Aplicado {p.id}.", "green"))
-    return True
+    return True, inbox_id
 
 
 def _three_paths_overflow(project_root: Path) -> str:
@@ -302,7 +316,7 @@ def _three_paths_overflow(project_root: Path) -> str:
     return question.ask(
         "Caminho?",
         {
-            "a": "forge memory → distill L2 (depois retomo)",
+            "a": "forge memory distill (depois retomo)",
             "b": "pausar e revisar depois (estado salvo)",
             "c": "abortar a sessão de evolve",
         },
@@ -327,8 +341,18 @@ def _record_history_event(
         event.update(extras)
     try:
         append_history(_HISTORY_SLUG, project_root, event)
-    except Exception:
-        pass
+    except (OSError, ValueError) as exc:
+        # P6 (cross-AI PR#32): narrow do broad-except. Desde o 6d o evento
+        # `evolve-apply` carrega o `mem-inbox-id` load-bearing pro recovery — se
+        # o append falhar SILENCIOSAMENTE, o candidato no mem-inbox fica órfão e
+        # o `forge undo` nunca acha o evento pra re-rotar pro `mem inbox reject`.
+        # Espelha `undo.py::_append_undo_log` (avisa mentor-calmo, não propaga):
+        # OSError (filesystem/lock/permissions); ValueError se payload não
+        # serializar. Aviso visível em vez de swallow; não propaga (o apply já
+        # sucedeu — não dá pra desfazer o drain aqui).
+        renderer.write(renderer.dim(
+            f"  (aviso) não consegui registrar o evento evolve — {exc}"
+        ))
 
 
 def _filter_rejected(
@@ -412,7 +436,12 @@ def run(argv: list[str]) -> int:
         return 0
 
     # ── Pre-flight overflow ─────────────────────────────────────────────────
-    if detect_l2_overflow(project_root, cfg):
+    # P4 (cross-AI PR#32): só checa overflow se há proposta que de fato toca L2.
+    # Knowledge kinds roteiam pro mem-inbox e nunca escrevem L2 — uma L2 legada
+    # cheia não pode bloquear applies só-mem-inbox válidos (espelha o skip
+    # per-proposal de `_apply_proposal`). O guard per-proposta cobre os não-knowledge.
+    needs_l2 = any(p.kind not in _KNOWLEDGE_KINDS for p in proposals)
+    if needs_l2 and detect_l2_overflow(project_root, cfg):
         choice = _three_paths_overflow(project_root)
         _write_checkpoint(
             project_root,
@@ -422,7 +451,7 @@ def run(argv: list[str]) -> int:
         )
         if choice == "a":
             renderer.write(
-                "  Rode `forge memory` → distill L2, depois `forge evolve` "
+                "  Rode `forge memory distill`, depois `forge evolve` "
                 "novamente — o checkpoint resume daqui."
             )
         elif choice == "b":
@@ -501,7 +530,7 @@ def run(argv: list[str]) -> int:
             continue
 
         if action == "a":
-            success = _apply_proposal(project_root, p, cfg)
+            success, inbox_id = _apply_proposal(project_root, p, cfg)
             if not success:
                 remaining = [pp.id for pp in proposals[cursor:]]
                 _write_checkpoint(
@@ -513,18 +542,25 @@ def run(argv: list[str]) -> int:
                 choice = _three_paths_overflow(project_root)
                 if choice == "a":
                     renderer.write(
-                        "  Rode `forge memory` → distill L2, depois `forge evolve`."
+                        "  Rode `forge memory distill`, depois `forge evolve`."
                     )
                 elif choice == "b":
                     renderer.write("  Pausei. Checkpoint salvo.")
                 else:
                     renderer.write("  Abortado pelo usuário.")
                 return 0
+            # M-001 (plan-audit r1): um apply de conhecimento NÃO toca L2 —
+            # não carregar l2-size-after-bytes nesse branch (evita um evento
+            # evolve-apply que mistura semântica de dois substratos).
+            if inbox_id:
+                extras = {"routed-to": "mem-inbox", "mem-inbox-id": inbox_id}
+            else:
+                extras = {"l2-size-after-bytes": l2_size_bytes(project_root)}
             _record_history_event(
                 project_root,
                 "evolve-apply",
                 p.id,
-                extras={"l2-size-after-bytes": l2_size_bytes(project_root)},
+                extras=extras,
             )
             cursor += 1
             continue

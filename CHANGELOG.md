@@ -7,6 +7,224 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `engine/integrations/mem.py::mem_inbox_reject` — wrapper degrade-soft sobre
+  `mem inbox reject <id>`.
+
+- `mem_inbox_add` — wrapper sobre `mem inbox add` na camada de integração
+  (`engine/integrations/mem.py`). Argv: `inbox add --type mem_type -t title
+  [opcionais] --origin origin -- body`. Separador `--` antes do body é
+  obrigatório (lição W-RULES). Degrade soft via `_run_or_degrade` (W-ROUTE 6b).
+
+- `forge init` vendoriza o mem no consumidor: copia o asset embutido pra
+  `.claude/bin/mem` (executável), roda o scaffold do mem (gitignore `mem.db*`,
+  índice no `AGENTS.md`) via a fronteira `mem_call`. `forge doctor` ganha a
+  categoria `mem` (saúde via `mem doctor` + drift do pin vendorizado vs asset).
+
+- Relatório-mãe do piloto end-to-end do forge contra o MeoBonsai (KMP) persistido em `docs/reports/2026-06-25-piloto-meobonsai-gaps.md` — gaps IA-first priorizados P0/P1/P2, scorecard dos 14 comandos, 8 temas cross-cutting, registro completo de bugs e fixes já aplicados. Síntese durável dos 11 relatórios por-comando que eram efêmeros (scratchpad da sessão do piloto).
+- mem vendorizado em `.claude/bin/mem` (asset pinado v0.8.1) + scaffold `.claude/memory/` + skills do mem (`mem-resume`/`mem-consolidate`/`mem-report`) — substrato de memória do dogfood da Fase 0. O `mem init` também adicionou `.claude/memory/mem.db*` ao `.gitignore` (índice SQLite derivado, não versionado) e criou um bloco rule-índice delimitado em `AGENTS.md` na raiz. Nenhuma migração de conhecimento aqui — só o substrato vazio (`mem stats` → `total: 0`); a curadoria Tier-0/Tier-1 vem nas tasks seguintes.
+- Decisões/disciplinas/pending/handoff/learnings espelhados no acervo mem (aditivo; os canônicos `docs/design/*` preservados intactos) — Fase 0 dogfood (T5). As 33 decisões de `01-decisions.md` (rows 1-32 + 18-v2, com `tag:superseded` nas supersedidas e `importance 4-5` nas 8 load-bearing), as 10 disciplinas de `07-discipline.md` (as 6 universais com `tag:universal`), os 7 gaps abertos de `04-pending.md`, o estado curado v1.6.1 de `08-session-handoff.md` (via `mem session`) e os 27 learnings duráveis da auto-memory (24 feedback + 3 reference, preservando Why/How-to-apply + links cruzados). Migração só por `mem add`/`mem session` (acervo `total: 45 → 123`, zero near-dup). Os `docs/design/*` permanecem como fonte de verdade load-bearing com enforcement acoplado; o mem é o espelho recuperável que destrava o enxugue do núcleo injetado na T6.
+- Hooks do mem instalados no `.claude/settings.json` via `mem install-hooks --apply` (Fase 0.5 — P2): `Stop`/`UserPromptSubmit` (eventos novos pro repo) + `SessionStart`/`PostToolUse` somados aos do forge. Merge aditivo verificado (gate de coexistência): os hooks do forge — `session-start-orientation`, `pre-tool-use-load-bearing`, `post-edit-doc-drift` — continuam registrados e funcionais; `PreToolUse` fica só do forge (mem não o registra). Continuidade via `checkpoint` (singleton mantido pelos hooks do mem) + consolidação via skill `mem-consolidate` passam a ser a prática canônica.
+
+- Novo intent-kind `classify` (Fase 1 W-RULES, ADITIVO): o engine emite um
+  pending `kind:"classify"` com `fragments` (fragmentos de text das rules do
+  consumidor) + `classification-schema`; o host-LLM fulfilla escrevendo
+  `forge-response.json` com `classification:[{fragment_id, tier:int, rationale,
+  mem_note?}]`. `tier 0` = invariante always-on (gates, enforcement,
+  "NUNCA/sempre"); `tier 1` = detalhe recuperável → mem. `TtyAdapter` retorna
+  `None` (host sem LLM) — `_reduce_rules` pula com aviso (fallback honesto
+  H-101). Schema: `docs/schemas/intent-protocol.md §classify`. Driver:
+  `skills/feature-forge/SKILL.md §Fulfillment do intent classify`.
+
+- `forge init` ganha passo de redução de rules do consumidor (`_reduce_rules`,
+  Fase 1 W-RULES): após o vendoring do mem, o init lê `.claude/rules/` +
+  `CLAUDE.md`, fatia por heading, emite um `classify` intent e exibe proposta
+  em 3-caminhos (G1 aceitar / G2 ajustar / G3 pular). Ao aceitar: `mem add`
+  de todos os tier-1 (verificado — sem `.bak` nem trim se algum falhar), depois
+  `.bak` imediato de cada arquivo tocado (Decisão 24), depois trim — substituindo
+  o conteúdo tier-1 por ponteiro `mem find`. Revisão (M-202): caminho G2 re-emite
+  `classify` com `revise:true` + `prior`, novo `intent-id` (sem colidir com o
+  anterior); máximo 3 rodadas. Greenfield sem rules e consumidor com sentinel
+  `.rules-reduced` (sem `--force`) pulam sem efeito.
+
+- `mem_context_hint(project_root, query, *, limit) -> str | None` — helper
+  compartilhado em `engine/integrations/mem.py`. Compõe sobre `mem_find` de 6a;
+  retorna bloco de texto compacto com hits ou `None` em degrade (W-ROUTE 6c).
+
+- `forge plan` / `implement` / `verify` / `qa`: leem `mem_context_hint` antes
+  de agir; resultado alimenta context-pack/handoff/hint educacional por handler
+  (D1 do design 6c). Handler-only: validators nunca recebem contexto de mem.
+  Degrade soft em todos os handlers: mem ausente → sem crash, sem "forge init" nag.
+
+- Placeholder `{{mem_context_hint}}` nos 3 templates de Wave A
+  (`feature-intake.template.md`, `feature-intake-bugfix.template.md`,
+  `feature-intake-refactor.template.md`) + input `memory-mem-hint` documentado em
+  `agents/feature-intake-agent.md` — consumidor real do read de `forge plan` (sem
+  o placeholder o token seria descartado no `re.sub`) (W-ROUTE 6c).
+
+- `tests/unit/test_validators_determinism.py`: teste estático parametrizado que
+  garante que nenhum módulo em `validators/` importa ou chama funções de
+  `engine.integrations.mem` (W-ROUTE 6c — invariante de determinismo).
+
+- `tests/unit/test_engine_plan_mem_hint.py`: prova que o hint chega ao artefato
+  RENDERIZADO da Wave A (não só ao dict de tokens) (W-ROUTE 6c).
+
+### Removed
+
+- `agents/memory-distiller.md` — agente órfão; a compressão de L2 perdeu sentido
+  pós-mem (o `mem evolve` gere o tamanho do acervo) e nada o despachava. Desvio
+  consciente da spec §Re-roteamento (que previa repurpose pra gerador de inbox —
+  descartado por duplicar o retrospective-agent + a skill mem-consolidate)
+  (Onda 7 / W-AGENTS).
+
+- `engine/memory/distiller._apply_consolidate_l2` — dead code após 6b (branch
+  `consolidate-l2` roteado via `_KNOWLEDGE_KINDS → mem_inbox_add`). Removido
+  em 6c após grep-confirm de zero caller (W-ROUTE 6c orphan-cleanup).
+
+- `engine/memory/l2.add_entry` — write-path órfão de conhecimento após 6b.
+  Nenhum engine code chamava a função após o re-roteamento dos 3 branches de
+  L2-knowledge pro mem inbox. Removida de `l2.py` e de `__all__` (W-ROUTE 6c).
+
+- Imports órfãos de `add_entry` e `L2Entry` em `engine/memory/distiller.py` —
+  `add_entry` perdeu o call-site em 6b; `L2Entry` era usado apenas em
+  `_apply_consolidate_l2` (deletada). Ambos removidos (W-ROUTE 6c).
+
+### Changed
+
+- Conductor prompts (feature-prd-agent, planning-conductor, contract-planner-agent,
+  retrospective-agent) consultam o acervo via `mem find` em vez do `L2-project.yaml`
+  abandonado (Onda 7 / W-AGENTS). Write-path inalterado — proposals seguem via
+  `proposed-evolutions.yaml` → `forge evolve` → `mem inbox add` (knowledge kinds).
+
+- `forge evolve` (knowledge proposals): aprovação de `promote-to-l2` /
+  `l1-to-l2-promotion` / `consolidate-l2` agora emite `mem inbox add` em vez
+  de escrever direto no L2 (anti-envenenamento G11). O conhecimento entra na
+  fila de inbox do mem e fica disponível via `mem evolve` / `mem inbox promote`
+  (W-ROUTE 6b).
+
+- `forge status` (seção memory): linha de L2-size substituída por resumo de
+  `mem stats` (total/live/stale/by_type). Payload JSON ganha bloco
+  `memory.mem`. Degrade soft se mem indisponível (W-ROUTE 6b).
+
+- `forge memory` reescrito como wrapper fino arg-driven sobre o `mem`
+  vendorizado (`search`/`inspect`/`export`/`distill`), stateless — elimina
+  o checkpoint-resume do DRIFT-1 (BUG-M1). Inspeção de lifecycle move pra
+  `forge status`; L3 e `forget` por-id removidos (W-ROUTE 6a).
+
+- ADR-note Decisão 22 (sem dep runtime de outras skills): o mem é vendorizado
+  como snapshot pinado fork-and-forget (Decisão 15), não import runtime — o
+  espírito da 22 se mantém. Sem revisita formal (não contradiz a decisão locked).
+
+- State-machine de lifecycle migrada de `.claude/memory/L1/` →
+  `.claude/forge/state/lifecycle/` (Decisão #1 da integração mem). Consolidada
+  numa fonte única `paths.lifecycle_root`. `.claude/memory/` deixa de hospedar
+  lifecycle (caminho pra ser 100% do mem). ADR-note Decisão 20 (persistence):
+  o espírito se mantém — lifecycle continua arquivos + SQLite; só muda o
+  sub-namespace de `memory/` pra `forge/state/`. Sem revisita formal (não
+  contradiz a decisão locked).
+
+- Renomeado o path de artefatos de feature `docs/feature-implementation-workflow`
+  → `docs/forge-specs` (clean break, sem alias). Consolidados os 11 literais
+  hardcoded numa fonte única `paths.FEATURE_WORKFLOW_DIRNAME`. `docs/superpowers/specs/`
+  (specs do forge) NÃO muda.
+
+- CLAUDE.md + `.claude/rules/**` enxugados pra Tier-0 lean + índice mem (Fase 0 dogfood, T6). O núcleo injetado sempre-on — Mandamento 0 (regra absoluta + whitelist de ferramentas + override do usuário), os 6 mandamentos e o fluxo único do orquestrador — permanece verbatim em `CLAUDE.md`; o resto (workflow por verbo, superpowers map, anatomia, comandos, graph howto, não-procrastinação) virou ponteiro `mem find` por tema. As 13 rules de `.claude/rules/` foram reduzidas a cabeçalho + ponteiro + invariante de enforcement que um hook lê (ex.: o ritual "Revisita decisão N" em `decisions.md`; os 5 títulos de smoke em `SMOKE-CHECKLIST.md`) — nenhuma apagada. O detalhe migrou pro acervo mem (recuperável via `.claude/bin/mem find "<tema>"`), comprovadamente coberto antes do enxugue. Canônicos `docs/design/*` preservados intactos. Os hooks (`session-start-orientation`, `pre-tool-use-load-bearing`, `pre-commit-feature-forge`) não leem texto de rule pra enforçar — a whitelist load-bearing e o hard-block de decisões vivem nos próprios `.sh` —, então o enxugue não afrouxa nenhum gate.
+
+  ADR-note (sem revisita formal — consistente com decisões locked):
+  - Decisão 20 (Persistence = SQLite + arquivos) é HONRADA: o `mem` É esse modelo — JSONL commitado (arquivos) como fonte + `mem.db` (SQLite) como índice derivado. O graph segue como a outra metade SQLite.
+  - Decisão 22 (zero runtime dep em skills; absorb patterns only) é HONRADA: o `mem` entra como TOOL vendorizada via shell, não import de skill. `engine/` nunca faz `import mem`. Snapshot local pinado alinha com Decisão 15.
+  Nenhuma das duas é revisitada — a substituição opera dentro do que ambas já endossam.
+
+- Design spec da substituição da camada de memória-de-conhecimento pelo `mem` (CLI vendorizada via shell) — `docs/superpowers/specs/2026-06-25-mem-integration-design.md`. O forge deixará de manter L1-distilável/L2/L3 caseiros em `engine/memory/`; o `mem` (vendorizado em `.claude/bin/mem`, pinado por versão, invocado por subprocess — mesmo padrão de `dispatch_native_tool` pra detekt/gradle) passa a ser o dono único de learnings, decisões, episodes, sessões e convenções curadas. O code graph (`graph.db`) e o L1 state-machine de lifecycle permanecem no forge (este migra de `.claude/memory/L1/` → `.claude/forge/state/`, deixando `.claude/memory/` 100% do mem). O spec também detalha o rename clean-break `docs/feature-implementation-workflow/` → `docs/forge-specs/` (sem back-compat; resolve colisão de namespace — NÃO confundir com `docs/superpowers/specs/`, que é spec do próprio forge).
+
+  Spec revisado pelo autor e consolidado: as 5 questões abertas viraram decisões (corte do L1 pra `.claude/forge/state/`; fronteira via helper enxuto `engine/integrations/mem.py:mem_call`; mem embarcado como asset pinado em `engine/assets/mem/mem`; bug multi-passo do `forge memory` exige TDD — reproduzir antes, não assumir cura; `forge evolve` vs `mem evolve` ortogonais). Rollout em 3 fases: **Fase 0** dogfood (o próprio forge usa mem, com gate de aceite explícito — sessão de manutenção fresca DEVE manter o Mandamento 0 enforçado), **Fase 1** produto (todos os fluxos re-roteiam; inclui a REDUÇÃO de rules no init — fix do gap de assimilação de convenção do piloto), **Fase 2** enriquecimento de rules (só referenciada).
+
+  ADR-note (sem revisita formal — consistente com decisões locked):
+  - Decisão 20 (Persistence = SQLite + arquivos) é HONRADA: o `mem` É esse modelo — JSONL commitado (arquivos) como fonte + `mem.db` (SQLite) como índice derivado. O graph segue como a outra metade SQLite.
+  - Decisão 22 (zero runtime dep em skills; absorb patterns only) é HONRADA: o `mem` entra como TOOL vendorizada via shell, não import de skill. `engine/` nunca faz `import mem`. Snapshot local pinado alinha com Decisão 15.
+  Nenhuma das duas é revisitada — a substituição opera dentro do que ambas já endossam. (Por não editar `docs/design/01-decisions.md`, o hard-block do Mandamento #1 não dispara; ADR-note aqui é a documentação correta de "honra, não revisita".)
+
+- Handoff de sessão re-roteado pro `mem` (Fase 0.5 — dogfood). O `session-start-orientation.sh` passa a injetar o corpo do último `mem session` (dois passos: `mem --json find "" --type session -k 1` → `mem --json get <id>` → `.body`), com fallback gracioso pro grep dos dois campos do `08-session-handoff.md` quando o mem está vazio/ausente/falhando — o bloco hardcoded de Mandamento 0 + fluxo e o contrato exit-0 permanecem intactos em todos os caminhos. O `post-edit-doc-drift.sh` e o SOFT WARNING do `pre-commit-feature-forge.sh` deixam de exigir o handoff-arquivo no gate per-commit (fica `CHANGELOG`/`README`) e passam a apontar `mem session` como o trilho de fim-de-sessão; o HARD BLOCK do Mandamento #1 (`01-decisions.md`) não foi tocado. `CLAUDE.md` §6 e `.claude/rules/doc-sync.md` refletem o novo modelo (per-commit = CHANGELOG/README; handoff = `mem session`); as duas notas mem de doc-sync (matriz código→docs + checklist pré-commit) foram re-classificadas via `mem add` + `mem supersede` (antigas preservadas como superseded). O `docs/design/08-session-handoff.md` congelou — snapshot histórico + fallback de bootstrap do SessionStart, não mais editado a cada sessão (estado-final hybrid: não deletado). Nenhuma mudança de código Python.
+
+### Fixed
+
+- Hook SessionStart (`.claude/hooks/session-start-orientation.sh`) resiliente
+  a `created_at` malformado no JSONL do mem (cross-AI bot PR #32): a seleção
+  da sessão mais recente agora valida que `created_at` é uma string ISO
+  parseável antes de usá-la como chave; entradas ausentes OU corrompidas (não
+  derivam de date válida) caem pra um sentinela que as ordena pro fim — nunca
+  são mis-selecionadas como "mais recente" (caminho de continuidade entre
+  sessões). Caso feliz (datas ISO válidas) preserva o comportamento atual.
+
+- `forge undo` de evolve-apply de conhecimento agora reverte de fato via
+  `mem inbox reject` (W-ROUTE 6d) — antes era no-op silencioso pós-6b (o
+  candidato persistia no inbox do mem). O id é capturado no apply e gravado
+  no evento `evolve-apply`; report honesto quando o candidato já virou nota
+  ativa ou o mem está indisponível.
+
+- Hardening do recovery-path 6d (cross-AI review PR #32):
+  - **P2** (`engine/memory/distiller.py`): `apply_proposal_to_l2` valida o
+    `mem-inbox-id` (`result.data["id"]`, não-vazio) ANTES de drenar a fila.
+    Se o mem mudar o shape do `inbox add --json` (sem `id`, ou `id`
+    vazio/null), levanta `MemoryError` sem drenar (raise-não-drena, espelhando
+    o guard de `result.ok`). Antes, um shape mudado retornava `inbox_id=None`
+    silencioso com a proposta já drenada → o evento `evolve-apply` virava
+    L2-style, o guard L-02 de `undo.py` não disparava, e o `forge undo`
+    reportava falso sucesso sobre um candidato órfão.
+  - **P4** (`engine/evolve.py`): o preflight de overflow no topo de `run()` só
+    roda quando há proposta pendente que de fato toca L2. Uma fila só-knowledge
+    (que roteia pro mem-inbox) com L2 legada cheia não bloqueia mais applies
+    válidos — espelha o skip per-proposta de `_apply_proposal`.
+  - **P6** (`engine/evolve.py`): `_record_history_event` estreita o
+    `except Exception: pass` para `(OSError, ValueError)` e emite aviso visível
+    (`renderer.dim`) em vez de swallow silencioso — alinhado com
+    `undo.py::_append_undo_log`. O evento `evolve-apply` carrega o
+    `mem-inbox-id` load-bearing pro recovery; um append-fail silencioso
+    orfanaria o candidato (undo nunca acharia o id).
+
+- `mem_call` degrada soft em `OSError`/`PermissionError`, não só em
+  `TimeoutExpired` (cross-AI PR #32, P1). Um binário mem resolvido por
+  `is_file()` mas não-executável (bit de exec ausente / shebang ruim /
+  delete em corrida) levantava `OSError` cru que escapava a fronteira e
+  crashava o caller, furando o contrato de degrade-soft de plan/implement/
+  verify/qa. Agora mapeia pro mesmo `MemResult` degradado (`found=True`,
+  exit `_BINARY_NOT_FOUND`).
+
+- `forge doctor` não crasha mais no check de pin do mem (cross-AI PR #32,
+  P3). `pin.read_text()`/`asset_v.read_text()` rodavam fora de try/except
+  logo após `is_file()` — um EACCES ou delete-em-corrida (TOCTOU) propagava
+  traceback cru do comando de health-check que nunca deve crashar. Agora
+  degrada pra um check WARN ("não consegui ler o pin/asset").
+
+- `mem_find` protege a `query` posicional com o separador `--` (cross-AI
+  PR #32, P5). Uma busca cujo tema começa por `-` (derivada de slug/
+  `scope.target`/descrição de task) era parseada como flag pelo argparse do
+  mem → exit≠0 → falha silenciosa do hint. Argv corrigido com a ordem
+  verificada empiricamente: flags ANTES, `--` separa, query por ÚLTIMO
+  (`find -k N [--type T] -- query`).
+
+### Changed
+
+- `MEM_PINNED_VERSION` (`engine/integrations/mem.py`) deixou de ser dead
+  constant (cross-AI PR #32, P7): o pin-check de `forge doctor` agora valida
+  o asset embutido contra a constante (fonte-da-verdade do pin do forge em
+  código), pegando drift silencioso entre a constante Python e o asset
+  `engine/assets/mem/VERSION`.
+
+- Limpeza de qualidade do power-review do PR #32 (Q-01..Q-06, sem mudança de
+  comportamento): docstring de `mentor_calmo` tira `pause_message` da lista
+  "bare" (exige `project_root`); categoria `Memory L2` do `forge doctor`
+  renomeada pra `Memory L2 (legacy)` com linguagem size-only (a curadoria do
+  conhecimento vive no `mem`, não no L2); novo helper
+  `paths.vendored_mem_version_path` centraliza o nome do pin do consumidor
+  (`mem.version`) — escrita (`_vendor_mem`) e leitura (pin-check do doctor)
+  passam por ele, removendo o literal duplicado (pin VALUE e drift-check
+  intactos); `_ = Optional` morto removido de `distiller.py`; docstring de
+  `engine/integrations/mem.py` referencia `MEM_PINNED_VERSION` em vez de
+  repetir o literal de versão; teste real-mem `apply_proposal_to_l2_knowledge`
+  alinhado ao guard `@pytest.mark.skipif` dos vizinhos.
+
 ## [1.6.1] - 2026-06-24
 
 Remediação do piloto: rodar `forge qa` end-to-end contra o consumer real MeoBonsai-qa expôs um bug no `forge doctor` que rejeitava o `schema-version` canônico que o próprio `forge init` escreve — todo consumer recém-inicializado falhava o primeiro `doctor`. Junto, alinhamentos de consistência entre os templates/agents do fluxo qa e o que o engine de fato lê.

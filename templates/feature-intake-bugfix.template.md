@@ -72,6 +72,14 @@ wave_b_required: "{{wave_b_required_bool}}"
 - affected versions: {{affected_versions_csv_or_unknown}}
 - related commits: {{related_commits_csv_or_none}}
 
+<!--
+  MEM-CONTEXT (W-ROUTE 6c) — gotchas/convenções relevantes do acervo de memória
+  (`mem find`), injetadas pelo engine ANTES do dispatch. Quando vazio (mem
+  indisponível ou sem hits), a linha abaixo fica em branco — sem ruído. NÃO é
+  fonte da verdade; é dica de contexto pro autor consultar.
+-->
+{{mem_context_hint}}
+
 ## Problem statement
 
 <!--

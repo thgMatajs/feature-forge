@@ -3,7 +3,7 @@
 # Two checks:
 #   (1) HARD BLOCK: docs/design/01-decisions.md staged without "Revisita
 #       decisão" in staged CHANGELOG.md → exit 1.
-#   (2) SOFT WARNING: code "vivo" staged sem CHANGELOG/handoff/README staged.
+#   (2) SOFT WARNING: code "vivo" staged sem CHANGELOG/README staged.
 #
 # Override consciente: git commit --no-verify (registra bypass deliberado).
 set -euo pipefail
@@ -43,17 +43,18 @@ fi
 
 TOUCHED_CODE=$(echo "$CHANGED" | grep -E '^(engine|validators|hooks|templates|cards|presets|docs/schemas)/' || true)
 if [[ -n "$TOUCHED_CODE" ]]; then
-    TOUCHED_DOCS=$(echo "$CHANGED" | grep -E '^(CHANGELOG\.md|docs/design/08-session-handoff\.md|README\.md)$' || true)
+    TOUCHED_DOCS=$(echo "$CHANGED" | grep -E '^(CHANGELOG\.md|README\.md)$' || true)
     if [[ -z "$TOUCHED_DOCS" ]]; then
         cat <<EOF >&2
 
-⚠️  doc-sync: commit toca código vivo mas não CHANGELOG/handoff/README.
+⚠️  doc-sync: commit toca código vivo mas não CHANGELOG/README.
 
     Arquivos vivos alterados:
 $(echo "$TOUCHED_CODE" | sed 's/^/      · /')
 
-    Lembre-se de atualizar doc-sync ou justifique no commit body.
-    (Sem bloqueio — só aviso.)
+    Lembre-se de atualizar doc-sync (CHANGELOG/README) ou justifique no
+    commit body. O handoff de sessão não é per-commit: rode
+    \`.claude/bin/mem session\` no fim da sessão. (Sem bloqueio — só aviso.)
 
 EOF
     fi

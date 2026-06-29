@@ -21,6 +21,7 @@ class AskKind(str, Enum):
     ASK_MULTI = "ask_multi"
     ASK_TEXT = "ask_text"
     CONFIRM = "confirm"
+    CLASSIFY = "classify"
 
 
 @dataclass(frozen=True)
@@ -111,3 +112,23 @@ class HostAdapter(ABC):
 
     @abstractmethod
     def emit_warn(self, *, message: str) -> None: ...
+
+    @abstractmethod
+    def classify(
+        self,
+        *,
+        fragments: list[dict],
+        schema: dict,
+    ) -> list[dict] | None:
+        """Classify rule fragments via the host LLM.
+
+        ``fragments``: ``[{"id", "source", "heading", "text"}]``
+        Returns: ``list[dict]`` ``[{"fragment_id", "tier": int, "rationale",
+                 "mem_note"?}]`` (``mem_note`` only for tier 1), or
+                 ``None`` when the host has no LLM (e.g. TtyAdapter).
+                 ``None`` is distinct from ``[]`` — callers must not confuse
+                 the two. ``None`` means "host cannot classify"; ``[]`` would
+                 mean "no fragments to classify" (degenerate, but structurally
+                 different).
+        """
+        ...

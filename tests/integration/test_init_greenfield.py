@@ -49,8 +49,8 @@ def test_init_run_rejects_unknown_arg(tmp_project_root, monkeypatch, capsys):
 @pytest.mark.integration
 def test_claude_dir_scaffold_locations(tmp_forge_project):
     # Sanity for the fixture used by other integration tests.
-    assert (tmp_forge_project / ".claude" / "memory" / "L1").is_dir()
-    assert (tmp_forge_project / ".claude" / "memory" / "L1" / "archived").is_dir()
+    assert (tmp_forge_project / ".claude" / "forge" / "state" / "lifecycle").is_dir()
+    assert (tmp_forge_project / ".claude" / "forge" / "state" / "lifecycle" / "archived").is_dir()
     assert (tmp_forge_project / ".claude" / "cards").is_dir()
     assert (tmp_forge_project / ".claude" / "inventory").is_dir()
     assert (tmp_forge_project / ".claude" / "hooks").is_dir()

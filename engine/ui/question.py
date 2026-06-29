@@ -889,3 +889,98 @@ def confirm(question: str, *, default: bool = False, allow_pause: bool = True) -
     raise ValueError(
         f"confirm response value {value!r} is not a bool or recognised yes/no token"
     )
+
+
+# --- classify ---------------------------------------------------------------
+
+
+def classify(
+    fragments: list[dict],
+    *,
+    schema: dict | None = None,
+    project_root: Path | None = None,
+) -> list[dict] | None:
+    """Classify rule fragments via the host LLM.
+
+    Entrypoint para a engine invocar o intent-kind ``classify``. O host
+    (Claude Code, intent-file) recebe o pending com ``fragments`` +
+    ``classification-schema``, classifica cada fragmento em tier 0/1 e
+    escreve a response com ``classification: [...]``.
+
+    Returns:
+    - ``list[dict]`` com a classificacao (um item por fragmento), quando
+      o host tem LLM e respondeu. Cada item: ``{fragment_id, tier: int,
+      rationale, mem_note?}``.
+    - ``None`` quando o host nao tem LLM (TtyAdapter) — o caller deve
+      pular a reducao com aviso claro. ``None`` e distinto de ``[]``
+      (fallback honesto H-101).
+
+    ``PausedForInputError`` propaga ate ``cli.py`` (exit 2); o host
+    re-invoca o forge com a response e a 2a invocacao consome via log.
+    """
+    project_root = project_root if project_root is not None else _project_root_for_io()
+    schema = schema if schema is not None else {"tiers": [0, 1]}
+
+    # IM-01: guard JSON-serializable antes de despachar pro adapter.
+    # fragments e passado ao adapter e serializado para o pending file;
+    # um TypeError silencioso ai produz um pending invalido sem diagnose.
+    try:
+        json.dumps(fragments)
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"fragments não é JSON-serializável: {e}") from e
+
+    from engine.host.adapter import (
+        PausedForInputError as _AdapterPaused,
+        UserPausedError as _AdapterUserPaused,
+        UserCancelledError as _AdapterUserCancelled,
+    )
+
+    # CR-01: fallback intent dict para PausedForInputError.intent.
+    # O adapter NAOCONSTROI um dict com .intent acessivel — ele levanta
+    # adapter.PausedForInputError(str). O cli.py espera
+    # question.PausedForInputError com .intent (dict nao-vazio com kind).
+    # Todos os outros entrypoints (ask/ask_text/ask_multi/confirm/
+    # ask_three_paths) convertem via _read_adapter_pending_or_fallback.
+    # classify deve seguir o mesmo padrao.
+    command, command_args = _command_context()
+    fallback_intent: dict[str, Any] = {
+        "schema-version": _SCHEMA_VERSION,
+        "intent-id": stable_intent_id(
+            "classify",
+            "classify-rules",
+            {},
+            extra={"fragments": fragments, "schema": schema},
+            command=command,
+            command_args=command_args,
+        ),
+        "command": command,
+        "command-args": command_args,
+        "kind": "classify",
+        "question": "classify-rules",
+        "options": None,
+        "default": None,
+        "allow-pause": True,
+        "created-at": _now_iso(),
+        "pid": os.getpid(),
+        "checkpoint-path": None,
+        "fragments": fragments,
+        "classification-schema": schema,
+    }
+
+    try:
+        return _resolve_adapter(project_root).classify(
+            fragments=fragments, schema=schema
+        )
+    except _AdapterPaused:
+        # CR-01: re-wrap como question.PausedForInputError (com .intent)
+        # para que cli.py possa mapear exit 2 e callers que fazem
+        # `except question.PausedForInputError` continuem funcionando.
+        # Re-hidrata .intent do pending em disco (escrito pelo adapter)
+        # para que o intent-id bata com o que o host vera.
+        raise PausedForInputError(
+            intent=_read_adapter_pending_or_fallback(project_root, fallback_intent)
+        )
+    except _AdapterUserPaused:
+        raise UserPausedError("user paused via response")
+    except _AdapterUserCancelled:
+        raise UserCancelledError("user cancelled via response")

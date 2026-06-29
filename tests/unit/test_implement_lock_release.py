@@ -32,7 +32,7 @@ def _seed_ready_feature(project_root: Path, slug: str = "lembrete-rega") -> Path
     feature_root = (
         project_root
         / "docs"
-        / "feature-implementation-workflow"
+        / "forge-specs"
         / "features"
         / slug
     )
@@ -57,7 +57,7 @@ def _seed_ready_feature(project_root: Path, slug: str = "lembrete-rega") -> Path
     )
 
     # L1 status — implementing-ready (no phase_lock)
-    memory_l1 = project_root / ".claude" / "memory" / "L1" / slug
+    memory_l1 = project_root / ".claude" / "forge" / "state" / "lifecycle" / slug
     memory_l1.mkdir(parents=True, exist_ok=True)
     (memory_l1 / "status.json").write_text(
         json.dumps(

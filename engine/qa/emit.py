@@ -8,7 +8,7 @@ Algoritmo (resumo):
    proposed-evolution).
 2. Para cada finding actionable, carrega rejected-fingerprints.yaml
    (Decisão 25). Se fingerprint vetada → skip silencioso.
-3. Append entry em `.claude/memory/L1/proposed-evolutions/proposed.yaml`.
+3. Append entry em `.claude/forge/state/lifecycle/proposed-evolutions/proposed.yaml`.
 4. Write atômico: temp file `proposed.yaml.tmp` → `os.replace(tmp, final)`.
 5. OSError mid-write (ex: disk full) → retorna `write_failed=True`
    graceful, NÃO propaga; tmp file é limpo.
@@ -34,18 +34,19 @@ from typing import Any
 
 import yaml
 
+from engine.utils.paths import lifecycle_root
+
 # Severity threshold pra virar proposed-evolution (spec §5.5).
 # low e info são informativos no qa-report mas não geram entry em
 # proposed.yaml — economiza ruído no endpoint humano (forge evolve).
 _ACTIONABLE_SEVERITIES: set[str] = {"critical", "high", "medium"}
 
-_PROPOSED_DIR_PARTS = (".claude", "memory", "L1", "proposed-evolutions")
 _PROPOSED_FILENAME = "proposed.yaml"
 _REJECTED_FILENAME = "rejected-fingerprints.yaml"
 
 
 def _proposed_dir(project_root: Path) -> Path:
-    return project_root.joinpath(*_PROPOSED_DIR_PARTS)
+    return lifecycle_root(project_root) / "proposed-evolutions"
 
 
 def load_rejected_fingerprints(project_root: Path) -> set[str]:
@@ -61,7 +62,7 @@ def load_rejected_fingerprints(project_root: Path) -> set[str]:
     - Chave `rejected` ausente ou não-list → set().
 
     Args:
-        project_root: raiz do projeto onde `.claude/memory/L1/...` mora.
+        project_root: raiz do projeto onde `.claude/forge/state/lifecycle/...` mora.
 
     Returns:
         Conjunto de fingerprints (strings) a pular durante emit.
@@ -129,7 +130,7 @@ def emit_proposed_evolutions(
             espera campos `severity`, `fingerprint`, `title`,
             `proposed_evolution.type`, `proposed_evolution.summary`.
         project_root: raiz do projeto pra resolver
-            `.claude/memory/L1/proposed-evolutions/`.
+            `.claude/forge/state/lifecycle/proposed-evolutions/`.
 
     Returns:
         Dict com:

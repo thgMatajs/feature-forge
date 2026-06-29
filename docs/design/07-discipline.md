@@ -439,7 +439,7 @@ completo.
 
 ### Storage
 
-`.claude/memory/L1/proposed-evolutions/rejected-fingerprints.yaml`:
+`.claude/forge/state/lifecycle/proposed-evolutions/rejected-fingerprints.yaml`:
 
 ```yaml
 rejected:
@@ -561,14 +561,14 @@ Em vez disso:
           propostas e mudar L2 sob seus pés invalidaria as próximas.
           
           Caminhos:
-            • forge memory → "distill L2"   (depois retoma evolve)
+            • forge memory distill            (depois retoma evolve)
             • forge evolve (retoma)         (após distill manual)
             • Pausar e revisar depois       (estado salvo)
           
           O que prefere?
    ```
 
-4. Usuário roda `forge memory` → distill, depois retorna a `forge evolve`,
+4. Usuário roda `forge memory distill`, depois retorna a `forge evolve`,
    que detecta `.evolve-checkpoint.yaml` e auto-resume da proposta
    pendente.
 
@@ -619,7 +619,7 @@ Ctrl+C **ou** digitar `para` interrompe o loop e **salva como deferred**:
 - Mensagem de saída:
 
   ```
-  Pausei aqui. Estado salvo em .claude/memory/L1/{slug}/status.json
+  Pausei aqui. Estado salvo em .claude/forge/state/lifecycle/{slug}/status.json
   
   Pra retomar: forge {plan|implement|evolve} {slug}
   ```
@@ -985,8 +985,8 @@ pegado isso antes?"
 
 ### Filesystem layout
 
-`docs/feature-implementation-workflow/non-product/{slug}/` paralelo a
-`features/{slug}/`. Mesmo `.claude/memory/L1/{slug}/` para `L1`. Sub-tree
+`docs/forge-specs/non-product/{slug}/` paralelo a
+`features/{slug}/`. Mesmo `.claude/forge/state/lifecycle/{slug}/` para estado de lifecycle. Sub-tree
 de status, history, dispatch-log, verify-log idênticos. Bugfix usa o
 mesmo `non-product/{slug}/` que refactor — decisão deliberada: bugfix
 também é "não é nova product behavior", é "restaurar product behavior
@@ -1347,7 +1347,7 @@ refactor/bugfix retrospective, extension retrospective também alimenta
 
 ### Filesystem layout
 
-Extension feature vive em `.claude/memory/L1/{parent-slug}-{descriptive-suffix}/`
+Extension feature vive em `.claude/forge/state/lifecycle/{parent-slug}-{descriptive-suffix}/`
 — **NÃO** em `non-product/{slug}/` (que é o guarda-chuva de refactor +
 bugfix em §8). Razão: extension é product-derived (gera valor de
 usuário novo, ainda que correlato), segue o pipeline product. O slug
@@ -1356,7 +1356,7 @@ derivado é convencionalmente `{parent}-{suffix-descritivo}` (ex.:
 sugere `{parent}-extension` como default na Cena 1, user customiza pra
 descritivo real.
 
-`docs/feature-implementation-workflow/features/{parent-slug}-{suffix}/`
+`docs/forge-specs/features/{parent-slug}-{suffix}/`
 paralelo a qualquer outra product feature. Sub-tree de status, history,
 dispatch-log, verify-log idêntico ao product padrão.
 

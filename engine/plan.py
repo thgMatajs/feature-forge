@@ -2,8 +2,8 @@
 
 Orchestrates a single feature through 5 sequential planning waves, each one
 emitting one or more artefacts under
-`docs/feature-implementation-workflow/features/{slug}/`. Per-feature working
-state lives in `.claude/memory/L1/{slug}/`.
+`docs/forge-specs/features/{slug}/`. Per-feature working
+state lives in `.claude/forge/state/lifecycle/{slug}/`.
 
 v1 realism: this module does NOT invoke LLM sub-agents directly. It renders
 the canonical templates as placeholder artefacts and walks the user through
@@ -91,6 +91,7 @@ from engine.utils.checkpoint_io import (
     save_yaml_checkpoint as _save_yaml_checkpoint_io,
 )
 from engine.utils.iso import utc_now_iso
+from engine.integrations.mem import mem_context_hint
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -815,7 +816,7 @@ def _persist_deferred(slug: str, project_root: Path, where: str) -> None:
         {"event": "plan-deferred", "where": where},
     )
     renderer.write("")
-    renderer.write(mentor_calmo.pause_message(slug=slug, resume_command=f"forge plan {slug}"))
+    renderer.write(mentor_calmo.pause_message(slug=slug, resume_command=f"forge plan {slug}", project_root=project_root))
 
 
 # ── Wave runners ─────────────────────────────────────────────────────────────
@@ -1171,10 +1172,10 @@ def _create_extension_l1(
     """Create the child's status.json + seed hypothesis.yaml as an extension.
 
     Gap 9 — extends-feature mechanic. Writes:
-      - ``.claude/memory/L1/{child}/status.json`` with extends-feature +
+      - ``.claude/forge/state/lifecycle/{child}/status.json`` with extends-feature +
         parent-feature pointing at ``parent_slug``, state=planning,
         subtype=product (extensions are always product-derived).
-      - ``.claude/memory/L1/{child}/hypothesis.yaml`` seeded with the
+      - ``.claude/forge/state/lifecycle/{child}/hypothesis.yaml`` seeded with the
         ``extends-feature`` + ``parent-feature`` fields so the conductor
         can read it on resume without re-asking.
 
@@ -2048,6 +2049,16 @@ def run(argv: list[str]) -> int:
         }
     )
 
+    # W-ROUTE 6c: consulta o acervo de memória por gotchas/convenções relevantes
+    # ANTES de redigir os artefatos. O resultado alimenta o context-pack que o
+    # subagente de planejamento recebe (token {{mem_context_hint}}). Degrade soft:
+    # mem ausente → hint é None → token fica em branco (sem nag "forge init").
+    _mem_hint = mem_context_hint(project_root, slug, limit=5)
+    if _mem_hint is not None:
+        intake_tokens["{{mem_context_hint}}"] = _mem_hint
+    else:
+        intake_tokens["{{mem_context_hint}}"] = ""
+
     # Wave dispatch loop (subtype-aware; bugfix branches on wave_b_required).
     try:
         rc = _run_waves_for_subtype(
@@ -2117,7 +2128,7 @@ def record_external_dep(
 
     Discipline §9 — engine helper invoked by planning-conductor when the
     user confirms a concrete external dep. Writes to
-    `.claude/memory/L1/{slug}/elicitation.yaml.external-deps[]` so Wave D
+    `.claude/forge/state/lifecycle/{slug}/elicitation.yaml.external-deps[]` so Wave D
     (task-contract-writer) can read it from the context pack and emit
     `depends_on_external` entries on the right tasks.
 

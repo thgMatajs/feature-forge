@@ -434,7 +434,8 @@ def run(argv: list[str]) -> int:
         except UserAbortError as exc:
             renderer.write(
                 mentor_calmo.pause_message(
-                    resume_command=f"forge reconfigure  # após reconciliar grants — {exc}"
+                    resume_command=f"forge reconfigure  # após reconciliar grants — {exc}",
+                    project_root=project_root,
                 )
             )
             _save_draft(draft_path, working)

@@ -54,17 +54,9 @@ def test_write_l2_confidence_out_of_range_raises(tmp_path):
         l2.write_l2(tmp_path, [bad])
 
 
-def test_add_entry_succeeds_then_duplicate_fails(tmp_path):
-    e = L2Entry(id="P-1", kind="pattern", title="x", body="d")
-    l2.add_entry(tmp_path, e)
-    assert l2.find_entry(tmp_path, "P-1") is not None
-    with pytest.raises(MemoryError):
-        l2.add_entry(tmp_path, e)
-
-
 def test_remove_entry_removes_when_present(tmp_path):
     e = L2Entry(id="P-1", kind="pattern", title="x", body="d")
-    l2.add_entry(tmp_path, e)
+    l2.write_l2(tmp_path, [e])
     l2.remove_entry(tmp_path, "P-1")
     assert l2.find_entry(tmp_path, "P-1") is None
 
@@ -134,3 +126,28 @@ def test_naming_extra_round_trip(tmp_path):
     read = l2.read_l2(tmp_path)
     assert read[0].kind == "naming-extra"
     assert read[0].provenance == ["AuthRepository", "BonsaiRepository"]
+
+
+# ── Task 4 (6c): add_entry removido de l2.py ──────────────────────────────────
+
+
+def test_l2_add_entry_removed_from_module() -> None:
+    """add_entry foi deletada de engine.memory.l2 em 6c (write-path órfão).
+
+    O write-path de conhecimento agora vai pro mem inbox (6b). l2.add_entry
+    era o único caller de produção; após 6b nenhum engine code a chamava.
+    """
+    import engine.memory.l2 as _l2
+    assert not hasattr(_l2, "add_entry"), (
+        "add_entry ainda existe em engine.memory.l2; "
+        "deveria ter sido removida na Task 4 de 6c (W-ROUTE orphan-cleanup)."
+    )
+
+
+def test_l2_add_entry_not_in_all() -> None:
+    """add_entry não deve estar em __all__ de engine.memory.l2."""
+    import engine.memory.l2 as _l2
+    assert "add_entry" not in _l2.__all__, (
+        "add_entry ainda está em l2.__all__; "
+        "deveria ter sido removida junto com a função em 6c."
+    )

@@ -42,7 +42,7 @@ def _seed_feature_all_tasks_done(
     feature_root = (
         project_root
         / "docs"
-        / "feature-implementation-workflow"
+        / "forge-specs"
         / "features"
         / slug
     )
@@ -65,7 +65,7 @@ def _seed_feature_all_tasks_done(
         encoding="utf-8",
     )
 
-    memory_l1 = project_root / ".claude" / "memory" / "L1" / slug
+    memory_l1 = project_root / ".claude" / "forge" / "state" / "lifecycle" / slug
     memory_l1.mkdir(parents=True, exist_ok=True)
     (memory_l1 / "status.json").write_text(
         json.dumps(
@@ -123,7 +123,7 @@ def test_state_done_transition_preserves_existing_shipped_at(
 
     # Cara dupla: já tem shipped-at carimbado de uma execução anterior + state done.
     status_path = (
-        tmp_forge_project / ".claude" / "memory" / "L1" / slug / "status.json"
+        tmp_forge_project / ".claude" / "forge" / "state" / "lifecycle" / slug / "status.json"
     )
     payload = json.loads(status_path.read_text(encoding="utf-8"))
     payload["state"] = "done"

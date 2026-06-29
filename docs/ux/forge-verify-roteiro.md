@@ -29,7 +29,7 @@ Resolução de escopo (silenciosa, < 50ms):
 
 1. Se arg começa com `TASK-` → task-scope
 2. Se arg é `.` ou bate com um slug de feature ativa → feature-scope
-3. Se sem arg → lê `.claude/memory/L1/*/status.json`, escolhe o único
+3. Se sem arg → lê `.claude/forge/state/lifecycle/*/status.json`, escolhe o único
    feature com `state ∈ {implementing, verifying}`. Se mais de um, pergunta.
 4. Se nenhum feature ativo → ver **Edge case 5**
 
@@ -295,7 +295,7 @@ shipar.
        ╰──────────────────────────────────────────────────────────────╯
        
        Pode commitar. Warnings ficam no log
-       (.claude/memory/L1/lembrete-rega/verify-log.jsonl).
+       (.claude/forge/state/lifecycle/lembrete-rega/verify-log.jsonl).
 ```
 
 **Note:** warnings ficam logados em `verify-log.jsonl`. Não somem entre runs.

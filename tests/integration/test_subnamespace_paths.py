@@ -111,7 +111,7 @@ def test_all_active_config_consumers_resolve_via_resolver() -> None:
     Raio completo do finding HIGH (cross-AI review): além de
     status/verify/reconfigure (cobertos acima), os demais comandos que liam
     a config ativa do projeto — cli (`qa`), raw (`edit-config`/`forge-debug`),
-    evolve, ingest, undo, implement, doctor, memory_cli — e o helper
+    evolve, ingest, undo, implement, doctor — e o helper
     `_resolve_features_root` em paths.py também liam só o legado
     `.claude/workflow-config.yaml`. Após um init v1.4 limpo (que grava só
     `.claude/forge/forge-config.yaml`), todos liam config vazia.
@@ -123,9 +123,9 @@ def test_all_active_config_consumers_resolve_via_resolver() -> None:
     """
     import inspect
 
-    from engine import cli, doctor, evolve, implement, ingest, memory_cli, raw, undo
+    from engine import cli, doctor, evolve, implement, ingest, raw, undo
 
-    for mod in (cli, raw, evolve, ingest, undo, implement, doctor, memory_cli):
+    for mod in (cli, raw, evolve, ingest, undo, implement, doctor):
         src = inspect.getsource(mod)
         assert "active_config_path" in src, (
             f"{mod.__name__} deveria ler config via active_config_path"

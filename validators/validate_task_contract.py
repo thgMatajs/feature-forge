@@ -31,7 +31,7 @@ from _common import (
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from engine.utils.paths import feature_dir, workflow_config_path  # noqa: E402
+from engine.utils.paths import feature_dir, feature_workflow_root, workflow_config_path  # noqa: E402
 from engine.utils.yaml_io import YamlIOError, read_yaml_or_default  # noqa: E402
 
 _TASK_ID_RE = re.compile(r"^TASK-\d{4}$")
@@ -85,7 +85,7 @@ def _list_task_files(feature_root: Path) -> list[Path]:
 
 def _find_task_across_features(project_root: Path, task_id: str) -> Path | None:
     """Find which feature owns a TASK-NNNN id when called with --id only."""
-    base = project_root / "docs" / "feature-implementation-workflow" / "features"
+    base = feature_workflow_root(project_root) / "features"
     if not base.is_dir():
         return None
     for f in base.iterdir():

@@ -293,7 +293,7 @@ _COMMAND_META: dict[str, dict] = {
     "doctor":      {"summary": "Health check read-only.",                        "prompts_by_default": True,  "machine_readable": True,  "flags": ["--json"], "args": []},
     "reconfigure": {"summary": "Atualiza config com diff incremental.",          "prompts_by_default": True,  "machine_readable": False, "flags": [],         "args": []},
     "graph":       {"summary": "Consulta o codebase graph.",                     "prompts_by_default": True,  "machine_readable": True,  "flags": ["--json"], "args": ["query args"]},
-    "memory":      {"summary": "Inspeciona/gerencia memory layers.",             "prompts_by_default": True,  "machine_readable": True,  "flags": ["--json"], "args": []},
+    "memory":      {"summary": "Wrapper sobre o mem: search/inspect/export/distill.", "prompts_by_default": False, "machine_readable": True,  "flags": ["--json"], "args": ["search|inspect|export|distill"]},
     "evolve":      {"summary": "Review-and-apply de proposed evolutions.",       "prompts_by_default": True,  "machine_readable": False, "flags": [],         "args": []},
     "undo":        {"summary": "Reverte mutações (2-step abort).",               "prompts_by_default": True,  "machine_readable": False, "flags": [],         "args": []},
     "raw":         {"summary": "Passthrough cru.",                               "prompts_by_default": True,  "machine_readable": False, "flags": [],         "args": ["args"]},

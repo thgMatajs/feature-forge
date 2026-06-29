@@ -38,8 +38,8 @@ dist/
 
 # Local-only project state (when forge runs inside another project)
 .claude/graph.db
-.claude/memory/L1/*
-!.claude/memory/L1/archived/
+.claude/forge/state/lifecycle/*
+!.claude/forge/state/lifecycle/archived/
 
 # Claude Code — runtime state (per-session, não versionado)
 .claude/state/*.json
@@ -69,3 +69,4 @@ dist/
 
 # Design outputs (generated artifacts)
 docs/design/outputs/
+.claude/memory/mem.db*

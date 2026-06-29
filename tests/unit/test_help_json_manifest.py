@@ -47,14 +47,15 @@ def test_manifest_prompts_by_default_is_truthful(capsys, monkeypatch):
         assert "prompts_by_default" in cmd
         assert "machine_readable" in cmd
 
-    # Os 4 read-cmds que promptam no default: prompts_by_default=True E --json.
-    for name in ("verify", "doctor", "graph", "memory"):
+    # Read-cmds que promptam no default: prompts_by_default=True E --json.
+    for name in ("verify", "doctor", "graph"):
         assert by_name[name]["prompts_by_default"] is True, name
         assert by_name[name]["machine_readable"] is True, name
 
-    # status: único genuinamente non-prompting, mas machine_readable.
-    assert by_name["status"]["prompts_by_default"] is False
-    assert by_name["status"]["machine_readable"] is True
+    # status e memory: non-prompting, mas machine_readable (--json).
+    for name in ("status", "memory"):
+        assert by_name[name]["prompts_by_default"] is False, name
+        assert by_name[name]["machine_readable"] is True, name
 
     # `interactive` é alias de prompts_by_default (não mais mentira).
     for cmd in manifest["commands"]:

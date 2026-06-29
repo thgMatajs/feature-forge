@@ -129,7 +129,7 @@ def test_resume_from_checkpoint(
         "1": "last — última ação reversível (default)",
         "2": "reconfigure — reverter último reconfigure",
         "3": "task commit — reverter commit (git revert)",
-        "4": "evolve apply — reverter aplicação L2",
+        "4": "evolve apply — reverter aplicação de proposta (L2 ou mem inbox)",
         "5": "abort feature — marcar feature como aborted (terminal)",
         "6": "delete feature artifacts — apagar pasta (irreversível)",
         "7": "init — apagar .claude/ inteira (raríssimo)",

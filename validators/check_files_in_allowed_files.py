@@ -24,7 +24,7 @@ from _common import (
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from engine.utils.paths import feature_dir  # noqa: E402
+from engine.utils.paths import feature_dir, feature_workflow_root  # noqa: E402
 from engine.utils.yaml_io import read_yaml_or_default  # noqa: E402
 
 
@@ -45,7 +45,7 @@ def _git_staged_files(project_root: Path) -> list[str]:
 
 
 def _find_task_yaml(project_root: Path, task_id: str) -> Path | None:
-    base = project_root / "docs" / "feature-implementation-workflow" / "features"
+    base = feature_workflow_root(project_root) / "features"
     if not base.is_dir():
         return None
     for f in base.iterdir():

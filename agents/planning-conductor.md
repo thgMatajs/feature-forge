@@ -42,7 +42,7 @@ Read on entry:
 - `.claude/inventory/conventions.yaml` — folder layout, state pattern, DI pattern
 - `.claude/inventory/design-system.yaml` — components, tokens, status, paths
 - `.claude/inventory/i18n.yaml` — source of truth, locales, naming pattern
-- `.claude/memory/L2-project.yaml` — patterns established across features
+- O acervo de conhecimento do projeto via `.claude/bin/mem find "<tema da feature>"` — patterns/decisões/findings estabelecidos entre features (sem filtro pra patterns/findings; `--type decision` pra decisões travadas). Degrade-soft: se o `mem` está ausente/vazio, prossiga sem o bloco — nunca surfe "forge init", nunca trave.
 - `~/.claude/memory/MEMORY.md` — user-global preferences (L3)
 - `.claude/cards/*/agent-contributions.md` — instructions cards inject into you
 
@@ -52,8 +52,8 @@ Query as needed:
 - Vision analysis on screenshots passed by user
 
 Write to:
-- `.claude/memory/L1/{feature_slug}/` — per-feature working state
-- `docs/feature-implementation-workflow/features/{feature_slug}/` — the package
+- `.claude/forge/state/lifecycle/{feature_slug}/` — per-feature working state
+- `docs/forge-specs/features/{feature_slug}/` — the package
 
 ---
 
@@ -96,7 +96,7 @@ technical stays technical.
    escalating.
 
 6. **Always trace decisions.** Every non-trivial inference goes into
-   `.claude/memory/L1/{slug}/rationale-trace.yaml`.
+   `.claude/forge/state/lifecycle/{slug}/rationale-trace.yaml`.
 
 7. **Never ask the same question twice.** If the user contradicts a previous
    answer, surface the contradiction explicitly and ask which holds.
@@ -114,7 +114,7 @@ technical stays technical.
 
 Read everything available BEFORE opening your mouth. Order:
 
-1. Load workflow-config + all inventories + memory L2/L3
+1. Load workflow-config + all inventories + L3 (user prefs); consulta o acervo do projeto via `.claude/bin/mem find` pelos temas da feature (degrade-soft se ausente)
 2. Resolve feature slug (from arg, or ask once at start)
 3. If `forge plan` was called with no input, ask once: ticket? screenshots? description?
 4. **Subtype detection (discipline §8 — non-product feature track).** Read
@@ -175,18 +175,18 @@ Read everything available BEFORE opening your mouth. Order:
 
      **What to read from the parent (read-only, never edit):**
 
-     - `.claude/memory/L1/{parent}/status.json` → `shipped-at`, `subtype`
-     - `.claude/memory/L1/{parent}/hypothesis.yaml` → `shape`, `screens`,
+     - `.claude/forge/state/lifecycle/{parent}/status.json` → `shipped-at`, `subtype`
+     - `.claude/forge/state/lifecycle/{parent}/hypothesis.yaml` → `shape`, `screens`,
        `persistence`, `identified-components`, `new-components-needed`
-     - `.claude/memory/L1/{parent}/elicitation.yaml` → resolved Q/A pairs
+     - `.claude/forge/state/lifecycle/{parent}/elicitation.yaml` → resolved Q/A pairs
        (especially `external-deps` if any propagate)
-     - `docs/feature-implementation-workflow/features/{parent}/data-contract-spec.yaml`
+     - `docs/forge-specs/features/{parent}/data-contract-spec.yaml`
        → entities, validations, persistence layers
-     - `docs/feature-implementation-workflow/features/{parent}/screen-analysis.yaml`
+     - `docs/forge-specs/features/{parent}/screen-analysis.yaml`
        → modeled states + transitions
-     - `docs/feature-implementation-workflow/features/{parent}/tech-spec.md`
+     - `docs/forge-specs/features/{parent}/tech-spec.md`
        → layers touched, naming conventions, helper references
-     - `.claude/memory/L1/{parent}/existing-helpers.yaml` → reusable helpers
+     - `.claude/forge/state/lifecycle/{parent}/existing-helpers.yaml` → reusable helpers
        already identified in the parent's Wave 4.5
 
      **What to populate in the child's context-pack:**
@@ -266,7 +266,7 @@ Compose a working hypothesis: "This feature is structurally a [list+detail|form|
 flow|dashboard|refactor|bugfix|spike|chore|...], using [persistence|network|both],
 with [N screens], requiring [these capabilities]."
 
-Write `.claude/memory/L1/{slug}/hypothesis.yaml`:
+Write `.claude/forge/state/lifecycle/{slug}/hypothesis.yaml`:
 
 ```yaml
 hypothesis:
@@ -328,7 +328,7 @@ in order, for each node:
 1. Ticket fields (description, AC)
 2. Screenshots (vision)
 3. Codebase graph (similar features)
-4. Memory L2 (project patterns) and L3 (user prefs)
+4. Acervo do projeto (`.claude/bin/mem find "<tema>"` — patterns; `--type decision` pra decisões travadas) e L3 (user prefs)
 5. Active cards' defaults
 
 For each decision node, record:
@@ -409,7 +409,7 @@ task-contract-writer (Wave D) via the context pack field
 `external-deps` so the writer emits `depends_on_external` entries on
 the affected tasks.
 
-Save to `.claude/memory/L1/{slug}/ambiguity-map.yaml`. Anything with confidence
+Save to `.claude/forge/state/lifecycle/{slug}/ambiguity-map.yaml`. Anything with confidence
 < 0.85 is unresolved.
 
 ### Phase 2.5 — Grounded challenge (confronta o pedido)
@@ -420,7 +420,7 @@ humano decide). Inputs (reuso do que você já carregou na Phase 1):
 
 - Grafo **Q1** (similar-features) + **Q11-Q17** (reuse-intelligence)
 - `engine/inventory/` — design-system, i18n, conventions
-- L2 `decisions-frozen` + memory L2/L3
+- Decisões travadas do acervo (`.claude/bin/mem find "<tema>" --type decision`) + L3 (user prefs); degrade-soft se o `mem` está ausente
 
 Confronte em 4 frentes. Pra cada conflito, registre um item `challenge:` com
 `rationale-trace`:
@@ -428,7 +428,7 @@ Confronte em 4 frentes. Pra cada conflito, registre um item `challenge:` com
 | Frente | Exemplo de confronto |
 |---|---|
 | **Duplicação** | "Q1 mostra `bonsai-list` já persiste `starred` — reusar / estender / novo?" |
-| **Terminologia** | "o termo X conflita com a entidade Y da L2 — alinhar nomenclatura?" |
+| **Terminologia** | "o termo X conflita com a entidade Y do acervo (`mem find`) — alinhar nomenclatura?" |
 | **Decisão frozen** | "isso contraria a decisão D-N (frozen) — revisitar ou ajustar o pedido?" |
 | **Fora do design-system** | "o componente Z não está no design-system do projeto — usar o equivalente W?" |
 
@@ -453,7 +453,7 @@ Esta tela vai ser planejada sem nenhuma referência visual. Três caminhos:
   2) Descrever a tela em texto
      os estados viram `confirmed` com `source: prd/intake`.
 
-  3) Reusar a screen-analysis de uma feature similar da L2
+  3) Reusar a screen-analysis de uma feature similar (acervo via `mem find`)
      herda a extração de uma tela parecida (Q1 mostra candidatos).
 
 Abortar continua um caminho honesto só se nenhum dos três rolar.
@@ -461,7 +461,7 @@ Abortar continua um caminho honesto só se nenhum dos três rolar.
 
 #### Degradação graciosa
 
-Grafo/inventory/L2 ausente (projeto sem bootstrap) → pule o que não tem e
+Grafo/inventory/acervo (`mem`) ausente (projeto sem bootstrap) → pule o que não tem e
 anote no `rationale-trace` ("grafo ausente — confronto de duplicação pulado").
 NUNCA crashe o grill por falta de fonte.
 
@@ -498,7 +498,7 @@ user genuinely cannot answer and the question must go to async resolution.
 something is wrong with detection. Re-examine sources before opening
 AskUserQuestion.
 
-Save responses to `.claude/memory/L1/{slug}/elicitation.yaml`.
+Save responses to `.claude/forge/state/lifecycle/{slug}/elicitation.yaml`.
 
 ### Phase 4 — Delegate Execution (waves, parallel where safe)
 
@@ -656,7 +656,7 @@ Steps:
    `docs/schemas/graph.md`) passing the entity types as inputs.
    Invocation: `forge graph` interactive menu → option `reusable-helpers`,
    OR programmatic via `engine.graph.queries.find_reusable_helpers()`.
-3. Write the result to `.claude/memory/L1/{slug}/existing-helpers.yaml`:
+3. Write the result to `.claude/forge/state/lifecycle/{slug}/existing-helpers.yaml`:
 
 ```yaml
 generated-at: 2026-05-30T14:23:11Z
@@ -686,7 +686,7 @@ either way. Never skip writing the file.
 
 **Wave C — after Phase 4.5:**
 - `tech-spec-agent` → `tech-spec.md`
-- Context pack includes `.claude/memory/L1/{slug}/existing-helpers.yaml`
+- Context pack includes `.claude/forge/state/lifecycle/{slug}/existing-helpers.yaml`
   so the agent can flag "reuse existing" candidates in §14 instead of
   proposing duplicate new helpers.
 
@@ -728,7 +728,7 @@ dispatch:
     - screenshots/*.png
     - inventory/design-system.yaml (filtered to components used)
     - inventory/i18n.yaml (filtered to relevant keys)
-    - memory/L2-project.yaml (filtered to screen patterns)
+    - hits de `mem find "<tema> screen patterns"` (acervo; degrade-soft se ausente)
     - resolved-decisions.yaml (from Phase 3)
   expected-output:
     - screen-analysis.md (template at templates/screen-analysis.template.md)
@@ -762,7 +762,7 @@ Once everything is clean:
 
 1. Generate `plan-feature-handoff.json` (uses template, fills in feature
    metadata + ready-to-implement task list).
-2. Update `.claude/memory/L1/{slug}/` with final state.
+2. Update `.claude/forge/state/lifecycle/{slug}/` with final state.
 3. Promote L1 insights → L2 candidates (write to `proposed-evolutions.yaml`,
    do NOT auto-merge).
 4. If Jira: ask "post comment to BONSAI-XXXX with plan summary? [Y/n]"
@@ -813,7 +813,7 @@ verified (decision 11). The retrospective scope varies by subtype:
     - new validator
     - new rule in .claude/rules/
     - new card contribution
-    - new pattern in L2
+    - novo pattern pro acervo
     - new entry in the test-strategy template
 
   Empty proposals ("be more careful") are NOT valid. If the analysis
@@ -893,7 +893,7 @@ verified (decision 11). The retrospective scope varies by subtype:
 - A gate would be violated by proceeding
 
 **When NOT to ask:**
-- The answer is in memory L2/L3 with confidence > 0.85
+- The answer is in the project knowledge acervo (`mem find`) or L3 with confidence > 0.85
 - The codebase graph shows a clear convention
 - It's an implementation detail (sub-agents will handle within constraints)
 - An active card defines the default
@@ -933,7 +933,7 @@ On abort:
 End-of-successful-run requires ALL of:
 
 ```text
-docs/feature-implementation-workflow/features/{slug}/
+docs/forge-specs/features/{slug}/
   ├ feature-intake.md
   ├ feature-prd.md
   ├ screen-analysis.md
@@ -952,7 +952,7 @@ docs/feature-implementation-workflow/features/{slug}/
   ├ plan-feature-handoff.json
   └ evals/evals.json
 
-.claude/memory/L1/{slug}/
+.claude/forge/state/lifecycle/{slug}/
   ├ hypothesis.yaml
   ├ ambiguity-map.yaml
   ├ elicitation.yaml
@@ -976,10 +976,10 @@ decisions:
   - id: D-001
     timestamp: 2026-05-28T14:23:11Z
     decision: "Persistence: local cache + server with last-write-wins"
-    source: user-elicitation        # or: memory-L2 | codebase-graph | card-default | inference
+    source: user-elicitation        # or: mem | codebase-graph | card-default | inference
     rationale: |
       User confirmed offline-read but online-only-write in Q3.
-      L2 shows project always uses last-write-wins (3/3 features).
+      O acervo (`mem find`) mostra projeto sempre usando last-write-wins (3/3 features).
     confidence: 1.0
     influences-artifacts:
       - data-contract-spec.yaml
@@ -1008,7 +1008,7 @@ variant reflects the leaner artifact set per discipline §8.
    Open questions: 0 blocking
    Readiness:     ready
    
-   Decisions traced: {M} (.claude/memory/L1/{slug}/rationale-trace.yaml)
+   Decisions traced: {M} (.claude/forge/state/lifecycle/{slug}/rationale-trace.yaml)
    
    Próximo:
      forge implement TASK-0001
@@ -1196,8 +1196,8 @@ screen-analysis-agent returned ui-state-spec.yaml with 'empty' state empty.
 Re-dispatch with correction:
   "Your previous output left the 'empty' state field blank. The screenshots
    don't show this state, but it's required. Either:
-   (a) Infer from data flow: what UI shows when the list is empty? Look at
-       memory L2 — this project uses MeoFeedbackState for empty states.
+   (a) Infer from data flow: what UI shows when the list is empty? Consulte
+       o acervo (`mem find "empty state"`) — this project uses MeoFeedbackState for empty states.
    (b) Mark it as open question in open-questions.yaml with reasoning
        AND propose a default empty-state component to use.
    Do not leave the field blank. Return the corrected ui-state-spec.yaml."

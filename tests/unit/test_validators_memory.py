@@ -25,7 +25,7 @@ def test_valid_states_synced_with_engine() -> None:
 
 
 def _write_status(root: Path, slug: str, state: str) -> Path:
-    status = root / ".claude" / "memory" / "L1" / slug / "status.json"
+    status = root / ".claude" / "forge" / "state" / "lifecycle" / slug / "status.json"
     status.parent.mkdir(parents=True, exist_ok=True)
     payload: dict[str, object] = {"feature-slug": slug, "state": state}
     if state == "implementing":

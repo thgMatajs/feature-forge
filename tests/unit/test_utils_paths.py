@@ -128,14 +128,14 @@ def test_canonical_paths(tmp_path):
     assert paths.cards_dir(tmp_path) == tmp_path / ".claude" / "cards"
     assert paths.inventory_dir(tmp_path) == tmp_path / ".claude" / "inventory"
     assert paths.memory_dir(tmp_path) == tmp_path / ".claude" / "memory"
-    assert paths.memory_l1_path(tmp_path, "slug-x") == tmp_path / ".claude" / "memory" / "L1" / "slug-x"
+    assert paths.memory_l1_path(tmp_path, "slug-x") == tmp_path / ".claude" / "forge" / "state" / "lifecycle" / "slug-x"
     assert paths.memory_l2_path(tmp_path) == tmp_path / ".claude" / "memory" / "L2-project.yaml"
     assert paths.graph_db_path(tmp_path) == tmp_path / ".claude" / "graph.db"
     assert paths.hooks_dir(tmp_path) == tmp_path / ".claude" / "hooks"
 
 
 def test_feature_dir(tmp_path):
-    assert paths.feature_dir(tmp_path, "auth") == tmp_path / "docs" / "feature-implementation-workflow" / "features" / "auth"
+    assert paths.feature_dir(tmp_path, "auth") == tmp_path / "docs" / "forge-specs" / "features" / "auth"
 
 
 def test_ensure_dir_is_idempotent(tmp_path):

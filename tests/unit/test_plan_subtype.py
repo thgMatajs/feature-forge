@@ -267,7 +267,7 @@ def test_l1state_invalid_subtype_raises(tmp_path: Path) -> None:
 
 def test_status_json_without_subtype_defaults_to_product(tmp_path: Path) -> None:
     """Legacy status.json without the `subtype` field reads as product."""
-    l1_dir = tmp_path / ".claude" / "memory" / "L1" / "legacy-feature"
+    l1_dir = tmp_path / ".claude" / "forge" / "state" / "lifecycle" / "legacy-feature"
     l1_dir.mkdir(parents=True)
     legacy_payload = {
         "schema-version": 1,
@@ -286,7 +286,7 @@ def test_status_json_without_subtype_defaults_to_product(tmp_path: Path) -> None
 
 def test_status_json_with_invalid_subtype_falls_back_to_product(tmp_path: Path) -> None:
     """Garbage subtype value on disk reads as product (defensive)."""
-    l1_dir = tmp_path / ".claude" / "memory" / "L1" / "corrupt-feature"
+    l1_dir = tmp_path / ".claude" / "forge" / "state" / "lifecycle" / "corrupt-feature"
     l1_dir.mkdir(parents=True)
     payload = {
         "schema-version": 1,

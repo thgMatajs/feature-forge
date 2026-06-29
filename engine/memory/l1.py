@@ -1,4 +1,4 @@
-"""L1 — per-feature memory (.claude/memory/L1/{feature_slug}/).
+"""L1 — per-feature memory (.claude/forge/state/lifecycle/{feature_slug}/).
 
 L1 is the feature logbook: status, history, hypotheses, ambiguities, elicitation,
 rationale, sub-agent dispatches. Lives gitignored as WIP; compresses to
@@ -22,7 +22,7 @@ from typing import Any, Iterator, Optional
 
 from engine.memory import MemoryError
 from engine.utils.iso import utc_now_iso
-from engine.utils.paths import ensure_dir, memory_dir, memory_l1_path
+from engine.utils.paths import ensure_dir, feature_workflow_root, lifecycle_root, memory_dir, memory_l1_path
 from engine.utils.yaml_io import read_yaml, read_yaml_or_default, write_yaml
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -125,7 +125,7 @@ def _l1_dir(project_root: Path, feature_slug: str) -> Path:
 
 
 def _archived_dir(project_root: Path) -> Path:
-    return memory_dir(project_root) / "L1" / "archived"
+    return lifecycle_root(project_root) / "archived"
 
 
 @contextmanager
@@ -463,7 +463,7 @@ def archive_feature(
 
 def list_active_features(project_root: Path) -> list[str]:
     """Sorted list of feature slugs with an L1/ subdir (not yet archived)."""
-    root = memory_dir(project_root) / "L1"
+    root = lifecycle_root(project_root)
     if not root.exists():
         return []
     return sorted(
@@ -718,7 +718,7 @@ def _feature_tasks_dir(feature_slug: str, project_root: Path) -> Optional[Path]:
     "no tasks emitted yet" — same semantics as empty list).
     """
     subtype = current_subtype(feature_slug, project_root)
-    base = project_root / "docs" / "feature-implementation-workflow"
+    base = feature_workflow_root(project_root)
     parent = base / ("non-product" if subtype != "product" else "features")
     candidate = parent / feature_slug / "tasks"
     if candidate.is_dir():

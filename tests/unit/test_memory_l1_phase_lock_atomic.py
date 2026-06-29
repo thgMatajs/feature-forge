@@ -52,7 +52,7 @@ def test_acquire_phase_lock_is_atomic_under_concurrent_processes(tmp_path: Path)
     slug = "race"
     # Pre-seed the L1 directory so the cold-create race doesn't mask the
     # status-write race.
-    (tmp_path / ".claude" / "memory" / "L1" / slug).mkdir(
+    (tmp_path / ".claude" / "forge" / "state" / "lifecycle" / slug).mkdir(
         parents=True, exist_ok=True
     )
 

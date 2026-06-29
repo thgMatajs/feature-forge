@@ -6,7 +6,7 @@
   1. last                    — best-effort reversal of the latest mutation
   2. reconfigure {date}      — restore `workflow-config.yaml` from `.bak`
   3. task commit (per feat)  — `git revert <sha>` after dual confirmation
-  4. evolve apply (per id)   — restore L2 backup and drop the entry
+  4. evolve apply (per id)   — revert L2 entry OR reject the mem-inbox candidate
   5. abort feature           — mark feature `aborted` (terminal)
   6. delete feature artifacts — `rm -rf {feature_dir}` after dual confirmation
 
@@ -38,6 +38,7 @@ from engine.memory.l1 import (
     write_l1_status,
 )
 from engine.memory.l2 import remove_entry as l2_remove_entry
+from engine.integrations.mem import mem_inbox_reject
 from engine.ui import question, renderer
 from engine.ui.exit_codes import ERR_PROJECT_NOT_FOUND, fail_with_tag
 from engine.ui.question import PromptAbortedError
@@ -250,6 +251,24 @@ def _last_evolve_apply(project_root: Path) -> Optional[dict[str, Any]]:
     return None
 
 
+def _evolve_apply_event_for(
+    project_root: Path, proposal_id: str
+) -> Optional[dict[str, Any]]:
+    """O evento `evolve-apply` mais recente com `proposal-id` == proposal_id.
+
+    Usado por `_undo_evolve` pra descobrir se o apply foi roteado pro mem inbox
+    (W-ROUTE 6d) e recuperar o `mem-inbox-id` capturado no momento do apply.
+    """
+    history = read_history("_evolve", project_root, tail=0)
+    for entry in reversed(history):
+        if (
+            entry.get("kind") == "evolve-apply"
+            and entry.get("proposal-id") == proposal_id
+        ):
+            return entry
+    return None
+
+
 # ── Reversal implementations ────────────────────────────────────────────────
 
 
@@ -351,6 +370,58 @@ def _undo_task_commit(project_root: Path, feature_slug: str) -> bool:
 
 
 def _undo_evolve(project_root: Path, proposal_id: str) -> bool:
+    event = _evolve_apply_event_for(project_root, proposal_id)
+    inbox_id = (event or {}).get("mem-inbox-id")
+    routed_to = (event or {}).get("routed-to")
+
+    # W-ROUTE 6d: apply roteado pro mem inbox → reverter via `mem inbox reject`.
+    # undo é recovery — o report aqui é honesto: se o reject falha (mem
+    # indisponível OU candidato já promovido a nota ativa), retornamos False
+    # e NÃO gravamos undo-log de sucesso. Nada foi revertido; não fingimos.
+    if routed_to == "mem-inbox" and inbox_id:
+        renderer.write(f"  proposal: {proposal_id}")
+        renderer.write(f"  mem inbox-id: {inbox_id}")
+        if not question.confirm(
+            f"Reverter aplicação de {proposal_id} "
+            f"(rejeitar candidato no mem inbox)?",
+            default=False,
+        ):
+            return False
+        result = mem_inbox_reject(project_root, inbox_id)
+        if not result.ok:
+            renderer.write(renderer.colored(
+                "  Não consegui rejeitar o candidato no mem — pode já ter sido "
+                "promovido a nota ativa, ou o mem está indisponível. Nada foi "
+                "revertido. Confira com `mem inbox list` / reverta a nota via mem.",
+                "yellow",
+            ))
+            return False
+        renderer.write(renderer.colored(
+            f"  ✓ candidato {inbox_id} rejeitado no mem inbox.", "green"
+        ))
+        _append_undo_log(
+            project_root,
+            kind="undo",
+            target=f"evolve-apply:{proposal_id}",
+            reverted_at=_utc_now_iso(),
+            slug="_evolve",
+        )
+        return True
+
+    # L-02 (defesa-em-profundidade): evento roteado pro mem-inbox mas sem id
+    # capturado. Estruturalmente impossível com o mem vendorizado deste commit
+    # (add sempre devolve id), mas o recovery path não pode silenciosamente cair
+    # no L2 no-op se um futuro mem mudar o shape do add. Avisa honesto e para.
+    elif routed_to == "mem-inbox" and not inbox_id:
+        renderer.write(renderer.colored(
+            "  Evento roteado pro mem inbox mas sem id capturado — não "
+            "consigo re-rotar a reversão automaticamente. Confira `mem inbox "
+            "list` e rejeite o candidato manualmente.",
+            "yellow",
+        ))
+        return False
+
+    # Fallback legado: apply em L2 (kinds não-conhecimento ou eventos pré-6d).
     l2_path = memory_l2_path(project_root)
     bak = l2_path.with_suffix(l2_path.suffix + ".bak")
     if not l2_path.exists():
@@ -624,7 +695,7 @@ def _pick_feature(project_root: Path, prompt: str) -> Optional[str]:
     features = list_active_features(project_root)
     if not features:
         renderer.write(renderer.colored(
-            "  Nenhuma feature ativa em .claude/memory/L1/.", "yellow"
+            "  Nenhuma feature ativa em .claude/forge/state/lifecycle/.", "yellow"
         ))
         return None
     options = {str(i): slug for i, slug in enumerate(features, start=1)}
@@ -690,7 +761,7 @@ def run(argv: list[str]) -> int:
         "1": "last — última ação reversível (default)",
         "2": "reconfigure — reverter último reconfigure",
         "3": "task commit — reverter commit (git revert)",
-        "4": "evolve apply — reverter aplicação L2",
+        "4": "evolve apply — reverter aplicação de proposta (L2 ou mem inbox)",
         "5": "abort feature — marcar feature como aborted (terminal)",
         "6": "delete feature artifacts — apagar pasta (irreversível)",
         "7": "init — apagar .claude/ inteira (raríssimo)",

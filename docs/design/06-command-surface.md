@@ -35,19 +35,19 @@ dedicated PR. Silent expansion is forbidden.
 
 | # | Command | Canonical purpose |
 |---|---|---|
-| 1 | `forge init` | Greenfield / brownfield install: scan project, propose cards, write `.claude/workflow-config.yaml`, seed memory L2/L3, build initial graph. |
-| 2 | `forge plan` | Conduct planning-conductor pipeline (Waves A–E) to produce a full feature package with `readiness=ready`. Aceita `<ticket\|frase\|slug>` como argv **posicional** (Decisão 10 preservada — argv, não flag): slug válido entra direto; ticket-id (ex.: `IN-37234`) ou frase livre são derivados pra slug kebab-case determinístico, confirmados conversacionalmente, e o texto cru é semeado no `feature-intake.md`. Screenshot/mockup entra conversacionalmente na source-inquiry (sem flag). Subtype-aware (product / refactor / bugfix / spike / chore): no bugfix detecta o ticket (ex: IN-37234) e exige regression-test-first; no refactor entra com contrato no-behavior-change. |
-| 3 | `forge implement` | Conduct execution-conductor pipeline (Plan Mode → Apply Mode → review → commit) for one task at a time. |
-| 4 | `forge verify` | Verification gate (task-scope, feature-scope, or inferred-scope). Não muta código nem artefatos, mas é um **observador com side-effects de L1** (C-34d): transita o status pra `verifying` enquanto roda + dá append no `verify-log.jsonl`. Runs hard-gate validators numa cascade fail-fast (para no primeiro erro duro). Inclui os gates fortes: `check_cyclomatic_complexity` (multi-lang), `check_secrets` (gitleaks/trufflehog), `check_no_behavior_change` (refactor) — cada gate forte com override-justify auditável no commit body + bypass de emergência logado em `.claude/state/`. |
+| 1 | `forge init` | Greenfield / brownfield install: scan project, propose cards, write `.claude/workflow-config.yaml`, seed memory L2/L3, build initial graph. Após o vendoring do mem, executa `_reduce_rules`: lê `.claude/rules/` + `CLAUDE.md`, classifica cada fragmento em Tier-0 (invariante always-on) vs Tier-1 (detalhe recuperável) via intent `classify` fulfillado pelo host-LLM, exibe proposta em 3-caminhos (G1 aceitar / G2 ajustar / G3 pular), e ao aceitar move Tier-1 pro mem (com `.bak`, apply ordenado). Greenfield sem rules ou sentinel `.rules-reduced` presente pulam o passo. `TtyAdapter` (host sem LLM) pula com aviso. |
+| 2 | `forge plan` | Conduct planning-conductor pipeline (Waves A–E) to produce a full feature package with `readiness=ready`. Aceita `<ticket\|frase\|slug>` como argv **posicional** (Decisão 10 preservada — argv, não flag): slug válido entra direto; ticket-id (ex.: `IN-37234`) ou frase livre são derivados pra slug kebab-case determinístico, confirmados conversacionalmente, e o texto cru é semeado no `feature-intake.md`. Screenshot/mockup entra conversacionalmente na source-inquiry (sem flag). Subtype-aware (product / refactor / bugfix / spike / chore): no bugfix detecta o ticket (ex: IN-37234) e exige regression-test-first; no refactor entra com contrato no-behavior-change. W-ROUTE 6c: antes de redigir os artefatos da Wave A, consulta `mem find` por gotchas/convenções relevantes ao slug da feature. O resultado é injetado no context-pack do subagente de planejamento via token `{{mem_context_hint}}`. Degrade soft: mem ausente → token vazio, sem crash. |
+| 3 | `forge implement` | Conduct execution-conductor pipeline (Plan Mode → Apply Mode → review → commit) for one task at a time. W-ROUTE 6c: em Plan Mode, exibe memória relevante ao tema da task antes do prompt de confirmação. O host vê o hint educacional antes de aprovar o plano. Degrade soft: mem ausente → hint omitido. |
+| 4 | `forge verify` | Verification gate (task-scope, feature-scope, or inferred-scope). Não muta código nem artefatos, mas é um **observador com side-effects de L1** (C-34d): transita o status pra `verifying` enquanto roda + dá append no `verify-log.jsonl`. Runs hard-gate validators numa cascade fail-fast (para no primeiro erro duro). Inclui os gates fortes: `check_cyclomatic_complexity` (multi-lang), `check_secrets` (gitleaks/trufflehog), `check_no_behavior_change` (refactor) — cada gate forte com override-justify auditável no commit body + bypass de emergência logado em `.claude/state/`. W-ROUTE 6c: antes do cascade de validators, exibe hint educacional com memória relevante ao scope. Só em modo interativo (omitido em --json). O hint NÃO é passado pra validators — determinismo preservado. |
 | 5 | `forge status` | Read-only board: in-flight features, current task, last verify, pending evolutions, doctor freshness. |
-| 6 | `forge doctor` | Read-only health check across config, cards, inventory, memory, graph, hooks, MCPs, i18n, connectivity. Interactive choice of scope (full / quick). |
+| 6 | `forge doctor` | Read-only health check across config, cards, inventory, memory, graph, hooks, MCPs, i18n, connectivity, mem. Categoria `mem` (scope `full`): verifica vendorização em `.claude/bin/mem`, saúde via `mem doctor` e drift do pin vendorizado vs asset. Interactive choice of scope (full / quick). |
 | 7 | `forge reconfigure` | **Single entrypoint for any post-init mutation**: cards, paths, conventions, backend, ticketing, workflow, persona, memory policy, external-docs, hooks, inventory re-extract, graph rebuild. Diff → confirm → apply → auto-doctor. |
 | 8 | `forge graph` | Read graph queries Q1–Q17 (similar features, blast-radius, orphans, reusable-helpers, duplications, KMP-migration candidates, near-duplicates, redundant-platform). Rebuild lives inside `forge reconfigure`. |
-| 9 | `forge memory` | Inspect and manage memory across L1–L5. Interactive menu: inspect, forget, promote-from-L1, view-L2. Distillation is **automatic** (não tem comando manual). |
-| 10 | `forge evolve` | Review and apply / reject proposed evolutions queued by retrospective-agent. |
+| 9 | `forge memory <ação>` | Wrapper fino sobre o `mem` vendorizado (stateless): `search <query>` (busca ranqueada — `mem find`), `inspect [id]` (corpo de uma nota ou stats do acervo — `mem get`/`mem stats`), `export [--budget N]` (índice de alto valor pro context-pack — `mem brief`), `distill [--apply]` (curadoria do acervo — `mem evolve`). Inspeção de lifecycle vive em `forge status`; L3/forget removidos (W-ROUTE 6a). |
+| 10 | `forge evolve` | Review and apply / reject proposed evolutions queued by retrospective-agent. Knowledge proposals (`promote-to-l2` / `l1-to-l2-promotion` / `consolidate-l2`): ao aprovar ("a"), emite `mem inbox add` (candidato curado) em vez de escrever direto no L2. O conhecimento entra na fila de inbox do mem e fica disponível via `mem evolve` / `mem inbox promote` (W-ROUTE 6b). Reuse-intelligence e `forget-l1` não são afetados. |
 | 11 | `forge undo` | Revert the last state-mutating action (task commit, reconfigure apply, init). Interactive prompt picks target if ambiguous — `last` is not a CLI suffix, é a opção default no menu. |
 | 12 | `forge raw` | Escape hatch. Direct invocation of internal scripts (`migrator-N-to-M`, `verify-card`, `edit-config`, `rebuild-templates`). Documented per-script. **NÃO** é uma porta pra inventar novos comandos via raw — é a porta pra operações pontuais sem UX. |
-| 13 | `forge qa` | Adversarial red-team gate. Audita artefatos do lifecycle inventando cenários hostis (4 attack vectors: spec-vs-spec, chaos, coverage, validator-claim), executa fixtures sintéticos em sandbox isolado, emite findings actionable em proposed-evolutions. Scope: feature / screen / task / paranoid (cross-feature). Trigger: manual + opt-in auto via `qa.auto-run-on-feature-done`. Verdict (BLOCK/FLAG/PASS) NÃO bloqueia retrospective nem commit — alinha Decisão 5 (code review final out-of-scope). |
+| 13 | `forge qa` | Adversarial red-team gate. Audita artefatos do lifecycle inventando cenários hostis (4 attack vectors: spec-vs-spec, chaos, coverage, validator-claim), executa fixtures sintéticos em sandbox isolado, emite findings actionable em proposed-evolutions. Scope: feature / screen / task / paranoid (cross-feature). Trigger: manual + opt-in auto via `qa.auto-run-on-feature-done`. Verdict (BLOCK/FLAG/PASS) NÃO bloqueia retrospective nem commit — alinha Decisão 5 (code review final out-of-scope). W-ROUTE 6c: antes de escrever o conductor-handoff.json, consulta `mem find` com o scope target. O resultado é injetado em `handoff["mem_context"]` pro conductor auditor. Degrade soft: campo `None` no handoff, sem crash. |
 | 14 | `forge upgrade` | Self-updater do forge (v1.3+). Opera no FORGE_HOME (`~/.local/share/feature-forge/` ou FORGE_HOME env). Fluxo: git fetch → check HEAD vs origin → git pull → pip install --upgrade → smoke (`./bin/forge --version`). Se smoke falhar: git reset --hard ao commit anterior (rollback automático). Não interativo: sem prompts, sem menus. Idempotente: "já no latest" → exit 0 sem mutação. Exit codes: 0 = atualizado com sucesso / já no latest; 1 = falha (carrega tag `[FORGE-ERR:UPGRADE-FAILED]` em stderr no caso de smoke/pip falho + rollback executado — recontratado em W2, C3 EXIT-2-COLLISION; antes era exit 4). Não toca `.claude/forge/` do projeto — só atualiza o canonical repo. |
 
 ---
@@ -60,15 +60,16 @@ dedicated PR. Silent expansion is forbidden.
 | **Card: remove** | `forge reconfigure` → menu `[ ] cards` → opção "remover card" | Resolver bloqueia se outro card ativo depende. |
 | **Card: upgrade (from canonical)** | `forge reconfigure` → menu `[ ] cards` → opção "atualizar card do canonical" | Mostra diff; usuário aceita ou pula. |
 | **Card: lock (trust local edit)** | `forge reconfigure` → menu `[ ] cards` → opção "travar edição local" | Marca `pinned: true` na config. |
-| **Card: inspect** | `forge memory` ou `forge reconfigure` → menu cards → opção "inspecionar" | Read-only; mostra sha256, conflicts, contributions. |
+| **Card: inspect** | `forge reconfigure` → menu cards → opção "inspecionar" | Read-only; mostra sha256, conflicts, contributions. |
 | **Inventory: refresh design-system** | `forge reconfigure` → menu `[ ] paths` (ou diretamente "re-extrair inventory") → escolhe quais | Auto também via post-commit hook quando DS muda no disco. |
 | **Inventory: refresh i18n** | Mesmo. Geralmente roda automático via hooks `i18n-changes`. | |
 | **Inventory: refresh conventions** | Mesmo. Roda automático no `feature-done` retrospective. | |
 | **Schema migration v(n) → v(n+1)** | `forge raw migrator-N-to-M` | `raw` é o escape hatch por design — migrations não têm UX cinemática própria. |
-| **Memory: distill L2 quando ultrapassa max-size** | (a) Automático no `feature-done` retrospective. (b) Manual via `forge memory` → menu "distill L2" — usado quando `forge evolve` apply é pausado por overflow (ver `docs/design/07-discipline.md` §6). | Não existe `forge memory distill` como CLI standalone; só opção de menu interativo. |
-| **Memory: inspect L1/L2/L3** | `forge memory` (interactive menu) | "Inspect" é uma das opções do menu. |
-| **Memory: forget / esquecer item** | `forge memory` (interactive menu) | "Forget" é opção; pede confirmação. |
-| **Memory: promote L1 → L2** | `forge evolve` aplica propostas que vieram de retrospective-agent | Promoção nunca é manual via comando — é review-and-apply. |
+| **Memory: distill quando acervo precisa curadoria** | (a) Manual via `forge memory distill [--apply]` — usado quando `forge evolve` apply é pausado por overflow de L2 (ver `docs/design/07-discipline.md` §6). (b) Interativo via `mem evolve`. | `forge memory distill` é CLI standalone arg-driven (W-ROUTE 6a). |
+| **Memory: buscar no acervo** | `forge memory search "<query>"` | Busca ranqueada; equivalente a `mem find`. |
+| **Memory: inspecionar nota ou stats** | `forge memory inspect [id]` | Sem id: stats do acervo (`mem stats`). Com id: corpo da nota (`mem get`). |
+| **Memory: exportar context-pack** | `forge memory export [--budget N]` | Índice de alto valor (`mem brief`). |
+| **Memory: knowledge → mem inbox** | `forge evolve` aplica propostas que vieram de retrospective-agent | Aprovação de proposal de conhecimento emite `mem inbox add`; curadoria final via `mem evolve` / `mem inbox promote`. |
 | **Graph: rebuild full** | `forge reconfigure` → opção "rebuild graph" (também dentro de menu paths quando paths mudam) | Hooks normalmente mantêm o graph quente; rebuild manual é raro. |
 | **Graph: query** | `forge graph` | Read-only sempre. Q1–Q10 estruturais, Q11 reusable-helpers, Q12–Q17 reuse-intelligence (duplications, KMP-migration, near-duplicates, redundant-platform, TS-helpers), `r` para combined view. |
 | **Reuse intelligence: list findings** | `forge graph` → opções 12–17 ou `r` (combined); `forge doctor` mostra counts agregados | Read-only. Findings são populated automaticamente em `forge init` Step 11.5 + `forge reconfigure → rebuild graph`. Apply review fica em `forge evolve`. |
@@ -98,10 +99,9 @@ A tabela completa de tudo que foi inventado nos roteiros e o que vira agora:
 | `forge card upgrade X` | `forge reconfigure` → menu cards → "atualizar card do canonical" |
 | `forge card upgrade X --from-canonical` | Same as above — `--from-canonical` é o default; sem flag. |
 | `forge card lock X` | `forge reconfigure` → menu cards → "travar edição local" |
-| `forge card list` | `forge memory` → menu → "inspecionar cards", ou `forge status`. |
+| `forge card list` | `forge status` (cards ativos listados). |
 | `forge inventory refresh X` | `forge reconfigure` → opção "re-extrair inventory: X" |
 | `forge migrate --from N --to M` | `forge raw migrator-N-to-M` |
-| `forge memory distill` (CLI standalone) | `forge memory` → menu "distill L2" (opção interativa). Auto também no `feature-done` retrospective. |
 | `forge memory promote` | `forge evolve` (review-and-apply de propostas do retrospective-agent) |
 | `forge ship` | Out-of-scope v1. Removido das referências. |
 | `forge feature-done` | Automático ao verificar a última task. Sem comando próprio. |
@@ -268,7 +268,7 @@ sobrevive ao modo independentemente.
 side-effects de L1** (C-34d): mesmo em JSON mode ele transita o status da feature
 pra `verifying` enquanto roda (restaurando ao status anterior no pass; anotando
 `verify-failed` no `raw.notes` no fail) e dá append num registro por invocação em
-`.claude/memory/L1/{slug}/verify-log.jsonl`. NÃO muta código nem artefatos — daí
+`.claude/forge/state/lifecycle/{slug}/verify-log.jsonl`. NÃO muta código nem artefatos — daí
 "observador" — mas a observabilidade de L1 é idêntica entre os modos
 interativo e JSON. Em scope `task` ambíguo (≥2 features ativas, sem
 `--feature-slug`) o JSON mode emite erro determinístico + exit 1 ANTES de
@@ -285,7 +285,10 @@ exige `feature <slug>`/`task TASK-NNNN`; `graph` exige `forge graph --json
 **Payloads:**
 
 - `forge status --json` → `{project, active_features, memory, pending_evolutions,
-  doctor, suggested_next_command}`. `suggested_next_command` é o workflow router
+  doctor, suggested_next_command}`. O bloco `memory` inclui `memory.mem`
+  (total/by_type/live/stale — resumo de `mem stats`) + `memory.l1`
+  (active/archived). Degrade soft se mem indisponível: `memory.mem` ausente
+  ou `null` (W-ROUTE 6b). `suggested_next_command` é o workflow router
   (A2): mapeia o estado da feature mais recente pro próximo verbo, cobrindo TODOS
   os 9 estados de `_VALID_STATES` (H-002): not-started→plan, planning/planned→
   implement, implementing/verifying→verify, done→status, deferred→status,
@@ -299,10 +302,11 @@ exige `feature <slug>`/`task TASK-NNNN`; `graph` exige `forge graph --json
   non-interactive: assume scope `full` (o ask de scope não pode pausar pra máquina).
 - `forge verify --json` → `{scope: {type, target}, overall, exit_code, validators:
   [{name, status, duration_ms, message, paths, what_failed, where, why}]}`.
-- `forge memory --json` → snapshot read-only NARROW dos 3 layers: `{l2: {size_bytes,
-  entries: [{id, kind, confidence, title, provenance}]}, l1: {active: [{slug, status,
-  last_action_kind}], archived: [slug]}, l3: [{title, hook}]}`. Search/forget/distill/
-  export permanecem no menu REPL — sem sub-flags por carve-out meta-flags-only.
+- `forge memory <ação> --json` → cada subcomando repassa `--json` ao `mem`; o schema de
+  saída casa com o do `mem` correspondente: `search <query>` → hits de `mem find`,
+  `inspect [id]` → nota/stats de `mem get`/`mem stats`, `export [--budget N]` → briefing
+  de `mem brief`, `distill [--apply]` → resultado de `mem evolve`. Não há mais snapshot
+  `{l1, l2, l3}` nem menu REPL — a superfície é arg-driven stateless.
 - `forge --help --json` → manifesto: `{forge_version, commands: [{name, summary,
   interactive, hidden, flags, args}]}`. Itera `_VISIBLE_ORDER` (ingest oculto
   omitido) e busca cada nome em `_COMMAND_META` — metadata hand-maintained em

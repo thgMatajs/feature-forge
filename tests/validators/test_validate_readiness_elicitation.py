@@ -341,7 +341,7 @@ def test_validate_blocks_needs_elicitation_even_with_ready_verdict(
     f_root = (
         tmp_forge_project
         / "docs"
-        / "feature-implementation-workflow"
+        / "forge-specs"
         / "features"
         / slug
     )
@@ -372,7 +372,7 @@ def test_validate_blocks_needs_elicitation_in_bdd_json(
     f_root = (
         tmp_forge_project
         / "docs"
-        / "feature-implementation-workflow"
+        / "forge-specs"
         / "features"
         / slug
     )
@@ -401,7 +401,7 @@ def test_validate_blocks_needs_elicitation_in_task_contract(
     f_root = (
         tmp_forge_project
         / "docs"
-        / "feature-implementation-workflow"
+        / "forge-specs"
         / "features"
         / slug
     )
@@ -431,7 +431,7 @@ def test_validate_ready_with_template_prose_passes(
     f_root = (
         tmp_forge_project
         / "docs"
-        / "feature-implementation-workflow"
+        / "forge-specs"
         / "features"
         / slug
     )
@@ -456,7 +456,7 @@ def test_validate_ready_with_resolved_marker_passes(
     f_root = (
         tmp_forge_project
         / "docs"
-        / "feature-implementation-workflow"
+        / "forge-specs"
         / "features"
         / slug
     )
@@ -484,7 +484,7 @@ def test_validate_ready_without_marker_still_passes(
     f_root = (
         tmp_forge_project
         / "docs"
-        / "feature-implementation-workflow"
+        / "forge-specs"
         / "features"
         / slug
     )
@@ -511,7 +511,7 @@ def test_make_paths_canonical_taxonomy(tmp_forge_project: Path) -> None:
     f_root = (
         tmp_forge_project
         / "docs"
-        / "feature-implementation-workflow"
+        / "forge-specs"
         / "features"
         / slug
     )
@@ -546,7 +546,7 @@ def test_validate_where_truncation_is_honest_with_many_hits(
     f_root = (
         tmp_forge_project
         / "docs"
-        / "feature-implementation-workflow"
+        / "forge-specs"
         / "features"
         / slug
     )

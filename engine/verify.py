@@ -41,6 +41,7 @@ from engine.memory.l1 import (
     read_l1_status,
     write_l1_status,
 )
+from engine.integrations.mem import mem_context_hint
 from engine.persona import mentor_calmo
 from engine.ui import output_mode, question, renderer
 from engine.ui.exit_codes import ERR_PROJECT_NOT_FOUND, fail_with_tag
@@ -52,6 +53,7 @@ from engine.utils.paths import (
     claude_dir,
     ensure_dir,
     find_project_root,
+    lifecycle_root,
     memory_dir,
 )
 from engine.utils.yaml_io import read_yaml_or_default, write_yaml
@@ -282,7 +284,7 @@ def run_scope(
       restoring the previous status on pass; on fail leaves the previous
       status untouched but appends ``verify-failed`` to ``raw.notes``.
     - Appends one record per invocation to
-      ``.claude/memory/L1/{feature_slug}/verify-log.jsonl`` (schema
+      ``.claude/forge/state/lifecycle/{feature_slug}/verify-log.jsonl`` (schema
       MEM-L1-VL-001..005).
     """
     if scope_type not in ("task", "feature"):
@@ -371,6 +373,18 @@ def run_scope(
             }
             print(json.dumps(payload, indent=2, default=str))
         return 0
+
+    # W-ROUTE 6c: hint educacional pré-cascade — renderizado pro usuário ANTES
+    # dos validators rodarem. NÃO passado pra _run_cascade (determinismo: validators
+    # nunca recebem contexto de mem — invariante enforçado por test_validators_determinism).
+    # Degrade soft: mem ausente → hint None → omitido silenciosamente, sem nag.
+    if interactive:
+        _hint_query = feature_slug or scope_target or scope_type
+        _verify_hint = mem_context_hint(project_root, _hint_query, limit=5)
+        if _verify_hint is not None:
+            renderer.write("")
+            renderer.write(renderer.dim(_verify_hint))
+            renderer.write("")
 
     fail_fast = _resolve_fail_fast(config)
     results = _run_cascade(
@@ -594,7 +608,7 @@ def _write_verify_log_entry(
     hard_fails: list[str],
     warnings_list: list[str],
 ) -> None:
-    """Append one line to ``.claude/memory/L1/{slug}/verify-log.jsonl``.
+    """Append one line to ``.claude/forge/state/lifecycle/{slug}/verify-log.jsonl``.
 
     Silently no-ops when there is no resolvable feature slug — the log is
     per-feature by design (schema MEM-L1-VL-001..005).
@@ -613,7 +627,7 @@ def _write_verify_log_entry(
         "hard-fails": list(hard_fails),
         "warnings": list(warnings_list),
     }
-    log_path = memory_dir(project_root) / "L1" / feature_slug / "verify-log.jsonl"
+    log_path = lifecycle_root(project_root) / feature_slug / "verify-log.jsonl"
     try:
         ensure_dir(log_path.parent)
         line = json.dumps(entry, ensure_ascii=False, sort_keys=True, separators=(",", ":"))

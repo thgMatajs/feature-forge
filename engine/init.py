@@ -80,6 +80,7 @@ from engine.ui.exit_codes import (
     fail_with_tag,
 )
 from engine.utils.paths import (
+    FEATURE_WORKFLOW_DIRNAME,
     cards_canonical_dir,
     cards_dir,
     claude_dir,
@@ -91,8 +92,13 @@ from engine.utils.paths import (
     forge_hooks_dir,
     graph_db_path,
     inventory_dir,
+    lifecycle_root,
+    mem_asset_path,
+    mem_asset_version_path,
     memory_dir,
     memory_l2_path,
+    vendored_mem_path,
+    vendored_mem_version_path,
 )
 from engine.utils.sha256 import file_sha256
 from engine.utils.yaml_io import read_yaml_or_default, write_yaml
@@ -101,6 +107,7 @@ from engine.utils.checkpoint_io import (
     save_yaml_checkpoint as _save_yaml_checkpoint_io,
 )
 from engine.utils.iso import utc_now_iso as _utc_now_iso_shared
+from engine.integrations.mem import mem_call
 
 PRESET_NAME = "kmp-mobile"
 LATENT_CAPS = ["android-platform", "ios-platform", "swift-language"]
@@ -919,6 +926,31 @@ def _install_git_hooks(project_root: Path) -> None:
                 pass
 
 
+def _vendor_mem(project_root: Path) -> bool:
+    """Vendoriza o mem no consumidor: copia o asset → .claude/bin/mem (755) +
+    a VERSION (pin), e roda o scaffold do mem (gitignore mem.db*, índice no
+    AGENTS.md) via a fronteira mem_call. Reusa o scaffold do próprio mem
+    (Decisão #2) em vez de replicá-lo. Idempotente."""
+    asset = mem_asset_path()
+    if not asset.is_file():
+        return False
+    dst = vendored_mem_path(project_root)
+    ensure_dir(dst.parent)
+    shutil.copy2(asset, dst)
+    dst.chmod(0o755)
+    version = mem_asset_version_path()
+    if version.is_file():
+        shutil.copy2(version, vendored_mem_version_path(project_root))
+    # Scaffold idempotente via a fronteira (mem init não aceita --json).
+    # M-002: NÃO descartar o resultado — se o scaffold falhar, o binário foi
+    # copiado mas o estado (.claude/memory, gitignore, AGENTS.md) pode estar
+    # incompleto. Retorna o sucesso REAL (cópia + scaffold), pra não afirmar
+    # vendorização completa quando o scaffold falhou. O init segue gracioso
+    # (não crasha), e a categoria `mem` do doctor pega o estado depois.
+    res = mem_call(project_root, ["init"], json=False)
+    return res.found and res.exit_code == 0
+
+
 def _merge_forge_hooks_into_settings(project_root: Path) -> None:
     """Append forge's CC hook registrations to `.claude/settings.json`.
 
@@ -1368,6 +1400,439 @@ def _write_graph_docs(project_root: Path) -> tuple[Path, Path]:
     return graph_first, graph_skill
 
 
+# ── _reduce_rules ─────────────────────────────────────────────────────────────
+
+
+def _rules_fragment_id(source_name: str, heading: str) -> str:
+    """Constrói o fragment_id base: '<filename>::<heading-slug>'.
+
+    O slug é gerado a partir do texto do heading sem os marcadores Markdown
+    (##/###): lowercase, sem espaços iniciais/finais. Espaços internos são
+    preservados como-estão após strip — mantendo simplicidade e
+    determinismo. Caracteres especiais não são removidos (slugs simples pra
+    nomes de seção curtos, como são os de rules/).
+
+    Nota: não desambigua headings repetidos — use _rules_slug_counter para
+    gerar o fragment_id final quando múltiplas ocorrências são possíveis.
+    """
+    import re
+
+    heading_text = re.sub(r"^#+\s*", "", heading).strip().lower()
+    return f"{source_name}::{heading_text}"
+
+
+def _rules_fragment_id_counted(
+    source_name: str,
+    heading: str,
+    occurrence_counter: dict[str, int],
+) -> str:
+    """Constrói o fragment_id desambiguado por ocorrência no mesmo arquivo.
+
+    WR-01: headings idênticos no mesmo arquivo geram slugs iguais → colisão
+    de fragment_id → o trim casa AMBAS as ocorrências, destruindo Tier-0.
+    Esta função incrementa `occurrence_counter[base_id]` a cada chamada e
+    sufixo com `#N` (N>=2) a partir da 2ª ocorrência.
+
+    Exemplo (mesmo arquivo, heading "## Reuso"):
+      1ª chamada → "reuso.md::reuso"     (occurrence_counter["reuso.md::reuso"] == 1)
+      2ª chamada → "reuso.md::reuso#2"   (occurrence_counter["reuso.md::reuso"] == 2)
+
+    `occurrence_counter` deve ser um dict vazio passado pelo chamador e
+    reutilizado dentro do mesmo arquivo (resetado entre arquivos).
+    """
+    base = _rules_fragment_id(source_name, heading)
+    count = occurrence_counter.get(base, 0) + 1
+    occurrence_counter[base] = count
+    if count == 1:
+        return base
+    return f"{base}#{count}"
+
+
+def _parse_rule_fragments(project_root: Path) -> list[dict]:
+    """Lê .claude/rules/*.md + CLAUDE.md, fatia por heading (##/###).
+
+    Determinismo (H-101 — critical for pause-resume):
+    - arquivos ordenados com sorted().
+    - *.bak e .rules-reduced excluídos.
+    - Dentro de cada arquivo, os fragmentos aparecem na ordem do texto.
+
+    Retorna lista de dicts: {id, source, heading, text}.
+    Fragmentos sem heading (preâmbulo) são EXCLUÍDOS — só seções com
+    heading ##/### são classificáveis. Preâmbulos sem heading não entram
+    no payload do classify.
+    """
+    import re
+
+    fragments: list[dict] = []
+
+    def _slice_file(source_name: str, content: str) -> None:
+        """Fatia <content> por headings ## ou ### e popula `fragments`."""
+        lines = content.splitlines(keepends=True)
+        current_heading = ""
+        current_lines: list[str] = []
+        # WR-01: contador de ocorrência por slug dentro deste arquivo.
+        # Resetado por arquivo (local à função), garante que "reuso.md::x#2"
+        # só aparece quando há 2 headings idênticos no MESMO arquivo.
+        _occ: dict[str, int] = {}
+
+        def _flush() -> None:
+            body = "".join(current_lines).strip()
+            if not current_heading:
+                # Preambulo sem heading — nao e uma seção classificavel (sem ##/###).
+                # Excluido do payload do classify (o host classificaria headings, nao
+                # blocos de texto soltos). O conteudo permanece intacto no arquivo.
+                return
+            if not body:
+                return
+            fid = _rules_fragment_id_counted(source_name, current_heading, _occ)
+            fragments.append(
+                {
+                    "id": fid,
+                    "source": source_name,
+                    "heading": current_heading,
+                    "text": body,
+                }
+            )
+
+        for line in lines:
+            if re.match(r"^#{2,3}\s", line):
+                _flush()
+                current_heading = line.rstrip()
+                current_lines = []
+            else:
+                current_lines.append(line)
+        _flush()
+
+    # Coleta .claude/rules/*.md (sorted, sem .bak).
+    rules_dir = claude_dir(project_root) / "rules"
+    rule_files: list[Path] = []
+    if rules_dir.is_dir():
+        rule_files = sorted(
+            p for p in rules_dir.iterdir()
+            if p.suffix == ".md" and not p.name.endswith(".bak")
+        )
+
+    # Coleta CLAUDE.md do project_root.
+    claude_md = project_root / "CLAUDE.md"
+
+    # Ordem: rules/ (sorted) depois CLAUDE.md (convenção — tier-0 tende
+    # a estar em CLAUDE.md, mas o classify decide; a ordem é só estável).
+    all_files: list[tuple[str, Path]] = [
+        (p.name, p) for p in rule_files
+    ]
+    if claude_md.is_file():
+        all_files.append(("CLAUDE.md", claude_md))
+
+    for source_name, path in all_files:
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        _slice_file(source_name, content)
+
+    return fragments
+
+
+class _MemAddError(InitError):
+    """Falha de mem add — aborta ANTES de .bak/trim (H-104/M-201)."""
+
+
+def _reduce_rules(project_root: Path) -> bool:
+    """Passo de redução de rules: classifica fragmentos, propõe divisão Tier-0/1.
+
+    Retorna True se a redução foi aplicada; False se pulada (greenfield,
+    host sem LLM, sem Tier-1, ou usuário escolheu pular).
+
+    Protocolo H-104 + M-201 (apply ordenado):
+    1. mem add de TODOS os Tier-1 + verifica cada MemResult.
+    2. Só com todos OK: .bak imediatamente antes do trim.
+    3. Trim: substitui Tier-1 por ponteiro, escreve sentinel.
+
+    PausedForInputError propaga até cli.py (exit 2) — NÃO capturada aqui.
+    """
+    import re
+
+    # ── Guard: sentinel indica que a redução já foi feita ───────────────────
+    sentinel = claude_dir(project_root) / ".rules-reduced"
+    if sentinel.exists():
+        return False
+
+    # ── Parse determinístico de fragmentos ──────────────────────────────────
+    fragments = _parse_rule_fragments(project_root)
+    if not fragments:
+        return False  # greenfield: sem rules nem CLAUDE.md
+
+    # ── Classify via host LLM ────────────────────────────────────────────────
+    # PausedForInputError propaga (NÃO capturada).
+    classification = question.classify(fragments, project_root=project_root)
+
+    if classification is None:
+        # Host sem LLM (TTY) — pula com aviso (H-101 honesto).
+        renderer.write(
+            renderer.colored(
+                "Aviso: redução de rules pulada — host sem LLM pra classificar "
+                "(host TTY ou ambiente não-agentico).",
+                "yellow",
+            )
+        )
+        return False
+
+    # Valida que TODO fragmento recebeu tier.
+    classified_ids = {item["fragment_id"] for item in classification}
+    fragment_ids = {f["id"] for f in fragments}
+    missing = fragment_ids - classified_ids
+    if missing:
+        raise InitError(
+            f"classify retornou resultado incompleto — fragmentos sem tier: {sorted(missing)}"
+        )
+
+    # ── Separa Tier-0 e Tier-1 ───────────────────────────────────────────────
+    tier1_items = [item for item in classification if item.get("tier") == 1]
+    if not tier1_items:
+        # Todos Tier-0 — nada a mover.
+        return False
+
+    # ── 3-caminhos: proposta ao usuário ─────────────────────────────────────
+    # Loop de ajuste com cap de 3 rodadas (M-202).
+    _MAX_ADJUST = 3
+    adjust_count = 0
+    current_classification = classification
+
+    while True:
+        tier1_items = [item for item in current_classification if item.get("tier") == 1]
+        n_tier1 = len(tier1_items)
+        n_tier0 = len(current_classification) - n_tier1
+
+        renderer.write("")
+        renderer.write(
+            f"Classificação de rules: {n_tier0} Tier-0 (invariante always-on) · "
+            f"{n_tier1} Tier-1 (referência — vai pro mem)."
+        )
+
+        paths = [
+            {
+                "label": "aceitar a classificação e mover Tier-1 pro mem",
+                "motive": "enxuga as rules mantendo o conteúdo acessível via mem find",
+            },
+            {
+                "label": "ajustar a classificação (re-classificar com feedback)",
+                "motive": "indica ao host que o split não está certo — re-classifica considerando o prior",
+            },
+            {
+                "label": "pular a redução agora",
+                "motive": "mantém as rules como estão — pode rodar manualmente depois",
+            },
+        ]
+        choice = question.ask_three_paths("REDUCAO-DE-RULES", paths)
+
+        if choice == "c":
+            # pular
+            return False
+
+        if choice == "a":
+            # aceitar — segue pro apply
+            break
+
+        # choice == "b": ajustar
+        adjust_count += 1
+        if adjust_count >= _MAX_ADJUST:
+            renderer.write(
+                renderer.colored(
+                    "Cap de ajustes atingido — aceite ou pule a redução.",
+                    "yellow",
+                )
+            )
+            # Força aceitar ou pular na próxima rodada (não entra no ajuste).
+            choice = question.ask_three_paths(
+                "REDUCAO-DE-RULES-FINAL",
+                [
+                    {
+                        "label": "aceitar a classificação atual",
+                        "motive": "aplica o split resultante das rodadas de ajuste",
+                    },
+                    {
+                        "label": "pular a redução",
+                        "motive": "mantém as rules como estão — pode rodar manualmente depois",
+                    },
+                    {
+                        "label": "inspecionar a classificação",
+                        "motive": "exibe a lista de fragmentos e tiers propostos antes de decidir",
+                    },
+                ],
+            )
+            if choice == "a":
+                break
+            if choice == "c":
+                # Inspecionar: re-renderiza a lista de fragmentos + tiers e
+                # retorna ao 3-caminhos (outcome distinto — sem aplicar nem pular).
+                _cur_tier1 = [
+                    item for item in current_classification if item.get("tier") == 1
+                ]
+                _cur_tier0 = [
+                    item for item in current_classification if item.get("tier") == 0
+                ]
+                renderer.write("")
+                renderer.write("  Tier-0 (invariante always-on):")
+                for _item in _cur_tier0:
+                    renderer.write(f"    · {_item['fragment_id']}")
+                renderer.write("  Tier-1 (vai pro mem):")
+                for _item in _cur_tier1:
+                    renderer.write(f"    · {_item['fragment_id']}")
+                renderer.write("")
+                continue
+            return False
+
+        # Re-classifica com revise=True + prior (M-202).
+        prior = current_classification
+        revised = question.classify(
+            fragments,
+            schema={"tiers": [0, 1], "revise": True, "prior": prior},
+            project_root=project_root,
+        )
+        if revised is None:
+            # Host perdeu LLM mid-flow — pula.
+            return False
+        current_classification = revised
+
+        # Valida completude da classificação revisada (mesmo gate que a inicial).
+        rev_ids = {item["fragment_id"] for item in current_classification}
+        missing_rev = fragment_ids - rev_ids
+        if missing_rev:
+            raise InitError(
+                f"classify (revise) retornou resultado incompleto — "
+                f"fragmentos sem tier: {sorted(missing_rev)}"
+            )
+
+    # ── Apply ordenado (H-104 + M-201) ──────────────────────────────────────
+    # Tier-1 final após loop de aceitar/ajustar.
+    tier1_items = [item for item in current_classification if item.get("tier") == 1]
+
+    # CR-02: valida ANTES de qualquer operação destrutiva que todo Tier-1
+    # tem mem_note.body não-vazio. Tier-1 sem body é perda de conhecimento —
+    # recusa o trim e aborta com mensagem clara.
+    _MEM_NOTE_TYPE_ENUM = {"decision", "episode", "feedback", "reference", "session"}
+    for item in tier1_items:
+        note = item.get("mem_note") or {}
+        if not (note.get("body") or "").strip():
+            raise InitError(
+                f"Tier-1 '{item['fragment_id']}' sem mem_note.body — "
+                "recusando trim que perderia conteúdo. "
+                "Refaça a classificação."
+            )
+
+    # Passo 1: mem add de TODOS os Tier-1 — verifica cada MemResult ANTES
+    # de qualquer operação destrutiva (.bak / trim).
+    # Se QUALQUER add falha → aborta imediatamente (dado intacto, sem .bak orfão).
+    for item in tier1_items:
+        note = item.get("mem_note") or {}
+        note_type = note.get("type", "reference")
+        # WR-02: valida --type contra o enum do mem; coage para "reference"
+        # com aviso se fora do conjunto aceito.
+        if note_type not in _MEM_NOTE_TYPE_ENUM:
+            renderer.write(
+                renderer.colored(
+                    f"  aviso: mem_note.type '{note_type}' inválido para "
+                    f"'{item['fragment_id']}' — coagindo para 'reference'.",
+                    "yellow",
+                )
+            )
+            note_type = "reference"
+        title = note.get("title", item["fragment_id"])
+        body = note.get("body", "")
+        tags = note.get("tags", [])
+        tags_str = ",".join(tags) if tags else ""
+
+        args = ["add", "--type", note_type, "-t", title]
+        if tags_str:
+            args += ["--tags", tags_str]
+        args += ["--", body]  # CR-01: `--` força body posicional (bullets com '-')
+
+        res = mem_call(project_root, args, json=False)
+        if not (res.found and res.exit_code == 0):
+            raise _MemAddError(
+                f"mem add falhou para '{title}' "
+                f"(found={res.found}, exit_code={res.exit_code}): {res.stderr}"
+            )
+
+    # Passo 2: .bak — SÓ aqui (depois de todos os adds OK), nunca antes.
+    # Identifica os arquivos fonte que têm Tier-1.
+    tier1_sources: set[str] = {item["fragment_id"].split("::")[0] for item in tier1_items}
+
+    for source_name in sorted(tier1_sources):
+        if source_name == "CLAUDE.md":
+            src_path = project_root / "CLAUDE.md"
+        else:
+            src_path = claude_dir(project_root) / "rules" / source_name
+        if src_path.is_file():
+            bak_path = src_path.with_suffix(src_path.suffix + ".bak")
+            shutil.copy2(src_path, bak_path)
+
+    # Passo 3: trim — substitui fragmentos Tier-1 por ponteiro, escreve sentinel.
+    tier1_frag_ids = {item["fragment_id"] for item in tier1_items}
+
+    # Agrupa Tier-1 fragments por fonte.
+    tier1_by_source: dict[str, list[str]] = {}
+    for item in tier1_items:
+        source_name = item["fragment_id"].split("::")[0]
+        tier1_by_source.setdefault(source_name, []).append(item["fragment_id"])
+
+    for source_name, frag_ids_to_trim in tier1_by_source.items():
+        if source_name == "CLAUDE.md":
+            src_path = project_root / "CLAUDE.md"
+        else:
+            src_path = claude_dir(project_root) / "rules" / source_name
+
+        if not src_path.is_file():
+            continue
+
+        content = src_path.read_text(encoding="utf-8")
+        lines = content.splitlines(keepends=True)
+
+        # Reconstrói o arquivo: mantém Tier-0, substitui Tier-1 por ponteiro.
+        out_lines: list[str] = []
+        in_tier1_section = False
+        current_heading = ""
+        # WR-01: mesmo contador de ocorrência usado no parse, garante que o
+        # fragment_id calculado no trim é idêntico ao do parse (determinismo).
+        _trim_occ: dict[str, int] = {}
+
+        for line in lines:
+            if re.match(r"^#{2,3}\s", line):
+                heading_text = line.rstrip()
+                fid = _rules_fragment_id_counted(source_name, heading_text, _trim_occ)
+                if fid in tier1_frag_ids:
+                    # Inicia secão Tier-1: escreve o heading + ponteiro.
+                    in_tier1_section = True
+                    current_heading = heading_text
+                    out_lines.append(line)
+                    # Infere o tema do título pra o ponteiro.
+                    tema = re.sub(r"^#+\s*", "", heading_text).strip()
+                    # WR-03: normaliza apóstrofo — um ' no tema quebraria o
+                    # template do ponteiro (aspas desbalanceadas). Remove.
+                    tema_safe = tema.replace("'", "")
+                    out_lines.append(
+                        f"\nDetalhe: `mem find '{tema_safe}'`\n"
+                    )
+                else:
+                    in_tier1_section = False
+                    out_lines.append(line)
+            else:
+                if in_tier1_section:
+                    # Suprime o corpo original do Tier-1 (substituído pelo ponteiro).
+                    pass
+                else:
+                    out_lines.append(line)
+
+        src_path.write_text("".join(out_lines), encoding="utf-8")
+
+    # Escreve sentinel.
+    sentinel.parent.mkdir(parents=True, exist_ok=True)
+    sentinel.write_text("", encoding="utf-8")
+
+    renderer.write("  └─ rules reduzidas: Tier-1 movido pro mem · .bak criado · ponteiros instalados")
+    return True
+
+
 # ── Entry point ──────────────────────────────────────────────────────────────
 
 
@@ -1396,7 +1861,7 @@ def run(argv: list[str]) -> int:
         return _run_pipeline(project_root)
     except ui_question.PromptAbortedError:
         renderer.write("")
-        renderer.write(mentor_calmo.pause_message(resume_command="forge init"))
+        renderer.write(mentor_calmo.pause_message(resume_command="forge init", project_root=project_root))
         return 130
     except KeyboardInterrupt:
         # Re-raise — the dispatcher in cli.py owns the 130 exit code path.
@@ -1974,7 +2439,8 @@ def _run_pipeline(project_root: Path) -> int:
     except UserAbortError as exc:
         renderer.write(
             mentor_calmo.pause_message(
-                resume_command=f"forge init  # após reconciliar grants — {exc}"
+                resume_command=f"forge init  # após reconciliar grants — {exc}",
+                project_root=project_root,
             )
         )
         return 0  # aborta init sem persistir workflow-config
@@ -2034,8 +2500,8 @@ def _run_pipeline(project_root: Path) -> int:
 
     # ── Step 10 — Memory L1/L2 seed ──────────────────────────────────────────
     ensure_dir(memory_dir(project_root))
-    ensure_dir(memory_dir(project_root) / "L1")
-    ensure_dir(memory_dir(project_root) / "L1" / "archived")
+    ensure_dir(lifecycle_root(project_root))
+    ensure_dir(lifecycle_root(project_root) / "archived")
     l2_path = memory_l2_path(project_root)
     if not l2_path.exists():
         write_yaml(
@@ -2222,6 +2688,9 @@ def _run_pipeline(project_root: Path) -> int:
     # Task 0.8 (v1.3 pilot-ready): hooks live under .claude/forge/ sub-namespace.
     ensure_dir(forge_hooks_dir(project_root))
     try:
+        # W-VENDOR Task 1: vendoriza o mem ANTES dos hooks/driver (que podem
+        # usar mem internamente em ondas futuras).
+        _vendor_mem(project_root)
         n_hooks = _install_hooks(project_root)
         _install_git_hooks(project_root)
         # Wave 1 Fix #1: register forge CC hooks in .claude/settings.json
@@ -2246,6 +2715,11 @@ def _run_pipeline(project_root: Path) -> int:
         renderer.write(
             renderer.colored(f"hooks install warn: {exc}", "yellow")
         )
+
+    # ── Step 13.6 — _reduce_rules ────────────────────────────────────────────
+    # W-RULES (H-105): APÓS vendoring, FORA do try/except que engole.
+    # PausedForInputError propaga até cli.py (exit 2) — o init é resumível.
+    _reduce_rules(project_root)
 
     # ── Step 14 — workflow-config-history.jsonl seed ─────────────────────────
     # Schema HIST-001..012 per docs/schemas/workflow-config-history.md.
@@ -3247,7 +3721,7 @@ def _summarize_backend_cells(
 def _build_paths(project_root: Path, conv_inv: Any) -> dict[str, Any]:
     """Best-effort path inference. Greenfield gets sensible defaults."""
     paths: dict[str, Any] = {
-        "features-package-root": "docs/feature-implementation-workflow/features",
+        "features-package-root": f"docs/{FEATURE_WORKFLOW_DIRNAME}/features",
         "inventory-root": ".claude/inventory",
         "memory-root": ".claude/memory",
         "graph-path": ".claude/graph.db",

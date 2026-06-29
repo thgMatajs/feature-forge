@@ -94,8 +94,8 @@ Discipline §8 — non-product feature track.
 ```
 
 Conductor escreve `subtype: refactor` em **dois lugares simultâneos**:
-`.claude/memory/L1/{slug}/status.json` (campo `subtype`) e
-`.claude/memory/L1/{slug}/hypothesis.yaml` (campo `subtype`). Resume reads
+`.claude/forge/state/lifecycle/{slug}/status.json` (campo `subtype`) e
+`.claude/forge/state/lifecycle/{slug}/hypothesis.yaml` (campo `subtype`). Resume reads
 from disk; live introspection in later phases is forbidden
 (deterministic-context discipline).
 
@@ -272,7 +272,7 @@ bugfix subtype.
        
        > 2
        
-[0:06] Pausado. Estado salvo em .claude/memory/L1/{slug}/status.json
+[0:06] Pausado. Estado salvo em .claude/forge/state/lifecycle/{slug}/status.json
        
        Pra retomar: forge plan {slug} (quando v1.1+ landar).
 ```
@@ -371,7 +371,7 @@ Only runs if the user mentioned a ticket.
 ```
 
 User accepts → slug locked. Conductor creates
-`.claude/memory/L1/lembrete-rega/` and writes the first `history.jsonl` entry.
+`.claude/forge/state/lifecycle/lembrete-rega/` and writes the first `history.jsonl` entry.
 
 **Note:** if the Jira MCP is configured but unreachable, the conductor degrades
 gracefully — see **Edge case: Jira offline**. Linked tickets are noted but not
@@ -460,7 +460,7 @@ corrects before any elicitation.
 ```
 
 User responds "Y". Conductor writes
-`.claude/memory/L1/lembrete-rega/hypothesis.yaml` with confidence, shape,
+`.claude/forge/state/lifecycle/lembrete-rega/hypothesis.yaml` with confidence, shape,
 identified-components, new-components-needed, similar-features.
 
 **Note:** this is the **first interactive checkpoint** and it's deliberately
@@ -480,7 +480,7 @@ what it can from ticket/screenshots/graph/L2/L3/cards, and counts unresolved.
 [0:42] Computando árvore de decisão...
        (27 nós · resolvendo via ticket · grafo · L2 · cards)
        
-       └ ambiguity-map.yaml gravado em .claude/memory/L1/lembrete-rega/
+       └ ambiguity-map.yaml gravado em .claude/forge/state/lifecycle/lembrete-rega/
          · resolvidos:   23
          · pendentes:    4
          · confidence média: 0.91
@@ -736,7 +736,7 @@ O ticket pai BONSAI-1284 cita "depende de BACKEND-1284 (endpoint
        eu passo essa dep no context pack. Nenhuma mudança no Wave B.
 ```
 
-Conductor persiste em `.claude/memory/L1/{slug}/elicitation.yaml`:
+Conductor persiste em `.claude/forge/state/lifecycle/{slug}/elicitation.yaml`:
 
 ```yaml
 external-deps:
@@ -1014,7 +1014,7 @@ The cinematic summary box. Mentor calmo's didactic closing.
        │     · 4 caminho crítico                                                  │
        │                                                                          │
        │   🧠 DECISÕES TRAÇADAS                                                   │
-       │     12 decisões (.claude/memory/L1/lembrete-rega/rationale-trace.yaml)   │
+       │     12 decisões (.claude/forge/state/lifecycle/lembrete-rega/rationale-trace.yaml)   │
        │       · 4 user-elicitation                                               │
        │       · 6 memory-L2 (alinhadas com projeto)                              │
        │       · 2 codebase-graph (similar features)                              │
@@ -1048,7 +1048,7 @@ If `ticketing.post-back.on-readiness-ready == true` and
          • Persistência: Firestore + outbox queue
          • Push: local (AlarmManager + UNUserNotification)
          • Open questions: 0 blocking · 1 deferred (FCM)
-         • Link: docs/feature-implementation-workflow/features/lembrete-rega/
+         • Link: docs/forge-specs/features/lembrete-rega/
        
        Postar? [Y / editar / pular]
        
@@ -1068,10 +1068,10 @@ detail is noise).
 ```
 [3:38] 📝 Salvo:
        
-       docs/feature-implementation-workflow/features/lembrete-rega/
+       docs/forge-specs/features/lembrete-rega/
          16 docs · 7 tasks · readiness=ready
        
-       .claude/memory/L1/lembrete-rega/
+       .claude/forge/state/lifecycle/lembrete-rega/
          hypothesis.yaml · ambiguity-map.yaml · elicitation.yaml
          rationale-trace.yaml · dispatch-log.jsonl · history.jsonl
        
@@ -1112,7 +1112,7 @@ not bossy. Nenhum comando extra precisa ser lembrado pelo usuário.
 
 ### 1. Auto-resume — feature already in-flight
 
-User runs `forge plan` while `.claude/memory/L1/{some-slug}/status.json`
+User runs `forge plan` while `.claude/forge/state/lifecycle/{some-slug}/status.json`
 shows `state ∈ {planning, planned, implementing, verifying, verified}`
 (in-flight — não feita ainda).
 
@@ -1143,7 +1143,7 @@ clássico.
 
 ### 1.5. Feature already done — extend mechanic (Gap 9)
 
-User runs `forge plan lembrete-rega` e `.claude/memory/L1/lembrete-rega/
+User runs `forge plan lembrete-rega` e `.claude/forge/state/lifecycle/lembrete-rega/
 status.json` está em `state == "done"`. Conductor não trata como retomar
 (não há nada pra retomar — feature shipped) nem como standalone nova
 (slug já existe). Oferece **quatro caminhos** — o caminho 3 é o novo
@@ -1176,7 +1176,7 @@ formaliza when-applies, semantics, retro variant.
 [0:04] Vou criar lembrete-rega-push como extension de lembrete-rega.
        
        O que isso faz:
-         · Novo L1 em .claude/memory/L1/lembrete-rega-push/
+         · Novo lifecycle dir em .claude/forge/state/lifecycle/lembrete-rega-push/
          · status.json.extends-feature: "lembrete-rega"
          · status.json.parent-feature: "lembrete-rega"
          · subtype: "product" (extension é product-derived)
@@ -1437,6 +1437,6 @@ campos esperados e registra a fonte como `user-paste` em vez de `jira-mcp`.
 - Does not estimate effort or time
 - Does not auto-merge L1 → L2 (promotion is **proposed** by retrospective-agent, **applied** by `forge evolve` after user review)
 - Does not approve or push PRs
-- Does not modify code outside `docs/.../features/{slug}/` and `.claude/memory/L1/{slug}/`
+- Does not modify code outside `docs/.../features/{slug}/` and `.claude/forge/state/lifecycle/{slug}/`
 - Does not call sub-agents in waves that violate the dependency DAG
 - Does not silently accept vague answers — drill-down or open-question, no third path
