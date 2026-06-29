@@ -250,6 +250,17 @@ Then for each candidate:
 
 Record the count of skipped-by-fingerprint and appended proposals.
 
+> **Nota honesta sobre o destino das propostas (engine v1).** Você segue
+> propondo todos os kinds candidatos — o registro em `proposed-evolutions.yaml`
+> tem valor por si só, mesmo quando o apply ainda não existe. Mas só os kinds
+> de conhecimento `{l1-to-l2-promotion, promote-to-l2, consolidate-l2}` são
+> aplicados automaticamente pelo engine (roteiam pro `mem inbox`). Os demais
+> kinds que estas fases produzem — `convention-refinement`, `decay-signal`,
+> `question-elimination` — são PROPOSTOS e registrados, mas o `forge evolve`
+> v1 ainda não os APLICA (levanta `NotImplementedError`). Não prometa apply
+> automático desses ao usuário; surfe a proposta como registro pendente de
+> aplicação manual.
+
 ### Phase 7 — Write `retrospective.md`
 
 Compose the narrative now that proposals exist with IDs. Reference each

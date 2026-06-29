@@ -268,7 +268,7 @@ entities:
     # manual-prompt).
 
     cache-strategy:
-      pattern: stale-while-revalidate    # from L2 patterns
+      pattern: stale-while-revalidate    # do acervo: mem find "cache-strategy"
       ttl-seconds: 300
 
     pii-classification: low   # none | low | medium | high — drives security review
@@ -705,7 +705,7 @@ PRD has 6 user stories with acceptance criteria, 5 screens, 18 states confirmed 
 
 → BDD: 6 stories × ~2 scenarios + 5 mandatory + 12 per-state = ~29 scenarios.
 → Navigation: 9 transitions, 2 deep-links, 1 conditional (auth).
-→ Data: 2 entities, both `persistence: both`, conflict-strategy from L2.
+→ Data: 2 entities, both `persistence: both`, conflict-strategy do acervo.
 → Analytics: 11 events (3 success + 3 error + 5 nav/screen-view), 14 test-ids.
 → Test-strategy: 5 mandatory + 12 state + 3 backend-e2e = 20 tests.
 → `status: success`.

@@ -813,7 +813,7 @@ verified (decision 11). The retrospective scope varies by subtype:
     - new validator
     - new rule in .claude/rules/
     - new card contribution
-    - new pattern in L2
+    - novo pattern pro acervo
     - new entry in the test-strategy template
 
   Empty proposals ("be more careful") are NOT valid. If the analysis

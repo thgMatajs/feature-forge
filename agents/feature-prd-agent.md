@@ -282,7 +282,7 @@ Output:
   - 2 non-goals inferred from frozen-decisions do acervo (mem)
   - 3 domain entities (2 inventory hits, 1 new flagged)
   - 2 constraints (both card-sourced)
-  - 4 risks (3 from intake OQs, 1 from L2 finding)
+  - 4 risks (3 from intake OQs, 1 from finding do acervo)
   - 5 open-questions added (phase_lock: prd, 2 blocking)
   - ac-coverage: 0.0
   - status: partial
