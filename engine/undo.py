@@ -408,6 +408,19 @@ def _undo_evolve(project_root: Path, proposal_id: str) -> bool:
         )
         return True
 
+    # L-02 (defesa-em-profundidade): evento roteado pro mem-inbox mas sem id
+    # capturado. Estruturalmente impossível com o mem vendorizado deste commit
+    # (add sempre devolve id), mas o recovery path não pode silenciosamente cair
+    # no L2 no-op se um futuro mem mudar o shape do add. Avisa honesto e para.
+    elif routed_to == "mem-inbox" and not inbox_id:
+        renderer.write(renderer.colored(
+            "  Evento roteado pro mem inbox mas sem id capturado — não "
+            "consigo re-rotar a reversão automaticamente. Confira `mem inbox "
+            "list` e rejeite o candidato manualmente.",
+            "yellow",
+        ))
+        return False
+
     # Fallback legado: apply em L2 (kinds não-conhecimento ou eventos pré-6d).
     l2_path = memory_l2_path(project_root)
     bak = l2_path.with_suffix(l2_path.suffix + ".bak")

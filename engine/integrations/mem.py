@@ -298,6 +298,17 @@ def mem_inbox_reject(project_root: Path, inbox_id: str) -> MemQuery:
     not-found emite texto em stderr com exit 2 — ambos tratados corretamente
     por ``_run_or_degrade`` (parse no exit 0, ok=False no exit não-zero). Não
     precisa de caminho non-json: o uso padrão, como em ``mem_inbox_add``, basta.
+
+    Nota de contrato (M-01, deliberado): diferente de ``mem_get`` — que ramifica
+    exit 2 (not-found contratual → ``ok=True, data=None``) de exit≠0,2 (falha
+    real) — aqui o exit 2 (candidato já-resolvido / not-found, um estado NORMAL
+    de negócio) e a indisponibilidade do mem (infra quebrada) colapsam DE
+    PROPÓSITO no mesmo ``ok=False`` via ``_run_or_degrade``. O único caller
+    atual (``_undo_evolve``) não precisa distinguir os dois: a microcopy dele já
+    cobre ambas as causas ("pode já ter sido promovido OU o mem está
+    indisponível"). Ramificar o exit 2 aqui sem um 2º caller que inspecione
+    ``result.message`` seria YAGNI; se/quando esse caller surgir, alinhar ao
+    tratamento explícito de ``mem_get``.
     """
     return _run_or_degrade(project_root, ["inbox", "reject", inbox_id])
 

@@ -86,6 +86,42 @@ def test_undo_evolve_knowledge_reject_failure_reports_honest(tmp_path, monkeypat
     assert undo_logs == []  # NÃO grava undo-log de sucesso
 
 
+def test_undo_evolve_mem_inbox_without_id_reports_honest(tmp_path, monkeypatch):
+    # L-02: evento roteado pro mem-inbox mas SEM id capturado → defesa-em-
+    # profundidade. NÃO pode silenciosamente cair no fallback L2 no-op:
+    # avisa honesto e retorna False, sem rejeitar nada nem remover do L2.
+    monkeypatch.setattr(
+        und,
+        "_evolve_apply_event_for",
+        lambda root, pid: {
+            "proposal-id": pid,
+            "routed-to": "mem-inbox",
+            "mem-inbox-id": None,
+        },
+    )
+    reject_calls = []
+    monkeypatch.setattr(
+        und,
+        "mem_inbox_reject",
+        lambda root, iid: reject_calls.append(iid),
+    )
+    l2_calls = []
+    monkeypatch.setattr(und, "l2_remove_entry", lambda *a, **k: l2_calls.append(a))
+    undo_logs = []
+    monkeypatch.setattr(
+        und,
+        "_append_undo_log",
+        lambda *a, **k: undo_logs.append(k.get("target")),
+    )
+    monkeypatch.setattr(und.question, "confirm", lambda *a, **k: True)
+
+    ok = und._undo_evolve(tmp_path, "P-001")
+    assert ok is False
+    assert reject_calls == []  # não tenta rejeitar — não há id
+    assert l2_calls == []  # NÃO cai no fallback L2 no-op
+    assert undo_logs == []  # nenhum undo-log de sucesso
+
+
 def test_undo_evolve_legacy_event_uses_l2_path(tmp_path, monkeypatch):
     # evento sem mem-inbox-id (pré-6d / kind não-conhecimento) → fallback L2.
     monkeypatch.setattr(und, "_evolve_apply_event_for", lambda root, pid: None)

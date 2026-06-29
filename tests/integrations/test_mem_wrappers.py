@@ -212,6 +212,77 @@ def test_mem_inbox_reject_invokes_reject_subcommand(tmp_path, monkeypatch):
     assert captured["args"] == ["inbox", "reject", "01ABCDEF"]
 
 
+@pytest.mark.skipif(
+    not os.path.isfile(
+        str(Path(__file__).resolve().parents[2] / ".claude" / "bin" / "mem")
+    ),
+    reason="binário mem não disponível — pule em CI sem vendorização",
+)
+def test_inbox_reject_real_mem_roundtrip(tmp_path):
+    """Teste real-mem do reject (MOCK-BLINDNESS): path de ESCRITA sem mock.
+
+    O reject escreve no mem (`UPDATE inbox SET status='rejected'`). A lição
+    do repo manda exercer todo path de escrita contra o binário real
+    vendorizado, sem mock — porque mock mascarou Critical no W-RULES.
+
+    Cobre a cadeia: add real → captura id → reject real (ok=True + sumiço do
+    pending) → 2º reject do MESMO id (já-resolvido → exit 2 → ok=False via
+    `_run_or_degrade`). Sem mock de `_run_or_degrade` — é justamente o
+    mapeamento de exit-code que precisa ser verificado contra o binário.
+    """
+    import shutil as _shutil
+    from engine.integrations import mem
+
+    repo_root = Path(__file__).resolve().parents[2]
+    src_bin = repo_root / ".claude" / "bin" / "mem"
+    if not src_bin.is_file():
+        pytest.skip("binário vendorizado não encontrado no repo")
+
+    dest_bin = tmp_path / ".claude" / "bin" / "mem"
+    dest_bin.parent.mkdir(parents=True, exist_ok=True)
+    _shutil.copy2(str(src_bin), str(dest_bin))
+    dest_bin.chmod(0o755)
+
+    # 1) add real → captura o id do candidato.
+    unique_title = f"test-6d-reject-real-mem-{tmp_path.name}"
+    add_res = mem.mem_inbox_add(
+        tmp_path,
+        title=unique_title,
+        body="Candidato para exercer o reject real-mem da sub-onda 6d.",
+        mem_type="reference",
+        importance=3,
+        source="forge-evolve:TEST-REJECT",
+        origin="manual",
+    )
+    assert add_res.ok is True, f"mem_inbox_add falhou: {add_res.message}"
+    inbox_id = add_res.data["id"]
+    assert inbox_id, f"id não capturado de result.data: {add_res.data}"
+
+    # 2) reject real do id → ok=True E candidato some do inbox pending.
+    rej_res = mem.mem_inbox_reject(tmp_path, inbox_id)
+    assert rej_res.ok is True, f"mem_inbox_reject falhou: {rej_res.message}"
+
+    # Verifica o sumiço do pending via `--json inbox list` real, como os
+    # roundtrips vizinhos (não há wrapper mem_inbox_list dedicado).
+    from engine.integrations.mem import mem_call
+    list_result = mem_call(tmp_path, ["inbox", "list"])
+    assert list_result.found is True
+    assert list_result.exit_code == 0
+    import json as _json_rt
+    items = _json_rt.loads(list_result.stdout or "[]")
+    pending_ids = [it.get("id") for it in items if isinstance(it, dict)]
+    assert inbox_id not in pending_ids, (
+        f"candidato rejeitado ainda aparece no inbox pending: {pending_ids}"
+    )
+
+    # 3) 2º reject do MESMO id → já-resolvido → exit 2 → degrade → ok=False.
+    rej2_res = mem.mem_inbox_reject(tmp_path, inbox_id)
+    assert rej2_res.ok is False, (
+        "2º reject de id já-resolvido deveria degradar pra ok=False "
+        f"(exit 2), mas veio ok={rej2_res.ok}"
+    )
+
+
 # ── Teste real-mem (MOCK-BLINDNESS): path de escrita contra binário real ──
 
 
