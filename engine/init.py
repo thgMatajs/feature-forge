@@ -1123,8 +1123,12 @@ def _write_claude_gitignores(project_root: Path) -> None:
         [
             _FORGE_GITIGNORE_MARKER,
             f"{graph_db_name}",
+            # SQLite sidecars. O graph.db roda em WAL mode (engine/assets/mem),
+            # que cria -wal E -shm; -journal cobre o rollback-journal mode.
+            # MED-02: -shm faltava → um `git add .` commitava o sidecar.
             f"{graph_db_name}-journal",
             f"{graph_db_name}-wal",
+            f"{graph_db_name}-shm",
             f"{cards_name}/",
             f"{memory_name}/",
             "locks/",

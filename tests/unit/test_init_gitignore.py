@@ -42,6 +42,22 @@ def test_init_gitignore_covers_derived_artifacts(tmp_path: Path) -> None:
         )
 
 
+def test_init_gitignore_covers_all_sqlite_wal_sidecars(tmp_path: Path) -> None:
+    """MED-02: o graph.db roda em WAL mode → SQLite cria graph.db-wal E
+    graph.db-shm (além do -journal de rollback). O bloco só cobria -journal e
+    -wal, omitindo -shm — um ``git add .`` ainda commitaria o sidecar -shm.
+
+    Assert que os 3 sufixos SQLite (-wal, -shm, -journal) estão cobertos.
+    """
+    _write_claude_gitignores(tmp_path)
+    content = _read_all_gitignores(tmp_path)
+    for suffix in ("graph.db-wal", "graph.db-shm", "graph.db-journal"):
+        assert suffix in content, (
+            f"sidecar SQLite {suffix!r} não coberto pelo .gitignore do init "
+            f"(MED-02) — conteúdo:\n{content}"
+        )
+
+
 def test_init_gitignore_append_non_destructive(tmp_path: Path) -> None:
     """Um .claude/.gitignore pré-existente do usuário é PRESERVADO (append-only)."""
     user_line = "# linha do usuário — não tocar\nmeu-segredo.local\n"
