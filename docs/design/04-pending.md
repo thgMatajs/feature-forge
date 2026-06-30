@@ -46,21 +46,40 @@ status correspondente no fim do próprio report.
   (`substantive`/`stub`/`staged-blind`/`opaque`) + campo `infra_degraded`; o box
   interativo quebra os passes por cobertura quando não são todos substantivos.
   Guarda: `tests/engine/test_verify_coverage_summary.py`.
+- ✓ **Tema 1 (gates procedurais → substantivos)** — fechado na **Onda 2**.
+  `forge plan` roda content-check determinístico nas waves (A/B/C/D/E) via
+  `engine/plan_content_check.py`: placeholder-scan quote-aware + substance-coverage
+  do DAG. Wave A (intake free-text) isenta. Substância parcial → pausa deferred
+  (exit 130), não falso-verde. Guardas: `tests/unit/test_plan_content_check.py`,
+  `tests/unit/test_plan_wave_gate_content.py`.
+- ✓ **BUG-STATUS-1/2 (status cego ao git/qa)** — fechado na **Onda 4**.
+  `forge status` reconcilia git (pathspec não double-conta qa + src) + expõe
+  `qa_verdict`; run mais recente sem verdict reporta `None`, não o velho.
+  Guarda: `tests/unit/test_status_git_qa.py`.
+- ✓ **BUG-G2/MEM-4 (marker não anuncia response-schema-version)** — fechado na
+  **Onda 4**. O `<FORGE_INTENT>` declara `response-schema-version`.
+  Guarda: `tests/unit/test_host_claude_code.py`.
+- ✓ **BUG-UPGRADE-1 (upgrade destrutivo sem preview)** — fechado na **Onda 4**.
+  `forge upgrade` ganha `--dry-run` + guard de branch nomeada antes do checkout.
+  Guarda: `tests/unit/test_upgrade_dry_run_guard.py`.
+- ✓ **BUG-4/MEM-5 (.gitignore incompleto)** — fechado na **Onda 4**. O
+  `.gitignore` do `forge init` cobre os derivados irmãos de `forge/`, incl. o
+  sidecar SQLite WAL `graph.db-shm`. Guarda: `tests/unit/test_init_gitignore.py`.
+- ✓ **BUG-IMPL-2 (build commands hardcoded)** — fechado na **Onda 4**. Os build
+  commands dos cards são project-derived pelo agente (não literal cego no
+  `agent-contributions`). Guarda: `tests/unit/test_card_build_commands_derived.py`.
+- ✓ **BUG-B (version-lock path mismatch)** — fechado na **Onda 4**. `forge doctor`
+  lê o version-lock no path canônico do `forge_dir`.
+  Guarda: `tests/unit/test_doctor_version_lock_roundtrip.py`.
+- ✓ **BUG-QA-4 (SKILL.md não cobre todos os verbos)** — fechado na **Onda 4**.
+  `skills/feature-forge/SKILL.md` mapeia todos os verbos dirigíveis.
+  Guarda: `tests/unit/test_skill_md_verbs.py`.
 
 ### Parciais
 
 - **BUG-1b (dedup `compose_backend_axes`)** — a 2ª chamada vive numa função W7.4
   deferred/unused; não há mais o duplo-custo do step-5 no hot-path ativo, mas a
   limpeza completa fica pendente. *Reentrar* ao tocar o caminho W7.4.
-- **BUG-QA-4 (SKILL.md não cobre todos os verbos)** — o SKILL.md cobre o intent
-  loop, mas não os prompts de `qa`/`verify`/`memory`/`reconfigure`/`upgrade`/`undo`.
-  Host ingênuo ainda não dirige IA-first esses verbos só pelos artefatos
-  instalados. (Onda 4 da spec.)
-- **BUG-UPGRADE-1 (upgrade destrutivo sem preview)** — tem rollback automático,
-  mas SEM `--dry-run` nem guard de branch antes do `checkout --detach`. (Onda 4.)
-- **BUG-4/MEM-5 (.gitignore incompleto)** — cobre `state/` + checkpoints; FALTAM
-  `graph.db`, `cards/`, `memory/`, `locks/`, `.memory-cli-checkpoint.yaml`.
-  Operador que faz `git add .` ainda commita artefatos derivados. (Onda 4.)
 
 ### Abertos (backlog de remediação)
 
@@ -87,19 +106,15 @@ Agrupado por prioridade. Plano de ataque por onda na spec
 
 **P1**
 
-- **BUG-G2/MEM-4 (marker não anuncia response-schema-version)** —
-  `engine/host/adapters/claude_code.py:422`: o `<FORGE_INTENT>` não declara
-  `response-schema-version`; host ingênuo omite e toma exit 1. (Onda 4.)
-- **BUG-STATUS-1/2 (status cego ao git/qa)** — `engine/status.py:47` não
-  reconcilia com git nem expõe qa verdict (commits da feature invisíveis, BLOCK
-  sem rastro). (Onda 4.)
-- **BUG-IMPL-2 (build commands hardcoded)** —
-  `cards/swiftui-screens/templates/swiftui-allowed-files.yaml:59`
-  (`run-ios-simulator.sh --build-only`); idem `testDebugUnitTest` no kotlin.
-  Fix: derivar do projeto (ler `gradlew tasks`). (Onda 4.)
-- **BUG-B (version-lock path mismatch — Médio)** — `engine/init.py:2654` grava
-  em `.claude/forge/` mas `engine/doctor.py:881` lê em `.claude/` → check morto.
-  (Onda 4.)
+- *(Todos os P1 da remediação — BUG-G2/MEM-4, BUG-STATUS-1/2, BUG-IMPL-2,
+  BUG-B — foram fechados na Onda 4; ver seção Fechados acima.)*
+
+**Follow-on (novos papercuts achados durante a remediação)**
+
+- **forge upgrade ignora flags desconhecidas em silêncio** — `engine/upgrade.py`
+  (~L333): flags não-reconhecidas passam batido sem aviso (cosmético, sem
+  impacto de segurança; um typo de flag não dá feedback). *Reentrar* ao tocar o
+  parser de `upgrade`.
 
 **P2 (polish — itens 16-21 do report)**
 

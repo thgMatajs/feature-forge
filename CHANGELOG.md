@@ -193,6 +193,36 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   - Validator do koin (`cards/koin-annotations/validators/check-koin-modules.py`)
     migrado pro contrato canônico (`--project-root/--scope/--id`).
 
+- Gates de wave do `forge plan` ganham dentes (Onda 2 da remediação do piloto
+  MeoBonsai — fecha o Tema 1: gates procedurais → substantivos): `forge plan`
+  passa a rodar um content-check determinístico nas waves (A/B/C/D/E) antes de
+  liberar o avanço. Helper `engine/plan_content_check.py` faz placeholder-scan
+  quote-aware (não acusa marcador citado dentro de exemplo/prosa) +
+  substance-coverage do DAG (cada nó precisa de conteúdo real, não só o
+  esqueleto). A Wave A (intake free-text) é isenta do scan — texto livre não
+  carrega marcador procedural. Substância apenas parcial → pausa deferred
+  (exit 130), não falso-verde. Antes, os gates eram procedurais (existência de
+  arquivo/marcador) e deixavam passar wave com placeholder não-resolvido.
+
+- Hardening P1 (Onda 4 da remediação do piloto MeoBonsai):
+  - `forge status` reconcilia git + expõe `qa_verdict` (**BUG-STATUS-1/2**): o
+    pathspec não double-conta commits (qa + src separados) e o run mais recente
+    sem verdict reporta `None`, não o veredito velho de um run anterior.
+  - O marker `FORGE_INTENT` anuncia `response-schema-version` (**BUG-G2**) — o
+    host-LLM sabe qual shape de `forge-response.json` o engine espera.
+  - `forge upgrade` ganha `--dry-run` + guard de branch nomeada antes do
+    checkout (**BUG-UPGRADE-1**) — não troca de branch às cegas.
+  - `.gitignore` do `forge init` cobre derivados irmãos de `forge/`, incluindo o
+    sidecar SQLite WAL `graph.db-shm` (**BUG-4/MEM-5**).
+  - Build commands dos cards são project-derived pelo agente, não hardcoded
+    literal cego no `agent-contributions` (**BUG-IMPL-2**).
+  - `forge doctor` lê o version-lock no path canônico do `forge_dir` (**BUG-B**).
+  - `skills/feature-forge/SKILL.md` mapeia todos os verbos dirigíveis
+    (**BUG-QA-4**).
+  - Polish P2 (bundle T8): `forge undo` no-op → exit 0 consistente; `evolve`
+    help + SIGPIPE; escopo do `raw`; dashboard do `reconfigure`; help do
+    `implement`.
+
 - Hook SessionStart (`.claude/hooks/session-start-orientation.sh`) resiliente
   a `created_at` malformado no JSONL do mem (cross-AI bot PR #32): a seleção
   da sessão mais recente agora valida que `created_at` é uma string ISO
