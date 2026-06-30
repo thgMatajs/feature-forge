@@ -56,7 +56,7 @@ from engine.cards.resolver import resolve
 from engine.cards.snapshotter import snapshot_card
 from engine.detection import _eval as _detection_eval
 from engine.detection._axes import BACKEND_AXES
-from engine.detection._eval import _SKIP_DIRS
+from engine.detection._eval import _SKIP_DIRS, _walk_recursive_pruned
 from engine.detection.composer import Cell, Conflict, compose_backend_axes
 from engine.graph.builder import build_full
 from engine.inventory.conventions import (
@@ -201,6 +201,157 @@ def _load_checkpoint(project_root: Path) -> dict[str, Any] | None:
 
 def _clear_checkpoint(project_root: Path) -> None:
     _clear_checkpoint_io(_checkpoint_path(project_root))
+    # BUG-2: o discovery cache segue o lifecycle do checkpoint — limpa junto
+    # (evita estado stale vazar entre features / pós-discard).
+    _clear_discovery_cache(project_root)
+
+
+# ── BUG-2 — discovery cache (persistente em disco, lifecycle=checkpoint) ──────
+#
+# O Step 2 (discovery) re-rodava os 3 extractors caros
+# (extract_design_system/i18n/conventions) a CADA invocação do init —
+# inclusive no loop mecânico (host replaying), onde cada response é um
+# PROCESSO NOVO (CLI). Em monorepo real isso custa ~220s/ciclo. LRU
+# intra-processo NÃO ajuda (cada processo zera o LRU); o cache TEM que ser
+# persistente em disco.
+#
+# L-001: nome concreto, persistente, sob `.claude/`, coberto pelo
+# `.claude/.gitignore` que `_write_claude_gitignores` semeia. Lifecycle =
+# checkpoint (some com `_clear_checkpoint`).
+_DISCOVERY_CACHE_NAME = ".init-discovery-cache.yaml"
+
+
+def _discovery_cache_path(project_root: Path) -> Path:
+    return claude_dir(project_root) / _DISCOVERY_CACHE_NAME
+
+
+def _save_discovery_cache(
+    project_root: Path,
+    ds_inv: "DesignSystemInventory | None",
+    i18n_inv: "I18nInventory | None",
+    conv_inv: "ConventionsInventory | None",
+) -> None:
+    """Persiste o resultado de discovery (os 3 `.raw` + contagens) em disco.
+
+    Cacheia o que o pipeline downstream consome dos inventories:
+      - ds_inv: `.raw` + `len(.components)` (summary L2827, _build_* L3881).
+      - i18n_inv: `.raw` + `len(.keys)` (summary L2828, _build_* L3871).
+      - conv_inv: `.raw` (_build_* L3838).
+    Não cacheia objetos ricos inteiros (DSComponent/I18nKey) — só o necessário
+    pra reproduzir fielmente o output, mantendo o YAML enxuto e round-trippável.
+    """
+    payload: dict[str, Any] = {"schema-version": 1}
+    if ds_inv is not None:
+        payload["design-system"] = {
+            "raw": ds_inv.raw,
+            "n-components": len(ds_inv.components),
+        }
+    if i18n_inv is not None:
+        payload["i18n"] = {"raw": i18n_inv.raw, "n-keys": len(i18n_inv.keys)}
+    if conv_inv is not None:
+        payload["conventions"] = {"raw": conv_inv.raw}
+    write_yaml(_discovery_cache_path(project_root), payload, atomic=True)
+
+
+def _load_discovery_cache(
+    project_root: Path,
+) -> tuple[
+    "DesignSystemInventory | None",
+    "I18nInventory | None",
+    "ConventionsInventory | None",
+] | None:
+    """Carrega o discovery cache; None em cache-miss (caller re-roda discovery).
+
+    Reconstrói os inventories preservando exatamente os campos que o pipeline
+    consome (contagens + `.raw`). `components`/`keys` viram listas de
+    placeholders do tamanho correto — o downstream só usa `len(...)` deles.
+
+    **Invariante de correção (WR-03 — sem fingerprint de conteúdo, por design):**
+    este cache NÃO carrega um fingerprint (mtime/hash) do source do projeto.
+    A correção está garantida pelo LIFECYCLE, não por revalidação de conteúdo:
+
+      - O cache só é CARREGADO sob `host_is_replaying` (loop mecânico de replay):
+        o host está respondendo prompts in-flight, NÃO editando source. O replay
+        é a MESMA invocação lógica — o source é tratado como imutável durante a
+        janela em que o cache vive.
+      - O lifecycle é ATADO ao checkpoint: `_clear_checkpoint` →
+        `_clear_discovery_cache` (discard / abort / novo-init limpam). Logo o
+        cache nunca sobrevive a uma transição que poderia mudar o source.
+
+    O único modo de servir stale é o anti-padrão "editar source no MEIO do
+    replay mecânico", que contradiz o modelo de loop. Fingerprint de conteúdo
+    (cinto + suspensório contra esse anti-padrão) é hardening FUTURO deliberado
+    — registrado como follow-on no doc-sync de merge-back, NÃO implementado aqui.
+    """
+    path = _discovery_cache_path(project_root)
+    if not path.exists():
+        return None
+    data = read_yaml_or_default(path, None)
+    if not isinstance(data, dict):
+        return None
+
+    # Imports locais: evita custo no import-time do módulo + mantém a fronteira
+    # com inventory clara (reuso das dataclasses canônicas, não re-derivação).
+    from engine.inventory.conventions import ConventionsInventory
+    from engine.inventory.design_system import (
+        DesignSystemInventory,
+        DSComponent,
+        DSTokens,
+    )
+    from engine.inventory.i18n import I18nInventory, I18nKey
+
+    ds_inv: DesignSystemInventory | None = None
+    ds_data = data.get("design-system")
+    if isinstance(ds_data, dict):
+        raw = ds_data.get("raw") or {}
+        n = int(ds_data.get("n-components") or 0)
+        tokens_raw = raw.get("tokens") or {}
+        ds_inv = DesignSystemInventory(
+            components=[
+                DSComponent(name="", level="unknown", status="unknown")
+                for _ in range(n)
+            ],
+            tokens=DSTokens(
+                colors=dict((tokens_raw.get("colors") or {}).get("values") or {}),
+                spacing=dict((tokens_raw.get("spacing") or {}).get("values") or {}),
+                radius=dict((tokens_raw.get("radii") or {}).get("values") or {}),
+                typography=dict(
+                    (tokens_raw.get("typography") or {}).get("values") or {}
+                ),
+            ),
+            raw=raw,
+        )
+
+    i18n_inv: I18nInventory | None = None
+    i18n_data = data.get("i18n")
+    if isinstance(i18n_data, dict):
+        raw = i18n_data.get("raw") or {}
+        n = int(i18n_data.get("n-keys") or 0)
+        sot = raw.get("source-of-truth") or {}
+        i18n_inv = I18nInventory(
+            keys=[I18nKey(key="") for _ in range(n)],
+            languages=list(sot.get("locales") or []),
+            source_of_truth=sot.get("path", "unknown"),
+            generated_paths=dict((raw.get("generation") or {}).get("outputs") or {}),
+            raw=raw,
+        )
+
+    conv_inv: ConventionsInventory | None = None
+    conv_data = data.get("conventions")
+    if isinstance(conv_data, dict):
+        conv_inv = ConventionsInventory(raw=conv_data.get("raw") or {})
+
+    return ds_inv, i18n_inv, conv_inv
+
+
+def _clear_discovery_cache(project_root: Path) -> None:
+    path = _discovery_cache_path(project_root)
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
 
 
 def _resume_option_labels() -> dict[str, str]:
@@ -322,16 +473,18 @@ def _count_needle_hits(project_root: Path, needle: str, limit: int = 50) -> int:
     count = 0
     patterns = ("*.kt", "build.gradle", "build.gradle.kts", "settings.gradle*")
     for pattern in patterns:
-        for path in project_root.rglob(pattern):
+        # BUG-5: `_walk_recursive_pruned` poda `_SKIP_DIRS` NA DESCIDA (não
+        # materializa node_modules/.gradle inteiros antes de filtrar). O filtro
+        # `startswith(".")` (H-002) PERMANECE pós-walk: cobre dirs ocultos
+        # ARBITRÁRIOS (.hidden etc.) que não estão nomeados em `_SKIP_DIRS`.
+        for path in _walk_recursive_pruned(project_root, pattern, _SKIP_DIRS):
             try:
                 parts = path.relative_to(project_root).parts
             except ValueError:
                 continue
-            # C16: filtra dirs ocultos (.git etc.) + monorepo culprits
-            # declarados em `_SKIP_DIRS` (node_modules, build, .gradle,
-            # Pods, DerivedData, dist). Sem isso, init trava em
-            # monorepos varrendo deps/build artifacts.
-            if any(part.startswith(".") or part in _SKIP_DIRS for part in parts):
+            # C16: filtra dirs ocultos (.git etc.) — o helper já podou
+            # `_SKIP_DIRS`; este filtro cobre o startswith(".") arbitrário.
+            if any(part.startswith(".") for part in parts):
                 continue
             try:
                 text = path.read_text(encoding="utf-8", errors="ignore")
@@ -1074,6 +1227,87 @@ def _merge_forge_hooks_into_settings(project_root: Path) -> None:
 # (idempotência). A SKILL.md canônica carrega o marker no topo (L5);
 # `templates/AGENTS.md.template` recebe o marker prefixado no install.
 _FORGE_DRIVER_MARKER = "<!-- FORGE_AI_DRIVER -->"
+
+# BUG-4/MEM-5 (T4): marker pra o bloco auto-gerido do .claude/.gitignore.
+# Append-only + idempotente (mesma filosofia do AGENTS.md driver).
+_FORGE_GITIGNORE_MARKER = "# >>> feature-forge — auto-managed (derived artifacts) >>>"
+_FORGE_GITIGNORE_END = "# <<< feature-forge — auto-managed <<<"
+
+
+def _write_claude_gitignores(project_root: Path) -> None:
+    """Semeia os .gitignore que mantêm os artefatos derivados fora do git.
+
+    Dois alvos (BUG-4/MEM-5):
+
+    - ``.claude/forge/.gitignore`` — estado interno do forge (checkpoints,
+      drafts, ``state/``, ``*.bak``). Reescrito (canonical wins, conteúdo
+      totalmente gerido pelo forge neste sub-namespace).
+    - ``.claude/.gitignore`` — irmãos derivados de ``forge/`` que um
+      ``git add .`` commitaria por engano: ``graph.db`` (+ working files
+      SQLite), ``cards/``, ``memory/``, ``locks/`` e o
+      ``.memory-cli-checkpoint.yaml`` do mem-CLI. Este alvo é
+      **append-only e idempotente**: se o usuário já tem um ``.gitignore``
+      em ``.claude/``, o conteúdo dele é preservado e o bloco do forge é
+      anexado via marker (no-op se o marker já existe).
+
+    Os nomes a ignorar derivam dos helpers canônicos de ``paths`` (não
+    hardcode que drifta do layout) — exceto ``locks/`` e o checkpoint do
+    mem-CLI, que são artefatos de runtime do mem vendorizado sob ``.claude/``.
+    """
+    # ── Alvo 1: .claude/forge/.gitignore (gerido pelo forge) ────────────────
+    forge_gi = forge_dir(project_root) / ".gitignore"
+    ensure_dir(forge_gi.parent)
+    forge_gi.write_text(
+        "# feature-forge — auto-managed\n"
+        "state/\n"
+        ".init-checkpoint.yaml\n"
+        ".reconfigure-draft.yaml\n"
+        ".evolve-checkpoint.yaml\n"
+        "*.bak\n",
+        encoding="utf-8",
+    )
+
+    # ── Alvo 2: .claude/.gitignore (append-only, cobre os irmãos derivados) ──
+    claude = claude_dir(project_root)
+    graph_db_name = graph_db_path(project_root).name  # canonical (paths helper)
+    cards_name = cards_dir(project_root).name
+    memory_name = memory_dir(project_root).name
+    block = "\n".join(
+        [
+            _FORGE_GITIGNORE_MARKER,
+            f"{graph_db_name}",
+            # SQLite sidecars. O graph.db roda em WAL mode (engine/assets/mem),
+            # que cria -wal E -shm; -journal cobre o rollback-journal mode.
+            # MED-02: -shm faltava → um `git add .` commitava o sidecar.
+            f"{graph_db_name}-journal",
+            f"{graph_db_name}-wal",
+            f"{graph_db_name}-shm",
+            f"{cards_name}/",
+            f"{memory_name}/",
+            "locks/",
+            ".memory-cli-checkpoint.yaml",
+            # BUG-2 (Onda 3): cache persistente de discovery (lifecycle =
+            # checkpoint). Derivado — não deve vazar num `git add .`.
+            _DISCOVERY_CACHE_NAME,
+            _FORGE_GITIGNORE_END,
+            "",
+        ]
+    )
+    claude_gi = claude / ".gitignore"
+    ensure_dir(claude)
+    if not claude_gi.exists():
+        claude_gi.write_text(block, encoding="utf-8")
+        return
+    try:
+        existing = claude_gi.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError):
+        # Não-decodável → trata como do usuário; anexa em modo binário-safe
+        # seria arriscado. Preserva e não anexa (raro; o usuário gerencia).
+        return
+    if _FORGE_GITIGNORE_MARKER in existing:
+        return  # idempotente — bloco já presente
+    sep = "" if existing.endswith("\n") else "\n"
+    claude_gi.write_text(existing + sep + block, encoding="utf-8")
 
 
 def _source_template_name(target: str) -> str:
@@ -1953,6 +2187,10 @@ def _run_pipeline(project_root: Path) -> int:
     }
     _resume_step: str | None = None
     _resume_preset: str | None = None
+    # BUG-2: default False — só vira True no ramo de loop mecânico (host
+    # replaying). Inicializado FORA do `if existing_checkpoint` pra estar
+    # sempre definido no Step 2 (decisão cache-hit vs re-discovery).
+    _host_loop_in_progress = False
 
     existing_checkpoint = _load_checkpoint(project_root)
     if existing_checkpoint:
@@ -2083,6 +2321,15 @@ def _run_pipeline(project_root: Path) -> int:
     i18n_inv = None
     conv_inv = None
 
+    # BUG-2: no loop mecânico (host replaying — cada response é processo novo),
+    # tenta carregar o resultado de discovery do cache persistente em vez de
+    # re-rodar os 3 extractors caros (~220s/ciclo em monorepo). Cache-miss
+    # (1ª invocação, ou pós-discard que limpou o checkpoint) cai no caminho
+    # normal e re-popula o cache ao fim do Step 2.
+    _cached_discovery = (
+        _load_discovery_cache(project_root) if _host_loop_in_progress else None
+    )
+
     with ui_progress.progress(len(discovery_steps), "discovery", width=24) as bar:
         canonical_cards = load_all_cards(canonical_dir)
         bar.update(1)
@@ -2090,29 +2337,48 @@ def _run_pipeline(project_root: Path) -> int:
         # Stack detection happens per-card later; we just mark the step done.
         bar.update(1)
 
-        try:
-            ds_inv = extract_design_system(project_root)
-        except Exception as exc:  # noqa: BLE001 — broad catch: defensive at discovery-step boundary — heuristic scanner walks project tree parsing XML/Kotlin/Swift; init must not fail for any extract hiccup
+        if _cached_discovery is not None:
+            # Cache-hit: reusa o discovery do ciclo anterior. Os 3 extractors
+            # NÃO re-rodam (o custo cai de re-execução pra load do YAML).
+            ds_inv, i18n_inv, conv_inv = _cached_discovery
             renderer.write(
                 renderer.colored(
-                    f"design-system extract skipped: {exc}", "dim_grey"
+                    "discovery reaproveitado do cache (loop mecânico — "
+                    "sem re-varrer o repositório).",
+                    "dim_grey",
                 )
             )
-        bar.update(1)
+            bar.update(3)
+        else:
+            try:
+                ds_inv = extract_design_system(project_root)
+            except Exception as exc:  # noqa: BLE001 — broad catch: defensive at discovery-step boundary — heuristic scanner walks project tree parsing XML/Kotlin/Swift; init must not fail for any extract hiccup
+                renderer.write(
+                    renderer.colored(
+                        f"design-system extract skipped: {exc}", "dim_grey"
+                    )
+                )
+            bar.update(1)
 
-        try:
-            i18n_inv = extract_i18n(project_root)
-        except Exception as exc:  # noqa: BLE001 — broad catch: defensive at discovery-step boundary — heuristic i18n scanner; init must not fail for any extract hiccup
-            renderer.write(renderer.colored(f"i18n extract skipped: {exc}", "dim_grey"))
-        bar.update(1)
+            try:
+                i18n_inv = extract_i18n(project_root)
+            except Exception as exc:  # noqa: BLE001 — broad catch: defensive at discovery-step boundary — heuristic i18n scanner; init must not fail for any extract hiccup
+                renderer.write(
+                    renderer.colored(f"i18n extract skipped: {exc}", "dim_grey")
+                )
+            bar.update(1)
 
-        try:
-            conv_inv = extract_conventions(project_root)
-        except Exception as exc:  # noqa: BLE001 — broad catch: defensive at discovery-step boundary — heuristic conventions scanner; init must not fail for any extract hiccup
-            renderer.write(
-                renderer.colored(f"conventions extract skipped: {exc}", "dim_grey")
-            )
-        bar.update(1)
+            try:
+                conv_inv = extract_conventions(project_root)
+            except Exception as exc:  # noqa: BLE001 — broad catch: defensive at discovery-step boundary — heuristic conventions scanner; init must not fail for any extract hiccup
+                renderer.write(
+                    renderer.colored(f"conventions extract skipped: {exc}", "dim_grey")
+                )
+            bar.update(1)
+
+            # Persiste o resultado de discovery pro próximo ciclo mecânico
+            # (lifecycle = checkpoint; some com `_clear_checkpoint`).
+            _save_discovery_cache(project_root, ds_inv, i18n_inv, conv_inv)
 
     renderer.write("")
     renderer.write(f"  {len(canonical_cards)} cards canônicos disponíveis em {canonical_dir}")
@@ -2665,21 +2931,14 @@ def _run_pipeline(project_root: Path) -> int:
 
     checkpoint.step = "step-12.6-gitignore"
 
-    # ── Step 12.6 — .claude/forge/.gitignore ────────────────────────────────
-    # Auto-managed gitignore per docs/design/05-filesystem-layout.md so that
-    # forge-internal state (init checkpoints, reconfigure drafts) stays out
-    # of git. Task 0.10 (v1.3 pilot-ready): vive em ``.claude/forge/``.
-    gitignore_path = forge_dir(project_root) / ".gitignore"
-    gitignore_content = (
-        "# feature-forge — auto-managed\n"
-        "state/\n"
-        ".init-checkpoint.yaml\n"
-        ".reconfigure-draft.yaml\n"
-        ".evolve-checkpoint.yaml\n"
-        "*.bak\n"
-    )
-    ensure_dir(gitignore_path.parent)
-    gitignore_path.write_text(gitignore_content, encoding="utf-8")
+    # ── Step 12.6 — .gitignore (forge sub-namespace + irmãos derivados) ──────
+    # Auto-managed gitignores per docs/design/05-filesystem-layout.md.
+    # BUG-4/MEM-5 (T4): além do ``.claude/forge/.gitignore`` (estado interno),
+    # semeia um ``.claude/.gitignore`` append-only cobrindo os artefatos
+    # derivados que vivem como irmãos de ``forge/`` (graph.db, cards/, memory/,
+    # locks/, .memory-cli-checkpoint.yaml) — senão um ``git add .`` commitava
+    # ~2.3 MB de graph.db + snapshots.
+    _write_claude_gitignores(project_root)
 
     checkpoint.step = "step-14-history"
 

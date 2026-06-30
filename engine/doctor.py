@@ -52,6 +52,7 @@ from engine.utils.paths import (
     claude_dir,
     ensure_dir,
     find_project_root,
+    forge_dir,
     forge_home,
     graph_db_path,
     hooks_dir,
@@ -878,7 +879,10 @@ def _check_bak_overdue(project_root: Path, config: dict) -> _CategoryReport:
 
 def _check_forge_version_lock(project_root: Path) -> _CategoryReport:
     checks: list[_Check] = []
-    lock_path = claude_dir(project_root) / "forge-version-lock.yaml"
+    # BUG-B (T6): init grava o lock em ``.claude/forge/`` (sub-namespace
+    # canônico, Task 0.10) — o doctor lê DO MESMO path. Antes lia em
+    # ``.claude/`` (claude_dir) e o check caía sempre no SKIP falso.
+    lock_path = forge_dir(project_root) / "forge-version-lock.yaml"
     if not lock_path.exists():
         checks.append(
             _Check(

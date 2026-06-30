@@ -14,6 +14,8 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from engine.detection._eval import _walk_recursive_pruned
+
 _SKIP_DIRS = frozenset(
     {
         ".git",
@@ -57,7 +59,13 @@ def walk_project(project_root: str, extensions: tuple[str, ...]) -> tuple[Path, 
         return ()
     paths: list[Path] = []
     ext_set = {ext.lower() for ext in extensions}
-    for path in root.rglob("*"):
+    # BUG-5: `_walk_recursive_pruned` poda `_SKIP_DIRS` NA DESCIDA (não
+    # materializa node_modules/.gradle inteiros antes do filtro). Conjunto
+    # idêntico ao `rglob("*")` filtrado; o helper já ORDENA, então o
+    # `paths.sort()` final fica redundante mas é mantido por clareza/segurança.
+    # O filtro `relative_to(root)` pós-walk é preservado (cobre o caso
+    # worktree onde `.claude/` é parent de root, não descendente).
+    for path in _walk_recursive_pruned(root, "*", _SKIP_DIRS):
         if not path.is_file():
             continue
         try:

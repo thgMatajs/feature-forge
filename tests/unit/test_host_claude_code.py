@@ -553,3 +553,47 @@ def test_ask_consume_preserves_state_files_cr_002(tmp_path, capsys):
         )
     finally:
         _cli_command_context.reset(token)
+
+
+# ----------------------------------------------------------------------
+# BUG-G2/MEM-4 (T2) — marker announces response-schema-version
+# ----------------------------------------------------------------------
+
+
+def test_marker_announces_response_schema_version(tmp_path, capsys):
+    """O ``<FORGE_INTENT>`` anuncia ``response-schema-version`` (auto-descritivo).
+
+    BUG-G2/MEM-4: sem o atributo, um host ingênuo omite ``schema-version`` na
+    response e toma exit 1 silencioso. O marker agora ensina ao host qual
+    versão devolver — sem enfraquecer o leitor estrito da response.
+    """
+    adapter = ClaudeCodeAdapter(project_root=tmp_path)
+    with pytest.raises(PausedForInputError):
+        adapter.ask(
+            kind=AskKind.ASK,
+            question="Tipo da feature?",
+            options={"product": "Product feature"},
+            default=None,
+            allow_pause=True,
+        )
+    attribs = _extract_marker_attribs(capsys.readouterr().out)
+    assert attribs.get("response-schema-version") == "1", (
+        "marker não anuncia response-schema-version (BUG-G2/MEM-4)"
+    )
+
+
+def test_marker_schema_version_attr_is_optional_tolerant(tmp_path, capsys):
+    """O novo atributo não quebra hosts que parseiam por presença dos antigos."""
+    adapter = ClaudeCodeAdapter(project_root=tmp_path)
+    with pytest.raises(PausedForInputError):
+        adapter.ask(
+            kind=AskKind.ASK,
+            question="Tipo?",
+            options={"a": "A"},
+            default=None,
+            allow_pause=True,
+        )
+    attribs = _extract_marker_attribs(capsys.readouterr().out)
+    # Atributos canônicos preservados (shape não muda).
+    for k in ("kind", "intent-id", "question", "options", "default", "allow-pause"):
+        assert k in attribs, f"atributo canônico {k!r} sumiu — shape quebrado"

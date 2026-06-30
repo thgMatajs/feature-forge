@@ -128,6 +128,24 @@ def _git_current_sha(forge_home: Path) -> str:
     ).decode().strip()
 
 
+def _current_branch(forge_home: Path) -> Optional[str]:
+    """Retorna o nome da branch atual, ou ``None`` se o HEAD está detached.
+
+    Read-only (``git rev-parse --abbrev-ref HEAD``). Em detached HEAD o git
+    retorna a string literal ``"HEAD"`` — traduzimos pra ``None`` (estado
+    canônico pós-install: detached numa release tag). Qualquer outra string é
+    uma branch nomeada (dev branch — alvo do guard de BUG-UPGRADE-1).
+    """
+    try:
+        out = subprocess.check_output(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=forge_home,
+        ).decode().strip()
+    except subprocess.CalledProcessError:
+        return None
+    return None if out == "HEAD" else out
+
+
 # ── handler público ───────────────────────────────────────────────────────────
 
 
@@ -135,19 +153,21 @@ def run_upgrade(
     *,
     forge_home: Optional[Path] = None,
     force: bool = False,
+    dry_run: bool = False,
 ) -> int:
     """Executa o upgrade do feature-forge para a última release tag.
 
     Parâmetros:
         forge_home: diretório de instalação. Se None, resolve via FORGE_HOME
                     env ou raiz do repo.
-        force:      ignora o check "já no latest" e re-checkout a última tag
-                    mesmo assim.
+        force:      ignora o check "já no latest" E o guard de branch nomeada
+                    (BUG-UPGRADE-1) — re-checkout/upgrade mesmo assim.
+        dry_run:    preview sem mutar git/venv. Faz fetch + descoberta de tag
+                    (read-only) e imprime o que faria; NÃO faz checkout/pip.
 
     Retorna:
-        0 — sucesso, já no latest, ou nenhuma release tag (no-op com aviso)
-        4 — smoke falhou, rollback executado
-        1 — erro inesperado
+        0 — sucesso, já no latest, nenhuma release tag, ou dry-run (preview)
+        1 — erro inesperado, smoke falhou (rollback), ou guard de branch pausou
     """
     home = _resolve_forge_home(forge_home)
 
@@ -193,6 +213,34 @@ def run_upgrade(
             f"forge: já no latest ({latest_tag}) — nenhuma atualização disponível.\n"
         )
         return 0
+
+    # 3.5 Dry-run (BUG-UPGRADE-1): preview read-only, sem mutar git/venv.
+    if dry_run:
+        sys.stdout.write(
+            "forge upgrade --dry-run (preview — nada será mutado):\n"
+            f"  HEAD atual:   {prev_sha[:8]}\n"
+            f"  última tag:   {latest_tag} ({(latest_sha or '?')[:8]})\n"
+            f"  faria:        git checkout --detach {latest_tag} + pip install -e . --upgrade + smoke\n"
+            "  rode `forge upgrade` (sem --dry-run) para aplicar.\n"
+        )
+        return 0
+
+    # 3.6 Guard de branch (BUG-UPGRADE-1): se o HEAD está numa branch NOMEADA
+    # (dev branch: fix/…, feat/…, docs/…), o checkout --detach tiraria o HEAD
+    # silenciosamente. Pausa com 3-caminhos mentor-calmo. --force ignora.
+    branch = _current_branch(home)
+    if branch is not None and not force:
+        sys.stderr.write(
+            f"forge upgrade: o FORGE_HOME está na branch '{branch}' (não em detached "
+            f"HEAD numa release tag).\n"
+            f"  Um upgrade faria `git checkout --detach {latest_tag}` e tiraria o HEAD "
+            f"dessa branch silenciosamente. Pausei antes de mutar. Três caminhos:\n"
+            f"  A) Saia da branch primeiro: cd {home} && git checkout --detach {latest_tag}, "
+            f"depois rode `forge upgrade`.\n"
+            f"  B) Force mesmo assim (ciente de que sai da branch): `forge upgrade --force`.\n"
+            f"  C) Faça antes um preview do que mudaria: `forge upgrade --dry-run`.\n"
+        )
+        return fail_with_tag(ERR_UPGRADE_FAILED)
 
     # 4. Checkout da última tag
     try:
@@ -262,20 +310,26 @@ def run(argv: list[str]) -> int:
 
     Aceita:
         --help / -h  → imprime uso e sai 0
-        --force      → passa force=True para run_upgrade
+        --dry-run    → preview read-only (não muta git/venv)
+        --force      → passa force=True (ignora 'já no latest' + guard de branch)
         (sem args)   → run_upgrade normal
     """
     if argv and argv[0] in ("--help", "-h"):
         sys.stdout.write(
             "forge upgrade — atualiza o feature-forge para a versão mais recente.\n"
             "\n"
-            "Uso: forge upgrade [--force]\n"
+            "Uso: forge upgrade [--dry-run] [--force]\n"
             "\n"
-            "  --force   Atualiza mesmo que já esteja no latest.\n"
+            "  --dry-run  Preview do que mudaria, sem mutar git/venv.\n"
+            "  --force    Atualiza mesmo que já esteja no latest; ignora o guard\n"
+            "             de branch nomeada (sai da branch de dev silenciosamente).\n"
             "\n"
             "Opera no FORGE_HOME (diretório de instalação), não no projeto consumidor.\n"
+            "Numa branch de dev (fix/…, feat/…) o upgrade pausa antes do checkout;\n"
+            "use --dry-run pra preview ou --force pra prosseguir mesmo assim.\n"
         )
         return 0
 
     force = "--force" in argv
-    return run_upgrade(force=force)
+    dry_run = "--dry-run" in argv
+    return run_upgrade(force=force, dry_run=dry_run)

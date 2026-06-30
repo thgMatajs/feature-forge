@@ -315,7 +315,13 @@ def run(argv: list[str]) -> int:
     else:
         working = deepcopy(current)
 
-    _show_snapshot(current)
+    # BUG-RECONF-1 (T8): o dashboard ("Configuração atual") só faz sentido no
+    # 1º passo. Sob o loop mecânico do host, o `run` re-executa a cada step e
+    # re-imprimia o dashboard inteiro (ruído no transcript IA-first). Mostra
+    # apenas quando NÃO há checkpoint de reconfigure em curso (= primeira
+    # entrada genuína); nos passos seguintes do mesmo loop, omite.
+    if _load_reconfigure_checkpoint(project_root) is None:
+        _show_snapshot(current)
 
     # P-18: sob replay com a response do apply-confirm em-voo, o draft já foi
     # adotado (`working = draft`) e o pipeline pula o category-menu — o intent

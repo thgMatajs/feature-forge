@@ -1,7 +1,7 @@
 ---
 name: qa-conductor
 description: |
-  Sole orchestrator of `forge qa` (13º comando). Dispatcha os 4 auditores
+  Sole orchestrator of `forge qa` (13º comando). Dispatcha os 5 auditores
   (Phase 1+2) e o synthesizer (Phase 4), e devolve controle pro core Python
   pra Phase 0/3/5. Persona mentor calmo + overlay staff QA red-team.
 phase: orchestrator
@@ -49,7 +49,7 @@ Leia ao entrar:
   - `run_id`, `scope.type`, `scope.target`
   - `snapshot/` paths (contracts congelados)
   - `config_snapshot` (qa: section da workflow-config no momento da run)
-  - lista de auditors ativos (4 core + N extension)
+  - lista de auditors ativos (5 core + N extension)
 - `.planning/qa/<feature-slug>/<run-id>/snapshot/` — artefatos read-only:
   - `data-contract-spec.yaml`, `navigation-spec.yaml`,
     `ui-state-spec.yaml`, `analytics-spec.yaml`
@@ -69,6 +69,7 @@ Leia ao entrar:
 **Phase 1 — Static auditors** (você dispatcha, **paralelo**):
 
 - `Agent[qa-auditor-spec-vs-spec]` → escreve `findings/spec-vs-spec.json`
+- `Agent[qa-auditor-impl-vs-spec]` → escreve `findings/impl-vs-spec.json`
 - `Agent[qa-auditor-coverage]` → escreve `findings/coverage.json`
 
 **Phase 2 — Generative auditors** (você dispatcha, **paralelo**):
@@ -81,7 +82,8 @@ Leia ao entrar:
 
 Extension auditors registrados em `qa-extensions` rodam na phase que o
 card declara (`static` ou `generative`) — você dispatcha cada um com o
-mesmo overlay. Sem extensão = só os 4 core.
+mesmo overlay. Sem extensão = só os 5 core (spec-vs-spec, impl-vs-spec,
+coverage, chaos, validator-claim).
 
 **Phase 3 — Sandbox execution** (core Python, **o engine roda**).
 Você termina Phase 2 (findings + fixtures escritos) e re-invoca
@@ -156,7 +158,7 @@ que é seguro repassar.
 
 **Phase 4 — Synthesis** (você dispatcha após Phase 3 completar):
 
-- `Agent[qa-synthesizer]` → consome `findings/*.json` (4 core + N extension)
+- `Agent[qa-synthesizer]` → consome `findings/*.json` (5 core + N extension)
   + `sandbox-results.json` (escrito pelo engine) → escreve `qa-report.json`
   final com verdict.
 
@@ -204,6 +206,7 @@ ao conductor + finding qa-auditor-malformed severity=high é gerado.
 
 - `.planning/qa/<slug>/<run-id>/findings/*.json` populados:
   - `spec-vs-spec.json` (Phase 1)
+  - `impl-vs-spec.json` (Phase 1)
   - `coverage.json` (Phase 1)
   - `chaos.json` (Phase 2)
   - `validator-claim.json` (Phase 2)
@@ -221,9 +224,9 @@ ao conductor + finding qa-auditor-malformed severity=high é gerado.
 
 - **Não bloqueie retrospective** — verdict é informativo (§12.2). Você
   emite o report; quem decide aplicar é o user via `forge evolve`.
-- **Não invente attack vectors** fora dos 4 baseline (spec-vs-spec,
-  coverage, chaos, validator-claim) + extensions registrados via
-  `qa-extensions`. Sem registro = sem auditor.
+- **Não invente attack vectors** fora dos 5 baseline (spec-vs-spec,
+  impl-vs-spec, coverage, chaos, validator-claim) + extensions registrados
+  via `qa-extensions`. Sem registro = sem auditor.
 - **Não invada Phase 3 ou Phase 5** — sandbox subprocess (o engine reconstrói
   Fixtures dos findings, roda `run_sandbox` e escreve `sandbox-results.json`) e
   emit de proposed-evolutions são **core Python only**. Você termina Phase 2,
@@ -249,5 +252,6 @@ ao conductor + finding qa-auditor-malformed severity=high é gerado.
   `templates/qa-finding.template.json`, `templates/qa-fixture-chaos.template.yaml`,
   `templates/qa-fixture-validator-claim.template.*`.
 - **Sub-agents qa:** `agents/qa-auditor-spec-vs-spec.md`,
-  `agents/qa-auditor-coverage.md`, `agents/qa-auditor-chaos.md`,
-  `agents/qa-auditor-validator-claim.md`, `agents/qa-synthesizer.md`.
+  `agents/qa-auditor-impl-vs-spec.md`, `agents/qa-auditor-coverage.md`,
+  `agents/qa-auditor-chaos.md`, `agents/qa-auditor-validator-claim.md`,
+  `agents/qa-synthesizer.md`.

@@ -69,19 +69,27 @@ validations:
     runs-after: edit
 
   - name: "compose-detekt"
-    command: "./gradlew :composeApp:detekt"
+    command: "./gradlew :{compose_module}:detekt"
     severity: error
     runs-after: edit-batch
 
   - name: "compose-assemble"
-    command: "./gradlew :composeApp:assembleDebug"
+    command: "./gradlew :{compose_module}:assembleDebug"
     severity: error
     runs-after: edit-batch
 ```
 
+> **Derive, não assuma (BUG-IMPL-2).** O nome do módulo Gradle (ex.: `composeApp`,
+> `app`, `androidApp`) varia por projeto — NÃO hardcode um módulo fixo.
+> Substitua `{compose_module}` pelo módulo
+> real, derivado de `inventory.conventions.modules` (ou `settings.gradle.kts` /
+> `./gradlew :tasks` como fallback de descoberta manual quando o inventory não
+> traz o módulo). Sem invocar gradle em tempo de plan: o módulo vem do
+> inventory já coletado.
+
 Os dois primeiros validators são do próprio card (stubs em Phase 5). Os
 dois últimos vêm de `inventory.commands.android-build` — task-contract-writer
-deve confirmar que existem antes de injetar.
+deve confirmar que existem antes de injetar (incluindo o módulo derivado).
 
 ### Gates
 

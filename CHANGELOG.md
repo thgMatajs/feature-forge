@@ -9,6 +9,21 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Added
 
+- Novo 5º vetor core `impl-vs-spec` no `forge qa` (Onda 1b da remediação do
+  piloto MeoBonsai — fecha o gap do Tema 6 "qa red-teia contratos, não a
+  impl"): o vetor snapshota a implementação real via os `allowed_files` dos
+  task contracts e roda um auditor Phase-1 static que confronta a impl contra a
+  spec (`agents/qa-auditor-impl-vs-spec.md`). Antes, o `qa` red-teava só os
+  contratos/plano; agora cobre também o código produzido. Helper de snapshot em
+  `engine/utils/task_contract.py`; ingest/synthesis do qa estendidos; schemas
+  e templates `qa-finding`/`qa-report` atualizados.
+- Duas specs de design adicionadas (implementação DEFERIDA pras suas próprias
+  ondas/decisões): `docs/superpowers/specs/2026-06-30-native-quality-gates-design.md`
+  (gates de qualidade nativos — pode exigir Decisão 33) e
+  `docs/superpowers/specs/2026-06-30-runtime-visual-verification-design.md`
+  (verificação runtime/visual). Só a spec; a impl é follow-on registrado em
+  `docs/design/04-pending.md`.
+
 - `engine/integrations/mem.py::mem_inbox_reject` — wrapper degrade-soft sobre
   `mem inbox reject <id>`.
 
@@ -69,6 +84,24 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 - `tests/unit/test_engine_plan_mem_hint.py`: prova que o hint chega ao artefato
   RENDERIZADO da Wave A (não só ao dict de tokens) (W-ROUTE 6c).
+
+### Docs
+
+- Gaps do piloto MeoBonsai (2026-06-25) catalogados em `docs/design/04-pending.md`
+  (seção nova "Piloto MeoBonsai 2026-06-25 — gaps", status verificado pós-merge
+  Fase 1). Os ~37 bugs do report viviam só no relatório e nunca tinham entrado no
+  backlog ativo; agora estão agrupados em Fechados / Parciais / Abertos (P0/P1/P2)
+  com file:line e direção de fix. Verificação empírica fechou BUG-A, Tema 7
+  (implement DAG), BUG-MEM-1/2 e BUG-1 — que o report tratava como abertos.
+- Apêndice de status no fim do report
+  `docs/reports/2026-06-25-piloto-meobonsai-gaps.md` (append-only; corpo histórico
+  intacto): registra o que mudou desde o piloto, verificado contra o código de
+  main pós-PR#32, e corrige explicitamente os itens que o report tratava como
+  abertos e hoje estão fechados.
+- Nova spec de remediação `docs/superpowers/specs/2026-06-29-pilot-remediation-design.md`:
+  organiza os gaps ABERTOS em 5 ondas (correctness → gates com dentes → P0s
+  estruturais → hardening P1 → mem Fase 2), lideradas pelo loop de correctness,
+  cada onda com gate de aceite testável.
 
 ### Removed
 
@@ -148,6 +181,74 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 - Handoff de sessão re-roteado pro `mem` (Fase 0.5 — dogfood). O `session-start-orientation.sh` passa a injetar o corpo do último `mem session` (dois passos: `mem --json find "" --type session -k 1` → `mem --json get <id>` → `.body`), com fallback gracioso pro grep dos dois campos do `08-session-handoff.md` quando o mem está vazio/ausente/falhando — o bloco hardcoded de Mandamento 0 + fluxo e o contrato exit-0 permanecem intactos em todos os caminhos. O `post-edit-doc-drift.sh` e o SOFT WARNING do `pre-commit-feature-forge.sh` deixam de exigir o handoff-arquivo no gate per-commit (fica `CHANGELOG`/`README`) e passam a apontar `mem session` como o trilho de fim-de-sessão; o HARD BLOCK do Mandamento #1 (`01-decisions.md`) não foi tocado. `CLAUDE.md` §6 e `.claude/rules/doc-sync.md` refletem o novo modelo (per-commit = CHANGELOG/README; handoff = `mem session`); as duas notas mem de doc-sync (matriz código→docs + checklist pré-commit) foram re-classificadas via `mem add` + `mem supersede` (antigas preservadas como superseded). O `docs/design/08-session-handoff.md` congelou — snapshot histórico + fallback de bootstrap do SessionStart, não mais editado a cada sessão (estado-final hybrid: não deletado). Nenhuma mudança de código Python.
 
 ### Fixed
+
+- `forge verify` ganha dentes contra validator off-contract/quebrado (Onda 1 da
+  remediação do piloto MeoBonsai — fecha BUG-VERIFY-1 e BUG-VERIFY-2):
+  - **BUG-VERIFY-1** — validator que estoura exit ≥2 sem JSON tail (script
+    quebrado ou fora do contrato canônico `--project-root/--scope/--id`) agora é
+    classificado como `degraded`, NÃO `fail`. `degraded` não conta no overall nem
+    cega a cascade fail-fast (Decisão 23): um validator off-contract não pode
+    mais parar os validators a jusante (foi exatamente o caso do koin no piloto,
+    que só aceitava `--root`, estourava exit 2 e parava tudo). Exit 1 sem JSON
+    permanece `warn`; hard fail de código vem só pelo JSON tail `{"status":"fail"}`.
+  - Novo veredito AGREGADO `incomplete` (distinto de `degraded`/`warn`): quando
+    há `degraded` e nenhum `fail`/`warn`, o `overall` vira `incomplete` — "verify
+    não pôde avaliar tudo (infra off-contract); NÃO-bloqueante, NÃO dispara
+    block-forge-implement". `incomplete` é deliberadamente distinto do `degraded`
+    do contrato L1 verify-log (que exige warnings≥1 e atrela block-implement).
+    Precedência do overall: `fail > warn > incomplete > pass`.
+  - **BUG-VERIFY-2 (T3)** — sumário honesto de cobertura: os passes são quebrados
+    por classe (`substantive`/`stub`/`staged-blind`/`opaque`) pro host IA-first
+    não tratar "verde" como garantia uniforme. Novo campo `infra_degraded` e
+    `coverage_summary` no `forge verify --json`; valores possíveis de `overall`:
+    `{pass, warn, incomplete, degraded, fail}`.
+  - Glyph próprio (`⛒`) pra `degraded` na linha-a-linha (distinto do `⚠` do warn)
+    + o motivo da degradação impresso na linha; título do box-sumário deriva do
+    veredito agregado (run all-degraded titula "Verify incomplete", não "clean").
+  - Validator do koin (`cards/koin-annotations/validators/check-koin-modules.py`)
+    migrado pro contrato canônico (`--project-root/--scope/--id`).
+
+- Gates de wave do `forge plan` ganham dentes (Onda 2 da remediação do piloto
+  MeoBonsai — fecha o Tema 1: gates procedurais → substantivos): `forge plan`
+  passa a rodar um content-check determinístico nas waves (A/B/C/D/E) antes de
+  liberar o avanço. Helper `engine/plan_content_check.py` faz placeholder-scan
+  quote-aware (não acusa marcador citado dentro de exemplo/prosa) +
+  substance-coverage do DAG (cada nó precisa de conteúdo real, não só o
+  esqueleto). A Wave A (intake free-text) é isenta do scan — texto livre não
+  carrega marcador procedural. Substância apenas parcial → pausa deferred
+  (exit 130), não falso-verde. Antes, os gates eram procedurais (existência de
+  arquivo/marcador) e deixavam passar wave com placeholder não-resolvido.
+
+- Hardening P1 (Onda 4 da remediação do piloto MeoBonsai):
+  - `forge status` reconcilia git + expõe `qa_verdict` (**BUG-STATUS-1/2**): o
+    pathspec não double-conta commits (qa + src separados) e o run mais recente
+    sem verdict reporta `None`, não o veredito velho de um run anterior.
+  - O marker `FORGE_INTENT` anuncia `response-schema-version` (**BUG-G2**) — o
+    host-LLM sabe qual shape de `forge-response.json` o engine espera.
+  - `forge upgrade` ganha `--dry-run` + guard de branch nomeada antes do
+    checkout (**BUG-UPGRADE-1**) — não troca de branch às cegas.
+  - `.gitignore` do `forge init` cobre derivados irmãos de `forge/`, incluindo o
+    sidecar SQLite WAL `graph.db-shm` (**BUG-4/MEM-5**).
+  - Build commands dos cards são project-derived pelo agente, não hardcoded
+    literal cego no `agent-contributions` (**BUG-IMPL-2**).
+  - `forge doctor` lê o version-lock no path canônico do `forge_dir` (**BUG-B**).
+  - `skills/feature-forge/SKILL.md` mapeia todos os verbos dirigíveis
+    (**BUG-QA-4**).
+  - Polish P2 (bundle T8): `forge undo` no-op → exit 0 consistente; `evolve`
+    help + SIGPIPE; escopo do `raw`; dashboard do `reconfigure`; help do
+    `implement`.
+
+- P0s estruturais (Onda 3 da remediação do piloto MeoBonsai):
+  - **BUG-5** — `_walk_recursive_pruned`/`_lazy`: a poda de diretórios acontece
+    na descida da árvore (não mais `rglob` cru no hot-path de discovery), o que
+    elimina a varredura de subárvores ignoradas. Em árvores pesadas o ganho
+    medido foi ~345x. `_glob_any` short-circuita no primeiro hit — a detecção
+    fica independente de ordem de iteração e de cap.
+  - **BUG-2** — o discovery passa a ser cacheado em disco no replay mecânico:
+    o init não re-paga o custo de varredura (~220s no piloto) a cada replay.
+  - **BUG-PLAN-1** — o gate de readiness do `forge plan` re-renderiza e pausa
+    (exit 130) sem recursar; antes recursava no próprio gate ao re-checar
+    prontidão.
 
 - `test_rule_file_linked_in_claude_md` alinhado ao modelo de índice da Fase 0
   (rules indexadas em `.claude/rules/README.md`, `CLAUDE.md` só Tier-0). O

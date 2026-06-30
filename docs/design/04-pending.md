@@ -3,6 +3,172 @@
 What still needs to be drafted, in dependency order. Use this as the
 checklist for next sessions.
 
+## Piloto MeoBonsai 2026-06-25 — gaps (status verificado pós-merge Fase 1, 2026-06-29)
+
+O piloto end-to-end contra o MeoBonsai (KMP real) levantou ~37 bugs em 8
+temas — registrados em `docs/reports/2026-06-25-piloto-meobonsai-gaps.md`.
+Esses gaps viviam SÓ no report: nunca foram catalogados aqui no backlog
+ativo. Desde então, a campanha mem (Fase 1, PR#32 MERGED em main, merge-commit
+`03a9f9c`) fechou alguns como efeito colateral. Esta seção reconcilia o report
+com o código de main pós-merge (inventário verificado 2026-06-29). O plano de
+ataque dos abertos é a spec
+`docs/superpowers/specs/2026-06-29-pilot-remediation-design.md`. Apêndice de
+status correspondente no fim do próprio report.
+
+### Fechados (verificado no código)
+
+- ✓ **BUG-A (doctor schema-version desync init↔doctor)** — `engine/doctor.py:440`
+  aceita `{1,"1",1.3,"1.3"}` E `engine/init.py` grava `schema-version: 1` (int)
+  em todos os sites. Desync impossível. (Report tratava como ABERTO P0 — hoje
+  fechado.)
+- ✓ **BUG-IMPL-1 / Tema 7 (implement não avançava a DAG)** — `engine/implement.py`
+  tem `_pick_next_task()` keyed em `done={t.task_id ... if status=="done"}`
+  (L374), grafo de deps + detecção de ciclo (L361) e checkpoint persistindo
+  `task-id` RESOLVIDO (L142). O "preso em TASK-0001 / orchestration theater" não
+  existe mais. (Report tratava como ABERTO P0 — hoje fechado.)
+- ✓ **BUG-MEM-1/2 (memory sub-intents inalcançáveis)** — `engine/memory_cli.py`
+  reescrito na W-ROUTE 6a (dispatcher stateless arg-driven); os 5/8 sub-intents
+  inalcançáveis sumiram com o menu interativo multi-passo.
+- ✓ **BUG-1 (init rglob `_glob_any` travava em monorepo)** — resolvido em main
+  via filtro inline `_SKIP_DIRS` em `engine/detection/_eval.py:72`. Independente
+  da branch `fix/pilot-init-perf` (que NÃO foi mergeada) — fechado por uma impl
+  diferente da do report.
+- ✓ **BUG-VERIFY-1 (validator quebrado cega a cascade)** — fechado na **Onda 1**
+  da remediação. `_invoke_validator` agora classifica validator off-contract /
+  quebrado (exit ≥2 sem JSON tail) como `degraded` — não `fail` — então não conta
+  no overall nem para a cascade fail-fast (Decisão 23). Novo veredito agregado
+  `incomplete` (degraded sem fail/warn), distinto do `degraded` do contrato L1
+  verify-log. Koin migrado pro contrato canônico (`--project-root/--scope/--id`).
+  Guardas: `tests/engine/test_verify_broken_validator_degraded.py`,
+  `test_verify_overall_degraded.py`, `test_koin_validator_contract.py`.
+- ✓ **BUG-VERIFY-2 (verify sem sumário honesto de cobertura)** — fechado na
+  **Onda 1**. `forge verify --json` ganha `coverage_summary`
+  (`substantive`/`stub`/`staged-blind`/`opaque`) + campo `infra_degraded`; o box
+  interativo quebra os passes por cobertura quando não são todos substantivos.
+  Guarda: `tests/engine/test_verify_coverage_summary.py`.
+- ✓ **Tema 1 (gates procedurais → substantivos)** — fechado na **Onda 2**.
+  `forge plan` roda content-check determinístico nas waves (A/B/C/D/E) via
+  `engine/plan_content_check.py`: placeholder-scan quote-aware + substance-coverage
+  do DAG. Wave A (intake free-text) isenta. Substância parcial → pausa deferred
+  (exit 130), não falso-verde. Guardas: `tests/unit/test_plan_content_check.py`,
+  `tests/unit/test_plan_wave_gate_content.py`.
+- ✓ **BUG-STATUS-1/2 (status cego ao git/qa)** — fechado na **Onda 4**.
+  `forge status` reconcilia git (pathspec não double-conta qa + src) + expõe
+  `qa_verdict`; run mais recente sem verdict reporta `None`, não o velho.
+  Guarda: `tests/unit/test_status_git_qa.py`.
+- ✓ **BUG-G2/MEM-4 (marker não anuncia response-schema-version)** — fechado na
+  **Onda 4**. O `<FORGE_INTENT>` declara `response-schema-version`.
+  Guarda: `tests/unit/test_host_claude_code.py`.
+- ✓ **BUG-UPGRADE-1 (upgrade destrutivo sem preview)** — fechado na **Onda 4**.
+  `forge upgrade` ganha `--dry-run` + guard de branch nomeada antes do checkout.
+  Guarda: `tests/unit/test_upgrade_dry_run_guard.py`.
+- ✓ **BUG-4/MEM-5 (.gitignore incompleto)** — fechado na **Onda 4**. O
+  `.gitignore` do `forge init` cobre os derivados irmãos de `forge/`, incl. o
+  sidecar SQLite WAL `graph.db-shm`. Guarda: `tests/unit/test_init_gitignore.py`.
+- ✓ **BUG-IMPL-2 (build commands hardcoded)** — fechado na **Onda 4**. Os build
+  commands dos cards são project-derived pelo agente (não literal cego no
+  `agent-contributions`). Guarda: `tests/unit/test_card_build_commands_derived.py`.
+- ✓ **BUG-B (version-lock path mismatch)** — fechado na **Onda 4**. `forge doctor`
+  lê o version-lock no path canônico do `forge_dir`.
+  Guarda: `tests/unit/test_doctor_version_lock_roundtrip.py`.
+- ✓ **BUG-QA-4 (SKILL.md não cobre todos os verbos)** — fechado na **Onda 4**.
+  `skills/feature-forge/SKILL.md` mapeia todos os verbos dirigíveis.
+  Guarda: `tests/unit/test_skill_md_verbs.py`.
+- ✓ **BUG-5 (rglob sem poda em hot-path de inventory)** — fechado na **Onda 3**.
+  Helper compartilhado `_walk_recursive_pruned`/`_lazy` poda diretórios na
+  descida da árvore (não mais `rglob` cru) e todos os sites de inventory
+  (`design_system.py`, `conventions.py`, `i18n.py`) passaram a usá-lo;
+  `_glob_any` short-circuita no primeiro hit (detecção independente de
+  ordem/cap). Ganho ~345x em árvores pesadas. Guardas:
+  `tests/unit/test_walk_recursive_pruned.py`,
+  `tests/unit/test_glob_any_short_circuit.py`,
+  `tests/unit/test_init_count_needle_hits_skip_dirs.py`.
+- ✓ **BUG-2 (discovery não cacheado no checkpoint)** — fechado na **Onda 3**.
+  O discovery é cacheado em disco no replay mecânico; o init não re-paga o
+  custo de varredura (~220s) a cada replay.
+  Guarda: `tests/unit/test_init_discovery_cache.py`.
+- ✓ **BUG-PLAN-1 (recursão no gate de readiness)** — fechado na **Onda 3**.
+  O gate de readiness re-renderiza e pausa (exit 130) sem recursar — nunca
+  recursa no próprio gate ao re-checar prontidão.
+  Guarda: `tests/unit/test_plan_readiness_no_recursion.py`.
+- ✓ **Tema 6 — qa sem vetor impl-vs-spec** — fechado na **Onda 1b**. O `forge qa`
+  ganha o 5º vetor core `impl-vs-spec`: snapshota a impl real via os
+  `allowed_files` dos task contracts (`engine/utils/task_contract.py`) e roda o
+  auditor Phase-1 static `agents/qa-auditor-impl-vs-spec.md` confrontando a impl
+  contra a spec. Fecha o "qa red-teia contratos, não a impl". Guardas:
+  `tests/engine/qa/test_snapshot_impl.py`,
+  `tests/engine/qa/test_core_auditors_impl.py`,
+  `tests/engine/utils/test_task_contract.py`,
+  `tests/integration/test_qa_lifecycle_feature.py`. *(As outras duas faces do
+  Tema 6 — gates nativos e runtime/visual — têm spec escrita e impl deferida;
+  ver Follow-on.)*
+
+### Parciais
+
+- **BUG-1b (dedup `compose_backend_axes`)** — a 2ª chamada vive numa função W7.4
+  deferred/unused; não há mais o duplo-custo do step-5 no hot-path ativo, mas a
+  limpeza completa fica pendente. *Reentrar* ao tocar o caminho W7.4.
+
+### Abertos (backlog de remediação)
+
+Agrupado por prioridade. Plano de ataque por onda na spec
+`docs/superpowers/specs/2026-06-29-pilot-remediation-design.md`.
+
+**P0**
+
+- **Tema 6 — verificação inerte (o loop de correctness)** — o gap que deixa o
+  "verde" mentir. A face **qa sem vetor impl-vs-spec** foi fechada na **Onda 1b**
+  (ver Fechados acima). As duas faces restantes — verify "verde inerte"
+  (gates nativos: 6 stubs no-op + 4 built-in staged-blind) e o passo
+  runtime/visual — ganharam **spec escrita** nesta onda e têm impl deferida pras
+  suas próprias ondas/decisões; ver Follow-on.
+
+  *(BUG-5, BUG-2 e BUG-PLAN-1 — os outros P0 desta seção — foram fechados na
+  Onda 3; ver seção Fechados acima.)*
+
+**P1**
+
+- *(Todos os P1 da remediação — BUG-G2/MEM-4, BUG-STATUS-1/2, BUG-IMPL-2,
+  BUG-B — foram fechados na Onda 4; ver seção Fechados acima.)*
+
+**Follow-on (novos papercuts achados durante a remediação)**
+
+- **impl de gates-nativos (Tema 6, face 2)** — spec escrita em
+  `docs/superpowers/specs/2026-06-30-native-quality-gates-design.md`; a impl
+  (substituir os 6 stubs no-op + os 4 built-in staged-blind por gates nativos
+  com dentes) está PENDENTE e **pode exigir Decisão 33**. *Reentrar* em onda
+  própria, após brainstorm da decisão.
+- **impl de runtime/visual (Tema 6, face 3)** — spec escrita em
+  `docs/superpowers/specs/2026-06-30-runtime-visual-verification-design.md`; a
+  impl do passo de verificação runtime/visual está PENDENTE. *Reentrar* em onda
+  própria.
+- **forge upgrade ignora flags desconhecidas em silêncio** — `engine/upgrade.py`
+  (~L333): flags não-reconhecidas passam batido sem aviso (cosmético, sem
+  impacto de segurança; um typo de flag não dá feedback). *Reentrar* ao tocar o
+  parser de `upgrade`.
+- **discovery cache sem content-fingerprint** (Onda 3, BUG-2) — o cache de
+  discovery é invalidado pelo lifecycle de replay, não por um fingerprint do
+  conteúdo da árvore. É seguro no fluxo mecânico de replay (bounded pelo
+  lifecycle), mas um hardening futuro adicionaria fingerprint pra robustez fora
+  desse caminho. *Reentrar* se o cache de discovery passar a ser reusado fora
+  do replay mecânico.
+- **symlink-dir não-seguido por design** (Onda 3, BUG-5) — `_walk_recursive_pruned`
+  não segue diretórios via symlink (evita ciclos/escape de árvore). Há
+  divergência de comportamento documentada entre Python 3.11 e 3.12 nesse ponto;
+  a escolha é consciente. *Reentrar* se um consumidor real depender de inventory
+  através de symlink-dir.
+
+**P2 (polish — itens 16-21 do report)**
+
+- Progress feedback nos steps longos do init (backend ~86s, orphan ~75s).
+- graph "did-you-mean" no Q4 quando o módulo não casa.
+- evolve: tratar SIGPIPE/EOF no loop de render.
+- reconfigure: imprimir o dashboard só no 1º passo do loop.
+- `--help` reconhecido em todos os subcomandos (evolve, implement).
+- undo: exit 0 em no-op de `last`; raw: aviso de escopo no `rebuild-templates`.
+
+*Reentrar* os P2 dobrando nos pontos baratos de cada onda da spec.
+
 ## W-VENDOR — gaps pós Fase 1 Onda 3 (2026-06-25)
 
 - **M-001 (forge reconfigure/upgrade não re-vendoriza o mem)** — `forge init`

@@ -43,6 +43,7 @@ summary:
     info: 2
   by_vector:
     spec-vs-spec: 3
+    impl-vs-spec: 0
     coverage: 4
     chaos: 3
     validator-claim: 2
@@ -75,9 +76,9 @@ findings:
 - `summary.total_findings`: inteiro, igual a `len(findings)`.
 - `summary.by_severity`: keys obrigatórias `critical / high / medium /
   low / info`; soma deve igualar `total_findings`.
-- `summary.by_vector`: keys obrigatórias `spec-vs-spec / coverage /
-  chaos / validator-claim`; cards via `qa-extensions` podem adicionar
-  keys extras com nome do auditor.
+- `summary.by_vector`: keys obrigatórias `spec-vs-spec / impl-vs-spec /
+  coverage / chaos / validator-claim`; cards via `qa-extensions` podem
+  adicionar keys extras com nome do auditor.
 - `findings`: lista de objetos no shape de `qa-finding.md`. Ordem
   canônica: severity desc (critical → info), depois vector asc
   alfabético, depois `created_at` asc.

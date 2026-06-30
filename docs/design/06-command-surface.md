@@ -300,8 +300,22 @@ exige `feature <slug>`/`task TASK-NNNN`; `graph` exige `forge graph --json
 - `forge doctor --json` → `{scope: "full", overall_status, exit_code, categories:
   [{title, worst, checks: [{name, status, message, remediation}]}]}`. JSON mode é
   non-interactive: assume scope `full` (o ask de scope não pode pausar pra máquina).
-- `forge verify --json` → `{scope: {type, target}, overall, exit_code, validators:
-  [{name, status, duration_ms, message, paths, what_failed, where, why}]}`.
+- `forge verify --json` → `{scope: {type, target}, overall, exit_code,
+  infra_degraded, coverage_summary, validators: [{name, status, duration_ms,
+  message, paths, what_failed, where, why, coverage}]}`.
+  - `overall` ∈ `{pass, warn, incomplete, degraded, fail}`. Precedência do
+    agregado: `fail > warn > incomplete > pass`. `incomplete` = houve validator
+    `degraded` (infra off-contract / quebrado) e nenhum `fail`/`warn` — "verify
+    não pôde avaliar tudo"; é NÃO-bloqueante (não dispara block-forge-implement)
+    e distinto do `degraded` do contrato L1 verify-log (Onda 1, BUG-VERIFY-1).
+  - `infra_degraded` (int) = contagem de validators `degraded`, saliente no topo
+    do payload pro host branchar sem varrer `validators[]` — loud mesmo num run
+    warn/fail-misto onde `overall` carrega o veredito dominante.
+  - `coverage_summary` (BUG-VERIFY-2) = quebra honesta dos passes por classe de
+    cobertura: `{substantive, stub, staged-blind, opaque, degraded}` (contagens
+    inteiras; `degraded` é gêmeo separado, não classe de pass-coverage). Cada
+    validator carrega `coverage` (só preenchido em `status==pass`) — pro host não
+    tratar "verde" como garantia uniforme.
 - `forge memory <ação> --json` → cada subcomando repassa `--json` ao `mem`; o schema de
   saída casa com o do `mem` correspondente: `search <query>` → hits de `mem find`,
   `inspect [id]` → nota/stats de `mem get`/`mem stats`, `export [--budget N]` → briefing

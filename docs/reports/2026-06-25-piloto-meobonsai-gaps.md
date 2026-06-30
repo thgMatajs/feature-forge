@@ -473,3 +473,75 @@ casa: o forge já possui o blueprint da auditoria determinística (plan-auditor)
 e dar dentes reais aos gates. Com os 6 P0 endereçados, o forge sai de "demo
 IA-first que constrói features sob condução cuidadosa do host" para
 "orquestrador IA-first confiável em projeto real".
+
+## Status update — verificação empírica pós-merge Fase 1 (2026-06-29)
+
+> O corpo acima é o registro durável do piloto (2026-06-25) — não foi alterado.
+> Esta seção (append-only) registra o que mudou desde então, verificado contra
+> o código de **main pós-merge do PR#32** (campanha mem Fase 1, merge-commit
+> `03a9f9c`, 2026-06-29). A campanha mem fechou os temas de footprint/namespace
+> e memória; vários P0 que o report tratava como abertos hoje estão fechados.
+> O backlog ativo dos ABERTOS está catalogado em `docs/design/04-pending.md`
+> (seção "Piloto MeoBonsai 2026-06-25 — gaps"); o plano de ataque por ondas é
+> a spec `docs/superpowers/specs/2026-06-29-pilot-remediation-design.md`.
+
+### Resolvidos (verificado no código de main)
+
+- **BUG-A (doctor schema-version) — FECHADO.** O report tratava como ABERTO P0
+  (#2 das recomendações). Hoje `engine/doctor.py:440` aceita `{1,"1",1.3,"1.3"}`
+  E `engine/init.py` grava `schema-version: 1` (int) em todos os sites — o
+  desync init↔doctor é impossível. **Correção explícita ao corpo acima:** o
+  veredito "🔴 broken logo após init" não vale mais.
+- **Tema 7 / BUG-IMPL-1 (implement não avançava a DAG) — FECHADO.** O report
+  tratava como ABERTO P0 (#4) e como falha da proposta de valor central. Hoje
+  `engine/implement.py` tem `_pick_next_task()` keyed em status `done` (L374),
+  grafo de deps + detecção de ciclo (L361) e checkpoint persistindo `task-id`
+  resolvido (L142). **Correção explícita ao corpo acima:** o "orchestration
+  theater / preso em TASK-0001 / checkpoint `task-id: null`" não existe mais.
+- **BUG-MEM-1/2 (memory sub-intents inalcançáveis) — FECHADO.**
+  `engine/memory_cli.py` foi reescrito como dispatcher stateless arg-driven na
+  W-ROUTE 6a; sem menu interativo multi-passo, os 5/8 sub-intents inalcançáveis
+  sumiram.
+- **BUG-1 (init travava em monorepo por rglob sem poda) — FECHADO, com nuance.**
+  O report registra o fix na branch `fix/pilot-init-perf` (commit `4649d78`,
+  via `_walk_recursive_pruned`). Essa branch **NÃO foi mergeada**. O bug está
+  fechado em main por uma implementação diferente: filtro inline `_SKIP_DIRS`
+  em `engine/detection/_eval.py:72`. (O helper compartilhado `_walk_recursive_pruned`
+  segue pendente para os outros sites — ver BUG-5 abaixo.)
+
+### Parciais
+
+- **BUG-1b** — a 2ª chamada de `compose_backend_axes` vive numa função W7.4
+  deferred/unused; sem o duplo-custo ativo, limpeza completa pendente.
+- **BUG-QA-4** — SKILL.md cobre o intent loop, não os prompts de
+  qa/verify/memory/reconfigure/upgrade/undo.
+- **BUG-UPGRADE-1** — tem rollback automático, mas sem `--dry-run` nem guard de
+  branch.
+- **BUG-4/MEM-5** — `.gitignore` cobre `state/` + checkpoints; faltam `graph.db`,
+  `cards/`, `memory/`, `locks/`, `.memory-cli-checkpoint.yaml`.
+
+### Abertos (backlog de remediação)
+
+Catalogados em `docs/design/04-pending.md`, agrupados P0/P1/P2 com file:line e
+direção de fix. Em síntese: o track que o mem **não** toca — correctness
+(Tema 6, novo P0 #1: BUG-VERIFY-1/2), perf estrutural (BUG-5, BUG-2),
+orquestração do gate de readiness (BUG-PLAN-1), e o hardening P1
+(BUG-STATUS-1/2, BUG-G2, BUG-IMPL-2, BUG-B). A spec
+`docs/superpowers/specs/2026-06-29-pilot-remediation-design.md` os organiza em
+ondas, liderado pelo loop de correctness.
+
+### Mapeamento tema → status (pós-merge)
+
+- Tema 1 (host-vs-engine, gates com dentes): mem VIABILIZOU (rules curadas), mas
+  os gates fortes ainda não foram construídos → **ABERTO** (Onda 2 da spec).
+- Tema 2 (footprint/namespace): **✅ fechado** pela campanha mem (Fase 0+1).
+- Tema 3 (assimilação de convenção): 🟡 substrato pronto; curadoria ativa = mem
+  Fase 2.
+- Tema 4 (papercuts do intent protocol): parcial — BUG-G2 aberto; BUG-MEM
+  resolvido; BUG-QA-4 parcial.
+- Tema 5 (performance): 🟡 BUG-1 fechado em main (não via a branch);
+  BUG-1b parcial; BUG-5/BUG-2 abertos.
+- Tema 6 (verificação inerte): **ABERTO — P0 #1.**
+- Tema 7 (orquestração DAG): **✅ resolvido** (BUG-IMPL-1).
+- Tema 8 (segurança de comando destrutivo): 🟡 BUG-UPGRADE-1 parcial; abertos os
+  no-op de undo/raw.

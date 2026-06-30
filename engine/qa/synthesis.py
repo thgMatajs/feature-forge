@@ -638,11 +638,12 @@ def synthesize(draft_findings: list[dict[str, Any]]) -> SynthesisResult:
         if sev in _SEVERITY_KEYS:
             by_sev[sev] += 1
 
-    # Inicializa todos os 4 vectors core com 0 — validate_qa_report exige
-    # presença das 4 keys (_REQUIRED_VECTOR_KEYS.issubset). Sem isso, run
+    # Inicializa todos os 5 vectors core com 0 — validate_qa_report exige
+    # presença das 5 keys (_REQUIRED_VECTOR_KEYS.issubset). Sem isso, run
     # com zero findings em algum vector quebraria a validação downstream.
     by_vec: dict[str, int] = {
         "spec-vs-spec": 0,
+        "impl-vs-spec": 0,
         "coverage": 0,
         "chaos": 0,
         "validator-claim": 0,

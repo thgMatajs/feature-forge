@@ -86,6 +86,9 @@ Categoria do problema. Enum strict canônico:
 
 - `spec-vs-spec` — contradição direta entre dois specs do mesmo nível
   (ex: BDD descreve campo X, data-contract não declara campo X).
+- `impl-vs-spec` — divergência entre a implementação real (conteúdo dos
+  `allowed_files` snapshotados em `snapshot/impl/`) e um spec correto (ex:
+  data-contract exige validação de `email`, a impl aceita sem validar).
 - `coverage` — cobertura faltante em path canônico (estado UI sem BDD,
   campo obrigatório sem validation declarada).
 - `chaos` — falha exposta por fixture sintético em path não-canônico
@@ -164,7 +167,7 @@ Material que prova o finding. Subkeys:
   resolvido. Presente quando `sandbox_result` está presente.
 - `auditor` (string, required) — nome do auditor que produziu o
   finding draft (ex: `validator-claim`, `chaos`, `spec-vs-spec`,
-  `coverage`, ou nome custom via `qa-extensions`).
+  `impl-vs-spec`, `coverage`, ou nome custom via `qa-extensions`).
 - `auditor_reasoning` (string, required) — explicação do auditor
   (geralmente LLM) sobre por que o resultado observado configura
   problema. Permite revisão humana sem re-rodar o auditor.
