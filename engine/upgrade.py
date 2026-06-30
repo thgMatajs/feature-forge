@@ -332,4 +332,16 @@ def run(argv: list[str]) -> int:
 
     force = "--force" in argv
     dry_run = "--dry-run" in argv
+
+    # B1 (Fase 1): flag não-reconhecida não passa mais em silêncio. Aviso
+    # mentor-calmo (não-fatal) — segue com as flags válidas; um token errado é
+    # quase sempre typo, abortar seria fricção maior que a pista.
+    _known = {"--force", "--dry-run", "--help", "-h"}
+    unknown = [tok for tok in argv if tok.startswith("-") and tok not in _known]
+    for tok in unknown:
+        sys.stderr.write(
+            f"forge upgrade: flag '{tok}' não reconhecida — ignorando. "
+            "Flags válidas: --dry-run, --force (veja `forge upgrade --help`).\n"
+        )
+
     return run_upgrade(force=force, dry_run=dry_run)

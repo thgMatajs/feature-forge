@@ -7,6 +7,10 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- `forge upgrade` avisa (não-fatal, stderr) em flag desconhecida em vez de ignorá-la em silêncio (Fase 1 Track B, B1).
+
 ### Changed (load-bearing)
 
 - Nova decisão 33: o engine pode executar binários externos do projeto
