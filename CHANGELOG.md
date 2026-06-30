@@ -149,6 +149,19 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Fixed
 
+- `test_rule_file_linked_in_claude_md` alinhado ao modelo de índice da Fase 0
+  (rules indexadas em `.claude/rules/README.md`, `CLAUDE.md` só Tier-0). O
+  teste codificava o invariante antigo (link literal de cada rule na
+  `CLAUDE.md`) e quebrava em 10 rules depois que a `CLAUDE.md` foi enxugada
+  pro ponteiro na campanha mem (cef24d5). Agora o invariante é: cada rule é
+  referenciada na `CLAUDE.md` (path-anchored / link — sem match por
+  substring) OU genuinamente indexada na tabela Map do README (parse
+  estrutural por LINHA, não substring solta). Elimina o falso-positivo do
+  `decisions.md` (passava por acidente via `01-decisions.md`) — agora passa
+  legitimamente via índice. Adicionados guarda anti-near-inert (rule fictício
+  DEVE falhar), consistência EXPECTED_RULES↔disco↔README, e `plan-auditor.md`
+  (que faltava em EXPECTED_RULES). Só-teste — sem mudança de comportamento.
+
 - Hook SessionStart (`.claude/hooks/session-start-orientation.sh`) resiliente
   a `created_at` malformado no JSONL do mem (cross-AI bot PR #32): a seleção
   da sessão mais recente agora valida que `created_at` é uma string ISO
