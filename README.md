@@ -195,7 +195,7 @@ explicitamente.
   presets/kmp-mobile/                   canonical preset v1
   validators/                           22 validators + 3 helpers (inclui check_cyclomatic_complexity + check_secrets + check_unfilled_placeholders + validate_extension_feature)
   hooks/                                9 hooks + reuse incremental script
-  tests/                                rapid 1946 / integration 222 / e2e 31 (unit + integration + e2e)
+  tests/                                rapid 2313 / integration 258 / e2e 31 (unit + integration + e2e)
 
 [per project install via `forge init`]
 {project}/.claude/forge/                sub-namespace forge (v1.3+)

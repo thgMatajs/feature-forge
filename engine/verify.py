@@ -61,6 +61,11 @@ from engine.utils.checkpoint_io import (
     save_yaml_checkpoint as _save_yaml_checkpoint_io,
 )
 from engine.utils.iso import utc_now_iso
+from engine.external_exec import (
+    ExternalToolResult,
+    resolve_invocation,
+    run_external_tool,
+)
 
 _DEFAULT_RUNS_ON = "verify-task"
 
@@ -104,6 +109,17 @@ class _ValidatorResult:
 # "opaque" pro legado não-declarado. Ordem estável p/ render e p/ as chaves
 # do coverage_summary no --json.
 _COVERAGE_CLASSES: tuple[str, ...] = ("substantive", "stub", "staged-blind", "opaque")
+
+# Track A (Tema 6) — mapping ExternalToolResult.status → _ValidatorResult.status.
+# LOCKED: violação reportada (exit≠0, tool rodou) é INFORMATIVA (warn), não fail.
+# Subir warn→fail é opt-in por gate (`fail-on-violation: true`). Não cria
+# vermelho inerte — espelha a lição do Tema 6 (verde inerte mente).
+_EXTERNAL_STATUS_MAP: dict[str, str] = {
+    "pass": "pass",
+    "fail": "warn",
+    "degraded": "degraded",
+    "skipped": "skipped",
+}
 
 
 # ── Checkpoint (DRIFT-1 W2.T3b — intent-resume, outcome C) ───────────────────
@@ -412,6 +428,10 @@ def run_scope(
         scope_type=scope_type,
         scope_target=scope_target,
     )
+    # Track A (Tema 6): gates de execução externa (Decisão 33). Mesclados na
+    # lista `results` ANTES do overall → fluem natural pro overall/coverage/
+    # infra_degraded/JSON/render sem refactor do cascade.
+    results = results + _run_native_gates(config, project_root, interactive=interactive)
     if interactive:
         _render_summary(results)
 
@@ -1161,6 +1181,163 @@ def _extract_json_tail(stdout: str) -> dict | None:
     except json.JSONDecodeError:
         return None
     return data if isinstance(data, dict) else None
+
+
+# ── Native gates (Tema 6, Decisão 33) ────────────────────────────────────────
+
+
+def _native_gate_block(config: dict) -> dict:
+    """Bloco `native-gates` do config; `{}` se ausente/malformado."""
+    block = config.get("native-gates")
+    return block if isinstance(block, dict) else {}
+
+
+def _ktlint_candidates(config: dict, project_root: Path) -> list[list[str] | str]:
+    """Candidatos de invocação do ktlint, em ordem de preferência.
+
+    1. ./gradlew ktlintCheck (wrapper — versão fixada, preferido).
+    2. native-gates.ktlint.bin (str → [bin]; argv-lista → inalterado).
+    3. ktlint (which no PATH).
+
+    Nível 1 mapeia só exit code — candidatos mínimos, sem `--reporter=json`
+    (parsing de saída estruturada é follow-on de Nível 2).
+    """
+    candidates: list[list[str] | str] = [["./gradlew", "ktlintCheck"]]
+    ktlint_cfg = _native_gate_block(config).get("ktlint")
+    if isinstance(ktlint_cfg, dict):
+        bin_value = ktlint_cfg.get("bin")
+        if isinstance(bin_value, str) and bin_value.strip():
+            candidates.append(bin_value.strip())
+        elif isinstance(bin_value, list) and bin_value:
+            candidates.append([str(x) for x in bin_value])
+    candidates.append("ktlint")
+    return candidates
+
+
+def _gate_cfg(config: dict, gate: str) -> dict:
+    """Sub-bloco `native-gates.<gate>`; `{}` se ausente."""
+    sub = _native_gate_block(config).get(gate)
+    return sub if isinstance(sub, dict) else {}
+
+
+def _gate_enabled(config: dict, gate: str) -> bool:
+    """Default True — ausência do tool ainda vira skipped no resolve."""
+    return bool(_gate_cfg(config, gate).get("enabled", True))
+
+
+def _gate_timeout(config: dict, gate: str, *, default: int = 120) -> int:
+    """Timeout (s) do gate; estouro → degraded. `default` vem do call-site.
+
+    ktlint usa o default 120; o build passa `default=600`. A função não
+    ramifica por gate — o call-site escolhe o default correto.
+    """
+    raw = _gate_cfg(config, gate).get("timeout", default)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def _gate_fail_on_violation(config: dict, gate: str) -> bool:
+    """Opt-in: True sobe warn→fail. Default False (informativo)."""
+    return bool(_gate_cfg(config, gate).get("fail-on-violation", False))
+
+
+def _map_external_result(
+    res: ExternalToolResult,
+    *,
+    gate_name: str,
+    fail_on_violation: bool,
+) -> _ValidatorResult:
+    """ExternalToolResult → _ValidatorResult (mapping LOCKED).
+
+    Só chamada quando o tool RESOLVEU e rodou (ausência é tratada antes, no
+    caller, via _skipped_gate_result — por isso NÃO há param `absent_message`).
+    - status pelo _EXTERNAL_STATUS_MAP; `warn` vira `fail` só com opt-in.
+    - coverage: pass externo é 'substantive' (rodou tool real sobre artefatos
+      reais — não é stub/staged-blind/opaque). Não-pass não tem coverage.
+    """
+    mapped = _EXTERNAL_STATUS_MAP.get(res.status, "degraded")
+    if mapped == "warn" and fail_on_violation:
+        mapped = "fail"
+
+    message = ""
+    if res.status == "degraded":
+        message = res.skipped_reason or "gate não terminou — classificado como degraded"
+    elif res.status == "fail":
+        tail = (res.stdout or res.stderr or "").strip().splitlines()
+        message = (
+            f"{gate_name} acusou violações (informativo; não reprova por default)."
+            + (f" {tail[-1][:80]}" if tail else "")
+        )
+
+    return _ValidatorResult(
+        name=gate_name,
+        status=mapped,
+        duration_ms=res.duration_ms,
+        message=message,
+        coverage="substantive" if mapped == "pass" else "",
+    )
+
+
+def _skipped_gate_result(gate_name: str, message: str) -> _ValidatorResult:
+    """Gate ausente → skipped com mensagem mentor-calmo nomeando como habilitar."""
+    return _ValidatorResult(name=gate_name, status="skipped", message=message)
+
+
+def _run_ktlint_gate(config: dict, project_root: Path) -> list[_ValidatorResult]:
+    if not _gate_enabled(config, "ktlint"):
+        return []
+    argv = resolve_invocation(_ktlint_candidates(config, project_root), project_root)
+    if argv is None:
+        return [
+            _skipped_gate_result(
+                "ktlint",
+                "Gate nativo `ktlint` não encontrado (nem `./gradlew ktlintCheck`, "
+                "nem `native-gates.ktlint.bin`, nem no PATH). Pulei este gate — a "
+                "feature não foi reprovada por isso. Pra habilitá-lo, instale o "
+                "ktlint ou aponte o binário em `forge-config.yaml`.",
+            )
+        ]
+    res = run_external_tool(
+        argv, project_root, timeout=_gate_timeout(config, "ktlint")
+    )
+    return [
+        _map_external_result(
+            res,
+            gate_name="ktlint",
+            fail_on_violation=_gate_fail_on_violation(config, "ktlint"),
+        )
+    ]
+
+
+def _run_native_gates(
+    config: dict,
+    project_root: Path,
+    *,
+    interactive: bool,
+) -> list[_ValidatorResult]:
+    """Gates de execução externa (Decisão 33). Ver contrato no plano §1.
+
+    Gates cobertos (Tema 6, Nível 1):
+      - ktlint  (A1) — `./gradlew ktlintCheck` em modo check, read-only.
+
+    Guard greenfield: se `config` é vazio (mid-init, config ainda não escrito),
+    devolve `[]` — não tenta rodar gate sem config. Os callers de run_scope
+    mesclam o retorno na lista `results` ANTES do cálculo do `overall`.
+
+    Cada gate é INFORMATIVO por default: violação → `warn` (exit do verify fica 0).
+    Opt-in `fail-on-violation: true` por gate sobe `warn → fail`.
+    """
+    if not config:
+        # Guard greenfield: config vazio (mid-init) → não roda gate algum.
+        return []
+
+    results: list[_ValidatorResult] = []
+    results.extend(_run_ktlint_gate(config, project_root))
+    # A2 acrescenta aqui: results.extend(_run_build_gates(config, project_root))
+    return results
 
 
 # ── Rendering ────────────────────────────────────────────────────────────────

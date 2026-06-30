@@ -145,12 +145,11 @@ Agrupado por prioridade. Plano de ataque por onda na spec
 
 **Follow-on (novos papercuts achados durante a remediação)**
 
-- **impl de gates-nativos (Tema 6, face 2)** — spec escrita em
-  `docs/superpowers/specs/2026-06-30-native-quality-gates-design.md`; a impl
-  (substituir os 6 stubs no-op + os 4 built-in staged-blind por gates nativos
-  com dentes) está PENDENTE. A **Decisão 33** (fronteira de execução externa,
-  distinta do sandbox da Decisão 30) foi LOCKED na Fase 0 da campanha AI-first —
-  destrava a impl. *Reentrar* em onda própria (Fase 1).
+- **impl de gates-nativos (Tema 6, face 2)** — **PARCIALMENTE FECHADA** na Fase
+  1 Track A1: gate ktlint (`./gradlew ktlintCheck`) implementado em
+  `engine/verify.py::_run_native_gates` / `_run_ktlint_gate`; guarda em
+  `tests/engine/test_verify_native_gates.py`. A face build-only fecha em A2;
+  a marcação final em "Fechados" das duas faces consolida em A2 Step 5.
 - **impl de runtime/visual (Tema 6, face 3)** — spec escrita em
   `docs/superpowers/specs/2026-06-30-runtime-visual-verification-design.md`; a
   impl do passo de verificação runtime/visual está PENDENTE. *Reentrar* em onda

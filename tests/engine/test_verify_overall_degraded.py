@@ -58,6 +58,10 @@ def _run_json_with_results(monkeypatch, project_root, results):
         lambda *a, **k: specs,  # não-vazio: evita o early-return all-pass
     )
     monkeypatch.setattr(verify, "_run_cascade", lambda *a, **k: results)
+    # Isola o teste dos gates nativos (A1/A2): estes testes exercitam o cálculo
+    # de overall/coverage/payload com resultados de cascade fixos — não devem
+    # variar pelo estado da toolchain (ktlint/gradlew) no ambiente de teste.
+    monkeypatch.setattr(verify, "_run_native_gates", lambda *a, **k: [])
 
     token = om.set_output_mode(om.OutputMode.JSON)
     try:

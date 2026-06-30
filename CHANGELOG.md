@@ -51,6 +51,15 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Added
 
+- Native gate ktlint no `forge verify` (Tema 6, Decisão 33, Fase 1 Track A1):
+  `./gradlew ktlintCheck` em modo check read-only. Violação é informativa (`warn`,
+  exit 0) por default; opt-in `fail-on-violation: true` sobe `warn→fail`; tool
+  ausente → `skipped` (skip-se-ausente é requisito); timeout → `degraded`. Config
+  em `native-gates.ktlint` (`docs/schemas/forge-config.md §native-gates`).
+  Implementado em `engine/verify.py::_run_native_gates` / `_run_ktlint_gate`;
+  guarda `tests/engine/test_verify_native_gates.py` (7 testes). (A2 build-only
+  fecha em Fase 1 Track A2.)
+
 - `engine/external_exec.py` — fronteira de execução externa genérica (Decisão
   33): `run_external_tool(argv, project_root, *, timeout)` roda binário do
   consumidor com env reduzido (`build_safe_env`), `check=False`, timeout com
