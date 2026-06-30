@@ -74,6 +74,23 @@ status correspondente no fim do próprio report.
 - ✓ **BUG-QA-4 (SKILL.md não cobre todos os verbos)** — fechado na **Onda 4**.
   `skills/feature-forge/SKILL.md` mapeia todos os verbos dirigíveis.
   Guarda: `tests/unit/test_skill_md_verbs.py`.
+- ✓ **BUG-5 (rglob sem poda em hot-path de inventory)** — fechado na **Onda 3**.
+  Helper compartilhado `_walk_recursive_pruned`/`_lazy` poda diretórios na
+  descida da árvore (não mais `rglob` cru) e todos os sites de inventory
+  (`design_system.py`, `conventions.py`, `i18n.py`) passaram a usá-lo;
+  `_glob_any` short-circuita no primeiro hit (detecção independente de
+  ordem/cap). Ganho ~345x em árvores pesadas. Guardas:
+  `tests/unit/test_walk_recursive_pruned.py`,
+  `tests/unit/test_glob_any_short_circuit.py`,
+  `tests/unit/test_init_count_needle_hits_skip_dirs.py`.
+- ✓ **BUG-2 (discovery não cacheado no checkpoint)** — fechado na **Onda 3**.
+  O discovery é cacheado em disco no replay mecânico; o init não re-paga o
+  custo de varredura (~220s) a cada replay.
+  Guarda: `tests/unit/test_init_discovery_cache.py`.
+- ✓ **BUG-PLAN-1 (recursão no gate de readiness)** — fechado na **Onda 3**.
+  O gate de readiness re-renderiza e pausa (exit 130) sem recursar — nunca
+  recursa no próprio gate ao re-checar prontidão.
+  Guarda: `tests/unit/test_plan_readiness_no_recursion.py`.
 
 ### Parciais
 
@@ -92,17 +109,9 @@ Agrupado por prioridade. Plano de ataque por onda na spec
   inerte" (6 stubs no-op + 4 built-in staged-blind), qa sem vetor impl-vs-spec,
   nenhum passo runtime/visual. É o gap que deixa o "verde" mentir — **novo P0 #1**
   e líder da spec (Onda 1). *Reentrar* via Onda 1.
-- **BUG-5 (rglob sem poda em hot-path de inventory)** —
-  `engine/inventory/design_system.py:444`, `conventions.py:308`, `i18n.py:101`
-  (rglob cru antes do skip). Fix: extrair helper compartilhado
-  `_walk_recursive_pruned` e trocar todos os sites (reuso-first — não duplicar).
-  (Onda 3.)
-- **BUG-2 (discovery não cacheado no checkpoint)** — `engine/init.py:190`
-  re-roda ~220s a cada invocação (~18 min em 5 invocações). Fix: cachear o
-  resultado de discovery no checkpoint e reusar com response pendente. (Onda 3.)
-- **BUG-PLAN-1 (recursão no gate de readiness)** — `engine/plan.py:1058`: path A
-  recursa síncrono → RecursionError (~979 níveis, 1.3MB stdout). Fix:
-  re-renderizar + PAUSAR (exit 2), nunca recursar. (Onda 3.)
+
+  *(BUG-5, BUG-2 e BUG-PLAN-1 — os outros P0 desta seção — foram fechados na
+  Onda 3; ver seção Fechados acima.)*
 
 **P1**
 
@@ -115,6 +124,17 @@ Agrupado por prioridade. Plano de ataque por onda na spec
   (~L333): flags não-reconhecidas passam batido sem aviso (cosmético, sem
   impacto de segurança; um typo de flag não dá feedback). *Reentrar* ao tocar o
   parser de `upgrade`.
+- **discovery cache sem content-fingerprint** (Onda 3, BUG-2) — o cache de
+  discovery é invalidado pelo lifecycle de replay, não por um fingerprint do
+  conteúdo da árvore. É seguro no fluxo mecânico de replay (bounded pelo
+  lifecycle), mas um hardening futuro adicionaria fingerprint pra robustez fora
+  desse caminho. *Reentrar* se o cache de discovery passar a ser reusado fora
+  do replay mecânico.
+- **symlink-dir não-seguido por design** (Onda 3, BUG-5) — `_walk_recursive_pruned`
+  não segue diretórios via symlink (evita ciclos/escape de árvore). Há
+  divergência de comportamento documentada entre Python 3.11 e 3.12 nesse ponto;
+  a escolha é consciente. *Reentrar* se um consumidor real depender de inventory
+  através de symlink-dir.
 
 **P2 (polish — itens 16-21 do report)**
 

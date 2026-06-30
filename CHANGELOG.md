@@ -223,6 +223,18 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
     help + SIGPIPE; escopo do `raw`; dashboard do `reconfigure`; help do
     `implement`.
 
+- P0s estruturais (Onda 3 da remediação do piloto MeoBonsai):
+  - **BUG-5** — `_walk_recursive_pruned`/`_lazy`: a poda de diretórios acontece
+    na descida da árvore (não mais `rglob` cru no hot-path de discovery), o que
+    elimina a varredura de subárvores ignoradas. Em árvores pesadas o ganho
+    medido foi ~345x. `_glob_any` short-circuita no primeiro hit — a detecção
+    fica independente de ordem de iteração e de cap.
+  - **BUG-2** — o discovery passa a ser cacheado em disco no replay mecânico:
+    o init não re-paga o custo de varredura (~220s no piloto) a cada replay.
+  - **BUG-PLAN-1** — o gate de readiness do `forge plan` re-renderiza e pausa
+    (exit 130) sem recursar; antes recursava no próprio gate ao re-checar
+    prontidão.
+
 - Hook SessionStart (`.claude/hooks/session-start-orientation.sh`) resiliente
   a `created_at` malformado no JSONL do mem (cross-AI bot PR #32): a seleção
   da sessão mais recente agora valida que `created_at` é uma string ISO
