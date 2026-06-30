@@ -383,6 +383,8 @@ def run_scope(
                 "scope": {"type": scope_type, "target": scope_target or None},
                 "overall": "pass",
                 "exit_code": 0,
+                # WR-02: shape estável — sem validators não há infra degradada.
+                "infra_degraded": 0,
                 # T3: shape estável — coverage_summary presente mesmo sem
                 # validators (todas as classes zeradas).
                 "coverage_summary": _coverage_breakdown([]),
@@ -418,7 +420,24 @@ def run_scope(
     hard_fail = next((r for r in results if r.status == "fail"), None)
     warnings_list = [r.name for r in results if r.status == "warn"]
     hard_fails = [r.name for r in results if r.status == "fail"]
-    overall = "fail" if hard_fail else ("warn" if warnings_list else "pass")
+    degraded_list = [r.name for r in results if r.status == "degraded"]
+    # WR-02 (fix-forward) — gêmeo "cega o overall" do BUG-VERIFY-1: um run com
+    # `degraded` (infra off-contract) NÃO pode reportar `overall=pass` silencioso.
+    # Quando há degraded e nenhum fail/warn, o overall vira `degraded` — sinal
+    # distinto que o host IA-first lê como "nem tudo foi verificado de fato".
+    #
+    # INVARIANTE PRESERVADA (H-001 + Decisão 23): `degraded` continua NÃO sendo
+    # `fail` — não halta a cascade e NÃO vira hard-fail de exit-code. Infra
+    # quebrada ≠ código reprovado, então o exit-code segue 0 (só `fail` → exit 1).
+    # `fail`/`warn` têm precedência sobre `degraded` no rótulo do overall (um
+    # fail genuíno é o veredito dominante); a saliência de degraded num run
+    # warn/fail-misto fica garantida pelo campo `infra_degraded` do payload.
+    overall = (
+        "fail" if hard_fail
+        else "warn" if warnings_list
+        else "degraded" if degraded_list
+        else "pass"
+    )
 
     _write_verify_log_entry(
         project_root,
@@ -440,6 +459,10 @@ def run_scope(
             "scope": {"type": scope_type, "target": scope_target or None},
             "overall": overall,
             "exit_code": (1 if hard_fail is not None else 0),
+            # WR-02: contagem saliente de infra degradada no topo do payload, pra
+            # o host branchar sem varrer `validators[]`. Loud mesmo num run
+            # warn/fail-misto (onde `overall` carrega o veredito dominante).
+            "infra_degraded": len(degraded_list),
             # BUG-VERIFY-2 (T3): sumário honesto de cobertura — distingue
             # pass-substantivo de stub-no-op / staged-blind / opaque pro host
             # IA-first não tratar "verde" como garantia que não existe.
@@ -1076,13 +1099,21 @@ def _normalize_coverage(raw: object) -> str:
 
 
 def _coverage_breakdown(results: list[_ValidatorResult]) -> dict[str, int]:
-    """Conta os PASSES por classe de cobertura (ACK M-001).
+    """Conta os PASSES por classe de cobertura (ACK M-001) + os degradados (WR-02).
 
-    Só `status == "pass"` entra — warn/fail/degraded/skipped não têm classe de
-    cobertura. Retorna sempre as 4 chaves canônicas (zeros inclusos) pra um
-    shape estável no --json e no render."""
+    As 4 chaves canônicas (`_COVERAGE_CLASSES`) contam só `status == "pass"` —
+    warn/fail/skipped não têm classe de cobertura. A chave `degraded` (gêmeo do
+    overall, WR-02) conta os validators degradados pra que um run all-degraded
+    exiba "0 substantivos / N degradados" em vez de um zero mudo que parece
+    "nada a verificar = ok". `degraded` NÃO é classe de pass-coverage — fica
+    numa chave separada pra não poluir a soma dos passes. Shape estável no
+    --json e no render (zeros inclusos)."""
     breakdown = {cls: 0 for cls in _COVERAGE_CLASSES}
+    breakdown["degraded"] = 0
     for r in results:
+        if r.status == "degraded":
+            breakdown["degraded"] += 1
+            continue
         if r.status != "pass":
             continue
         cls = r.coverage if r.coverage in breakdown else "opaque"
