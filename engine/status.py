@@ -454,22 +454,34 @@ _GIT_DRIFT_STATES = {"implementing", "verifying", "planning", "planned"}
 
 
 def _git_feature_commits(project_root: Path, slug: str) -> int | None:
-    """Count commits on HEAD touching any path containing the feature slug.
+    """Count commits on HEAD touching CODE paths containing the feature slug.
 
     BUG-STATUS-1: ``forge status`` was forge-faithful but git-blind. This is a
     PURE READ — only ``git log`` (never a mutating subcommand). Returns ``None``
     when the project is not a git repo (or git is unavailable), so the caller
     can omit the git block honestly instead of inventing a count.
 
-    The pathspec ``*<slug>*`` matches commits that touched feature-scoped paths
-    (e.g. ``src/<slug>/…`` or ``.planning/qa/<slug>/…``); slug is sanitised to
-    a git pathspec literal by rejecting empty/whitespace.
+    MED-01: the pathspec ``*<slug>*`` alone double-counted — it matched BOTH
+    ``src/<slug>/…`` AND ``.planning/qa/<slug>/…`` / ``.claude/.../<slug>``, so a
+    commit touching only planning/qa artefacts inflated ``feature_commits`` (a
+    signal meant to track CODE work). We exclude the planning/claude artefact
+    trees via negative pathspecs (``:(exclude)``) so the count reflects real
+    code commits. Slug is sanitised to a git pathspec literal by rejecting
+    empty/whitespace.
     """
     if not slug or not slug.strip():
         return None
     try:
         proc = subprocess.run(
-            ["git", "log", "--format=%H", "--", f"*{slug}*"],
+            [
+                "git",
+                "log",
+                "--format=%H",
+                "--",
+                f"*{slug}*",
+                ":(exclude).planning/**",
+                ":(exclude).claude/**",
+            ],
             cwd=project_root,
             capture_output=True,
             text=True,

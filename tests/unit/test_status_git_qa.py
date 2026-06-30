@@ -147,6 +147,65 @@ def test_status_qa_verdict_picks_most_recent_run(tmp_path: Path, capsys, monkeyp
     assert fp.get("qa_verdict") == "PASS", "deveria ler o verdict da run mais recente"
 
 
+def test_git_commits_not_double_counted_across_src_and_qa(tmp_path: Path) -> None:
+    """MED-01: o pathspec ``*<slug>*`` casava src E .planning/qa do mesmo slug,
+    double-contando. Um commit que toca só planning/qa NÃO é commit de código
+    da feature — deve ser excluído da contagem.
+
+    Cenário: 1 commit de código (src/<slug>) + 1 commit só de planning/qa do
+    mesmo slug. A contagem de commits de CÓDIGO deve ser 1, não 2.
+    """
+    slug = "lembrete-rega"
+    _init_git_repo(tmp_path)
+
+    # Commit 1: código real da feature.
+    feat_dir = tmp_path / "src" / slug
+    feat_dir.mkdir(parents=True)
+    (feat_dir / "Screen.kt").write_text("// code\n", encoding="utf-8")
+    _git(["add", "-A"], tmp_path)
+    _git(["commit", "-qm", f"feat({slug}): code"], tmp_path)
+
+    # Commit 2: só artefatos de planning/qa do mesmo slug (NÃO é código).
+    qa_dir = tmp_path / ".planning" / "qa" / slug
+    qa_dir.mkdir(parents=True)
+    (qa_dir / "qa-report.json").write_text("{}\n", encoding="utf-8")
+    _git(["add", "-A"], tmp_path)
+    _git(["commit", "-qm", f"qa({slug}): report"], tmp_path)
+
+    n = status._git_feature_commits(tmp_path, slug)
+    assert n == 1, (
+        f"esperava 1 commit de código (não double-contar planning/qa), vi {n}"
+    )
+
+
+def test_qa_verdict_most_recent_run_without_verdict_reports_none(
+    tmp_path: Path,
+) -> None:
+    """LOW-01: se a run mais recente existe mas não tem verdict (run em voo /
+    report parcial), NÃO cair pro verdict de uma run anterior — devolver None
+    (= "ainda sem veredito"), não um PASS/BLOCK estale rotulado como atual.
+    """
+    slug = "lembrete-rega"
+    qa_dir = tmp_path / ".planning" / "qa" / slug
+    older = qa_dir / "2026-06-28T10-00-00Z-aaaa"
+    newer = qa_dir / "2026-06-29T10-00-00Z-bbbb"  # mais recente, sem verdict
+    older.mkdir(parents=True)
+    newer.mkdir(parents=True)
+    (older / "qa-report.json").write_text(
+        json.dumps({"verdict": "PASS"}), encoding="utf-8"
+    )
+    # run mais recente: report sem campo verdict (run em voo)
+    (newer / "qa-report.json").write_text(
+        json.dumps({"schema_version": 1, "findings": []}), encoding="utf-8"
+    )
+
+    verdict = status._read_qa_verdict(tmp_path, slug)
+    assert verdict is None, (
+        f"run mais recente sem verdict deveria reportar None, não o verdict velho "
+        f"({verdict!r})"
+    )
+
+
 def test_status_does_not_mutate_git(tmp_path: Path, capsys, monkeypatch) -> None:
     """Pure-read: rodar status não muda o HEAD nem cria/altera commits."""
     slug = "lembrete-rega"
