@@ -265,3 +265,49 @@ def test_append_verify_log_degraded_still_requires_warnings(
     }
     with pytest.raises(L1MemoryError):
         append_verify_log(slug, tmp_forge_project, entry)
+
+
+# ── WR-04: precedência fail > warn > incomplete > pass ────────────────────────
+
+
+def test_precedence_fail_dominates_infra_degraded(
+    tmp_forge_project, capsys, monkeypatch
+) -> None:
+    """WR-04: run [fail, infra-degraded] → overall==`fail`, exit_code==1.
+
+    Um fail genuíno é o veredito dominante; a presença de infra degradada NÃO
+    rebaixa o overall pra `incomplete`. exit_code segue 1 (código reprovou)."""
+    results = [
+        _ValidatorResult(name="hard", status="fail", what_failed="boom"),
+        _ValidatorResult(name="koin", status="degraded", message="off-contract"),
+    ]
+    code, _ = _run_json_with_results(monkeypatch, tmp_forge_project, results)
+    payload = _capture_payload(capsys)
+
+    assert payload["overall"] == "fail"
+    assert payload["exit_code"] == 1
+    assert code == 1
+    # A saliência de infra degradada permanece no payload mesmo num run fail.
+    assert payload.get("infra_degraded") == 1
+
+
+def test_precedence_warn_dominates_infra_degraded(
+    tmp_forge_project, capsys, monkeypatch
+) -> None:
+    """WR-04: run [warn, infra-degraded] → overall==`warn`, infra_degraded saliente.
+
+    Warn (ressalva de código) tem precedência sobre `incomplete` (infra); o
+    overall carrega `warn`, mas a infra degradada continua visível no topo."""
+    results = [
+        _ValidatorResult(name="soft", status="warn", message="ressalva"),
+        _ValidatorResult(name="koin", status="degraded", message="off-contract"),
+    ]
+    code, _ = _run_json_with_results(monkeypatch, tmp_forge_project, results)
+    payload = _capture_payload(capsys)
+
+    assert payload["overall"] == "warn"
+    # warn ≠ fail → exit 0.
+    assert code == 0
+    assert payload["exit_code"] == 0
+    # infra degradada ainda saliente no topo (não some sob o veredito warn).
+    assert payload.get("infra_degraded") == 1
