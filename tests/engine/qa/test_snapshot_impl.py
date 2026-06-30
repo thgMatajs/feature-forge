@@ -123,3 +123,75 @@ def test_snapshot_impl_traversal_real_escape_is_blocked(tmp_path):
     impl_resolved = impl_dir.resolve()
     for dest in copied:
         assert impl_resolved in dest.resolve().parents
+
+
+def test_snapshot_impl_absolute_path_outside_root_is_blocked(tmp_path):
+    """MED-002 (a) — H-001 ADVERSARIAL: um allowed_files com path ABSOLUTO
+    fora do project_root DEVE ser rejeitado. `project_root / "/abs"` resolve
+    pro path absoluto (pathlib: operando absoluto à direita substitui), então
+    `_is_contained` o rejeita via relative_to. O secret real NÃO vaza."""
+    root = tmp_path
+    project_root = root / "project"
+    project_root.mkdir()
+    # Secret REAL com path absoluto fora do project_root.
+    secret = root / "abs_secret.kt"
+    secret.write_text("ABS SECRET — não deve vazar", encoding="utf-8")
+    assert secret.is_file()
+
+    feature_dir = project_root / "docs" / "forge-specs" / "features" / "demo"
+    # allowed_files com path ABSOLUTO (string absoluta) fora do projeto.
+    task_yaml = _write_task(feature_dir, "TASK-0001", [str(secret)])
+    snap = project_root / ".planning" / "qa" / "demo" / "run" / "snapshot"
+    snap.mkdir(parents=True, exist_ok=True)
+    scope = Scope(type="task", target="TASK-0001", paths=(task_yaml,))
+
+    copied = snapshot_impl_files(scope, snap, project_root=project_root)
+
+    # Absoluto fora do root foi BLOQUEADO.
+    assert copied == []
+    impl_dir = snap / "impl"
+    if impl_dir.exists():
+        for f in impl_dir.rglob("*"):
+            if f.is_file():
+                assert "ABS SECRET" not in f.read_text(encoding="utf-8")
+    assert secret.read_text(encoding="utf-8") == "ABS SECRET — não deve vazar"
+
+
+def test_snapshot_impl_symlink_escaping_root_is_blocked(tmp_path):
+    """MED-002 (b) — H-001 ADVERSARIAL: um allowed_files apontando pra um
+    SYMLINK que mora DENTRO do projeto mas RESOLVE pra um target FORA do
+    project_root DEVE ser rejeitado. `candidate.resolve()` segue o symlink
+    até o target externo, então relative_to falha e o conteúdo não vaza."""
+    root = tmp_path
+    project_root = root / "project"
+    project_root.mkdir()
+    # Secret REAL fora do project_root.
+    secret = root / "sym_secret.kt"
+    secret.write_text("SYMLINK SECRET — não deve vazar", encoding="utf-8")
+    assert secret.is_file()
+
+    # Symlink DENTRO do projeto apontando pro secret externo.
+    src_dir = project_root / "src"
+    src_dir.mkdir(parents=True, exist_ok=True)
+    link = src_dir / "leak.kt"
+    link.symlink_to(secret)
+    # Sanity: o symlink mora dentro do projeto mas resolve pra fora.
+    assert link.is_symlink()
+    assert link.resolve() == secret.resolve()
+
+    feature_dir = project_root / "docs" / "forge-specs" / "features" / "demo"
+    task_yaml = _write_task(feature_dir, "TASK-0001", ["src/leak.kt"])
+    snap = project_root / ".planning" / "qa" / "demo" / "run" / "snapshot"
+    snap.mkdir(parents=True, exist_ok=True)
+    scope = Scope(type="task", target="TASK-0001", paths=(task_yaml,))
+
+    copied = snapshot_impl_files(scope, snap, project_root=project_root)
+
+    # O symlink que escapa foi BLOQUEADO: o secret não entrou no snapshot.
+    assert copied == []
+    impl_dir = snap / "impl"
+    if impl_dir.exists():
+        for f in impl_dir.rglob("*"):
+            if f.is_file():
+                assert "SYMLINK SECRET" not in f.read_text(encoding="utf-8")
+    assert secret.read_text(encoding="utf-8") == "SYMLINK SECRET — não deve vazar"
