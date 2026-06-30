@@ -70,6 +70,24 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 - `tests/unit/test_engine_plan_mem_hint.py`: prova que o hint chega ao artefato
   RENDERIZADO da Wave A (não só ao dict de tokens) (W-ROUTE 6c).
 
+### Docs
+
+- Gaps do piloto MeoBonsai (2026-06-25) catalogados em `docs/design/04-pending.md`
+  (seção nova "Piloto MeoBonsai 2026-06-25 — gaps", status verificado pós-merge
+  Fase 1). Os ~37 bugs do report viviam só no relatório e nunca tinham entrado no
+  backlog ativo; agora estão agrupados em Fechados / Parciais / Abertos (P0/P1/P2)
+  com file:line e direção de fix. Verificação empírica fechou BUG-A, Tema 7
+  (implement DAG), BUG-MEM-1/2 e BUG-1 — que o report tratava como abertos.
+- Apêndice de status no fim do report
+  `docs/reports/2026-06-25-piloto-meobonsai-gaps.md` (append-only; corpo histórico
+  intacto): registra o que mudou desde o piloto, verificado contra o código de
+  main pós-PR#32, e corrige explicitamente os itens que o report tratava como
+  abertos e hoje estão fechados.
+- Nova spec de remediação `docs/superpowers/specs/2026-06-29-pilot-remediation-design.md`:
+  organiza os gaps ABERTOS em 5 ondas (correctness → gates com dentes → P0s
+  estruturais → hardening P1 → mem Fase 2), lideradas pelo loop de correctness,
+  cada onda com gate de aceite testável.
+
 ### Removed
 
 - `agents/memory-distiller.md` — agente órfão; a compressão de L2 perdeu sentido
