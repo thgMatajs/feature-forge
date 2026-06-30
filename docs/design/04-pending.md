@@ -3,6 +3,109 @@
 What still needs to be drafted, in dependency order. Use this as the
 checklist for next sessions.
 
+## Piloto MeoBonsai 2026-06-25 — gaps (status verificado pós-merge Fase 1, 2026-06-29)
+
+O piloto end-to-end contra o MeoBonsai (KMP real) levantou ~37 bugs em 8
+temas — registrados em `docs/reports/2026-06-25-piloto-meobonsai-gaps.md`.
+Esses gaps viviam SÓ no report: nunca foram catalogados aqui no backlog
+ativo. Desde então, a campanha mem (Fase 1, PR#32 MERGED em main, merge-commit
+`03a9f9c`) fechou alguns como efeito colateral. Esta seção reconcilia o report
+com o código de main pós-merge (inventário verificado 2026-06-29). O plano de
+ataque dos abertos é a spec
+`docs/superpowers/specs/2026-06-29-pilot-remediation-design.md`. Apêndice de
+status correspondente no fim do próprio report.
+
+### Fechados (verificado no código)
+
+- ✓ **BUG-A (doctor schema-version desync init↔doctor)** — `engine/doctor.py:440`
+  aceita `{1,"1",1.3,"1.3"}` E `engine/init.py` grava `schema-version: 1` (int)
+  em todos os sites. Desync impossível. (Report tratava como ABERTO P0 — hoje
+  fechado.)
+- ✓ **BUG-IMPL-1 / Tema 7 (implement não avançava a DAG)** — `engine/implement.py`
+  tem `_pick_next_task()` keyed em `done={t.task_id ... if status=="done"}`
+  (L374), grafo de deps + detecção de ciclo (L361) e checkpoint persistindo
+  `task-id` RESOLVIDO (L142). O "preso em TASK-0001 / orchestration theater" não
+  existe mais. (Report tratava como ABERTO P0 — hoje fechado.)
+- ✓ **BUG-MEM-1/2 (memory sub-intents inalcançáveis)** — `engine/memory_cli.py`
+  reescrito na W-ROUTE 6a (dispatcher stateless arg-driven); os 5/8 sub-intents
+  inalcançáveis sumiram com o menu interativo multi-passo.
+- ✓ **BUG-1 (init rglob `_glob_any` travava em monorepo)** — resolvido em main
+  via filtro inline `_SKIP_DIRS` em `engine/detection/_eval.py:72`. Independente
+  da branch `fix/pilot-init-perf` (que NÃO foi mergeada) — fechado por uma impl
+  diferente da do report.
+
+### Parciais
+
+- **BUG-1b (dedup `compose_backend_axes`)** — a 2ª chamada vive numa função W7.4
+  deferred/unused; não há mais o duplo-custo do step-5 no hot-path ativo, mas a
+  limpeza completa fica pendente. *Reentrar* ao tocar o caminho W7.4.
+- **BUG-QA-4 (SKILL.md não cobre todos os verbos)** — o SKILL.md cobre o intent
+  loop, mas não os prompts de `qa`/`verify`/`memory`/`reconfigure`/`upgrade`/`undo`.
+  Host ingênuo ainda não dirige IA-first esses verbos só pelos artefatos
+  instalados. (Onda 4 da spec.)
+- **BUG-UPGRADE-1 (upgrade destrutivo sem preview)** — tem rollback automático,
+  mas SEM `--dry-run` nem guard de branch antes do `checkout --detach`. (Onda 4.)
+- **BUG-4/MEM-5 (.gitignore incompleto)** — cobre `state/` + checkpoints; FALTAM
+  `graph.db`, `cards/`, `memory/`, `locks/`, `.memory-cli-checkpoint.yaml`.
+  Operador que faz `git add .` ainda commita artefatos derivados. (Onda 4.)
+
+### Abertos (backlog de remediação)
+
+Agrupado por prioridade. Plano de ataque por onda na spec
+`docs/superpowers/specs/2026-06-29-pilot-remediation-design.md`.
+
+**P0**
+
+- **Tema 6 — verificação inerte (o loop de correctness)** — verify "verde
+  inerte" (6 stubs no-op + 4 built-in staged-blind), qa sem vetor impl-vs-spec,
+  nenhum passo runtime/visual. É o gap que deixa o "verde" mentir — **novo P0 #1**
+  e líder da spec (Onda 1). *Reentrar* via Onda 1.
+- **BUG-5 (rglob sem poda em hot-path de inventory)** —
+  `engine/inventory/design_system.py:444`, `conventions.py:308`, `i18n.py:101`
+  (rglob cru antes do skip). Fix: extrair helper compartilhado
+  `_walk_recursive_pruned` e trocar todos os sites (reuso-first — não duplicar).
+  (Onda 3.)
+- **BUG-2 (discovery não cacheado no checkpoint)** — `engine/init.py:190`
+  re-roda ~220s a cada invocação (~18 min em 5 invocações). Fix: cachear o
+  resultado de discovery no checkpoint e reusar com response pendente. (Onda 3.)
+- **BUG-PLAN-1 (recursão no gate de readiness)** — `engine/plan.py:1058`: path A
+  recursa síncrono → RecursionError (~979 níveis, 1.3MB stdout). Fix:
+  re-renderizar + PAUSAR (exit 2), nunca recursar. (Onda 3.)
+- **BUG-VERIFY-1 (validator quebrado cega a cascade)** — `engine/verify.py:985`
+  trata exit 2 como `fail` (não `degraded`); `check-koin-modules.py:100` usa
+  `--root` (off-contract) → cega 5 validators iOS/KMP via fail-fast (Decisão 23).
+  Fix: classificar validator-quebrado como `degraded` + atualizar koin pro
+  contrato canônico (`--scope`/`--id`). (Onda 1.)
+
+**P1**
+
+- **BUG-G2/MEM-4 (marker não anuncia response-schema-version)** —
+  `engine/host/adapters/claude_code.py:422`: o `<FORGE_INTENT>` não declara
+  `response-schema-version`; host ingênuo omite e toma exit 1. (Onda 4.)
+- **BUG-VERIFY-2 (verify sem sumário honesto de cobertura)** — falta o sumário
+  tipo "Pass: 10 — 6 stub no-op, 4 sem staged". (Onda 1.)
+- **BUG-STATUS-1/2 (status cego ao git/qa)** — `engine/status.py:47` não
+  reconcilia com git nem expõe qa verdict (commits da feature invisíveis, BLOCK
+  sem rastro). (Onda 4.)
+- **BUG-IMPL-2 (build commands hardcoded)** —
+  `cards/swiftui-screens/templates/swiftui-allowed-files.yaml:59`
+  (`run-ios-simulator.sh --build-only`); idem `testDebugUnitTest` no kotlin.
+  Fix: derivar do projeto (ler `gradlew tasks`). (Onda 4.)
+- **BUG-B (version-lock path mismatch — Médio)** — `engine/init.py:2654` grava
+  em `.claude/forge/` mas `engine/doctor.py:881` lê em `.claude/` → check morto.
+  (Onda 4.)
+
+**P2 (polish — itens 16-21 do report)**
+
+- Progress feedback nos steps longos do init (backend ~86s, orphan ~75s).
+- graph "did-you-mean" no Q4 quando o módulo não casa.
+- evolve: tratar SIGPIPE/EOF no loop de render.
+- reconfigure: imprimir o dashboard só no 1º passo do loop.
+- `--help` reconhecido em todos os subcomandos (evolve, implement).
+- undo: exit 0 em no-op de `last`; raw: aviso de escopo no `rebuild-templates`.
+
+*Reentrar* os P2 dobrando nos pontos baratos de cada onda da spec.
+
 ## W-VENDOR — gaps pós Fase 1 Onda 3 (2026-06-25)
 
 - **M-001 (forge reconfigure/upgrade não re-vendoriza o mem)** — `forge init`
