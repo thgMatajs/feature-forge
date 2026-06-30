@@ -1144,7 +1144,10 @@ _STATUS_GLYPH = {
     "warn": "⚠",
     "fail": "🛑",
     "skipped": "—",
-    "degraded": "⚠",
+    # WR-01: glyph PRÓPRIO pra degraded — não reusa o ⚠ do warn. A distinção
+    # infra-vs-código (coração do H-001) tem que ser visível na linha-a-linha,
+    # não só no sumário-box agregado.
+    "degraded": "⛒",
 }
 
 
@@ -1160,7 +1163,10 @@ def _render_line(result: _ValidatorResult) -> None:
     line = f"├ {result.name:<40} {glyph} {duration:>6}"
     if suffix:
         line = f"{line}  {suffix}"
-    if result.status == "warn" and result.message:
+    # WR-01: warn (ressalva de código) E degraded (infra off-contract) imprimem
+    # o motivo na linha — pro usuário ler na hora, junto do glyph distinto, que
+    # foi infra quebrada e não código reprovado.
+    if result.status in ("warn", "degraded") and result.message:
         line = f"{line}  ({result.message[:60]})"
     renderer.write(line)
 
