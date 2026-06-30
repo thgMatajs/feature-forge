@@ -101,9 +101,12 @@ Validation:
 MEM-L1-VL-001  every line must be valid JSON
 MEM-L1-VL-002  timestamp must be ISO8601 UTC
 MEM-L1-VL-003  scope must be in {"task", "feature", "inferred"}
-MEM-L1-VL-004  result must be in {"pass", "warn", "degraded", "fail"}
-               (warn = validators executados, alguns warnings não-bloqueantes)
+MEM-L1-VL-004  result must be in {"pass", "warn", "incomplete", "degraded", "fail"}
+               (warn = validators executados, alguns warnings não-bloqueantes;
+                incomplete = veredito AGREGADO de infra — ver MEM-L1-VL-006)
 MEM-L1-VL-005  if result == "degraded", warnings must be ≥ 1
+MEM-L1-VL-006  result == "incomplete" NÃO exige warnings ≥ 1 (warnings pode
+               ser 0). É DISTINTO de "degraded" — ver Behavior abaixo.
 ```
 
 Behavior: when the last entry's `result == "degraded"`, the next
@@ -111,6 +114,21 @@ Behavior: when the last entry's `result == "degraded"`, the next
 roteiro shows the warnings and asks "ok to continue?"). When `result == "fail"`,
 the feature's `status.json.state` is left at `verifying` and the conductor
 explains the failure.
+
+`degraded` vs `incomplete` (WR-03 — desambiguação do veredito agregado):
+
+- `degraded` = veredito de CÓDIGO-COM-RESSALVA. Os validators rodaram, alguns
+  emitiram warnings não-bloqueantes (exige `warnings ≥ 1`). Atrela o
+  comportamento "block forge implement até o user reconhecer".
+- `incomplete` = veredito AGREGADO de INFRA. `forge verify` produz este
+  `result` quando um ou mais validators ficaram infra-degradados (script
+  off-contract / quebrado, status por-validator `degraded`) e NÃO houve nenhum
+  `fail` nem `warn` de código. Semântica: "verify não pôde avaliar tudo;
+  NÃO-bloqueante; NÃO dispara block-forge-implement". `warnings` pode ser 0.
+  O status POR-VALIDATOR permanece `degraded` (glyph ⛒); só o veredito
+  agregado escrito como `result` no log usa `incomplete`. Precedência do
+  agregado: `fail > warn > incomplete > pass`. exit-code de `incomplete` é 0
+  (infra quebrada ≠ código reprovado — Decisão 23 + H-001).
 
 ### `hypothesis.yaml`
 

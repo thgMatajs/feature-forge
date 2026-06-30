@@ -23,8 +23,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from engine.ui import output_mode as om
 from engine import verify
+from engine.memory.l1 import append_verify_log, MemoryError as L1MemoryError
 from engine.verify import _coverage_breakdown, _ValidatorResult, _ValidatorSpec
 
 
@@ -89,7 +92,11 @@ def test_all_degraded_run_overall_is_not_clean_pass(
     assert payload["overall"] != "pass", (
         "run all-degraded não pode reportar overall=pass limpo — cega o overall (WR-02)"
     )
-    assert payload["overall"] == "degraded"
+    # WR-03: o veredito AGREGADO do caso infra é `incomplete` — token DISTINTO
+    # do `degraded` do contrato L1 (que tem semântica código-com-ressalva +
+    # block-implement + warnings>=1). `incomplete` = "verify não pôde avaliar
+    # tudo; não-bloqueante; não dispara block-forge-implement".
+    assert payload["overall"] == "incomplete"
     # H-001 / Decisão 23: degraded ≠ fail → exit-code NÃO vira hard-fail.
     assert code == 0
     assert payload["exit_code"] == 0
@@ -148,8 +155,9 @@ def test_mixed_substantive_and_degraded_overall_signals_not_all_verified(
     code, _ = _run_json_with_results(monkeypatch, tmp_forge_project, results)
     payload = _capture_payload(capsys)
 
-    # overall não é pass-limpo: há infra que não foi verificada.
+    # overall não é pass-limpo: há infra que não foi verificada (WR-03: incomplete).
     assert payload["overall"] != "pass"
+    assert payload["overall"] == "incomplete"
     # E a saliência no topo permite o host branchar sem varrer o array.
     assert payload.get("infra_degraded") == 1
     assert payload["coverage_summary"]["substantive"] == 2
@@ -194,3 +202,66 @@ def test_coverage_breakdown_counts_degraded() -> None:
     assert breakdown["stub"] == 0
     assert breakdown["staged-blind"] == 0
     assert breakdown["opaque"] == 0
+
+
+# ── WR-03: `incomplete` é um result válido distinto de `degraded` no L1 ───────
+
+
+def _seed_l1_feature(project_root: Path, slug: str) -> None:
+    """Cria o diretório L1 mínimo da feature pra append_verify_log escrever."""
+    from engine.memory.l1 import L1State, write_l1_status
+
+    write_l1_status(
+        L1State(
+            feature_slug=slug,
+            status="verifying",
+            last_action_at="2026-06-29T00:00:00Z",
+            last_action_kind="verify-started",
+        ),
+        project_root,
+    )
+
+
+def test_append_verify_log_accepts_incomplete_with_zero_warnings(
+    tmp_forge_project,
+) -> None:
+    """WR-03: o contrato L1 ACEITA result==`incomplete` mesmo com warnings==0.
+
+    `incomplete` (infra/off-contract, não-bloqueante) é DISTINTO de `degraded`
+    (código-com-ressalva, exige warnings>=1, block-implement). Um run all-infra-
+    degradado emite overall=`incomplete` com warnings=0 — append_verify_log NÃO
+    pode levantar MemoryError nesse caso.
+    """
+    slug = "demo-feature"
+    _seed_l1_feature(tmp_forge_project, slug)
+    entry = {
+        "schema-version": 1,
+        "verify-id": "verify-20260629T000000Z",
+        "at": "2026-06-29T00:00:00Z",
+        "scope": "task",
+        "validators-run": ["koin", "ios"],
+        "result": "incomplete",
+        "warnings": 0,
+    }
+    # Não deve levantar — `incomplete` é result válido (MEM-L1-VL-004 estendido).
+    append_verify_log(slug, tmp_forge_project, entry)
+
+
+def test_append_verify_log_degraded_still_requires_warnings(
+    tmp_forge_project,
+) -> None:
+    """WR-03 guard: o `degraded` do L1 NÃO mudou — segue exigindo warnings>=1
+    (MEM-L1-VL-005). O novo `incomplete` não relaxa essa regra."""
+    slug = "demo-feature"
+    _seed_l1_feature(tmp_forge_project, slug)
+    entry = {
+        "schema-version": 1,
+        "verify-id": "verify-20260629T000001Z",
+        "at": "2026-06-29T00:00:01Z",
+        "scope": "task",
+        "validators-run": ["x"],
+        "result": "degraded",
+        "warnings": 0,
+    }
+    with pytest.raises(L1MemoryError):
+        append_verify_log(slug, tmp_forge_project, entry)

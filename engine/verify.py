@@ -423,19 +423,29 @@ def run_scope(
     degraded_list = [r.name for r in results if r.status == "degraded"]
     # WR-02 (fix-forward) — gêmeo "cega o overall" do BUG-VERIFY-1: um run com
     # `degraded` (infra off-contract) NÃO pode reportar `overall=pass` silencioso.
-    # Quando há degraded e nenhum fail/warn, o overall vira `degraded` — sinal
+    # Quando há degraded e nenhum fail/warn, o overall vira `incomplete` — sinal
     # distinto que o host IA-first lê como "nem tudo foi verificado de fato".
     #
-    # INVARIANTE PRESERVADA (H-001 + Decisão 23): `degraded` continua NÃO sendo
-    # `fail` — não halta a cascade e NÃO vira hard-fail de exit-code. Infra
-    # quebrada ≠ código reprovado, então o exit-code segue 0 (só `fail` → exit 1).
-    # `fail`/`warn` têm precedência sobre `degraded` no rótulo do overall (um
-    # fail genuíno é o veredito dominante); a saliência de degraded num run
-    # warn/fail-misto fica garantida pelo campo `infra_degraded` do payload.
+    # WR-03 — o veredito AGREGADO usa `incomplete`, NÃO `degraded`. `degraded`
+    # JÁ EXISTE no contrato L1 verify-log (MEM-L1-VL-004/005) com OUTRA
+    # semântica: "validators rodaram, alguns warnings não-bloqueantes", EXIGE
+    # warnings>=1, e atrela "block forge implement até o user reconhecer".
+    # Reusar `degraded` no agregado colidiria com esse contrato (verify grava
+    # `overall` como `result` no verify-log). `incomplete` é DISTINTO:
+    # "verify não pôde avaliar tudo (validators infra/off-contract); NÃO-
+    # bloqueante; NÃO dispara block-forge-implement; warnings pode ser 0". O
+    # status POR-VALIDATOR continua `degraded` (glyph ⛒ do WR-01 — intacto).
+    #
+    # INVARIANTE PRESERVADA (H-001 + Decisão 23): infra quebrada ≠ código
+    # reprovado, então o exit-code segue 0 (só `fail` → exit 1). Precedência
+    # `fail > warn > incomplete > pass`: `fail`/`warn` têm precedência sobre
+    # `incomplete` no rótulo do overall (um fail genuíno é o veredito
+    # dominante); a saliência de infra degradada num run warn/fail-misto fica
+    # garantida pelo campo `infra_degraded` do payload.
     overall = (
         "fail" if hard_fail
         else "warn" if warnings_list
-        else "degraded" if degraded_list
+        else "incomplete" if degraded_list
         else "pass"
     )
 
