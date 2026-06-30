@@ -92,6 +92,20 @@ class _ValidatorResult:
     what_failed: str = ""
     where: str = ""
     why: list[str] = field(default_factory=list)
+    # BUG-VERIFY-2 (T3) — classe de cobertura de um PASS (vazio p/ não-pass):
+    #   "substantive"  — examinou artefatos reais e aprovou
+    #   "stub"         — stub/no-op que sempre passa
+    #   "staged-blind" — passou porque nada estava no escopo (vacuous)
+    #   "opaque"       — pass via exit-code (sem JSON): substância indeterminável
+    # Validators declaram via `coverage` no JSON tail; legados (sem JSON) caem
+    # em "opaque" — o verify nunca afirma substância que não pode provar.
+    coverage: str = ""
+
+
+# As 3 categorias NOMEADAS que o sumário honesto distingue (ACK M-001) +
+# "opaque" pro legado não-declarado. Ordem estável p/ render e p/ as chaves
+# do coverage_summary no --json.
+_COVERAGE_CLASSES: tuple[str, ...] = ("substantive", "stub", "staged-blind", "opaque")
 
 
 # ── Checkpoint (DRIFT-1 W2.T3b — intent-resume, outcome C) ───────────────────
@@ -369,6 +383,11 @@ def run_scope(
                 "scope": {"type": scope_type, "target": scope_target or None},
                 "overall": "pass",
                 "exit_code": 0,
+                # WR-02: shape estável — sem validators não há infra degradada.
+                "infra_degraded": 0,
+                # T3: shape estável — coverage_summary presente mesmo sem
+                # validators (todas as classes zeradas).
+                "coverage_summary": _coverage_breakdown([]),
                 "validators": [],
             }
             print(json.dumps(payload, indent=2, default=str))
@@ -401,7 +420,34 @@ def run_scope(
     hard_fail = next((r for r in results if r.status == "fail"), None)
     warnings_list = [r.name for r in results if r.status == "warn"]
     hard_fails = [r.name for r in results if r.status == "fail"]
-    overall = "fail" if hard_fail else ("warn" if warnings_list else "pass")
+    degraded_list = [r.name for r in results if r.status == "degraded"]
+    # WR-02 (fix-forward) — gêmeo "cega o overall" do BUG-VERIFY-1: um run com
+    # `degraded` (infra off-contract) NÃO pode reportar `overall=pass` silencioso.
+    # Quando há degraded e nenhum fail/warn, o overall vira `incomplete` — sinal
+    # distinto que o host IA-first lê como "nem tudo foi verificado de fato".
+    #
+    # WR-03 — o veredito AGREGADO usa `incomplete`, NÃO `degraded`. `degraded`
+    # JÁ EXISTE no contrato L1 verify-log (MEM-L1-VL-004/005) com OUTRA
+    # semântica: "validators rodaram, alguns warnings não-bloqueantes", EXIGE
+    # warnings>=1, e atrela "block forge implement até o user reconhecer".
+    # Reusar `degraded` no agregado colidiria com esse contrato (verify grava
+    # `overall` como `result` no verify-log). `incomplete` é DISTINTO:
+    # "verify não pôde avaliar tudo (validators infra/off-contract); NÃO-
+    # bloqueante; NÃO dispara block-forge-implement; warnings pode ser 0". O
+    # status POR-VALIDATOR continua `degraded` (glyph ⛒ do WR-01 — intacto).
+    #
+    # INVARIANTE PRESERVADA (H-001 + Decisão 23): infra quebrada ≠ código
+    # reprovado, então o exit-code segue 0 (só `fail` → exit 1). Precedência
+    # `fail > warn > incomplete > pass`: `fail`/`warn` têm precedência sobre
+    # `incomplete` no rótulo do overall (um fail genuíno é o veredito
+    # dominante); a saliência de infra degradada num run warn/fail-misto fica
+    # garantida pelo campo `infra_degraded` do payload.
+    overall = (
+        "fail" if hard_fail
+        else "warn" if warnings_list
+        else "incomplete" if degraded_list
+        else "pass"
+    )
 
     _write_verify_log_entry(
         project_root,
@@ -423,6 +469,14 @@ def run_scope(
             "scope": {"type": scope_type, "target": scope_target or None},
             "overall": overall,
             "exit_code": (1 if hard_fail is not None else 0),
+            # WR-02: contagem saliente de infra degradada no topo do payload, pra
+            # o host branchar sem varrer `validators[]`. Loud mesmo num run
+            # warn/fail-misto (onde `overall` carrega o veredito dominante).
+            "infra_degraded": len(degraded_list),
+            # BUG-VERIFY-2 (T3): sumário honesto de cobertura — distingue
+            # pass-substantivo de stub-no-op / staged-blind / opaque pro host
+            # IA-first não tratar "verde" como garantia que não existe.
+            "coverage_summary": _coverage_breakdown(results),
             "validators": [asdict(r) for r in results],
         }
         print(json.dumps(payload, indent=2, default=str))
@@ -983,18 +1037,44 @@ def _invoke_validator(
     duration_ms = int((time.monotonic() - started) * 1000)
     payload = _extract_json_tail(proc.stdout)
     if payload is None:
-        status = (
-            "pass"
-            if proc.returncode == 0
-            else "warn"
-            if proc.returncode == 1
-            else "fail"
-        )
+        # BUG-VERIFY-1 / ACK H-001 — INVARIANTE DE DETECTION (durável, não opcional):
+        #
+        #   validator quebrado / off-contract  ≠  código reprovado.
+        #
+        # Sem JSON tail, caímos na exit-code contract. Exit 2 é o sinal de
+        # argparse para "unrecognized arguments" / "invalid choice": o script
+        # está QUEBRADO ou FORA do contrato canônico (--project-root/--scope/
+        # --id). Isso é falha de INFRAESTRUTURA do validator — não código que
+        # o validator reprovou. Por isso vira `degraded`:
+        #
+        #   - `degraded` NÃO conta pro overall (run() só olha fail/warn) e NÃO
+        #     para a cascade fail-fast (Decisão 23 — _run_cascade só halta em
+        #     `fail`). Um validator off-contract não pode cegar os 5 validators
+        #     iOS/KMP a jusante (foi exatamente o piloto MeoBonsai: koin só
+        #     aceitava --root, estourava exit 2, virava `fail`, parava tudo).
+        #   - Deliberadamente NÃO é `warn`: warn conta no overall (vira
+        #     overall="warn") e mascararia o problema de infra como ressalva de
+        #     código. O anti-padrão exit-2→warn está banido.
+        #   - Exit 1 sem JSON permanece `warn` (ressalva leve); o hard fail
+        #     canônico de código reprovado vem pelo JSON tail {"status":"fail"}.
+        #
+        # Guarda executável desta fronteira:
+        #   tests/engine/test_verify_broken_validator_degraded.py
+        if proc.returncode == 0:
+            status = "pass"
+        elif proc.returncode == 1:
+            status = "warn"
+        else:
+            # exit 2 (ou qualquer código ≥2) = validator quebrado/off-contract.
+            status = "degraded"
         return _ValidatorResult(
             name=spec.name,
             status=status,
             duration_ms=duration_ms,
             message=(proc.stderr or proc.stdout).strip()[:200],
+            # T3: pass via exit-code (sem JSON) é "opaque" — o verify não tem
+            # como afirmar que houve trabalho substantivo. Honesto por default.
+            coverage="opaque" if status == "pass" else "",
         )
 
     status = str(payload.get("status") or "pass").lower()
@@ -1009,7 +1089,46 @@ def _invoke_validator(
         what_failed=str(payload.get("what-failed") or ""),
         where=str(payload.get("where") or ""),
         why=list(payload.get("why") or []),
+        # T3: só PASS carrega classe de cobertura. Validator que declara
+        # `coverage` no JSON tem sua palavra honrada; se passou e não declarou,
+        # cai em "opaque" (o verify não inventa substância). Valor não-canônico
+        # é normalizado pra "opaque" pra não poluir o breakdown.
+        coverage=_normalize_coverage(payload.get("coverage")) if status == "pass" else "",
     )
+
+
+def _normalize_coverage(raw: object) -> str:
+    """Mapeia o `coverage` declarado por um validator pra uma das classes
+    canônicas. Ausente / não-string / fora do vocabulário → "opaque" (default
+    honesto — verify não afirma substância não-provada)."""
+    if isinstance(raw, str):
+        value = raw.strip().lower()
+        if value in _COVERAGE_CLASSES:
+            return value
+    return "opaque"
+
+
+def _coverage_breakdown(results: list[_ValidatorResult]) -> dict[str, int]:
+    """Conta os PASSES por classe de cobertura (ACK M-001) + os degradados (WR-02).
+
+    As 4 chaves canônicas (`_COVERAGE_CLASSES`) contam só `status == "pass"` —
+    warn/fail/skipped não têm classe de cobertura. A chave `degraded` (gêmeo do
+    overall, WR-02) conta os validators degradados pra que um run all-degraded
+    exiba "0 substantivos / N degradados" em vez de um zero mudo que parece
+    "nada a verificar = ok". `degraded` NÃO é classe de pass-coverage — fica
+    numa chave separada pra não poluir a soma dos passes. Shape estável no
+    --json e no render (zeros inclusos)."""
+    breakdown = {cls: 0 for cls in _COVERAGE_CLASSES}
+    breakdown["degraded"] = 0
+    for r in results:
+        if r.status == "degraded":
+            breakdown["degraded"] += 1
+            continue
+        if r.status != "pass":
+            continue
+        cls = r.coverage if r.coverage in breakdown else "opaque"
+        breakdown[cls] += 1
+    return breakdown
 
 
 def _extract_json_tail(stdout: str) -> dict | None:
@@ -1035,7 +1154,10 @@ _STATUS_GLYPH = {
     "warn": "⚠",
     "fail": "🛑",
     "skipped": "—",
-    "degraded": "⚠",
+    # WR-01: glyph PRÓPRIO pra degraded — não reusa o ⚠ do warn. A distinção
+    # infra-vs-código (coração do H-001) tem que ser visível na linha-a-linha,
+    # não só no sumário-box agregado.
+    "degraded": "⛒",
 }
 
 
@@ -1051,7 +1173,10 @@ def _render_line(result: _ValidatorResult) -> None:
     line = f"├ {result.name:<40} {glyph} {duration:>6}"
     if suffix:
         line = f"{line}  {suffix}"
-    if result.status == "warn" and result.message:
+    # WR-01: warn (ressalva de código) E degraded (infra off-contract) imprimem
+    # o motivo na linha — pro usuário ler na hora, junto do glyph distinto, que
+    # foi infra quebrada e não código reprovado.
+    if result.status in ("warn", "degraded") and result.message:
         line = f"{line}  ({result.message[:60]})"
     renderer.write(line)
 
@@ -1078,6 +1203,18 @@ def _render_summary(results: list[_ValidatorResult]) -> None:
         f"Skipped:   {skipped}",
         f"Degraded:  {degraded}",
     ]
+    # BUG-VERIFY-2 (T3): quebra honesta dos passes — "verde" não conta como
+    # garantia uniforme. Só renderiza quando há pass que não é substantivo,
+    # pra não nag em projeto 100% substantivo.
+    if passed:
+        cov = _coverage_breakdown(results)
+        if cov["substantive"] != passed:
+            body.append("")
+            body.append("Pass por cobertura:")
+            body.append(f"  substantive:  {cov['substantive']}")
+            body.append(f"  stub:         {cov['stub']}")
+            body.append(f"  staged-blind: {cov['staged-blind']}")
+            body.append(f"  opaque:       {cov['opaque']}")
     renderer.write(renderer.box(title, body))
 
 

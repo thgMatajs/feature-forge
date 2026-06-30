@@ -930,7 +930,12 @@ def list_extensions_of(parent_slug: str, project_root: Path) -> list[str]:
 
 
 _VERIFY_SCOPES = {"task", "feature", "inferred"}
-_VERIFY_RESULTS = {"pass", "warn", "degraded", "fail"}
+# WR-03: `incomplete` é o veredito AGREGADO de verify quando há validators
+# infra-degradados e zero fail/warn (warnings pode ser 0). É DISTINTO de
+# `degraded` (código-com-ressalva, exige warnings>=1, block-implement):
+# `incomplete` significa "verify não pôde avaliar tudo (infra/off-contract);
+# não-bloqueante; NÃO dispara block-forge-implement".
+_VERIFY_RESULTS = {"pass", "warn", "incomplete", "degraded", "fail"}
 
 
 def append_verify_log(
@@ -946,8 +951,12 @@ def append_verify_log(
     - MEM-L1-VL-001: line must be a JSON-serialisable mapping (caller passes a dict)
     - MEM-L1-VL-002: timestamp must be ISO8601 UTC (auto-stamped if absent)
     - MEM-L1-VL-003: scope must be in {"task", "feature", "inferred"}
-    - MEM-L1-VL-004: result must be in {"pass", "warn", "degraded", "fail"}
+    - MEM-L1-VL-004: result must be in
+      {"pass", "warn", "incomplete", "degraded", "fail"}
     - MEM-L1-VL-005: when result == "degraded", warnings must be >= 1
+      (NB: "incomplete" — veredito agregado de infra, WR-03 — NÃO exige
+      warnings>=1; warnings pode ser 0 e é não-bloqueante, distinto de
+      "degraded" que é código-com-ressalva e bloqueia forge implement)
 
     Raises MemoryError on schema violation. Required keys: schema-version,
     verify-id, at, scope, validators-run, result.
