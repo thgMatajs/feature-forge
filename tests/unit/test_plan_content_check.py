@@ -77,11 +77,22 @@ def test_scan_placeholders_ignores_fully_commented_line():
     assert scan_placeholders(text) == []
 
 
-def test_scan_placeholders_catches_residual_todo_markers():
-    """``TODO``/``TBD``/``FIXME`` residual fora de comentário também conta."""
-    text = "## Seção 3\nTODO: preencher os ViewModels\n"
-    hits = scan_placeholders(text)
-    assert any("TODO" in h for h in hits), f"TODO residual deve ser pego; got {hits!r}"
+def test_scan_placeholders_ignores_todo_tbd_fixme_in_prose():
+    """M-01: ``TODO``/``TBD``/``FIXME`` em prosa legítima NÃO dispara o gate.
+
+    Diferente do ``{{...}}`` (inequivocamente token de template), TBD/TODO/
+    FIXME são palavras ambíguas em texto livre PT/EN. "A decisão está TBD" é
+    prosa substantiva e honesta — flagá-la é gate-histérico. Confiamos no
+    placeholder-scan (``{{...}}``) + substance-coverage, não em marcador-em-prosa.
+    """
+    for text in (
+        "A decisão está TBD pendente de aprovação.\n",
+        "Adicionar suporte FIXME no backend.\n",
+        "## Seção 3\nTODO: preencher os ViewModels\n",
+    ):
+        assert scan_placeholders(text) == [], (
+            f"marcador em prosa NÃO deve disparar (M-01); text={text!r}"
+        )
 
 
 def test_scan_placeholders_clean_text_has_no_hits():
@@ -226,6 +237,42 @@ def test_check_artefacts_wave_a_is_exempt_from_dag_substance(tmp_path: Path):
     findings = check_artefacts("A", [bd])
     assert not any(f.category == "substance" for f in findings), (
         f"Wave A não roda substance-check de DAG; got {findings!r}"
+    )
+
+
+def test_check_artefacts_wave_a_intake_literal_placeholder_does_not_fire(tmp_path: Path):
+    """H-01: Wave A (intake free-text) é EXENTA do placeholder-scan de ``.md``.
+
+    O ``source-ref`` do feature-intake.md carrega o argv CRU do usuário; um
+    ``{{...}}`` LITERAL ali (feature de templating/i18n) é texto legítimo, não
+    stub residual. A Wave A é intake — os escapes do piloto foram em tech-spec
+    (Wave C) e task-breakdown (Wave D), não no intake. O gate NÃO deve disparar.
+    """
+    intake = tmp_path / "feature-intake.md"
+    intake.write_text(
+        "# Intake bonsai\n- source-ref: add {{screenshots_count}} widget\n",
+        encoding="utf-8",
+    )
+    findings = check_artefacts("A", [intake])
+    assert findings == [], (
+        f"intake com {{{{...}}}} literal no source-ref NÃO deve disparar o gate "
+        f"(gate-histérico — inverso da lição C5); got {findings!r}"
+    )
+
+
+def test_check_artefacts_wave_c_literal_placeholder_still_fires(tmp_path: Path):
+    """Contraprova de H-01: a isenção é SÓ da Wave A — Wave C ainda escaneia.
+
+    O mesmo token literal numa tech-spec da Wave C É um stub residual real (o
+    escape do piloto). A isenção não pode vazar pras waves estruturadas.
+    """
+    spec = tmp_path / "tech-spec.md"
+    spec.write_text(
+        "## §3 ViewModels\nbackend: {{screenshots_count}}\n", encoding="utf-8"
+    )
+    findings = check_artefacts("C", [spec])
+    assert any(f.category == "placeholder" for f in findings), (
+        f"Wave C (estruturada) ainda deve pegar o stub residual; got {findings!r}"
     )
 
 

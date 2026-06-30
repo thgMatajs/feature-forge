@@ -39,9 +39,12 @@ from engine.utils.yaml_io import YamlIOError, read_yaml
 
 # Placeholder residual: ``{{...}}`` (token de template não preenchido).
 _PLACEHOLDER_RE = re.compile(r"\{\{.*?\}\}")
-# Marcadores de pendência residual (forma de L2). ``\b`` evita pegar
-# substrings ("TODOS", "ATBD"); maiúsculas só (o template usa caixa-alta).
-_TODO_RE = re.compile(r"\b(?:TODO|TBD|FIXME)\b")
+# M-01 (gate-histérico): a detecção de TODO/TBD/FIXME em prosa foi REMOVIDA.
+# Diferente do ``{{...}}`` (inequivocamente token de template residual), as
+# palavras TODO/TBD/FIXME aparecem legitimamente em texto livre PT/EN ("a
+# decisão está TBD", "suporte FIXME no backend") — flagá-las disparava o gate
+# em prosa honesta. Confiamos no placeholder-scan (``{{...}}``) +
+# substance-coverage (DAG/totais) pra pegar incompletude REAL.
 
 # Severity mínimo HIGH — alinhado à calibração do auditor: detection
 # findings (gate enforcement) recebem severity mínimo HIGH, o reviewer não
@@ -84,7 +87,7 @@ def _strip_trailing_comment(line: str) -> str:
 
 
 def scan_placeholders(text: str) -> list[str]:
-    """Devolve a lista de stubs residuais (``{{...}}`` / TODO/TBD/FIXME).
+    """Devolve a lista de stubs residuais (``{{...}}`` não preenchidos).
 
     Tradução determinística de **L2** (placeholder-scan). Por linha:
 
@@ -93,6 +96,10 @@ def scan_placeholders(text: str) -> list[str]:
        parte NÃO-comentada. Assim ``backend: "{{x}}"  # ex.:`` é pego (stub
        substantivo) e ``allowed: []  # ex.: ["{{slug}}"]`` é ignorado (token
        só na ilustração).
+
+    M-01: NÃO escaneia TODO/TBD/FIXME — são palavras ambíguas em prosa livre
+    (ver ``_PLACEHOLDER_RE``/comentário acima). Só ``{{...}}``, que é
+    inequivocamente token de template residual.
     """
     hits: list[str] = []
     for raw in text.splitlines():
@@ -101,8 +108,6 @@ def scan_placeholders(text: str) -> list[str]:
             continue  # linha puramente comentada — ilustração legítima
         code = _strip_trailing_comment(raw)
         for match in _PLACEHOLDER_RE.findall(code):
-            hits.append(match)
-        for match in _TODO_RE.findall(code):
             hits.append(match)
     return hits
 
@@ -241,11 +246,21 @@ def check_task_breakdown(path: Path) -> list[ContentFinding]:
 def check_artefacts(wave_label: str, artefacts: list[Path]) -> list[ContentFinding]:
     """Despacha o content-check por artefato (extensão/nome).
 
-    - ``.md`` → placeholder-scan (L2).
+    - ``.md`` → placeholder-scan (L2), EXCETO na Wave A (intake free-text).
     - ``task-breakdown.yaml`` (por nome) → ``check_task_breakdown`` (C2/M2) +
       placeholder-scan, EXCETO na Wave A (intake), que é exenta do
       substance-check de DAG.
     - demais ``.yaml``/``.json`` → placeholder-scan só.
+
+    H-01 (gate-histérico) — a Wave A renderiza o ``feature-intake.md``, cujo
+    ``source-ref`` carrega o **argv CRU do usuário** (texto livre, não
+    sanitizado de placeholder). Um ``{{...}}`` LITERAL na frase do usuário
+    (feature de templating/i18n/qualquer texto com chaves duplas) NÃO é stub
+    residual de template — é conteúdo legítimo. Por isso o placeholder-scan de
+    ``.md`` é ISENTADO na Wave A. Os dois escapes reais do piloto foram em
+    tech-spec (Wave C) e task-breakdown (Wave D) — artefatos ESTRUTURADOS de
+    engenharia, não o intake. Isentar só o ``.md`` da Wave A fecha o
+    false-positive sem perder cobertura dos escapes reais.
 
     Determinístico, puro, sem prompt nem subprocess.
     """
@@ -259,15 +274,19 @@ def check_artefacts(wave_label: str, artefacts: list[Path]) -> list[ContentFindi
         if name == _BREAKDOWN_NAME:
             if not wave_a:
                 findings.extend(check_task_breakdown(artefact))
-            # placeholder-scan vale mesmo na Wave A (tokens crus são stub).
-            if artefact.exists():
-                findings.extend(_scan_file_placeholders(artefact))
-            elif wave_a:
-                # Na Wave A o breakdown pode nem existir ainda — silêncio.
-                pass
+                # placeholder-scan do breakdown só fora da Wave A (estruturado).
+                if artefact.exists():
+                    findings.extend(_scan_file_placeholders(artefact))
+            # Na Wave A o breakdown é intake-adjacente / pode nem existir —
+            # isento do scan (mesma política de free-text do intake).
             continue
 
-        if suffix in (".md", ".yaml", ".yml", ".json"):
+        if suffix == ".md":
+            # H-01: intake free-text da Wave A é isento do placeholder-scan.
+            if wave_a:
+                continue
+            findings.extend(_scan_file_placeholders(artefact))
+        elif suffix in (".yaml", ".yml", ".json"):
             findings.extend(_scan_file_placeholders(artefact))
 
     return findings
