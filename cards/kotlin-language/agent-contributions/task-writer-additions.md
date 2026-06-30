@@ -42,14 +42,20 @@ Para tasks que tocam **somente** shared:
 
 ```yaml
   - name: shared-test
-    command: "./gradlew :shared:<module>:testAndroidHostTest"
+    command: "./gradlew :shared:{module}:testAndroidHostTest"
     on-failure: block
 ```
 
-> Use `testAndroidHostTest` (não `testDebugUnitTest`) para módulos KMP
-> shared — o JVM target do KMP usa o source set `androidHostTest`. Confirme
-> via `inventory.conventions.test-pattern.framework-shared: kotlin-test`
-> (default deste card).
+> **Derive, não assuma (BUG-IMPL-2).** O `{module}` e o nome da task de teste
+> vêm do projeto: confirme o módulo via `settings.gradle.kts` /
+> `./gradlew :tasks` (ou `inventory.conventions.modules`), e a task de teste
+> via `inventory.conventions.test-pattern`. Para módulos KMP shared o JVM
+> target usa o source set `androidHostTest`, então a task canônica é
+> `testAndroidHostTest` — confirme via
+> `inventory.conventions.test-pattern.framework-shared: kotlin-test` (default
+> deste card). Não emita a task de teste do template Android padrão (a do
+> `androidUnitTest`/`testDebug*`) para um módulo KMP shared: ela não existe
+> nesse source set e o build quebra.
 
 ### `gates`
 

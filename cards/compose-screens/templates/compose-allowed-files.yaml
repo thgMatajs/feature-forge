@@ -25,12 +25,18 @@ compose_file_patterns:
     - "{Screen}Components.kt"
     - "{Screen}Mappers.kt"
 
+  # BUG-IMPL-2 (T5): o nome do módulo Gradle (`:composeApp:`) varia por projeto.
+  # NÃO hardcode — o agente substitui {compose_module} pelo módulo real,
+  # derivado do projeto (`./gradlew :tasks` / settings.gradle.kts /
+  # inventory.conventions.modules). Sem invocar gradle em tempo de plan:
+  # o módulo vem do inventory já coletado; o `gradlew tasks` é só o fallback
+  # de descoberta manual quando o inventory não traz o módulo.
   validations_suggested:
-    - command: "./gradlew :composeApp:assembleDebug"
-      purpose: "Compila o módulo Compose; falha cedo em erros de tipo/Composable"
-    - command: "./gradlew :composeApp:lintDebug"
+    - command: "./gradlew :{compose_module}:assembleDebug"
+      purpose: "Compila o módulo Compose; falha cedo em erros de tipo/Composable. Derive {compose_module} do inventory (settings.gradle.kts / ./gradlew :tasks)."
+    - command: "./gradlew :{compose_module}:lintDebug"
       purpose: "Lint Android padrão"
-    - command: "./gradlew :composeApp:detekt"
+    - command: "./gradlew :{compose_module}:detekt"
       purpose: "Detekt + ktlint — bloqueia @Suppress e LongMethod"
     - command: "python3 .claude/cards/compose-screens/validators/check-no-suppress.py {file}"
       purpose: "Valida que nenhum @Suppress entrou no arquivo Compose"
@@ -44,4 +50,4 @@ compose_file_patterns:
     verify_task:
       - validate-compose-no-suppress
       - validate-compose-screen-layout
-      - "./gradlew :composeApp:assembleDebug"
+      - "./gradlew :{compose_module}:assembleDebug"
