@@ -114,37 +114,15 @@ def _walk_recursive_pruned(
     ``skip_dirs`` é PARÂMETRO (não o ``_SKIP_DIRS`` global): cada site passa o
     seu set atual, preservando o no-behavior-change por-site (há 4 sets
     divergentes no codebase — não unificados nesta onda, por design).
+
+    **Implementação (WR-NEW-01 — DRY):** esta variante ordenada DELEGA pra
+    ``_walk_recursive_pruned_lazy`` e só aplica ``sorted()`` ao resultado. A
+    poda-na-descida, o caso ``pattern == ""`` (só-diretórios), o root-append e
+    o symlink-guard vivem em UM lugar (o lazy); aqui só se materializa + ordena.
+    A saída é idêntica à anterior — ``sorted(lazy(...))`` produz exatamente o
+    mesmo conjunto na mesma ordem.
     """
-    skip = set(skip_dirs)
-    dirs_only = pattern == ""
-    collected: list[Path] = []
-    # `rglob("")` inclui o próprio root (um diretório). Replicamos isso.
-    if dirs_only and project_root.is_dir():
-        collected.append(project_root)
-    stack: list[Path] = [project_root]
-    while stack:
-        current = stack.pop()
-        try:
-            entries = list(current.iterdir())
-        except OSError:
-            continue
-        for entry in entries:
-            is_dir = entry.is_dir()
-            if is_dir and not entry.is_symlink():
-                # Poda na descida: não recursa em skip-dirs. Match contra o
-                # NOME do dir — equivale ao filtro "qualquer part relativa em
-                # skip_dirs".
-                if entry.name in skip:
-                    continue
-                stack.append(entry)
-            if dirs_only:
-                # Paridade com rglob("")/glob("**/"): só diretórios.
-                if is_dir:
-                    collected.append(entry)
-            elif entry.match(pattern):
-                collected.append(entry)
-    collected.sort()
-    yield from collected
+    yield from sorted(_walk_recursive_pruned_lazy(project_root, pattern, skip_dirs))
 
 
 def _walk_recursive_pruned_lazy(
@@ -300,8 +278,8 @@ def _scan_build_gradle_for_coordinate(project_root: Path, coordinate: str) -> bo
     Filtra linhas de comentário Groovy/KTS (`//` line-comment e blocos
     `/* ... */`) antes de testar substring — evita falso positivo de
     coordenadas mencionadas em comentários do tipo `// io.ktor:foo
-    retirado 2024` (M-5). Mantém o cap de arquivos visitados de
-    `_glob_any` (800) e o skip-dirs canônico. Walk manual em vez de
+    retirado 2024` (M-5). Mantém um cap próprio de 800 arquivos visitados
+    (defensivo) e o skip-dirs canônico. Walk manual em vez de
     rglob() para evitar descer em node_modules/.gradle/build.
     """
     stack: list[Path] = [project_root]
