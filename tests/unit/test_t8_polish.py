@@ -166,6 +166,27 @@ def test_evolve_handles_broken_pipe_in_source() -> None:
     )
 
 
+def test_evolve_broken_pipe_returns_zero_functional(monkeypatch) -> None:
+    """D3 (Fase 1) — regressão funcional: _run_evolve levanta BrokenPipeError →
+    run() captura e retorna 0 (não propaga, não retorna 143)."""
+    import io
+    import sys
+    from engine import evolve
+
+    def _raise_broken_pipe(argv):
+        raise BrokenPipeError("simulated SIGPIPE")
+
+    monkeypatch.setattr(evolve, "_run_evolve", _raise_broken_pipe)
+    # Substitui sys.stdout por um StringIO pra evitar que close() afete o
+    # stdout real do pytest (evolve.run fecha o stdout no handler BrokenPipe).
+    monkeypatch.setattr(sys, "stdout", io.StringIO())
+
+    rc = evolve.run([])
+    assert rc == 0, (
+        f"BrokenPipeError não deve propagar; run() deveria retornar 0, obtido {rc}"
+    )
+
+
 # ── BUG-RAW-1: rebuild-templates avisa que opera no FORGE_HOME ─────────────────
 
 
