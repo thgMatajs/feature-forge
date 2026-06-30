@@ -983,13 +983,36 @@ def _invoke_validator(
     duration_ms = int((time.monotonic() - started) * 1000)
     payload = _extract_json_tail(proc.stdout)
     if payload is None:
-        status = (
-            "pass"
-            if proc.returncode == 0
-            else "warn"
-            if proc.returncode == 1
-            else "fail"
-        )
+        # BUG-VERIFY-1 / ACK H-001 — INVARIANTE DE DETECTION (durável, não opcional):
+        #
+        #   validator quebrado / off-contract  ≠  código reprovado.
+        #
+        # Sem JSON tail, caímos na exit-code contract. Exit 2 é o sinal de
+        # argparse para "unrecognized arguments" / "invalid choice": o script
+        # está QUEBRADO ou FORA do contrato canônico (--project-root/--scope/
+        # --id). Isso é falha de INFRAESTRUTURA do validator — não código que
+        # o validator reprovou. Por isso vira `degraded`:
+        #
+        #   - `degraded` NÃO conta pro overall (run() só olha fail/warn) e NÃO
+        #     para a cascade fail-fast (Decisão 23 — _run_cascade só halta em
+        #     `fail`). Um validator off-contract não pode cegar os 5 validators
+        #     iOS/KMP a jusante (foi exatamente o piloto MeoBonsai: koin só
+        #     aceitava --root, estourava exit 2, virava `fail`, parava tudo).
+        #   - Deliberadamente NÃO é `warn`: warn conta no overall (vira
+        #     overall="warn") e mascararia o problema de infra como ressalva de
+        #     código. O anti-padrão exit-2→warn está banido.
+        #   - Exit 1 sem JSON permanece `warn` (ressalva leve); o hard fail
+        #     canônico de código reprovado vem pelo JSON tail {"status":"fail"}.
+        #
+        # Guarda executável desta fronteira:
+        #   tests/engine/test_verify_broken_validator_degraded.py
+        if proc.returncode == 0:
+            status = "pass"
+        elif proc.returncode == 1:
+            status = "warn"
+        else:
+            # exit 2 (ou qualquer código ≥2) = validator quebrado/off-contract.
+            status = "degraded"
         return _ValidatorResult(
             name=spec.name,
             status=status,
