@@ -53,6 +53,7 @@ from engine.memory.l1 import (
     write_l1_status,
 )
 from engine.persona import mentor_calmo
+from engine.plan_content_check import check_artefacts
 from engine.ui import question, renderer
 from engine.ui.exit_codes import (
     ERR_ABORTED,
@@ -828,6 +829,127 @@ class WaveResult:
     deferred: bool
 
 
+def _rel_to_root(path: Path, project_root: Path) -> str:
+    """Path relativo a ``project_root``, degradando-soft pra ``str(path)``.
+
+    M-02: ``Path.relative_to`` levanta ``ValueError`` quando ``path`` não é
+    subpath de ``project_root`` — possível quando um override de
+    workflow-config aponta o feature_path pra fora da raiz. Aqui caímos pro
+    path absoluto/string em vez de crashar no meio da apresentação 3-caminhos
+    (preserva o degrade-soft que a Onda 2 promete).
+
+    L-01: helper de módulo puro (depende só de ``project_root``), extraído do
+    ``lambda`` que era recriado a cada iteração do ``while`` do gate.
+    """
+    if not path.is_absolute():
+        return str(path)
+    try:
+        return str(path.relative_to(project_root))
+    except ValueError:
+        return str(path)
+
+
+def _run_content_gate(
+    label: str,
+    created: list[Path],
+    slug: str,
+    project_root: Path,
+) -> Optional[WaveResult]:
+    """Content-gate com dentes (Onda 2): roda o content-check determinístico
+    nos artefatos da wave APÓS o 'continuar' e ANTES do '*-acknowledged'.
+
+    Porta a FORMA do plan-auditor (L2 placeholder-scan + C2/M2
+    substance-coverage) via ``engine.plan_content_check.check_artefacts``. Se
+    há findings (substância parcial: stubs ``{{...}}`` residuais ou DAG vazio
+    com ≥2 tasks), emite o bloco 3-caminhos canônico e ramifica:
+
+    - caminho 'a' (Re-revisar agora) → re-LÊ o disco (bounded; sem re-render
+      nem recursão profunda — lição BUG-PLAN-1). Se limpo, segue pro
+      acknowledge (retorna None); se ainda há findings, pausa deferred.
+    - caminhos 'b'/'c' (Deferir / Pausar) → ``_persist_deferred`` +
+      ``WaveResult(deferred=True)``.
+
+    Retorno:
+    - ``None`` → conteúdo OK (ou re-revisado e limpo); o caller faz o
+      ``append_history(... acknowledged)`` normal.
+    - ``WaveResult(deferred=True)`` → pausou; o caller retorna esse resultado.
+
+    Acks: substância parcial = PAUSA deferred (exit 130), não hard-fail
+    (H-002). YAML malformado degrada-soft pra finding substance no helper, e
+    aqui vira a mesma pausa amigável (M-002).
+    """
+    findings = check_artefacts(label, created)
+    if not findings:
+        return None
+
+    rerun_left = 1  # bounded: 1 re-leitura de disco, sem recursão profunda.
+
+    def rel(p: Path) -> str:  # L-01: closure fina sobre o helper de módulo.
+        return _rel_to_root(p, project_root)
+
+    while True:
+        what_failed = "; ".join(f"{rel(f.artefact)}: {f.detail}" for f in findings)
+        where = ", ".join(sorted({rel(f.artefact) for f in findings}))
+        block = mentor_calmo.three_paths_block(
+            gate_name=f"Wave {label} — conteúdo incompleto",
+            what_failed=what_failed,
+            where=where,
+            why=[
+                "o host avançou a wave com substância parcial (stub residual ou DAG vazio)",
+                "implement/readiness assumem artefatos completos — gate procedural não basta",
+            ],
+            paths=[
+                {
+                    "label": "Re-revisar agora — eu re-leio o disco após você preencher",
+                    "motive": "se o gap é local (preencher os {{...}}), fecha nesta sessão",
+                },
+                {
+                    "label": "Marcar como deferred — eu salvo o estado e você revisa offline",
+                    "motive": "use quando o conteúdo depende de input externo ou outra pessoa",
+                },
+                {
+                    "label": "Pausar e investigar manualmente",
+                    "motive": "mentor calmo não força — você inspeciona e volta",
+                },
+            ],
+        )
+        renderer.write("")
+        renderer.write(block)
+        append_history(
+            slug,
+            project_root,
+            {
+                "event": f"wave-{label.lower()}-content-gate",
+                "findings": [
+                    {"artefact": rel(f.artefact), "category": f.category, "detail": f.detail}
+                    for f in findings
+                ],
+            },
+        )
+        chosen = question.ask_three_paths(
+            f"wave-{label.lower()}-content-incomplete",
+            [
+                {"label": "Re-revisar agora", "motive": ""},
+                {"label": "Deferir e salvar estado", "motive": ""},
+                {"label": "Pausar e investigar", "motive": ""},
+            ],
+        )
+        if chosen == "a" and rerun_left > 0:
+            rerun_left -= 1
+            renderer.write("Re-lendo os artefatos do disco após seu ajuste...")
+            append_history(
+                slug, project_root, {"event": f"wave-{label.lower()}-content-recheck"}
+            )
+            findings = check_artefacts(label, created)
+            if not findings:
+                return None  # limpo agora — segue pro acknowledge
+            continue  # ainda há gap — re-apresenta (mas rerun_left esgotou)
+
+        # 'b'/'c', ou 'a' sem re-revisão restante → pausa deferred.
+        _persist_deferred(slug, project_root, f"wave-{label.lower()}-content-incomplete")
+        return WaveResult(artefacts=created, deferred=True)
+
+
 def _run_static_wave(
     label: str,
     templates: tuple[tuple[str, str], ...],
@@ -871,6 +993,12 @@ def _run_static_wave(
     if choice == "pausar":
         _persist_deferred(slug, project_root, f"wave-{label.lower()}")
         return WaveResult(artefacts=created, deferred=True)
+
+    # Onda 2 — content-gate com dentes: roda o content-check ANTES do
+    # acknowledge. Substância parcial ramifica pra pausa deferred (H-002).
+    gated = _run_content_gate(label, created, slug, project_root)
+    if gated is not None:
+        return gated
 
     append_history(slug, project_root, {"event": f"wave-{label.lower()}-acknowledged"})
     return WaveResult(artefacts=created, deferred=False)
@@ -952,6 +1080,12 @@ def _run_wave_d(
         _persist_deferred(slug, project_root, "wave-d")
         return WaveResult(artefacts=created, deferred=True)
 
+    # Onda 2 — content-gate: o task-breakdown.yaml (DAG vazio) é o 2º escape
+    # do piloto; o check_task_breakdown dispara aqui via check_artefacts.
+    gated = _run_content_gate("D", created, slug, project_root)
+    if gated is not None:
+        return gated
+
     append_history(slug, project_root, {"event": "wave-d-acknowledged"})
     return WaveResult(artefacts=created, deferred=False)
 
@@ -1005,6 +1139,15 @@ def _run_wave_e(
     if choice == "pausar":
         _persist_deferred(slug, project_root, "wave-e")
         return WaveResult(artefacts=created, deferred=True)
+
+    # Onda 2 (Task 3) — content-gate INSERIDO ACIMA da recursão de readiness.
+    # Pega {{...}} residual no readiness/handoff ANTES do parse de verdict —
+    # um status='ready' não pode passar cego com handoff incompleto. Esta
+    # inserção NÃO altera a recursão de readiness (L~1060, território da Onda
+    # 3); só a antecede. Regiões disjuntas → merge limpo.
+    gated = _run_content_gate("E", created, slug, project_root)
+    if gated is not None:
+        return gated
 
     review_path = feature_path / "implementation-readiness-review.md"
     verdict = _parse_readiness_status(review_path)
