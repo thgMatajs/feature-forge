@@ -1197,9 +1197,34 @@ def _run_wave_e(
         {"label": "Pausar e investigar", "motive": ""},
     ])
     if chosen == "a":
-        renderer.write("Re-rodando Wave E após você ajustar os artefatos...")
-        append_history(slug, project_root, {"event": "wave-e-rerun-requested"})
-        return _run_wave_e(slug, project_root, feature_path)
+        # BUG-PLAN-1 (Onda 3): NÃO recursar. O `return _run_wave_e(...)` síncrono
+        # anterior recursava infinito quando o verdict continuava 'partial' (host
+        # respondeu 'a' mas não ajustou os artefatos) → RecursionError, exit 1,
+        # ~1.3MB stdout, N× 'wave-e-rerun-requested' no history.
+        #
+        # Fix: re-renderizar as waves apontadas como gap UMA vez (o host pediu
+        # "re-revisar agora") e PAUSAR (deferred). O host ajusta os artefatos e
+        # re-invoca pelo loop canônico — a próxima invocação re-roda o gate com
+        # o verdict atualizado. Mesmo contrato de pausa dos irmãos (b/c, wave-d,
+        # wave-e): _persist_deferred + WaveResult(deferred=True) → exit 130.
+        renderer.write(
+            "Re-renderizando as waves apontadas como gap. Ajuste os artefatos e "
+            "rode `forge plan {slug}` de novo pra re-checar a readiness.".format(
+                slug=slug
+            )
+        )
+        for template_name, output_name in WAVE_E_TEMPLATES:
+            target = feature_path / output_name
+            was_new = _render_template(template_name, target, slug, project_root)
+            marker = "NEW " if was_new else "EXIST"
+            renderer.write(f"  ├ {marker}  {target.relative_to(project_root)}")
+        append_history(
+            slug,
+            project_root,
+            {"event": "wave-e-rerendered-then-paused"},
+        )
+        _persist_deferred(slug, project_root, "wave-e-not-ready-rerender")
+        return WaveResult(artefacts=created, deferred=True)
 
     # b or c — both defer.
     _persist_deferred(slug, project_root, "wave-e-not-ready")
