@@ -52,13 +52,38 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 ### Added
 
 - Native gate ktlint no `forge verify` (Tema 6, Decisão 33, Fase 1 Track A1):
-  `./gradlew ktlintCheck` em modo check read-only. Violação é informativa (`warn`,
-  exit 0) por default; opt-in `fail-on-violation: true` sobe `warn→fail`; tool
-  ausente → `skipped` (skip-se-ausente é requisito); timeout → `degraded`. Config
-  em `native-gates.ktlint` (`docs/schemas/forge-config.md §native-gates`).
-  Implementado em `engine/verify.py::_run_native_gates` / `_run_ktlint_gate`;
-  guarda `tests/engine/test_verify_native_gates.py` (7 testes). (A2 build-only
-  fecha em Fase 1 Track A2.)
+  `./gradlew ktlintCheck` em modo check read-only, guard de stack FR-02 (só roda
+  em projetos com `platforms.active` contendo `android` ou `kmp`). Violação é
+  informativa (`warn`, exit 0) por default; opt-in `fail-on-violation: true` sobe
+  `warn→fail`; tool ausente → `skipped`; timeout → `degraded`. Config em
+  `native-gates.ktlint`. Implementado em `engine/verify.py::_run_ktlint_gate`;
+  guarda `tests/engine/test_verify_native_gates.py` (8 testes, inclui FR-04
+  early-return).
+
+- Build-only no `forge verify` (Tema 6, Nível 1, Decisão 33, Fase 1 Track A2):
+  `./gradlew assembleDebug` (android/kmp) / `xcodebuild build` (ios) conforme
+  `platforms.active`; web sem build-only no Nível 1. Reusa o step de gates externos
+  de A1 (`_run_native_gates` / `_map_external_result` / `resolve_invocation`).
+  Informativo por default, opt-in `fail-on-violation`, skip-se-ausente, timeout →
+  `degraded`. O build escreve artefatos no working tree (esperado; forge não
+  versiona/limpa). Config em `native-gates.build`.
+  Implementado em `engine/verify.py::_run_build_gates` / `_build_candidates`;
+  guarda `tests/engine/test_verify_build_only.py` (13 testes, inclui FR-01/02/03).
+
+- FR-01 fix em `_map_external_result`: mensagem agora é condicional a
+  `fail_on_violation` — quando `true`, diz "fail-on-violation: true — feature
+  reprova" (antes dizia "informativo; não reprova por default" mesmo ao reprovar).
+
+- FR-02 guard de stack compartilhado (`_ktlint_applies`): ktlint só roda quando
+  `platforms.active` tem `android`/`kmp`; stack desconhecida (active vazio ou
+  ausente) → tenta (conservador). Evita verde inerte em repos não-Kotlin com
+  ktlint no PATH.
+
+- FR-03 removido import `os` morto de `tests/engine/test_verify_native_gates.py`.
+
+- FR-04 adicionado teste `test_run_scope_early_return_skips_native_gates`:
+  validators=[] aciona early-return sem chamar gates nativos (comportamento Nível 1
+  documentado — gates acompanham cascade).
 
 - `engine/external_exec.py` — fronteira de execução externa genérica (Decisão
   33): `run_external_tool(argv, project_root, *, timeout)` roda binário do

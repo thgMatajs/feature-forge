@@ -130,10 +130,10 @@ Agrupado por prioridade. Plano de ataque por onda na spec
 
 - **Tema 6 — verificação inerte (o loop de correctness)** — o gap que deixa o
   "verde" mentir. A face **qa sem vetor impl-vs-spec** foi fechada na **Onda 1b**
-  (ver Fechados acima). As duas faces restantes — verify "verde inerte"
-  (gates nativos: 6 stubs no-op + 4 built-in staged-blind) e o passo
-  runtime/visual — ganharam **spec escrita** nesta onda e têm impl deferida pras
-  suas próprias ondas/decisões; ver Follow-on.
+  (ver Fechados acima). A face **gates nativos** (ktlint + build-only, Nível 1)
+  foi **fechada na Fase 1 Track A** (A1 + A2, 2026-06-30 — ver Follow-on). A face
+  **runtime/visual** (smoke Nível 2 + screenshot Nível 3) segue com spec escrita e
+  impl PENDENTE; ver Follow-on.
 
   *(BUG-5, BUG-2 e BUG-PLAN-1 — os outros P0 desta seção — foram fechados na
   Onda 3; ver seção Fechados acima.)*
@@ -145,15 +145,18 @@ Agrupado por prioridade. Plano de ataque por onda na spec
 
 **Follow-on (novos papercuts achados durante a remediação)**
 
-- **impl de gates-nativos (Tema 6, face 2)** — **PARCIALMENTE FECHADA** na Fase
-  1 Track A1: gate ktlint (`./gradlew ktlintCheck`) implementado em
-  `engine/verify.py::_run_native_gates` / `_run_ktlint_gate`; guarda em
-  `tests/engine/test_verify_native_gates.py`. A face build-only fecha em A2;
-  a marcação final em "Fechados" das duas faces consolida em A2 Step 5.
+- ✓ **impl de gates-nativos (Tema 6, face 2)** — **FECHADA** na Fase 1 Track A
+  (A1 + A2, 2026-06-30): gate ktlint (`./gradlew ktlintCheck`, modo check
+  read-only, guard de stack android/kmp FR-02) em `engine/verify.py::_run_ktlint_gate`;
+  gate build-only (`./gradlew assembleDebug` pra android/kmp, `xcodebuild build`
+  pra ios, web skip) em `engine/verify.py::_run_build_gates`; ambos mesclados via
+  `_run_native_gates`. Guardas: `tests/engine/test_verify_native_gates.py`,
+  `tests/engine/test_verify_build_only.py`.
 - **impl de runtime/visual (Tema 6, face 3)** — spec escrita em
   `docs/superpowers/specs/2026-06-30-runtime-visual-verification-design.md`; a
-  impl do passo de verificação runtime/visual está PENDENTE. *Reentrar* em onda
-  própria.
+  impl do passo de verificação runtime/visual (smoke Nível 2 + screenshot Nível 3)
+  está PENDENTE. *Reentrar* em onda própria (critério: piloto MeoBonsai com
+  gates nativos A1/A2 estabilizados).
 - **forge upgrade ignora flags desconhecidas em silêncio** — `engine/upgrade.py`
   (~L333): flags não-reconhecidas passam batido sem aviso (cosmético, sem
   impacto de segurança; um typo de flag não dá feedback). *Reentrar* ao tocar o

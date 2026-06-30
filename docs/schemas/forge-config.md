@@ -717,6 +717,20 @@ Nenhum resolve → o gate é `skipped` com aviso mentor-calmo nomeando como habi
 Skip-se-ausente é **requisito**, não conveniência: um gate que falha por ausência
 tornaria o forge refém da toolchain de cada consumidor.
 
+### Guard de stack (FR-02)
+
+O ktlint roda apenas em projetos Kotlin. A decisão usa `platforms.active`:
+
+- `active` contém `android` ou `kmp` → ktlint tenta resolver (projeto Kotlin).
+- `active` definido mas sem `android`/`kmp` (ex.: `["ios","web"]`) → ktlint não
+  roda (projeto não-Kotlin; evita verde inerte via which-fallback num repo não-Kotlin).
+- `active` vazio ou bloco `platforms` ausente → ktlint tenta (stack desconhecida;
+  pode ser Kotlin — conservador).
+
+O build gate usa `platforms.active` para escolher o comando por plataforma (ver
+seção §Descoberta do binário). Plataformas sem build-only no Nível 1 (`web`,
+desconhecidas) são silenciosamente puladas.
+
 ### Notas de runtime
 
 - **Modo check, read-only (ktlint).** O ktlint roda só em `ktlintCheck` — nunca

@@ -1267,10 +1267,18 @@ def _map_external_result(
         message = res.skipped_reason or "gate não terminou — classificado como degraded"
     elif res.status == "fail":
         tail = (res.stdout or res.stderr or "").strip().splitlines()
-        message = (
-            f"{gate_name} acusou violações (informativo; não reprova por default)."
-            + (f" {tail[-1][:80]}" if tail else "")
-        )
+        # FR-01: mensagem condicional — contradição se sempre diz "não reprova" quando
+        # fail_on_violation=True (nesse path mapped="fail", reprova de verdade).
+        if fail_on_violation:
+            suffix = f" {tail[-1][:80]}" if tail else ""
+            message = (
+                f"{gate_name} acusou violações (fail-on-violation: true — feature reprova).{suffix}"
+            )
+        else:
+            suffix = f" {tail[-1][:80]}" if tail else ""
+            message = (
+                f"{gate_name} acusou violações (informativo; não reprova por default).{suffix}"
+            )
 
     return _ValidatorResult(
         name=gate_name,
@@ -1286,8 +1294,36 @@ def _skipped_gate_result(gate_name: str, message: str) -> _ValidatorResult:
     return _ValidatorResult(name=gate_name, status="skipped", message=message)
 
 
+def _active_platforms(config: dict) -> list[str]:
+    """Lê `platforms.active` do config; [] se ausente ou malformado."""
+    platforms = config.get("platforms")
+    if not isinstance(platforms, dict):
+        return []
+    active = platforms.get("active")
+    return [str(p) for p in active] if isinstance(active, list) else []
+
+
+def _ktlint_applies(config: dict) -> bool:
+    """FR-02: guard de stack — ktlint só roda em projetos Kotlin (android/kmp).
+
+    Regra:
+    - active contém android ou kmp → roda (projeto Kotlin).
+    - active definido mas sem android/kmp (ex.: ["ios","web"]) → não roda
+      (projeto não-Kotlin — evita verde inerte via which-fallback).
+    - active vazio OU platforms ausente → roda (stack desconhecida; pode ser Kotlin).
+    """
+    active = _active_platforms(config)
+    if not active:
+        # Vazio ou ausente: não sabemos a stack → tenta (pode ser Kotlin).
+        return True
+    return bool(set(active) & {"android", "kmp"})
+
+
 def _run_ktlint_gate(config: dict, project_root: Path) -> list[_ValidatorResult]:
     if not _gate_enabled(config, "ktlint"):
+        return []
+    # FR-02: guard de stack compartilhado — ktlint só se stack é Kotlin.
+    if not _ktlint_applies(config):
         return []
     argv = resolve_invocation(_ktlint_candidates(config, project_root), project_root)
     if argv is None:
@@ -1312,6 +1348,67 @@ def _run_ktlint_gate(config: dict, project_root: Path) -> list[_ValidatorResult]
     ]
 
 
+# Plataforma → comando de build-only (modo build, sem rodar o app). web não tem
+# build-only no Nível 1 (skip). android/kmp compartilham o gradle wrapper.
+_BUILD_CMD_BY_PLATFORM: dict[str, list[str]] = {
+    "android": ["./gradlew", "assembleDebug"],
+    "kmp": ["./gradlew", "assembleDebug"],
+    "ios": ["xcodebuild", "build"],
+}
+
+
+def _build_candidates(platform: str) -> list[list[str] | str]:
+    """Candidatos de invocação do build-only pra uma plataforma.
+
+    Um candidato por plataforma no Nível 1 (o wrapper/binário canônico). web e
+    plataformas desconhecidas devolvem [] → o caller pula (sem _ValidatorResult).
+    """
+    cmd = _BUILD_CMD_BY_PLATFORM.get(platform)
+    return [cmd] if cmd else []
+
+
+def _run_build_gates(config: dict, project_root: Path) -> list[_ValidatorResult]:
+    """Build-only por plataforma ativa. Reusa resolve/run/map do A1.
+
+    Um único _ValidatorResult `build` (a primeira plataforma com build que
+    resolver vence) — Nível 1 não roda múltiplos builds no mesmo verify. Se
+    nenhuma plataforma com build resolve E ao menos uma plataforma de build
+    estava ativa → skipped; se só web/desconhecidas → nada (lista vazia).
+    """
+    if not _gate_enabled(config, "build"):
+        return []
+
+    platforms = _active_platforms(config)
+    buildable = [p for p in platforms if _build_candidates(p)]
+    if not buildable:
+        return []  # só web/desconhecidas → sem build-only no Nível 1
+
+    for platform in buildable:
+        argv = resolve_invocation(_build_candidates(platform), project_root)
+        if argv is None:
+            continue
+        res = run_external_tool(
+            argv, project_root, timeout=_gate_timeout(config, "build", default=600)
+        )
+        return [
+            _map_external_result(
+                res,
+                gate_name="build",
+                fail_on_violation=_gate_fail_on_violation(config, "build"),
+            )
+        ]
+
+    # Plataforma com build ativa mas toolchain ausente → skipped (não fail).
+    return [
+        _skipped_gate_result(
+            "build",
+            "Build-only pulado: toolchain de build não encontrada (nem `./gradlew "
+            "assembleDebug` pra android/kmp, nem `xcodebuild` pra ios). A feature não "
+            "foi reprovada por isso. Instale o SDK/toolchain pra habilitar o build-only.",
+        )
+    ]
+
+
 def _run_native_gates(
     config: dict,
     project_root: Path,
@@ -1322,6 +1419,7 @@ def _run_native_gates(
 
     Gates cobertos (Tema 6, Nível 1):
       - ktlint  (A1) — `./gradlew ktlintCheck` em modo check, read-only.
+      - build   (A2) — `./gradlew assembleDebug` / `xcodebuild` conforme stack.
 
     Guard greenfield: se `config` é vazio (mid-init, config ainda não escrito),
     devolve `[]` — não tenta rodar gate sem config. Os callers de run_scope
@@ -1336,7 +1434,7 @@ def _run_native_gates(
 
     results: list[_ValidatorResult] = []
     results.extend(_run_ktlint_gate(config, project_root))
-    # A2 acrescenta aqui: results.extend(_run_build_gates(config, project_root))
+    results.extend(_run_build_gates(config, project_root))
     return results
 
 

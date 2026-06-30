@@ -7,7 +7,6 @@ mescla no run_scope / o opt-in warn→fail.
 """
 from __future__ import annotations
 
-import os
 import stat
 from pathlib import Path
 
@@ -145,6 +144,43 @@ def test_ktlint_timeout_maps_to_degraded(project_with_wrapper, monkeypatch):
     ktlint = next(r for r in results if r.name == "ktlint")
     assert ktlint.status == "degraded"
     assert "timeout" in ktlint.message.lower()
+
+
+def test_run_scope_early_return_skips_native_gates(tmp_path, monkeypatch, capsys):
+    """FR-04: run_scope com validators=[] retorna pass sem chamar gates nativos.
+
+    O early-return (validators vazio) dispara ANTES do ponto de mescla dos gates
+    nativos — `run_external_tool` não deve ser chamado. O guard é documentado no
+    plano (Nível 1: gates acompanham a cascade; sem validators → sem gates nativos).
+    """
+    import json as _json
+    from engine.ui import output_mode
+
+    def _boom(*a, **k):
+        raise AssertionError("run_external_tool não devia ser chamado no early-return path")
+
+    monkeypatch.setattr(verify, "run_external_tool", _boom)
+    monkeypatch.setattr(verify, "_discover_validators", lambda *a, **k: [])
+    monkeypatch.setattr(verify, "_write_verify_log_entry", lambda *a, **k: None)
+    monkeypatch.setattr(verify, "_restore_l1_status", lambda *a, **k: None)
+    monkeypatch.setattr(verify, "_clear_verify_checkpoint", lambda *a, **k: None)
+    monkeypatch.setattr(verify, "_scope_to_feature_slug", lambda *a, **k: "")
+    monkeypatch.setattr(
+        verify,
+        "read_yaml_or_default",
+        lambda path, default: {
+            "platforms": {"active": ["android"]},
+            "native-gates": {"ktlint": {"enabled": True}, "build": {"enabled": True}},
+        },
+    )
+    monkeypatch.setattr(output_mode, "is_json_mode", lambda: True)
+
+    exit_code = verify.run_scope("feature", "demo", tmp_path, interactive=False)
+
+    payload = _json.loads(capsys.readouterr().out)
+    assert payload["overall"] == "pass"
+    assert exit_code == 0
+    # Não houve chamada a run_external_tool — se houvesse, _boom teria disparado.
 
 
 def test_native_gate_merges_into_run_scope_json(project_with_wrapper, monkeypatch, capsys):
