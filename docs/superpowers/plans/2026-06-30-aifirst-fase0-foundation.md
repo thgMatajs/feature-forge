@@ -7,6 +7,10 @@
 > **Voz:** mentor calmo — firme nos gates, didático nos exemplos.
 > **Status:** pré-implementação (aguarda plan-auditor antes do handoff ao `gsd-executor`).
 > **Data:** 2026-06-30.
+> **Emenda r1 (2026-06-30):** endereça os 4 findings do plan-auditor —
+> H-001 (isola a causa do BLOCK no teste do hook), M-002 (estende a definição
+> do check C1 pra "Nova decisão N"), M-001 (fecha `04-pending.md` já na Fase 0,
+> não na Fase 2), L-001 (guard anti-leak de fixture).
 
 ---
 
@@ -18,13 +22,17 @@ afrouxar nenhuma garantia que custou caro. Três entregas serial-dependentes:
 1. **0a** — Abrir a **Decisão 33** (fronteira de execução externa, distinta do
    sandbox de validators da Decisão 30) via o ritual de *nova decisão*, e
    estender o hook de cerimônia pra aceitar "nova decisão" (hoje só aceita
-   "revisita decisão" — sem isso o commit da 33 trava no HARD BLOCK).
+   "revisita decisão" — sem isso o commit da 33 trava no HARD BLOCK). A mesma
+   task estende a definição do check **C1** do plan-auditor (rule + `mem`) pra
+   reconhecer "Nova decisão N" como cerimônia de primeira classe, e fecha em
+   `04-pending.md` o follow-on de gates-nativos que dependia da Decisão 33.
 2. **0b** — Um helper **genérico** de fronteira de execução externa
    (`engine/external_exec.py`), TDD, que a Fase 1 (A1 ktlint, A2 build-only)
    reusa. Nada tool-específico aqui.
 3. **0c** — **Investigar** (não fixar cego) a divergência dos dois write-paths
    do verify-log, e bater o martelo via 3-caminhos com base no que o teste
-   observar.
+   observar. O veredito (Caminho A fix / Caminho B doc) atualiza `04-pending.md`
+   no MESMO commit, fechando ou documentando a divergência.
 
 A Fase 0 é **serial** (0a → 0b → 0c não têm dependência de código entre si, mas
 rodam em sequência na mesma branch; 0c toca `verify.py`, que a Fase 1 estende, e
@@ -37,6 +45,10 @@ por isso precisa estar limpo antes). **Este plano NÃO planeja a Fase 1.**
   faz HARD BLOCK quando `docs/design/01-decisions.md` é staged sem a cerimônia
   no CHANGELOG staged. Hoje a cerimônia reconhecida é só "revisita decisão" — a
   Decisão 33 é **nova**, então o regex precisa aceitar também "nova decisão".
+  Pelo Mandamento #6 (doc-sync no MESMO commit), a mesma task que muda o hook
+  estende o **rule + a nota `mem`** que descrevem o check C1 do plan-auditor —
+  o tooling de review que documenta o hook deve mudar junto com ele — e fecha em
+  `04-pending.md` o follow-on que a Decisão 33 destrava.
 - **0b** materializa a **fronteira de execução externa** da spec irmã (§1
   Caminho A): um caminho de subprocess **separado** do sandbox de validators
   (Decisão 30). Espelha o pattern de `engine/verify.py::_invoke_validator`
@@ -56,6 +68,8 @@ por isso precisa estar limpo antes). **Este plano NÃO planeja a Fase 1.**
   reduzido (allowlist `PATH/HOME/USER/LOGNAME/LANG/LC_*/TZ/TMPDIR/TEMP/TMP/PYTHONHASHSEED`).
 - `pytest` — **`.venv/bin/pytest` é o CANÔNICO** (tem json5 + deps; o system
   pytest gera false-fail). Testes novos vivem em `tests/engine/`.
+- `.claude/bin/mem` pro acervo (extensão da definição de C1 — ver 0a). `--json` é
+  flag GLOBAL (vem ANTES do subcomando).
 - Sem dependências novas. Decisão 22 (zero runtime deps em outras skills) intacta.
 
 ## Global Constraints
@@ -74,7 +88,8 @@ por isso precisa estar limpo antes). **Este plano NÃO planeja a Fase 1.**
   texto de decisão, mensagem do hook). Sem voz corporativa, sem emoji decorativo.
 - **Doc-sync no mesmo commit** ao tocar `engine/`/`hooks/`/`docs/`: cada task
   que toca código vivo ou hook atualiza `CHANGELOG.md` (`[Unreleased]`) no MESMO
-  commit. (O pre-commit emite SOFT WARNING se faltar.)
+  commit. (O pre-commit emite SOFT WARNING se faltar.) **Inclui `04-pending.md`:**
+  item fechado/documentado nesta fase é movido no MESMO commit da task (M-001).
 - **Decisão 33 (ritual nova decisão):** append-only em `01-decisions.md` (nunca
   deletar linha), texto literal "Nova decisão 33:" no CHANGELOG sob
   `### Changed (load-bearing)`, e "Nova decisão 33" no commit body da task 0a.
@@ -89,13 +104,18 @@ por isso precisa estar limpo antes). **Este plano NÃO planeja a Fase 1.**
 ### Arquivos permitidos por task (whitelist de edit)
 
 - **0a:** `.claude/hooks/pre-commit-feature-forge.sh`, `docs/design/01-decisions.md`,
-  `CHANGELOG.md`. (+ teste do hook em `tests/hooks/` — ver step 0a.2.)
+  `CHANGELOG.md`, `tests/hooks/test_pre_commit_ceremony.py` (novo),
+  `.claude/rules/plan-auditor.md` (extensão de C1 — ver step 0a.6),
+  `docs/design/04-pending.md` (fechar follow-on Decisão 33 — ver step 0a.7).
+  (+ acervo `mem` via `.claude/bin/mem`, que é JSONL append-only fora da árvore
+  de edit de arquivo de produto — ver step 0a.6.)
 - **0b:** `engine/external_exec.py` (novo), `tests/engine/test_external_exec.py`
   (novo), `CHANGELOG.md`.
 - **0c:** `tests/engine/test_verify_log_write_paths.py` (novo); depois,
   **condicionalmente** (Caminho A) `engine/verify.py` + `tests/engine/test_verify_log_consolidation.py`,
   **ou** (Caminho B) docstrings de `engine/verify.py::_write_verify_log_entry`
-  e `engine/memory/l1.py::append_verify_log`; `CHANGELOG.md`.
+  e `engine/memory/l1.py::append_verify_log`; `CHANGELOG.md`; e em AMBOS os
+  caminhos `docs/design/04-pending.md` (fechar/documentar a divergência — step 0c.4).
 
 ---
 
@@ -109,13 +129,28 @@ Registrado pra o executor não re-scoutar. Linhas conferidas nesta data.
   ```
   HARD BLOCK (exit 1) quando `01-decisions.md` é staged sem casar esse regex no
   diff staged de `CHANGELOG.md`. A mensagem de block (heredoc L25-37) cita só
-  `'Revisita decisão N: ...'` como cerimônia.
+  `'Revisita decisão N: ...'` como cerimônia. A primeira linha do heredoc é
+  literal `🛑 BLOCK: docs/design/01-decisions.md alterado sem cerimônia.` — esse
+  prefixo `🛑 BLOCK: docs/design/01-decisions.md` PERMANECE no heredoc reescrito
+  por 0a.2, então o teste pode assertá-lo como marker estável (H-001).
 - **Decisões** — `docs/design/01-decisions.md`: tabela Markdown
   `| # | Decision | Choice | Rationale |`. Última linha hoje = **32** (revisita
   da Decisão 10, interaction mode). Próxima = **33**. Decisões 30/31 = sandbox
   isolation Python-only via `sitecustomize.py` preload.
 - **CHANGELOG.md** — tem `## [Unreleased]` com `### Added`. **NÃO tem**
   `### Changed (load-bearing)` ainda — 0a cria a subseção.
+- **`docs/design/04-pending.md`** — §"Follow-on" (L134+) tem o item **"impl de
+  gates-nativos (Tema 6, face 2)"** (L136-140) cujo texto diz literalmente que a
+  impl "está PENDENTE e **pode exigir Decisão 33**". Com a 0a abrindo a Decisão 33,
+  esse "pode exigir" vira "tem" — o item é atualizado (não removido) pra refletir
+  que a decisão foi tomada, destravando a impl da Fase 1 (step 0a.7). NÃO há item
+  separado "scope dict/string no verify-log" listado em `04-pending.md` — esse
+  débito vive na spec irmã §2; 0c o registra/fecha em `04-pending.md` conforme o
+  veredito (step 0c.4).
+- **Rule do plan-auditor** — `.claude/rules/plan-auditor.md` é um **ponteiro**: o
+  detalhe dos 12 checks vive no acervo `mem` (nota `01KVZW16WAH54P8FCSN9FQ8VP2`,
+  "Os 12 checks do plan-auditor"). A extensão de C1 (0a.6) toca os DOIS: a invariante
+  no rule + a definição canônica na nota `mem`.
 - **Env reduzido** — `engine/_sandbox/env.py:72`:
   `build_safe_env(*, extras: Iterable[str] = (), allow_sensitive: bool = False) -> dict[str, str]`.
   Retorna `(CORE_ALLOWLIST ∪ extras) ∩ os.environ`. `extras` com var sensitive
@@ -170,11 +205,13 @@ Registrado pra o executor não re-scoutar. Linhas conferidas nesta data.
 
 ---
 
-## Task 0a — Decisão 33 + extensão do hook de cerimônia
+## Task 0a — Decisão 33 + extensão do hook + C1 + pending
 
 **Objetivo:** abrir a Decisão 33 (fronteira de execução externa) seguindo o
-ritual de nova decisão, e estender o hook pra que ele aceite "nova decisão" como
-cerimônia válida (sem deixar de bloquear o caso sem-cerimônia).
+ritual de nova decisão; estender o hook pra que ele aceite "nova decisão" como
+cerimônia válida (sem deixar de bloquear o caso sem-cerimônia); estender a
+definição do check **C1** do plan-auditor (rule + `mem`) pra espelhar o hook; e
+fechar em `04-pending.md` o follow-on que a Decisão 33 destrava.
 
 **Por que o hook PRIMEIRO:** a Decisão 33 é nova (não revisita). Com o regex
 atual (`'revisita decisão|revisit decision'`), o commit que staga
@@ -182,20 +219,59 @@ atual (`'revisita decisão|revisit decision'`), o commit que staga
 BLOCK. Estender o hook antes destrava o próprio commit desta task.
 
 **Foco do reviewer (anote no handoff):** (a) o hook ainda bloqueia o commit
-sem-cerimônia; (b) append-only preservado em `01-decisions.md` (linha 32 intacta,
+sem-cerimônia, e o teste PROVA isso pela string literal do BLOCK (não só exit≠0 —
+H-001); (b) append-only preservado em `01-decisions.md` (linha 32 intacta,
 33 só adicionada); (c) texto literal "Nova decisão 33:" presente no CHANGELOG;
-(d) "Nova decisão 33" no commit body.
+(d) "Nova decisão 33" no commit body; (e) C1 estendido no rule + `mem` espelha o
+hook (M-002); (f) `04-pending.md` reflete a Decisão 33 como tomada (M-001);
+(g) fixtures de teste confinados ao `tmp_path`, sem leak pro `01-decisions.md`
+real (L-001).
 
 **Arquivos permitidos:** `.claude/hooks/pre-commit-feature-forge.sh`,
-`docs/design/01-decisions.md`, `CHANGELOG.md`, `tests/hooks/test_pre_commit_ceremony.py` (novo).
+`docs/design/01-decisions.md`, `CHANGELOG.md`,
+`tests/hooks/test_pre_commit_ceremony.py` (novo),
+`.claude/rules/plan-auditor.md`, `docs/design/04-pending.md`
+(+ acervo `mem` via `.claude/bin/mem` — JSONL append-only, fora da árvore de produto).
 
 ### Step 0a.1 — Test do hook FALHANDO (TDD)
 
 Crie `tests/hooks/test_pre_commit_ceremony.py`. O teste exercita o hook num repo
 git temporário, stageando `docs/design/01-decisions.md` + um `CHANGELOG.md`, e
-asserta os três comportamentos: (1) BLOCK sem cerimônia → exit 1; (2) PASS com
-"revisita decisão" → exit 0; (3) PASS com "nova decisão" → exit 0. O caso (3)
-**deve falhar** contra o hook atual (regex não casa "nova decisão").
+asserta quatro comportamentos: (1) BLOCK sem cerimônia → exit 1 **com a string
+literal do BLOCK no STDERR**; (2) PASS com "revisita decisão" → exit 0; (3) PASS
+com "nova decisão" → exit 0; (4) controle: stage de arquivo NÃO-decisions → exit 0
+(prova que o hook não bloqueia o mundo todo). O caso (3) **deve falhar** contra o
+hook atual (regex não casa "nova decisão").
+
+**Isolamento da causa do BLOCK (H-001 — não-negociável):** o hook roda sob
+`set -euo pipefail` e faz `git rev-parse --show-toplevel` + `git diff --cached`. Um
+repo temp **sem commit inicial** (sem HEAD) pode estourar exit 1 por motivo
+*estrutural* (diff contra HEAD inexistente, `pipefail` num pipe intermediário) — e
+aí `test_blocks_without_ceremony` passaria pelo motivo ERRADO, mascarando se o
+regex estendido (0a.2) abriu um buraco. Pra isolar que o exit 1 veio do **ramo de
+cerimônia ausente** e não de erro estrutural, o fixture:
+1. **Inicializa o repo temp COM um commit inicial** (`git commit --allow-empty -m init`),
+   de modo que `git diff --cached` rode contra um HEAD válido — o pre-commit roda
+   num estado de repo válido.
+2. Stage de `01-decisions.md` com linha nova MAS sem cerimônia no CHANGELOG staged.
+3. Asserta exit 1 **E** que o STDERR contém a string literal do BLOCK
+   (`"🛑 BLOCK: docs/design/01-decisions.md"`) — não só `returncode != 0`. Se o exit
+   1 fosse estrutural, o heredoc do ramo de cerimônia NÃO teria rodado e a string
+   literal estaria ausente → o teste pegaria o falso-BLOCK. Isso isola que o BLOCK
+   veio do gate de cerimônia, não de erro estrutural.
+
+**Caso positivo complementar:** com "Nova decisão" no CHANGELOG staged (mesmo
+setup estrutural — repo COM commit inicial), o hook deixa passar (exit 0). Os dois
+casos abaixo (`test_blocks_without_ceremony` + `test_passes_with_nova_decisao`)
+compartilham o `_init_repo` com commit inicial — então a diferença de veredito
+(BLOCK vs PASS) só pode vir da cerimônia, nunca do estado estrutural.
+
+**Guard anti-leak de fixture (L-001):** todos os fixtures rodam em `tmp_path`
+isolado e escrevem `01-decisions.md`/`CHANGELOG.md` **dentro do repo temp** — nunca
+no `docs/design/01-decisions.md` real deste repo. O `_init_repo`/`_stage` operam só
+sob `tmp_path`; o `| 33 | stub | stub | stub |` é corpo sintético confinado ao
+temp. O `test_blocks_without_ceremony` asserta explicitamente esse confinamento (o
+real do repo permanece intacto).
 
 ```python
 """Gate do ritual de cerimônia no pre-commit (Decisão 33, Fase 0a).
@@ -204,6 +280,11 @@ O hook .claude/hooks/pre-commit-feature-forge.sh faz HARD BLOCK quando
 docs/design/01-decisions.md é staged sem a cerimônia no CHANGELOG staged.
 Cerimônia válida: 'revisita decisão' (decisão existente) OU 'nova decisão'
 (decisão nova, como a 33). Mentor calmo: firme no gate, claro no porquê.
+
+H-001: o repo temp tem commit inicial pra que o exit 1 só possa vir do ramo de
+cerimônia (não de erro estrutural de repo sem HEAD), e o BLOCK-test asserta a
+string literal do heredoc — não só returncode.
+L-001: todos os fixtures vivem em tmp_path; jamais tocam o 01-decisions.md real.
 """
 from __future__ import annotations
 
@@ -214,12 +295,22 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HOOK = REPO_ROOT / ".claude" / "hooks" / "pre-commit-feature-forge.sh"
+# Prefixo literal do heredoc de BLOCK (espelha pre-commit-feature-forge.sh).
+# Estável entre o hook atual (RED) e o reescrito por 0a.2 (GREEN).
+BLOCK_MARKER = "🛑 BLOCK: docs/design/01-decisions.md"
 
 
 def _init_repo(tmp_path: Path) -> Path:
+    """Repo temp COM commit inicial (H-001): git diff --cached roda contra HEAD
+    válido, então um exit 1 só pode vir do ramo de cerimônia, não de repo sem HEAD."""
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "config", "user.email", "t@e.st"], cwd=tmp_path, check=True)
     subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "--allow-empty", "-m", "init"],
+        cwd=tmp_path,
+        check=True,
+    )
     (tmp_path / "docs" / "design").mkdir(parents=True)
     return tmp_path
 
@@ -245,25 +336,54 @@ def _run_hook(repo: Path) -> subprocess.CompletedProcess[str]:
 
 
 def test_blocks_without_ceremony(tmp_path: Path) -> None:
+    # H-001: exit 1 ISOLADO ao ramo de cerimônia — confirmado pela string literal
+    # do heredoc (se fosse exit 1 estrutural, o heredoc não teria rodado).
     repo = _init_repo(tmp_path)
-    _stage(repo, "| 33 | x | y | z |\n", "## [Unreleased]\n\n### Added\n- nada de cerimônia\n")
+    _stage(
+        repo,
+        "| 33 | stub | stub | stub |\n",
+        "## [Unreleased]\n\n### Added\n- nada de cerimônia\n",
+    )
     result = _run_hook(repo)
     assert result.returncode == 1, f"esperava BLOCK, veio {result.returncode}: {result.stderr}"
-    assert "BLOCK" in result.stderr
+    assert BLOCK_MARKER in result.stderr, (
+        "exit 1 sem a string literal do BLOCK = bloqueio estrutural, não do ramo de "
+        f"cerimônia (H-001). STDERR: {result.stderr!r}"
+    )
+    # L-001: o 01-decisions.md REAL do repo nunca foi tocado pelo fixture.
+    assert (REPO_ROOT / "docs" / "design" / "01-decisions.md").read_text(
+        encoding="utf-8"
+    ).count("| stub | stub | stub |") == 0
 
 
 def test_passes_with_revisita(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path)
-    _stage(repo, "| 33 | x | y | z |\n", "### Changed\n- Revisita decisão 10: foo — bar\n")
+    _stage(repo, "| 33 | stub | stub | stub |\n", "### Changed\n- Revisita decisão 10: foo — bar\n")
     result = _run_hook(repo)
     assert result.returncode == 0, f"esperava PASS, veio {result.returncode}: {result.stderr}"
 
 
 def test_passes_with_nova_decisao(tmp_path: Path) -> None:
+    # Caso positivo complementar (H-001): MESMO setup estrutural do BLOCK-test
+    # (repo COM commit inicial); a única diferença é a cerimônia presente → PASS.
     repo = _init_repo(tmp_path)
-    _stage(repo, "| 33 | x | y | z |\n", "### Changed (load-bearing)\n- Nova decisão 33: foo — bar\n")
+    _stage(
+        repo,
+        "| 33 | stub | stub | stub |\n",
+        "### Changed (load-bearing)\n- Nova decisão 33: foo — bar\n",
+    )
     result = _run_hook(repo)
     assert result.returncode == 0, f"esperava PASS pra nova decisão, veio {result.returncode}: {result.stderr}"
+
+
+def test_non_decisions_file_passes(tmp_path: Path) -> None:
+    # Controle: o gate de cerimônia só morde 01-decisions.md. Stage de outro
+    # arquivo (sem cerimônia nenhuma) passa — prova que o hook não bloqueia o mundo.
+    repo = _init_repo(tmp_path)
+    (repo / "README.md").write_text("# qualquer coisa\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+    result = _run_hook(repo)
+    assert result.returncode == 0, f"esperava PASS pra arquivo não-decisions, veio {result.returncode}: {result.stderr}"
 ```
 
 **Rodar e ver falhar** (a worktree gate primeiro):
@@ -271,8 +391,11 @@ def test_passes_with_nova_decisao(tmp_path: Path) -> None:
 .venv/bin/python -c "import engine, pathlib; p=pathlib.Path(engine.__file__).resolve(); cwd=pathlib.Path('.').resolve(); assert str(p).startswith(str(cwd)), p; print('OK', p)"
 .venv/bin/pytest tests/hooks/test_pre_commit_ceremony.py -q
 ```
-Esperado: `test_passes_with_nova_decisao` FALHA (exit 1 do hook); os outros dois
-passam (comportamento já existente). Isso prova que o teste casa o gap.
+Esperado: `test_passes_with_nova_decisao` FALHA (exit 1 do hook); os outros três
+(`test_blocks_without_ceremony`, `test_passes_with_revisita`,
+`test_non_decisions_file_passes`) passam (comportamento já existente). Isso prova
+que o teste casa o gap — e que o BLOCK-test bloqueia pela cerimônia ausente
+(string literal presente), não por defeito estrutural do repo temp.
 
 ### Step 0a.2 — Estender o regex e a mensagem do hook (impl mínima)
 
@@ -284,7 +407,9 @@ aceitar também "nova decisão"/"new decision":
 ```
 
 E atualize o heredoc da mensagem de BLOCK (L25-37) pra citar as duas cerimônias
-válidas, em voz mentor calmo:
+válidas, em voz mentor calmo. **Preserve a primeira linha literal
+`🛑 BLOCK: docs/design/01-decisions.md alterado sem cerimônia.`** — é o marker que
+o teste asserta (H-001):
 
 ```bash
         cat <<'EOF' >&2
@@ -308,7 +433,8 @@ EOF
 ```bash
 .venv/bin/pytest tests/hooks/test_pre_commit_ceremony.py -q
 ```
-Esperado: 3 passed. O caso sem-cerimônia continua bloqueando (test_blocks_without_ceremony verde).
+Esperado: 4 passed. O caso sem-cerimônia continua bloqueando
+(`test_blocks_without_ceremony` verde, com a string literal do BLOCK).
 
 ### Step 0a.3 — Append da Decisão 33 (append-only)
 
@@ -333,20 +459,115 @@ Em `CHANGELOG.md`, sob `## [Unreleased]`, crie a subseção `### Changed (load-b
   estouro → degraded; skip-se-ausente; sem auto-fix; sem instalar toolchain. A
   Decisão 30 segue valendo integralmente pro sandbox de validators — a 33 é
   fronteira separada, não afrouxa a 30.
+- Hook `.claude/hooks/pre-commit-feature-forge.sh` e check **C1** do plan-auditor
+  (`.claude/rules/plan-auditor.md` + nota `mem`) agora reconhecem "Nova decisão N"
+  (decisão nova) como cerimônia de primeira classe, além de "Revisita decisão N"
+  (decisão existente). Espelha o hook estendido pela Decisão 33; evita
+  falso-positivo Critical em auditorias de decisões novas.
 ```
 
-### Step 0a.5 — Verificar e commitar a task
+### Step 0a.5 — Adicionar nota no CHANGELOG sobre o pending fechado (doc-only)
+
+Ainda em `CHANGELOG.md`, sob `## [Unreleased]`, em `### Changed` (subseção
+doc-only; criar se não existir, distinta da `(load-bearing)`):
+
+```markdown
+### Changed
+
+- `docs/design/04-pending.md`: o follow-on "impl de gates-nativos (Tema 6, face 2)"
+  deixa de dizer "pode exigir Decisão 33" — a Decisão 33 foi tomada nesta fase,
+  destravando a impl da Fase 1.
+```
+
+### Step 0a.6 — Estender a definição do check C1 (rule + mem) (M-002)
+
+A definição de C1 procura hoje só o literal "Revisita decisão N". Com a Decisão
+33 introduzindo "Nova decisão N" como segunda cerimônia legítima (e o hook
+enforçando-a), C1 aplicado ao pé da letra trataria "Nova decisão 33" como ausência
+de cerimônia — falso-positivo Critical. Pelo Mandamento #6, o tooling de review que
+descreve o hook muda junto com o hook. Dois alvos:
+
+**(a) O rule (ponteiro).** Em `.claude/rules/plan-auditor.md`, na seção "Invariante
+always-on", adicione um bullet explicitando a cerimônia dupla (o rule não tem o
+texto inline dos 12 checks — é ponteiro —, então a extensão entra como invariante
+de enforcement, espelhando o que já existe pra "Detection findings"):
+
+```markdown
+- C1 aceita DUAS cerimônias de decisão, espelhando o hook (Decisão 33):
+  "Revisita decisão N" (decisão existente) OU "Nova decisão N" (decisão nova) —
+  N inteiro real, texto literal no CHANGELOG sob `### Changed (load-bearing)` +
+  no commit body. Plano que abre decisão NOVA com "Nova decisão N" NÃO é
+  falso-positivo Critical de C1.
+```
+
+**(b) A nota `mem` (definição canônica dos 12 checks).** Atualize o corpo do check
+C1 na nota `01KVZW16WAH54P8FCSN9FQ8VP2` ("Os 12 checks do plan-auditor"). Como o
+`mem` é JSONL append-only, a extensão entra como uma nota nova de tipo `decision`
+que **supersede** a definição vigente quanto a C1 (mantém histórico). Comando exato
+(o `--json` é flag GLOBAL, ANTES do subcomando; sintaxe conferida em
+`.claude/bin/mem add --help`):
+
+```bash
+NEW_ID=$(.claude/bin/mem --json add \
+  --type decision \
+  -t "C1 do plan-auditor aceita 'Nova decisão N' além de 'Revisita decisão N'" \
+  --tags "plan-auditor,c1,ceremony,decisao-33" \
+  --source "docs/design/01-decisions.md#33" \
+  "C1 (mandamento #1 enforcement) FALHA só se um plano toca docs/design/01-decisions.md SEM cerimônia rastreável. A cerimônia válida é UMA de: (a) 'Revisita decisão N' (revisita de decisão existente, append-only marcando a antiga superseded) OU (b) 'Nova decisão N' (decisão nova, append da linha N), ambas com texto literal no CHANGELOG sob '### Changed (load-bearing)' + no commit body, e ambas casando o regex do hook 'revisita decisão|revisit decision|nova decisão|new decision' (.claude/hooks/pre-commit-feature-forge.sh:24). N é inteiro real. Plano que abre decisão NOVA com 'Nova decisão N' NÃO dispara Critical de C1. Estende a definição original dos 12 checks (nota 01KVZW16WAH54P8FCSN9FQ8VP2) quanto a C1; os outros 11 checks permanecem como na nota original." \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+.claude/bin/mem supersede "$NEW_ID" 01KVZW16WAH54P8FCSN9FQ8VP2
+```
+
+> Nota de execução: confira o shape do `--json add` com `.claude/bin/mem add --help`
+> e `.claude/bin/mem --json stats` antes de extrair o `id` — se o campo no JSON não
+> for `id`, ajuste o extrator. Se preferir o caminho de baixo risco, rode
+> `.claude/bin/mem add ...` (sem `--json`), copie o id da saída humana e rode o
+> `supersede` num segundo comando. O objetivo invariante: futuras auditorias leem a
+> definição ESTENDIDA de C1 via `mem`, não a original.
+
+Após o add+supersede, confirme:
+```bash
+.claude/bin/mem find "C1 nova decisão plan-auditor" | head -5
+```
+Esperado: a nota nova aparece; a original some do `find` ativo (superseded).
+
+### Step 0a.7 — Atualizar 04-pending.md (M-001)
+
+Em `docs/design/04-pending.md`, no item de §"Follow-on" "impl de gates-nativos
+(Tema 6, face 2)" (L136-140), atualize a frase que diz "está PENDENTE e **pode
+exigir Decisão 33**" pra refletir que a decisão foi tomada. Mantenha o item (a
+IMPL segue pendente — é Fase 1); só atualize a linkagem da decisão:
+
+Trocar o trecho:
+```
+  com dentes) está PENDENTE e **pode exigir Decisão 33**. *Reentrar* em onda
+  própria, após brainstorm da decisão.
+```
+por:
+```
+  com dentes) está PENDENTE. A **Decisão 33** (fronteira de execução externa,
+  distinta do sandbox da Decisão 30) foi LOCKED na Fase 0 da campanha AI-first —
+  destrava a impl. *Reentrar* em onda própria (Fase 1).
+```
+
+Append-only de garantias: NÃO remova o item; ele descreve impl que segue pendente.
+A única mudança é "pode exigir" → "foi locked, destrava".
+
+### Step 0a.8 — Verificar e commitar a task
 
 ```bash
 .venv/bin/pytest tests/hooks/test_pre_commit_ceremony.py -q
-git add .claude/hooks/pre-commit-feature-forge.sh docs/design/01-decisions.md CHANGELOG.md tests/hooks/test_pre_commit_ceremony.py
-git commit -m "feat(decisions): Nova decisão 33 — fronteira de execução externa + hook aceita nova decisão
+git add .claude/hooks/pre-commit-feature-forge.sh docs/design/01-decisions.md CHANGELOG.md tests/hooks/test_pre_commit_ceremony.py .claude/rules/plan-auditor.md docs/design/04-pending.md
+git commit -m "feat(decisions): Nova decisão 33 — fronteira de execução externa + hook/C1 aceitam nova decisão
 
 Estende .claude/hooks/pre-commit-feature-forge.sh pra aceitar 'nova decisão'
 como cerimônia válida (antes só 'revisita decisão'), destravando o registro de
 decisões novas. Append-only da Decisão 33 em 01-decisions.md + entrada literal
-no CHANGELOG sob Changed (load-bearing). Test de cerimônia cobre block-sem-,
-pass-revisita-, pass-nova-decisão.
+no CHANGELOG sob Changed (load-bearing). Estende a definição do check C1 do
+plan-auditor (rule + mem) pra reconhecer 'Nova decisão N' espelhando o hook.
+Fecha em 04-pending.md a linkagem do follow-on de gates-nativos (pode exigir →
+foi locked). Test de cerimônia isola a causa do BLOCK pela string literal
+(block-sem-, pass-revisita-, pass-nova-decisão, controle não-decisions).
 
 Nova decisão 33: fronteira de execução externa distinta do sandbox de validators
 (Decisão 30) — não afrouxa a 30.
@@ -354,9 +575,12 @@ Nova decisão 33: fronteira de execução externa distinta do sandbox de validat
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
-**Done quando:** `tests/hooks/test_pre_commit_ceremony.py` 3 passed; o próprio
+**Done quando:** `tests/hooks/test_pre_commit_ceremony.py` 4 passed; o próprio
 commit acima passou pelo hook (prova viva de que "nova decisão" é aceita); linha
-32 intacta + 33 adicionada; "Nova decisão 33:" literal no CHANGELOG e no commit body.
+32 intacta + 33 adicionada; "Nova decisão 33:" literal no CHANGELOG e no commit
+body; C1 estendido no rule + nota `mem` superseding a original; `04-pending.md`
+reflete a Decisão 33 como locked; nenhum `| stub | stub | stub |` vazou pro
+`01-decisions.md` real (grep confirma 0).
 
 ---
 
@@ -766,14 +990,16 @@ CHANGELOG atualizado; `engine.external_exec` listado em env.py.
 `engine/memory/l1.py::append_verify_log`) escrevem no mesmo arquivo e se o
 caminho do `verify.py` produz entradas que VIOLARIAM a validação do
 `append_verify_log`. Depois, bater o martelo via **3-caminhos** com base no que o
-teste observar — **NÃO assumir o veredito**.
+teste observar — **NÃO assumir o veredito**. Em AMBOS os caminhos viáveis, o
+veredito atualiza `docs/design/04-pending.md` no MESMO commit (M-001).
 
 Esta task é uma INVESTIGAÇÃO (`superpowers:systematic-debugging`), não um fix
 cego. O scout aponta forte pro **Caminho A** (drift real), mas o implementador
 **decide** a partir da observação do teste.
 
 **Arquivos permitidos:** `tests/engine/test_verify_log_write_paths.py` (novo)
-sempre; depois, condicional ao caminho (ver abaixo).
+sempre, e `docs/design/04-pending.md` sempre (doc-sync do veredito — step 0c.4);
+depois, condicional ao caminho (ver abaixo).
 
 ### Step 0c.1 — Teste de investigação (escrever PRIMEIRO, observar)
 
@@ -909,13 +1135,15 @@ pra delegar → ver passar → rodar a lane de verify inteira pra garantir zero 
 .venv/bin/pytest tests/engine/test_verify_log_consolidation.py tests/engine/test_verify_log_write_paths.py -q
 .venv/bin/pytest tests/engine/ -m "not integration and not e2e" -q
 ```
-Doc-sync: entrada no `CHANGELOG.md > [Unreleased] > ### Fixed` descrevendo a
-consolidação (verify.py passa a validar o verify-log via append_verify_log,
-fechando o bypass).
+Doc-sync (Caminho A): entrada no `CHANGELOG.md > [Unreleased] > ### Fixed`
+descrevendo a consolidação (verify.py passa a validar o verify-log via
+append_verify_log, fechando o bypass) **+ atualizar `04-pending.md`** (step 0c.4,
+variante A — fechar a divergência).
 
 **Arquivos (Caminho A):** `engine/verify.py`,
 `tests/engine/test_verify_log_consolidation.py`,
-`tests/engine/test_verify_log_write_paths.py`, `CHANGELOG.md`.
+`tests/engine/test_verify_log_write_paths.py`, `CHANGELOG.md`,
+`docs/design/04-pending.md`.
 
 #### Caminho B — sem cruzamento: documentar a intenção, sem mudança de comportamento
 
@@ -929,10 +1157,12 @@ reabrir a dúvida. SEM mudança de comportamento de produção.
 ```bash
 .venv/bin/pytest tests/engine/test_verify_log_write_paths.py -q
 ```
-Doc-sync: entrada no `CHANGELOG.md > [Unreleased] > ### Changed` (doc-only) ou
-nota no commit body. **Arquivos (Caminho B):** `engine/verify.py` (docstring),
-`engine/memory/l1.py` (docstring), `tests/engine/test_verify_log_write_paths.py`,
-`CHANGELOG.md`.
+Doc-sync (Caminho B): entrada no `CHANGELOG.md > [Unreleased] > ### Changed`
+(doc-only) **+ atualizar `04-pending.md`** (step 0c.4, variante B — registrar como
+decisão consciente documentada, não bug). **Arquivos (Caminho B):**
+`engine/verify.py` (docstring), `engine/memory/l1.py` (docstring),
+`tests/engine/test_verify_log_write_paths.py`, `CHANGELOG.md`,
+`docs/design/04-pending.md`.
 
 #### Caminho C — escalar
 
@@ -941,43 +1171,85 @@ bug próprio, ou há um terceiro consumidor do log com outra forma, ou o fix do
 Caminho A toca contratos de schema MEM-L1-VL-* que exigem decisão de produto):
 PARAR, registrar o achado, e escalar ao usuário com 3-caminhos próprios (não
 fix-forward cego). `systematic-debugging` exige hipótese confirmada antes do fix.
+(No Caminho C não há veredito de produto → `04-pending.md` recebe só uma linha
+"divergência verify-log EM INVESTIGAÇÃO — escalada, ver <registro>", sem fechar.)
 
-### Step 0c.3 — Commit da task
+### Step 0c.3 — Doc-sync de 04-pending.md (M-001)
 
-Commitar conforme o caminho batido (A inclui o fix + regression; B é doc-only; C
-não commita fix, só o teste de investigação + o registro do escalonamento):
+Em `docs/design/04-pending.md`, registre/feche a "divergência scope dict/string nos
+write-paths do verify-log" (catalogada na spec irmã §2; não há item dedicado em
+`04-pending.md` hoje). Adicione UMA linha conforme o caminho batido, na seção
+apropriada (item novo em §Fechados pra A, item de nota documentada pra B, ou linha
+de escalonamento em §Follow-on pra C):
+
+- **Variante A (fix):** na seção "Fechados", adicionar:
+  ```
+  - ✓ **Divergência scope dict/string no verify-log** — fechado na **Fase 0c** da
+    campanha AI-first. `_write_verify_log_entry` (engine/verify.py) passou a rotear
+    pela fronteira validada `append_verify_log` (engine/memory/l1.py), fechando o
+    bypass de validação (scope dict + warnings list seriam rejeitados). Guarda:
+    `tests/engine/test_verify_log_consolidation.py`.
+  ```
+- **Variante B (doc consciente):** em §Follow-on, adicionar:
+  ```
+  - **verify-log com dois write-paths é intencional** — investigação (Fase 0c,
+    systematic-debugging) confirmou que `_write_verify_log_entry` e
+    `append_verify_log` NÃO colidem (paths distintos / contratos distintos). Não é
+    bug; docstrings de ambas as funções registram o porquê. Sem ação pendente.
+  ```
+- **Variante C (escalado):** em §Follow-on, adicionar:
+  ```
+  - **divergência verify-log EM INVESTIGAÇÃO** — escalada na Fase 0c (achado fora
+    do escopo da Fase 0; ver registro do escalonamento). Sem veredito de produto.
+  ```
+
+Append-only de garantias: NÃO remova itens existentes; só adicione a linha do
+veredito.
+
+### Step 0c.4 — Commit da task
+
+Commitar conforme o caminho batido (A inclui o fix + regression + pending fechado;
+B é doc-only + pending documentado; C não commita fix, só o teste de investigação
++ a linha de escalonamento em pending):
 
 ```bash
 # Exemplo do Caminho A:
-git add engine/verify.py tests/engine/test_verify_log_consolidation.py tests/engine/test_verify_log_write_paths.py CHANGELOG.md
+git add engine/verify.py tests/engine/test_verify_log_consolidation.py tests/engine/test_verify_log_write_paths.py CHANGELOG.md docs/design/04-pending.md
 git commit -m "fix(verify-log): consolida _write_verify_log_entry via append_verify_log (DRY)
 
 Investigação (systematic-debugging) confirmou que os dois write-paths escrevem
 no MESMO arquivo (lifecycle_root/slug/verify-log.jsonl) e que verify.py bypassava
 a validação de append_verify_log (scope dict + warnings list seriam rejeitados).
 Roteia verify.py pela fronteira validada; regression test cobre degraded+warnings
-e pass+feature. Fecha o smell de validação assimétrica.
+e pass+feature. Fecha o smell de validação assimétrica. Fecha o item em
+04-pending.md no mesmo commit (doc-sync, mandamento #6).
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
 **Done quando:** o teste de investigação documenta a realidade observada; o
-caminho batido está justificado pela observação (não por suposição); se Caminho
-A, a lane de verify (`tests/engine/ -m "not integration and not e2e"`) está verde
-sem regressão de count; doc-sync no mesmo commit.
+caminho batido está justificado pela observação (não por suposição); `04-pending.md`
+reflete o veredito no MESMO commit; se Caminho A, a lane de verify
+(`tests/engine/ -m "not integration and not e2e"`) está verde sem regressão de
+count; doc-sync no mesmo commit.
 
 ---
 
 ## Gates / definition of done (Fase 0)
 
 - **Por task:** `.venv/bin/pytest` verde na lane relevante; commit único por task
-  com a mensagem prescrita; doc-sync no mesmo commit ao tocar engine/hooks/docs.
-- **0a:** os 3 casos do test de cerimônia verdes; o próprio commit da 0a passou
-  pelo hook (prova viva); append-only + texto literal "Nova decisão 33:".
+  com a mensagem prescrita; doc-sync no mesmo commit ao tocar engine/hooks/docs
+  (inclui `04-pending.md`).
+- **0a:** os 4 casos do test de cerimônia verdes; o BLOCK-test prova a causa pela
+  string literal (H-001); o próprio commit da 0a passou pelo hook (prova viva);
+  append-only + texto literal "Nova decisão 33:"; C1 estendido no rule + `mem`
+  (M-002); `04-pending.md` reflete a Decisão 33 locked (M-001); zero leak de
+  fixture no `01-decisions.md` real (L-001, grep confirma 0).
 - **0b:** todos os testes de `external_exec` verdes; `external_exec.py` 100%
   genérico (grep por `ktlint|gradle|swiftlint|detekt` em `external_exec.py` → 0).
-- **0c:** veredito batido a partir da observação do teste; se Caminho A, regression
-  test verde + lane de verify sem regressão.
+- **0c:** veredito batido a partir da observação do teste; `04-pending.md`
+  atualizado conforme o veredito; se Caminho A, regression test verde + lane de
+  verify sem regressão.
 - **Fim da Fase 0 (antes de devolver ao orquestrador):** lane rápida inteira
   verde — `.venv/bin/pytest -m "not integration and not e2e" -q | tail -1` — com
   count ≥ baseline (sem regressão sem justificativa no commit body). A Fase 0 NÃO
@@ -988,17 +1260,29 @@ sem regressão de count; doc-sync no mesmo commit.
 
 - **0c pode degradar pra doc (Caminho B)** se a investigação mostrar paths
   distintos — é resultado legítimo, não falha. O plano não força o fix.
+- **Pending-sync por-fase (M-001):** decidido pelo usuário FECHAR `04-pending.md`
+  na própria Fase 0 (não esperar a Fase 2). A 0a fecha a linkagem do follow-on de
+  gates-nativos (Decisão 33 locked); a 0c fecha/documenta a divergência do
+  verify-log conforme o veredito. Ambos no MESMO commit da task (Mandamento #6).
+- **Extensão de C1 (M-002):** o hook e a definição do check mudam juntos
+  (Mandamento #6 aplicado ao próprio tooling de review). O `mem` é a fonte
+  canônica dos 12 checks; a nota nova supersede a original quanto a C1 — auditorias
+  futuras leem a definição estendida.
 - **Worktree + editable-install trap:** o gate `engine.__file__` é obrigatório em
   cada task antes de rodar testes; sem ele, os testes rodam contra o repo
   principal silenciosamente (false-pass).
 - **O hook 0a é load-bearing** (`.claude/hooks/`): o reviewer foca em append-only,
-  texto literal e no fato de o block sem-cerimônia continuar firme.
+  texto literal, no fato de o block sem-cerimônia continuar firme (provado pela
+  string literal — H-001), e em nenhum leak de fixture no real (L-001).
 
 ## Cross-refs
 
 - Spec da campanha: `docs/superpowers/specs/2026-06-30-aifirst-pendencias-campaign-design.md` §4 Fase 0.
 - Spec irmã (fronteira externa): `docs/superpowers/specs/2026-06-30-native-quality-gates-design.md` §1/§2/§3/§5.
+- Review do plan-auditor: `.planning/plan-reviews/2026-06-30-aifirst-fase0-foundation-review-r1.md` (H-001/M-001/M-002/L-001).
 - Decisões 30/31 (sandbox Python-only): `docs/design/01-decisions.md`.
 - Pattern subprocess: `engine/verify.py::_invoke_validator`; pattern a melhorar: `engine/upgrade.py::_git_fetch/_git_checkout`.
 - Env reduzido: `engine/_sandbox/env.py::build_safe_env`.
 - verify-log: `engine/verify.py::_write_verify_log_entry` + `engine/memory/l1.py::append_verify_log`.
+- C1 / 12 checks: `.claude/rules/plan-auditor.md` (ponteiro) + nota `mem` `01KVZW16WAH54P8FCSN9FQ8VP2`.
+- Follow-on de gates-nativos + Decisão 33: `docs/design/04-pending.md` §Follow-on.
