@@ -70,6 +70,7 @@ from engine.utils.paths import (
     find_project_root,
     forge_state_dir,
 )
+from engine.utils.task_contract import parse_allowed_files
 from engine.utils.yaml_io import read_yaml, read_yaml_or_default, write_yaml
 from engine.utils.checkpoint_io import (
     clear_checkpoint as _clear_checkpoint_io,
@@ -244,9 +245,9 @@ def _load_task_contract(path: Path) -> TaskContract:
         raise SystemExit(f"forge implement: task file {path} is not a YAML mapping.")
     task_id = str(raw.get("task_id") or raw.get("task-id") or path.stem)
     description = str(raw.get("description") or raw.get("title") or "")
-    allowed = raw.get("allowed_files") or raw.get("allowed-files") or []
-    if not isinstance(allowed, list):
-        allowed = []
+    # Reuso (Mandamento #3): helper compartilhado com snapshot_impl_files
+    # (engine/qa/ingest.py) — aceita allowed_files/allowed-files + coage str.
+    allowed_files = parse_allowed_files(raw)
     validations = raw.get("validations") or []
     if not isinstance(validations, list):
         validations = []
@@ -288,7 +289,7 @@ def _load_task_contract(path: Path) -> TaskContract:
         task_id=task_id,
         path=path,
         description=description,
-        allowed_files=[str(x) for x in allowed],
+        allowed_files=allowed_files,
         validations=[str(x) for x in validations],
         gates=[str(x) for x in gates],
         dependencies=[str(x) for x in deps],
