@@ -62,6 +62,23 @@ from engine.utils.iso import utc_now_iso as _utc_now_iso_shared
 _HISTORY_FILE_NAME = "workflow-config-history.jsonl"
 _UNDO_SLUG = "_undo"
 
+# BUG-UNDO-1 (T8): sentinel de "no-op legítimo" — distingue "nada a reverter"
+# (exit 0) de "erro real" (return False → exit 1). Sentinel singleton: comparado
+# por identidade (`is`), nunca confundido com True/False.
+_NOOP = object()
+
+
+def _rc_for(result: Any) -> int:
+    """Mapeia o resultado de uma reversão pro exit code.
+
+    - ``_NOOP``  → 0 (no-op legítimo: nada a reverter / usuário declinou)
+    - truthy     → 0 (reversão aplicada com sucesso)
+    - falsy      → 1 (erro real)
+    """
+    if result is _NOOP:
+        return 0
+    return 0 if result else 1
+
 
 def _delete_feature_artifacts_guard(project_root: Path, target: Path) -> None:
     """H-06: refuse rmtree on paths outside the project tree.
@@ -279,14 +296,17 @@ def _undo_reconfigure(project_root: Path) -> bool:
         renderer.write(renderer.colored(
             "  Sem .bak de workflow-config.yaml — nada a reverter.", "yellow"
         ))
-        return False
+        # BUG-UNDO-1 (T8): no-op LEGÍTIMO (não há o que reverter) — exit 0, não
+        # exit 1. O caller distingue via _NOOP do erro real.
+        return _NOOP
 
     renderer.write(f"  alvo: {cfg_path}")
     renderer.write(f"  backup: {bak}")
     if not question.confirm(
         "Restaurar workflow-config.yaml a partir do .bak?", default=False
     ):
-        return False
+        # Usuário declinou — também é no-op legítimo (nada foi mutado).
+        return _NOOP
 
     shutil.copy2(bak, cfg_path)
     renderer.write(renderer.colored(
@@ -843,10 +863,11 @@ def run(argv: list[str]) -> int:
             else:
                 ok = False
             _clear_undo_checkpoint(project_root)
-            return 0 if ok else 1
+            # BUG-UNDO-1 (T8): _rc_for honra _NOOP (no-op legítimo → exit 0).
+            return _rc_for(ok)
 
         if choice == "2":
-            rc = 0 if _undo_reconfigure(project_root) else 1
+            rc = _rc_for(_undo_reconfigure(project_root))
             _clear_undo_checkpoint(project_root)
             return rc
 

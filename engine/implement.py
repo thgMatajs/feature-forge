@@ -1159,6 +1159,19 @@ def _elicit_slug(argv_slug: str | None, project_root: Path) -> str:
 
 def run(argv: list[str]) -> int:
     """`forge implement [feature-slug]` — execute one task with Plan Mode discipline."""
+    # BUG-IMPL-4 (T8): reconhece --help/-h antes de tratar argv[0] como slug.
+    # Sem isto, `forge implement --help` resolvia "--help" como slug inválido.
+    if argv and argv[0] in ("--help", "-h"):
+        sys.stdout.write(
+            "forge implement — executa uma task da feature com disciplina Plan Mode.\n"
+            "\n"
+            "Uso: forge implement [feature-slug]\n"
+            "\n"
+            "Sem o slug, o engine elicita interativamente. A feature precisa estar\n"
+            "'ready' (Wave E do plano concluída). Dirige a execução das waves.\n"
+        )
+        return 0
+
     try:
         project_root = find_project_root()
     except ProjectRootNotFoundError as exc:
