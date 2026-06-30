@@ -21,15 +21,17 @@ fi
 TOUCHES_DECISIONS=$(echo "$CHANGED" | grep -E '^docs/design/01-decisions\.md$' || true)
 if [[ -n "$TOUCHES_DECISIONS" ]]; then
     CHANGELOG_DIFF=$(git diff --cached CHANGELOG.md 2>/dev/null || true)
-    if ! echo "$CHANGELOG_DIFF" | grep -qiE 'revisita decisão|revisit decision'; then
+    if ! echo "$CHANGELOG_DIFF" | grep -qiE 'revisita decisão|revisit decision|nova decisão|new decision'; then
         cat <<'EOF' >&2
 
 🛑 BLOCK: docs/design/01-decisions.md alterado sem cerimônia.
 
-    Adicione entrada em CHANGELOG.md (staged) contendo:
-      'Revisita decisão N: <novo choice> — <rationale>'
+    Adicione entrada em CHANGELOG.md (staged) contendo UMA das cerimônias:
+      'Revisita decisão N: <novo choice> — <rationale>'   (decisão existente)
+      'Nova decisão N: <choice> — <rationale>'            (decisão nova)
 
-    Por quê: decisões locked são imutáveis sem revisitar (mandamento #1).
+    Por quê: decisões locked são imutáveis sem revisitar, e toda decisão nova
+    precisa de registro explícito (mandamento #1). Sem silent drift.
     Override consciente: git commit --no-verify (registra que foi deliberado).
 
     Detalhe: .claude/rules/decisions.md

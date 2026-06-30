@@ -15,6 +15,11 @@ o protocolo de re-audit vivem no `mem`.
   improvisa "é cosmético".
 - Output em `.planning/plan-reviews/<plan-slug>-review-r<N>.md`. Cap de 3
   rodadas; rodada 4 → verdict `ESCALATE`.
+- C1 aceita DUAS cerimônias de decisão, espelhando o hook (Decisão 33):
+  "Revisita decisão N" (decisão existente) OU "Nova decisão N" (decisão nova) —
+  N inteiro real, texto literal no CHANGELOG sob `### Changed (load-bearing)` +
+  no commit body. Plano que abre decisão NOVA com "Nova decisão N" NÃO é
+  falso-positivo Critical de C1.
 
 ## Detalhe (recupere por tema)
 

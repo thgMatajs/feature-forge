@@ -7,6 +7,27 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed (load-bearing)
+
+- Nova decisão 33: o engine pode executar binários externos do projeto
+  consumidor (linters, build tools) via uma fronteira de execução dedicada,
+  distinta do sandbox de validators da Decisão 30. Garantias: modo check
+  read-only onde aplicável; env reduzido (build_safe_env); timeout por gate com
+  estouro → degraded; skip-se-ausente; sem auto-fix; sem instalar toolchain. A
+  Decisão 30 segue valendo integralmente pro sandbox de validators — a 33 é
+  fronteira separada, não afrouxa a 30.
+- Hook `.claude/hooks/pre-commit-feature-forge.sh` e check **C1** do plan-auditor
+  (`.claude/rules/plan-auditor.md` + nota `mem`) agora reconhecem "Nova decisão N"
+  (decisão nova) como cerimônia de primeira classe, além de "Revisita decisão N"
+  (decisão existente). Espelha o hook estendido pela Decisão 33; evita
+  falso-positivo Critical em auditorias de decisões novas.
+
+### Changed
+
+- `docs/design/04-pending.md`: o follow-on "impl de gates-nativos (Tema 6, face 2)"
+  deixa de dizer "pode exigir Decisão 33" — a Decisão 33 foi tomada nesta fase,
+  destravando a impl da Fase 1.
+
 ### Added
 
 - Novo 5º vetor core `impl-vs-spec` no `forge qa` (Onda 1b da remediação do

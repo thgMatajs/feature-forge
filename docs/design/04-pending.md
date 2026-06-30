@@ -136,8 +136,9 @@ Agrupado por prioridade. Plano de ataque por onda na spec
 - **impl de gates-nativos (Tema 6, face 2)** — spec escrita em
   `docs/superpowers/specs/2026-06-30-native-quality-gates-design.md`; a impl
   (substituir os 6 stubs no-op + os 4 built-in staged-blind por gates nativos
-  com dentes) está PENDENTE e **pode exigir Decisão 33**. *Reentrar* em onda
-  própria, após brainstorm da decisão.
+  com dentes) está PENDENTE. A **Decisão 33** (fronteira de execução externa,
+  distinta do sandbox da Decisão 30) foi LOCKED na Fase 0 da campanha AI-first —
+  destrava a impl. *Reentrar* em onda própria (Fase 1).
 - **impl de runtime/visual (Tema 6, face 3)** — spec escrita em
   `docs/superpowers/specs/2026-06-30-runtime-visual-verification-design.md`; a
   impl do passo de verificação runtime/visual está PENDENTE. *Reentrar* em onda
