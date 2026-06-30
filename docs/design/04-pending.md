@@ -102,6 +102,18 @@ status correspondente no fim do próprio report.
   `tests/integration/test_qa_lifecycle_feature.py`. *(As outras duas faces do
   Tema 6 — gates nativos e runtime/visual — têm spec escrita e impl deferida;
   ver Follow-on.)*
+- ✓ **Divergência scope dict/string no verify-log** — fechado na **Fase 0c** da
+  campanha AI-first. A investigação (`superpowers:systematic-debugging`) confirmou
+  que os dois write-paths escreviam no MESMO arquivo
+  (`lifecycle_root/slug/verify-log.jsonl`) e que `engine/verify.py::_write_verify_log_entry`
+  bypassava a validação de `engine/memory/l1.py::append_verify_log` (gravava `scope`
+  como dict e `warnings` como list — o dict chega a estourar `TypeError` no
+  membership test do set `_VERIFY_SCOPES`, rejeição ainda mais grosseira que um
+  `MemoryError` de schema). `_write_verify_log_entry` passou a rotear pela
+  fronteira validada (DRY): `scope` → string + `scope-id` preservado; `warnings`
+  → contagem int (VL-005) + lista humana sob `warnings-list`. Guardas:
+  `tests/engine/test_verify_log_write_paths.py` (investigação),
+  `tests/engine/test_verify_log_consolidation.py` (regressão).
 
 ### Parciais
 

@@ -28,6 +28,21 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   deixa de dizer "pode exigir Decisão 33" — a Decisão 33 foi tomada nesta fase,
   destravando a impl da Fase 1.
 
+### Fixed
+
+- `engine/verify.py::_write_verify_log_entry` agora roteia pela fronteira
+  validada `engine/memory/l1.py::append_verify_log` (Fase 0c, campanha AI-first).
+  Antes serializava JSON DIRETO, bypassando a validação MEM-L1-VL-001..005:
+  gravava `scope` como dict `{"type","id"}` e `warnings` como list — formas que
+  `append_verify_log` rejeita (o dict chega a estourar `TypeError` no membership
+  test do set `_VERIFY_SCOPES`). A investigação (`superpowers:systematic-debugging`)
+  confirmou que os DOIS write-paths escreviam no MESMO arquivo
+  (`lifecycle_root/slug/verify-log.jsonl`), então a assimetria era drift real. A
+  consolidação mapeia `scope` → string validável + `scope-id` preservado, e
+  `warnings` → contagem int (VL-005) com a lista humana sob `warnings-list`.
+  Guardas: `tests/engine/test_verify_log_write_paths.py` (investigação) +
+  `tests/engine/test_verify_log_consolidation.py` (regressão).
+
 ### Added
 
 - `engine/external_exec.py` — fronteira de execução externa genérica (Decisão

@@ -25,7 +25,6 @@ block on hard fail.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 import time
@@ -37,6 +36,7 @@ from engine._sandbox.env import build_safe_env
 from engine.memory import MemoryError as MemoryStoreError  # WR-02: avoid shadowing the CPython builtin OOM `MemoryError` (engine.memory.MemoryError is a domain subclass of Exception, NOT BaseException).
 from engine.memory.l1 import (
     L1State,
+    append_verify_log,
     list_active_features,
     read_l1_status,
     write_l1_status,
@@ -51,9 +51,7 @@ from engine.utils.paths import (
     active_config_path,
     cards_dir,
     claude_dir,
-    ensure_dir,
     find_project_root,
-    lifecycle_root,
     memory_dir,
 )
 from engine.utils.yaml_io import read_yaml_or_default, write_yaml
@@ -664,32 +662,46 @@ def _write_verify_log_entry(
 ) -> None:
     """Append one line to ``.claude/forge/state/lifecycle/{slug}/verify-log.jsonl``.
 
+    Roteia pela fronteira VALIDADA ``append_verify_log`` (engine/memory/l1.py) —
+    uma só porta de escrita do verify-log, com a validação MEM-L1-VL-001..005
+    aplicada. Antes (Fase 0c), este caminho serializava JSON DIRETO, bypassando a
+    validação: gravava ``scope`` como dict ``{"type","id"}`` e ``warnings`` como
+    list, formas que ``append_verify_log`` rejeita (o dict chega a estourar
+    ``TypeError`` no membership test do set ``_VERIFY_SCOPES``). A investigação da
+    Fase 0c confirmou que ambos os caminhos escreviam no MESMO arquivo, então a
+    assimetria era drift real — consolidado aqui (DRY).
+
+    Mapeamento pra forma validável (sem perda de info):
+    - ``scope`` (campo validado) = ``scope_type`` cru (string ∈ _VERIFY_SCOPES);
+      o id vai em ``scope-id`` (preservado, fora do enum).
+    - ``warnings-list`` guarda os nomes humanos; ``warnings`` é a CONTAGEM (int),
+      exigida por MEM-L1-VL-005 quando ``result == "degraded"`` e inofensiva nos
+      demais vereditos.
+
     Silently no-ops when there is no resolvable feature slug — the log is
-    per-feature by design (schema MEM-L1-VL-001..005).
+    per-feature by design (schema MEM-L1-VL-001..005). Best-effort: uma entrada
+    malformada ou um erro de I/O NÃO derruba o verify (o log é bônus, não gate).
     """
     if not feature_slug:
         return
     ts = utc_now_iso()
     compact = ts.replace(":", "").replace("-", "").replace(".", "")
+    warnings_named = list(warnings_list)
     entry = {
         "schema-version": 1,
         "verify-id": f"verify-{compact}",
         "at": ts,
-        "scope": {"type": scope_type, "id": scope_id},
+        "scope": scope_type,
+        "scope-id": scope_id,
         "validators-run": list(validators),
         "result": result,
         "hard-fails": list(hard_fails),
-        "warnings": list(warnings_list),
+        "warnings": len(warnings_named),
+        "warnings-list": warnings_named,
     }
-    log_path = lifecycle_root(project_root) / feature_slug / "verify-log.jsonl"
     try:
-        ensure_dir(log_path.parent)
-        line = json.dumps(entry, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        with log_path.open("a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
-            fh.flush()
-            os.fsync(fh.fileno())
-    except OSError:
+        append_verify_log(feature_slug, project_root, entry)
+    except (OSError, MemoryStoreError):
         pass
 
 
