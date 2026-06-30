@@ -158,6 +158,49 @@ def test_wave_d_populated_dag_acknowledges(
     assert result.deferred is False, "DAG populado passa o gate sem fricção"
 
 
+# ── M-02 — artefato fora de project_root degrada-soft (rel sem ValueError) ────
+
+
+def test_content_gate_artefact_outside_project_root_degrades_soft(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """M-02: artefato fora de ``project_root`` NÃO crasha o gate.
+
+    Um override de workflow-config pode colocar o feature_path fora de
+    ``project_root``; o ``rel`` do gate usava ``relative_to`` que levanta
+    ValueError nesse caso, crashando no meio da apresentação 3-caminhos
+    (regressão do degrade-soft que a Onda 2 promete). O fix (``_rel_to_root``)
+    degrada pra ``str(path)`` — o gate ainda pausa amigável (deferred), sem
+    exceção. Testa ``_run_content_gate`` direto (a função que o review cita).
+    """
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    # artefato FORA do project_root (override de workflow-config).
+    outside = tmp_path / "elsewhere" / "feature"
+    outside.mkdir(parents=True)
+    spec = outside / "tech-spec.md"
+    spec.write_text("## §3\nclass {{ConceptViewModel}}\n", encoding="utf-8")
+    _pick_path(monkeypatch, "c")  # Pausar e investigar
+
+    # NÃO deve levantar ValueError — degrada-soft pra str(path).
+    result = plan_mod._run_content_gate("C", [spec], "feature-outside", project_root)
+    assert result is not None and result.deferred is True, (
+        "gate com artefato fora de project_root deve pausar (deferred), não crashar"
+    )
+
+
+def test_rel_to_root_degrades_soft_outside_root(tmp_path: Path):
+    """M-02 (unit): ``_rel_to_root`` cai pra str(path) quando fora da raiz."""
+    root = tmp_path / "project"
+    inside = root / "feature" / "tech-spec.md"
+    outside = tmp_path / "elsewhere" / "tech-spec.md"
+    assert plan_mod._rel_to_root(inside, root) == "feature/tech-spec.md"
+    # Fora da raiz: NÃO levanta, devolve o path absoluto como string.
+    assert plan_mod._rel_to_root(outside, root) == str(outside)
+    # Path relativo (não-absoluto): devolve str direto.
+    assert plan_mod._rel_to_root(Path("rel/path.md"), root) == "rel/path.md"
+
+
 # ── Wave E (readiness) — placeholder ANTES do parse de verdict (Task 3) ───────
 
 

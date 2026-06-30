@@ -829,6 +829,26 @@ class WaveResult:
     deferred: bool
 
 
+def _rel_to_root(path: Path, project_root: Path) -> str:
+    """Path relativo a ``project_root``, degradando-soft pra ``str(path)``.
+
+    M-02: ``Path.relative_to`` levanta ``ValueError`` quando ``path`` não é
+    subpath de ``project_root`` — possível quando um override de
+    workflow-config aponta o feature_path pra fora da raiz. Aqui caímos pro
+    path absoluto/string em vez de crashar no meio da apresentação 3-caminhos
+    (preserva o degrade-soft que a Onda 2 promete).
+
+    L-01: helper de módulo puro (depende só de ``project_root``), extraído do
+    ``lambda`` que era recriado a cada iteração do ``while`` do gate.
+    """
+    if not path.is_absolute():
+        return str(path)
+    try:
+        return str(path.relative_to(project_root))
+    except ValueError:
+        return str(path)
+
+
 def _run_content_gate(
     label: str,
     created: list[Path],
@@ -863,8 +883,11 @@ def _run_content_gate(
         return None
 
     rerun_left = 1  # bounded: 1 re-leitura de disco, sem recursão profunda.
+
+    def rel(p: Path) -> str:  # L-01: closure fina sobre o helper de módulo.
+        return _rel_to_root(p, project_root)
+
     while True:
-        rel = lambda p: str(p.relative_to(project_root)) if p.is_absolute() else str(p)  # noqa: E731
         what_failed = "; ".join(f"{rel(f.artefact)}: {f.detail}" for f in findings)
         where = ", ".join(sorted({rel(f.artefact) for f in findings}))
         block = mentor_calmo.three_paths_block(
