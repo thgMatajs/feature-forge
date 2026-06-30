@@ -25,6 +25,21 @@ _KOTLIN_PROSE = (
     _CARDS / "kotlin-language" / "agent-contributions" / "task-writer-additions.md"
 )
 
+# HIGH-01 (review r1): os `.md` de agent-contributions são o que o AGENTE lê
+# pra montar o bloco `validations:` que EMITE na task — são o consumidor real
+# do BUG-IMPL-2. O teste do T5 só varria `templates/` (cego ao gap). Estendido
+# pra varrer também os agent-contributions, assertando ausência dos literais
+# cegos.
+_AGENT_CONTRIB_GLOB = "*/agent-contributions/*.md"
+
+# Literais cegos do BUG-IMPL-2 que NÃO podem sobreviver nos agent-contributions
+# (o agente copiaria pra um projeto onde script/módulo não existem).
+_BLIND_LITERALS = (
+    "run-ios-simulator.sh --build-only",  # script que pode não existir
+    ":composeApp:",                        # módulo Gradle hardcoded
+    "testDebugUnitTest",                   # task errada pra KMP shared
+)
+
 
 def test_ios_build_command_not_blind_literal() -> None:
     """O build iOS não pode ser o literal cego ``run-ios-simulator.sh --build-only``.
@@ -72,4 +87,31 @@ def test_kmp_shared_uses_android_host_test_not_debug_unit() -> None:
     assert "testAndroidHostTest" in text
     assert "testDebugUnitTest" not in text, (
         "prose KMP ainda menciona testDebugUnitTest (errado pra KMP shared)"
+    )
+
+
+def test_agent_contributions_have_no_blind_build_literals() -> None:
+    """HIGH-01: os agent-contributions `.md` (consumidor real do agente) não
+    podem carregar os literais cegos do BUG-IMPL-2.
+
+    O T5 corrigiu os `templates/*.yaml` e o kotlin agent-contributions, mas
+    swiftui/compose agent-contributions ficaram cegos. Estes `.md` são o que o
+    task-writer agent lê pra montar o bloco `validations:` que EMITE — o
+    consumidor real. Varre TODOS os agent-contributions assertando ausência dos
+    literais cegos (script inexistente / módulo hardcoded / task KMP errada).
+    """
+    md_files = sorted(_CARDS.glob(_AGENT_CONTRIB_GLOB))
+    assert md_files, "nenhum agent-contributions .md encontrado (glob quebrou?)"
+
+    offenders: dict[str, list[str]] = {}
+    for md in md_files:
+        text = md.read_text(encoding="utf-8")
+        hits = [lit for lit in _BLIND_LITERALS if lit in text]
+        if hits:
+            rel = md.relative_to(_CARDS).as_posix()
+            offenders[rel] = hits
+
+    assert not offenders, (
+        "agent-contributions ainda carregam literais cegos do BUG-IMPL-2 "
+        f"(devem ser project-derived-pelo-agente): {offenders}"
     )
