@@ -71,17 +71,13 @@ def test_verify_py_entry_shape_would_violate_append_validation(tmp_path: Path) -
     """A entrada que verify.py monta (scope dict + warnings list) seria rejeitada
     por append_verify_log? Reconstrói a MESMA forma e passa por append_verify_log.
 
-    OBSERVAÇÃO (Fase 0c — diverge do que o plano supunha em LN-2): a rejeição NÃO
-    é um MemoryError limpo de VL-003. O membership test `scope not in
-    _VERIFY_SCOPES` (l1.py:988) estoura `TypeError: unhashable type: 'dict'` ANTES
-    de poder formatar a mensagem VL-003 — porque `_VERIFY_SCOPES` é um set e um
-    dict não é hashable. Ou seja: a forma do verify.py é rejeitada de modo AINDA
-    MAIS grosseiro (exceção crua, não a MemoryError de schema). Isso reforça o
-    drift (Caminho A): consolidar exige mapear scope dict → string validável.
-
-    LN-2 honrado: assertamos o motivo REAL observado (TypeError por dict
-    unhashable em VL-003), não o MemoryError de VL-005 que poderia ser assumido.
+    OBSERVAÇÃO ORIGINAL (Fase 0c): a rejeição era `TypeError: unhashable type: 'dict'`
+    cru ANTES do guard VL-003. Após Fix #6 (Fase 0 cleanup), um guard `isinstance`
+    captura o dict ANTES do membership test, levantando `MemoryError` canônico
+    (VL-003a). O teste foi atualizado pra refletir o comportamento corrigido.
     """
+    from engine.memory import MemoryError as MemoryStoreError  # noqa: PLC0415
+
     # Forma idêntica à de _write_verify_log_entry (verify.py:674-683):
     verify_shaped_entry = {
         "schema-version": 1,
@@ -93,10 +89,8 @@ def test_verify_py_entry_shape_would_violate_append_validation(tmp_path: Path) -
         "hard-fails": [],
         "warnings": ["alguma ressalva"],  # LIST, não int
     }
-    # A rejeição vem na checagem de scope (VL-003, l1.py:988), que é a PRIMEIRA
-    # checagem de enum — e estoura TypeError porque o dict não é hashable contra
-    # o set _VERIFY_SCOPES. Não chega na checagem de warnings (VL-005).
-    with pytest.raises(TypeError, match="unhashable type: 'dict'"):
+    # Com o guard VL-003a, o dict scope levanta MemoryError canônico (não TypeError).
+    with pytest.raises(MemoryStoreError):
         append_verify_log("feat-x", tmp_path, dict(verify_shaped_entry))
 
 

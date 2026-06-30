@@ -691,6 +691,7 @@ def _write_verify_log_entry(
         "schema-version": 1,
         "verify-id": f"verify-{compact}",
         "at": ts,
+        "timestamp": ts,  # IN-02: único clock-read — at e timestamp idênticos
         "scope": scope_type,
         "scope-id": scope_id,
         "validators-run": list(validators),

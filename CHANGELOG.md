@@ -30,6 +30,12 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Fixed
 
+- `engine/memory/l1.py::append_verify_log`: guard VL-003a — `scope` não-str
+  (ex.: dict) agora levanta `MemoryError` canônico com mensagem VL-003 antes do
+  membership test no set `_VERIFY_SCOPES`, evitando `TypeError: unhashable type`
+  cru. Cobre o caminho de drift documentado em `test_verify_log_write_paths.py`
+  (Fase 0 cleanup, Fix #6).
+
 - `engine/verify.py::_write_verify_log_entry` agora roteia pela fronteira
   validada `engine/memory/l1.py::append_verify_log` (Fase 0c, campanha AI-first).
   Antes serializava JSON DIRETO, bypassando a validação MEM-L1-VL-001..005:

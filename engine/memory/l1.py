@@ -985,6 +985,13 @@ def append_verify_log(
         )
 
     scope = enriched.get("scope")
+    # Guard VL-003a: scope não-str (ex.: dict) estouraria TypeError no membership
+    # test do set abaixo. Levanta MemoryError canônico antes disso.
+    if not isinstance(scope, str):
+        raise MemoryError(
+            f"verify-log scope {scope!r} must be a string, got {type(scope).__name__} "
+            "(MEM-L1-VL-003)"
+        )
     if scope not in _VERIFY_SCOPES:
         raise MemoryError(
             f"verify-log scope {scope!r} must be one of {sorted(_VERIFY_SCOPES)} "

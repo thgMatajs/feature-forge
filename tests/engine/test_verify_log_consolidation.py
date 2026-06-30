@@ -22,6 +22,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+from engine.memory import MemoryError as MemoryStoreError
 from engine.memory.l1 import _VERIFY_RESULTS, _VERIFY_SCOPES, append_verify_log
 from engine.utils.paths import lifecycle_root
 from engine.verify import _write_verify_log_entry
@@ -115,3 +118,20 @@ def test_consolidated_entry_roundtrips_through_append(tmp_path: Path) -> None:
     # Não estoura (nem TypeError nem MemoryError):
     append_verify_log(slug, tmp_path, dict(entry))
     assert len(_read_log(tmp_path, slug)) == 2
+
+
+def test_append_verify_log_scope_non_str_raises_memory_error(tmp_path: Path) -> None:
+    """TDD RED→GREEN: scope não-hashable (dict) deve levantar MemoryError canônico,
+    não TypeError cru. Antes do guard, `scope not in _VERIFY_SCOPES` estourava
+    TypeError: unhashable type: 'dict' antes da validação formatar o erro (Fix #6)."""
+    slug = "feat-guard"
+    entry = {
+        "schema-version": 1,
+        "verify-id": "verify-test",
+        "at": "2026-06-30T00:00:00Z",
+        "scope": {"type": "task"},  # dict não-str — deve ser rejeitado com MemoryError
+        "validators-run": [],
+        "result": "pass",
+    }
+    with pytest.raises(MemoryStoreError):
+        append_verify_log(slug, tmp_path, entry)
