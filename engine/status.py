@@ -496,13 +496,19 @@ def _git_feature_commits(project_root: Path, slug: str) -> int | None:
 
 
 def _read_qa_verdict(project_root: Path, target: str) -> str | None:
-    """Read the verdict of the most recent qa run for ``target``.
+    """Read the verdict of the MOST RECENT qa run for ``target``.
 
     BUG-STATUS-2: the qa verdict IS persisted (H-001) at
     ``.planning/qa/<target>/<run-id>/qa-report.json`` (top-level ``verdict``).
     Run-ids are ISO-timestamp-prefixed, so the lexically-greatest run dir is
     the most recent. Returns ``None`` when no run exists for the target (no
     fabricated "sem registro" — absence is honest absence).
+
+    LOW-01: report the state of THE MOST RECENT run, never a stale verdict from
+    an older one. If the latest run exists but its report is missing/corrupt or
+    carries no ``verdict`` (run in flight / partial report), return ``None`` (=
+    "ainda sem veredito") instead of silently falling back to a previous run's
+    verdict and mislabelling it as current.
     """
     qa_dir = project_root / ".planning" / "qa" / target
     if not qa_dir.is_dir():
@@ -511,18 +517,18 @@ def _read_qa_verdict(project_root: Path, target: str) -> str | None:
         (d for d in qa_dir.iterdir() if d.is_dir()),
         key=lambda d: d.name,
     )
-    for run_dir in reversed(run_dirs):
-        report = run_dir / "qa-report.json"
-        if not report.is_file():
-            continue
-        try:
-            data = json.loads(report.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
-            continue
-        verdict = data.get("verdict") if isinstance(data, dict) else None
-        if verdict is not None:
-            return str(verdict)
-    return None
+    if not run_dirs:
+        return None
+    # Only the most recent run is authoritative — no fallback to older runs.
+    report = run_dirs[-1] / "qa-report.json"
+    if not report.is_file():
+        return None
+    try:
+        data = json.loads(report.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        return None
+    verdict = data.get("verdict") if isinstance(data, dict) else None
+    return str(verdict) if verdict is not None else None
 
 
 def _feature_git_block(
