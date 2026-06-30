@@ -2517,9 +2517,12 @@ def _run_pipeline(project_root: Path) -> int:
     backend_cells: dict[str, Any] = {}
     if has_signals:
         # Brownfield path — W7.1 handler.
+        # B3 (Fase 1): passa composer_result pré-computado pra evitar recompute
+        # duplo no hot-path (a mesma varredura já foi feita em L2507 acima).
         result = _handle_backend_multi_axis_brownfield(
             project_root=project_root,
             active_cards=canonical_cards,
+            composer_result=composer_result,
         )
         backend_cells = _composer_result_to_cells(result.get("composer_result") or {})
         bundle_cards = list(result.get("selected_card_names") or [])
@@ -3373,18 +3376,19 @@ def _handle_backend_multi_axis_brownfield(
     *,
     project_root: Path,
     active_cards: list[CardManifest],
+    composer_result: "dict[str, dict[str, Cell | None]] | None" = None,
 ) -> dict[str, Any]:
     """Brownfield multi-axis backend handler — DET-6 W7.1, cobre AC-6.
 
-    Substitui (em projetos com signals matching) o legacy backend picker
-    inline em ``_run_pipeline`` linha ~1264. W7.1 só ADICIONA esta função;
-    o wiring real (decisão de qual handler chamar) entra em W7.4 com a
-    remoção do legacy. Até lá, esta função é chamada apenas pelo
-    integration test ``tests/integration/test_init_brownfield_multi_axis.py``.
+    Chamado por ``_run_pipeline`` no hot-path brownfield ativo (Step 5, L2520).
+    O wiring entrou em W7.4 (não é mais chamada isolada pelo integration test).
 
     Fluxo:
       1. Roda ``compose_backend_axes`` (W5) sobre ``active_cards``
-         normalizados pra shape do composer.
+         normalizados pra shape do composer. Se ``composer_result`` já foi
+         pré-computado pelo caller (B3 — dedup: evita recompute duplo no
+         hot-path ativo), reutiliza sem re-varrer. Integration tests que
+         chamam o handler isolado passam o default ``None``.
       2. Detecta uniformity per axis (adaptive UX — SPEC §"Adaptive UX").
       3. Renderiza tabela (axis × platform → card / conflict / null).
       4. Emit ``ask_three_paths`` (Phase A) com 3 opções:
@@ -3404,6 +3408,10 @@ def _handle_backend_multi_axis_brownfield(
     Args:
         project_root: raiz do projeto sob análise (composer + signals).
         active_cards: lista de ``CardManifest`` que o pipeline já tem em mão.
+        composer_result: resultado pré-computado de ``compose_backend_axes``
+            (B3 — dedup). Se ``None`` (default), o handler computa internamente.
+            O caller (``_run_pipeline``) passa o resultado já computado pra
+            ``has_signals`` — elimina o duplo-custo no hot-path brownfield.
 
     Returns:
         Dict com keys:
@@ -3420,9 +3428,12 @@ def _handle_backend_multi_axis_brownfield(
     """
     # Cycle broken in Phase B (PR #13 review): _eval_detection_signals
     # moved to engine.detection._eval, composer now imports from there.
-    # ``compose_backend_axes`` é import top-level deste módulo.
-    normalized = _normalize_cards_for_composer(active_cards)
-    composer_result = compose_backend_axes(project_root, normalized)
+    # B3 (Fase 1): reutiliza composer_result pré-computado quando disponível
+    # (evita o duplo-custo no hot-path brownfield ativo — L2507 + aqui).
+    # Integration tests que chamam o handler isolado passam None → recomputa.
+    if composer_result is None:
+        normalized = _normalize_cards_for_composer(active_cards)
+        composer_result = compose_backend_axes(project_root, normalized)
     uniformity = _detect_axis_uniformity(composer_result)
     table = _render_axes_table(composer_result, uniformity)
 

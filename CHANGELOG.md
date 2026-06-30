@@ -14,6 +14,7 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 ### Changed
 
 - discovery cache do `forge init` ganha content-fingerprint top-level (invalida fora do replay mecânico) — hardening cinto-e-suspensório sobre o lifecycle de checkpoint (Fase 1 Track B, B2; fecha BUG-2 follow-on).
+- `forge init` brownfield computa `compose_backend_axes` uma única vez (era 2× por fase no hot-path) — `_handle_backend_multi_axis_brownfield` aceita `composer_result` pré-computado; no-behavior-change confirmado; docstring de `_handle_backend_multi_axis_brownfield` corrigido (estava stale: "só pelo integration test" — a função está no hot-path ativo via `_run_pipeline`) (Fase 1 Track B, B3; fecha BUG-1b — CAMINHO A confirmado empiricamente).
 
 ### Changed (load-bearing)
 
