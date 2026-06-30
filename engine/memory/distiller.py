@@ -467,7 +467,7 @@ def is_fingerprint_rejected(project_root: Path, fingerprint: str) -> bool:
 # ── Apply ────────────────────────────────────────────────────────────────────
 
 
-def apply_proposal_to_l2(
+def route_proposal_to_inbox(
     project_root: Path,
     proposal: DistillationProposal,
 ) -> str | None:
@@ -519,7 +519,7 @@ def apply_proposal_to_l2(
         )
         if not result.ok:
             raise MemoryError(
-                f"apply_proposal_to_l2: mem_inbox_add falhou para {proposal.id} — "
+                f"route_proposal_to_inbox: mem_inbox_add falhou para {proposal.id} — "
                 f"{result.message} — queue não drenada (raise-não-drena)."
             )
         # W-ROUTE 6d: captura o mem-inbox-id (de `mem --json inbox add`) ANTES de
@@ -532,7 +532,7 @@ def apply_proposal_to_l2(
         inbox_id = result.data.get("id") if isinstance(result.data, dict) else None
         if not inbox_id:
             raise MemoryError(
-                f"apply_proposal_to_l2: mem inbox add não devolveu id para "
+                f"route_proposal_to_inbox: mem inbox add não devolveu id para "
                 f"{proposal.id} — queue não drenada (raise-não-drena)."
             )
         remove_from_queue(project_root, proposal.id)
@@ -563,7 +563,7 @@ def apply_proposal_to_l2(
     # Demais kinds: explicitamente não implementados em v1.
     # NÃO drenar a queue — usuário precisa saber que NÃO foi aplicado.
     raise NotImplementedError(
-        f"apply_proposal_to_l2: kind '{proposal.kind}' não implementado em v1 — FOLLOWUP v1.1"
+        f"route_proposal_to_inbox: kind '{proposal.kind}' não implementado em v1 — FOLLOWUP v1.1"
     )
 
 
@@ -648,7 +648,7 @@ __all__ = [
     "remove_from_queue",
     "record_rejection",
     "is_fingerprint_rejected",
-    "apply_proposal_to_l2",
+    "route_proposal_to_inbox",
     "compute_proposal_fingerprint",
     "proposal_from_dict",
 ]

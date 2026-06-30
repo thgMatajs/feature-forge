@@ -429,8 +429,8 @@ source files  ──build_full──>  symbols + files +  ──detect_all_*─�
 | `forge init` Step 11.5 | Inicial — todo o backlog do projeto vira findings | depende do tamanho (~10s em MeoBonsai 8k LOC) |
 | `forge reconfigure` → graph rebuild | Refresh — qualquer mudança no codebase reflete | mesma do rebuild |
 | Post-edit hook (`.claude/hooks/post-edit-detect-duplications.sh`) | Incremental — só pra arquivo editado, surface inline | < 200ms |
-| `apply_proposal_to_l2(reuse-kind)` | Out — escreve intake + L1 status (NÃO mexe em código) | < 50ms |
-| `apply_proposal_to_l2(reject)` | Out — fingerprint vai pra rejected-evolutions; futuros scans skipam | < 50ms |
+| `route_proposal_to_inbox(reuse-kind)` | Out — escreve intake + L1 status (NÃO mexe em código) | < 50ms |
+| `route_proposal_to_inbox(reject)` | Out — fingerprint vai pra rejected-evolutions; futuros scans skipam | < 50ms |
 | `forge plan refactor-{slug}` | Out — lê L1 status subtype=refactor, dispatcha Gap 2 flow | Wave A skipada |
 
 **Idempotência por fingerprint SHA-256:**

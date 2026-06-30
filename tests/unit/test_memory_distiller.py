@@ -159,7 +159,7 @@ def test_apply_promote_to_l2_calls_mem_inbox_add(tmp_path, monkeypatch):
         confidence=0.8,
         fingerprint="",
     )
-    _dist.apply_proposal_to_l2(tmp_path, p)
+    _dist.route_proposal_to_inbox(tmp_path, p)
 
     assert called["title"] == "use-stateflow"
     assert called["body"] == "Use MutableStateFlow para screen state"
@@ -190,7 +190,7 @@ def test_apply_l1_to_l2_promotion_calls_mem_inbox_add(tmp_path, monkeypatch):
         provenance=["onboarding"],
         confidence=0.7,
     )
-    _dist.apply_proposal_to_l2(tmp_path, p)
+    _dist.route_proposal_to_inbox(tmp_path, p)
     assert len(called) == 1
 
 
@@ -214,7 +214,7 @@ def test_apply_consolidate_l2_calls_mem_inbox_add(tmp_path, monkeypatch):
         provenance=["payment", "cart"],
         confidence=0.9,
     )
-    _dist.apply_proposal_to_l2(tmp_path, p)
+    _dist.route_proposal_to_inbox(tmp_path, p)
     assert len(called) == 1
 
 
@@ -251,7 +251,7 @@ def test_apply_knowledge_raises_on_mem_inbox_add_failure(tmp_path, monkeypatch):
     _dist.queue_proposal(tmp_path, p)
 
     with pytest.raises(_MemError):
-        _dist.apply_proposal_to_l2(tmp_path, p)
+        _dist.route_proposal_to_inbox(tmp_path, p)
 
     # Queue não deve ter sido drenada (raise antes do remove_from_queue)
     queue = _dist.read_proposals_queue(tmp_path)
@@ -272,7 +272,7 @@ def test_apply_knowledge_importance_clamp(tmp_path, monkeypatch):
     monkeypatch.setattr(_dist, "mem_inbox_add", _fake_inbox_add)
 
     for confidence, expected in ((0.0, 1), (1.0, 5), (0.5, 3)):
-        _dist.apply_proposal_to_l2(
+        _dist.route_proposal_to_inbox(
             tmp_path,
             DistillationProposal(
                 id=f"P-conf{int(confidence*10)}",
@@ -302,7 +302,7 @@ def _make_knowledge_proposal(id_: str = "P-know") -> DistillationProposal:
     )
 
 
-def test_apply_proposal_to_l2_returns_inbox_id_for_knowledge(tmp_path, monkeypatch):
+def test_route_proposal_to_inbox_returns_inbox_id_for_knowledge(tmp_path, monkeypatch):
     """W-ROUTE 6d: knowledge proposal → mem inbox add → retorna o id capturado."""
     import engine.memory.distiller as _dist
     from engine.integrations import mem as mem_mod
@@ -315,7 +315,7 @@ def test_apply_proposal_to_l2_returns_inbox_id_for_knowledge(tmp_path, monkeypat
     monkeypatch.setattr(_dist, "is_fingerprint_rejected", lambda *a, **k: False)
 
     p = _make_knowledge_proposal()
-    inbox_id = _dist.apply_proposal_to_l2(tmp_path, p)
+    inbox_id = _dist.route_proposal_to_inbox(tmp_path, p)
     assert inbox_id == "01INBOXID"
 
 
@@ -349,14 +349,14 @@ def test_apply_knowledge_raises_when_inbox_id_missing(tmp_path, monkeypatch, bad
     _dist.queue_proposal(tmp_path, p)
 
     with pytest.raises(_MemError):
-        _dist.apply_proposal_to_l2(tmp_path, p)
+        _dist.route_proposal_to_inbox(tmp_path, p)
 
     # Raise-não-drena: a fila precisa preservar o candidato.
     queue = _dist.read_proposals_queue(tmp_path)
     assert any(q.id == "P-noid" for q in queue), "queue foi drenada sem inbox-id"
 
 
-def test_apply_proposal_to_l2_returns_none_for_forget_l1(tmp_path, monkeypatch):
+def test_route_proposal_to_inbox_returns_none_for_forget_l1(tmp_path, monkeypatch):
     """Branch não-conhecimento retorna None explícito (contrato -> str | None)."""
     import engine.memory.distiller as _dist
 
@@ -372,7 +372,7 @@ def test_apply_proposal_to_l2_returns_none_for_forget_l1(tmp_path, monkeypatch):
         provenance=["auth"],
         payload={"target": "auth"},
     )
-    assert _dist.apply_proposal_to_l2(tmp_path, p) is None
+    assert _dist.route_proposal_to_inbox(tmp_path, p) is None
 
 
 # ── Task 4 (6c): cleanup de órfãos ────────────────────────────────────────────
@@ -457,7 +457,7 @@ def test_apply_forget_l1_unchanged_no_mem_call(tmp_path, monkeypatch):
     # O _apply_forget_l1 pode falhar sem estrutura de L1 real; catching MemoryError
     # (target não existe) é ok — o importante é que inbox_add não foi chamado.
     try:
-        _dist.apply_proposal_to_l2(tmp_path, p)
+        _dist.route_proposal_to_inbox(tmp_path, p)
     except Exception:
         pass
 
@@ -495,7 +495,7 @@ def test_retrospective_kinds_route_to_inbox(tmp_path, monkeypatch, kind):
         provenance=["feat-x"],
         confidence=0.8,
     )
-    inbox_id = _dist.apply_proposal_to_l2(tmp_path, p)
+    inbox_id = _dist.route_proposal_to_inbox(tmp_path, p)
 
     assert inbox_id == "01INBOX"
     assert captured["mem_type"] == "reference"

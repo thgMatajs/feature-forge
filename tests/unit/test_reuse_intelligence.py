@@ -345,14 +345,14 @@ def test_apply_writes_intake_and_status(tmp_path: Path, monkeypatch):
 
     from engine.graph.builder import build_full
     from engine.graph.duplicates import queue_proposals_from_table
-    from engine.memory.distiller import apply_proposal_to_l2, read_proposals_queue
+    from engine.memory.distiller import route_proposal_to_inbox, read_proposals_queue
 
     build_full(tmp_path, db_path=claude / "graph.db")
     queue_proposals_from_table(tmp_path)
 
     proposals = read_proposals_queue(tmp_path)
     assert proposals
-    apply_proposal_to_l2(tmp_path, proposals[0])
+    route_proposal_to_inbox(tmp_path, proposals[0])
 
     intake = (
         tmp_path
