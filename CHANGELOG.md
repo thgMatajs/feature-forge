@@ -22,6 +22,32 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   (decisão existente). Espelha o hook estendido pela Decisão 33; evita
   falso-positivo Critical em auditorias de decisões novas.
 
+### Removed
+
+- `engine/memory/l3.py` (órfão desde W-ROUTE 6a — perdeu o único consumidor de produção;
+  zero imports confirmado por grep) — clean-break (Fase 1 Track C). Nota para merge:
+  item "`engine/memory/l3.py` órfão" de `04-pending.md §W-ROUTE 6a` fechado.
+
+### Changed
+
+- Rename `apply_proposal_to_l2` → `route_proposal_to_inbox` (misnomer desde W-ROUTE 6b —
+  knowledge kinds vão pro mem inbox, não L2); sweep semântico em callers + testes + docs vivos
+  (Fase 1 Track C, clean-break sem alias — pré-produção). Nota para merge: item
+  "`apply_proposal_to_l2` misnomer" de `04-pending.md §W-ROUTE 6b` fechado.
+
+### Fixed
+
+- `route_proposal_to_inbox` (ex-`apply_proposal_to_l2`) roteia `convention-refinement`/`decay-signal`/`question-elimination`
+  pro mem inbox (antes `NotImplementedError`); `decay-signal` agora é kind válido
+  (Fase 1 Track C, fecha limitação v1.1 §W-AGENTS). Nota para merge: item
+  "_KNOWLEDGE_KINDS cobre só 3 kinds" de `04-pending.md §W-AGENTS` fechado.
+
+- Docstring de `route_proposal_to_inbox` (`engine/memory/distiller.py`) e nota
+  honesta em `agents/retrospective-agent.md` atualizadas: `convention-refinement`,
+  `decay-signal` e `question-elimination` agora roteiam pro mem inbox normalmente
+  (C1) — bloco anterior dizia erroneamente "ainda não APLICA / NotImplementedError"
+  (Fase 1 Track C, review fix WARNING-01/02).
+
 ### Changed
 
 - `docs/design/04-pending.md`: o follow-on "impl de gates-nativos (Tema 6, face 2)"

@@ -190,12 +190,22 @@ def test_resume_from_checkpoint(
 # ── Task 2 (6b / D5): overflow-skip pra kinds de conhecimento ─────────────
 
 
-def test_apply_proposal_skips_overflow_for_knowledge_kind(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "promote-to-l2",
+        "convention-refinement",
+        "decay-signal",
+        "question-elimination",
+    ],
+)
+def test_apply_proposal_skips_overflow_for_knowledge_kind(tmp_path, monkeypatch, kind):
     """Knowledge proposal NÃO é bloqueado por L2-overflow (D5).
 
-    detect_l2_overflow é forçado a True; mem_inbox_add (via apply_proposal_to_l2)
+    detect_l2_overflow é forçado a True; mem_inbox_add (via route_proposal_to_inbox)
     é stubado pra sucesso. O proposal de conhecimento deve aplicar (retorna True),
-    provando que o guard foi pulado.
+    provando que o guard foi pulado — incluindo os 3 novos kinds do retrospective-agent
+    (convention-refinement, decay-signal, question-elimination) incorporados em C1.
     """
     import engine.evolve as _evolve
     from engine.memory.distiller import DistillationProposal
@@ -205,13 +215,13 @@ def test_apply_proposal_skips_overflow_for_knowledge_kind(tmp_path, monkeypatch)
     # Stuba o apply pra não tocar mem real nem L2.
     applied: list = []
     monkeypatch.setattr(
-        _evolve, "apply_proposal_to_l2",
+        _evolve, "route_proposal_to_inbox",
         lambda root, p: applied.append(p.id),
     )
 
     p = DistillationProposal(
         id="P-know",
-        kind="promote-to-l2",
+        kind=kind,
         title="t",
         description="d",
         provenance=["auth"],
@@ -219,7 +229,9 @@ def test_apply_proposal_skips_overflow_for_knowledge_kind(tmp_path, monkeypatch)
     )
     # W-ROUTE 6d: _apply_proposal agora retorna (success, inbox_id).
     success, _inbox_id = _evolve._apply_proposal(tmp_path, p, {})
-    assert success is True, "knowledge proposal foi bloqueado pelo overflow-guard (D5 falhou)"
+    assert success is True, (
+        f"knowledge proposal kind={kind!r} foi bloqueado pelo overflow-guard (D5 falhou)"
+    )
     assert applied == ["P-know"]
 
 
@@ -231,7 +243,7 @@ def test_apply_proposal_keeps_overflow_guard_for_non_knowledge_kind(tmp_path, mo
     monkeypatch.setattr(_evolve, "detect_l2_overflow", lambda root, cfg: True)
     applied: list = []
     monkeypatch.setattr(
-        _evolve, "apply_proposal_to_l2",
+        _evolve, "route_proposal_to_inbox",
         lambda root, p: applied.append(p.id),
     )
 
@@ -258,7 +270,7 @@ def test_evolve_apply_records_mem_inbox_id(tmp_path, monkeypatch):
     import engine.evolve as _evolve
     from engine.memory.distiller import DistillationProposal
 
-    monkeypatch.setattr(_evolve, "apply_proposal_to_l2", lambda root, p: "01INBOXID")
+    monkeypatch.setattr(_evolve, "route_proposal_to_inbox", lambda root, p: "01INBOXID")
     monkeypatch.setattr(_evolve, "detect_l2_overflow", lambda root, cfg: False)
 
     p = DistillationProposal(

@@ -20,7 +20,7 @@ from typing import Any, Optional
 from engine.memory.distiller import (
     DistillationProposal,
     _KNOWLEDGE_KINDS,
-    apply_proposal_to_l2,
+    route_proposal_to_inbox,
     compute_proposal_fingerprint,
     detect_l2_overflow,
     is_fingerprint_rejected,
@@ -283,7 +283,7 @@ def _apply_proposal(
     kinds (forget-l1, reuse-intelligence, etc.) mantêm o guard legacy.
 
     W-ROUTE 6d: no sucesso de um knowledge kind, ``inbox_id`` é o id do
-    candidato no mem inbox (capturado em ``apply_proposal_to_l2``) — o
+    candidato no mem inbox (capturado em ``route_proposal_to_inbox``) — o
     call-site grava esse id no evento ``evolve-apply`` pra o ``forge undo``
     re-rotar pro ``mem inbox reject``. ``(True, None)`` no sucesso L2/reuse;
     ``(False, None)`` na pausa por overflow.
@@ -300,7 +300,7 @@ def _apply_proposal(
             )
             return False, None
 
-    inbox_id = apply_proposal_to_l2(project_root, p)
+    inbox_id = route_proposal_to_inbox(project_root, p)
     renderer.write(renderer.colored(f"  ✓ Aplicado {p.id}.", "green"))
     return True, inbox_id
 

@@ -360,7 +360,7 @@ def test_inbox_add_real_mem_roundtrip(tmp_path):
     assert unique_title in titles, f"nota não aparece no inbox list: {titles}"
 
 
-# ── Task 2 (6b): apply_proposal_to_l2(knowledge) real-mem e2e ────────────────
+# ── Task 2 (6b): route_proposal_to_inbox(knowledge) real-mem e2e ────────────────
 
 
 @pytest.mark.skipif(
@@ -369,8 +369,8 @@ def test_inbox_add_real_mem_roundtrip(tmp_path):
     ),
     reason="binário mem não disponível — pule em CI sem vendorização",
 )
-def test_apply_proposal_to_l2_knowledge_real_mem_roundtrip(tmp_path):
-    """E2E: apply_proposal_to_l2(knowledge) → mem inbox REAL (MOCK-BLINDNESS).
+def test_route_proposal_to_inbox_knowledge_real_mem_roundtrip(tmp_path):
+    """E2E: route_proposal_to_inbox(knowledge) → mem inbox REAL (MOCK-BLINDNESS).
 
     Confirma que o path de escrita do distiller — description com bullet '-'/
     multiline, provenance→--tags, importance boundary — chega ao inbox sem
@@ -392,7 +392,7 @@ def test_apply_proposal_to_l2_knowledge_real_mem_roundtrip(tmp_path):
     from engine.integrations.mem import mem_call
     from engine.memory.distiller import (
         DistillationProposal,
-        apply_proposal_to_l2,
+        route_proposal_to_inbox,
         queue_proposal,
     )
 
@@ -406,7 +406,7 @@ def test_apply_proposal_to_l2_knowledge_real_mem_roundtrip(tmp_path):
         confidence=0.5,
     )
     queue_proposal(tmp_path, p)
-    apply_proposal_to_l2(tmp_path, p)
+    route_proposal_to_inbox(tmp_path, p)
 
     result = mem_call(tmp_path, ["inbox", "list"])
     assert result.exit_code == 0, f"inbox list falhou: {result.stderr}"
