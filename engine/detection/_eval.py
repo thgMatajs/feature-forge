@@ -135,25 +135,76 @@ def _walk_recursive_pruned(
     yield from collected
 
 
-def _glob_any(project_root: Path, glob: str, needle: str | None) -> bool:
-    """Best-effort glob walk with depth + count caps to keep init responsive.
+def _walk_recursive_pruned_lazy(
+    project_root: Path,
+    pattern: str,
+    skip_dirs: Iterable[str],
+) -> Iterator[Path]:
+    """Variante LAZY de ``_walk_recursive_pruned`` — yield SEM ordenar/materializar.
 
-    Para padrões ``**/X`` usa ``_walk_recursive_pruned`` — walk manual que poda
-    ``_SKIP_DIRS`` NA DESCIDA, evitando materializar node_modules / .gradle
-    inteiros antes do filtro agir. Conjunto de paths considerados e valor de
-    retorno são idênticos ao código rglob-based anterior (no-behavior-change);
-    o cap de 800 + filtro relativo abaixo são preservados.
+    Mesma poda-na-descida e mesma semântica de ``pattern == ""`` (só-diretórios)
+    do ``_walk_recursive_pruned``, mas yield em ordem de ``os.scandir``
+    (inode-order) à medida que desce, SEM coletar a árvore inteira nem ``sort()``.
+    Existe para o caminho de EXISTÊNCIA (``_glob_any``), que só precisa do 1º
+    match e portanto pode (e deve) curto-circuitar sem pagar materialização +
+    ordenação + cap.
+
+    NÃO use esta variante onde a ORDEM importa (sites com ``break`` no 1º match
+    que precisam de vencedor determinístico — H-001): esses continuam usando
+    ``_walk_recursive_pruned`` (ordenado). Aqui a ordem é irrelevante porque o
+    consumidor só pergunta "existe ALGUM match?".
+    """
+    skip = set(skip_dirs)
+    dirs_only = pattern == ""
+    # `rglob("")` inclui o próprio root (um diretório). Replicamos isso.
+    if dirs_only and project_root.is_dir():
+        yield project_root
+    stack: list[Path] = [project_root]
+    while stack:
+        current = stack.pop()
+        try:
+            entries = list(current.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            is_dir = entry.is_dir()
+            if is_dir and not entry.is_symlink():
+                if entry.name in skip:
+                    continue
+                stack.append(entry)
+            if dirs_only:
+                if is_dir:
+                    yield entry
+            elif entry.match(pattern):
+                yield entry
+
+
+def _glob_any(project_root: Path, glob: str, needle: str | None) -> bool:
+    """Best-effort glob walk para check de EXISTÊNCIA — curto-circuita no 1º match.
+
+    Para padrões ``**/X`` usa ``_walk_recursive_pruned_lazy`` — walk manual que
+    poda ``_SKIP_DIRS`` NA DESCIDA (evita materializar node_modules / .gradle
+    inteiros) e yield LAZY, permitindo retornar ``True`` assim que o primeiro
+    match é encontrado.
+
+    **Independente de ordem e de cap (WR-02):** por ser um check de existência
+    ("existe ALGUM match?"), o resultado é o 1º match achado. NÃO ordenamos nem
+    capamos a árvore: o ``_walk_recursive_pruned`` ordenado + cap de 800
+    introduzia um viés lexicográfico que podia ESCONDER um match cujo nome
+    ordenava depois da posição 800 (divergindo do rglob lazy legado, que
+    curto-circuitava em inode-order). O short-circuit elimina esse viés — com
+    1 ou 1M de paths, basta UM match para retornar ``True``. O cap antigo
+    mitigava materialização de node_modules, hoje podada na descida.
     """
     if not glob:
         return False
     if glob.startswith("**/"):
         pattern = glob[3:]
-        iterator: Iterator[Path] = _walk_recursive_pruned(
+        iterator: Iterator[Path] = _walk_recursive_pruned_lazy(
             project_root, pattern, _SKIP_DIRS
         )
     else:
         iterator = project_root.glob(glob)
-    count = 0
     for path in iterator:
         # Match _SKIP_DIRS contra parts RELATIVO a project_root — não path.parts
         # absoluto. Sem isso, paths sob .claude/worktrees/<branch>/ ficam
@@ -164,9 +215,6 @@ def _glob_any(project_root: Path, glob: str, needle: str | None) -> bool:
             continue
         if any(part in _SKIP_DIRS for part in relative_parts):
             continue
-        if count > 800:
-            break
-        count += 1
         if not path.is_file():
             continue
         if needle is None:
