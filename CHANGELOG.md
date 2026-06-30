@@ -9,6 +9,21 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Added
 
+- Novo 5º vetor core `impl-vs-spec` no `forge qa` (Onda 1b da remediação do
+  piloto MeoBonsai — fecha o gap do Tema 6 "qa red-teia contratos, não a
+  impl"): o vetor snapshota a implementação real via os `allowed_files` dos
+  task contracts e roda um auditor Phase-1 static que confronta a impl contra a
+  spec (`agents/qa-auditor-impl-vs-spec.md`). Antes, o `qa` red-teava só os
+  contratos/plano; agora cobre também o código produzido. Helper de snapshot em
+  `engine/utils/task_contract.py`; ingest/synthesis do qa estendidos; schemas
+  e templates `qa-finding`/`qa-report` atualizados.
+- Duas specs de design adicionadas (implementação DEFERIDA pras suas próprias
+  ondas/decisões): `docs/superpowers/specs/2026-06-30-native-quality-gates-design.md`
+  (gates de qualidade nativos — pode exigir Decisão 33) e
+  `docs/superpowers/specs/2026-06-30-runtime-visual-verification-design.md`
+  (verificação runtime/visual). Só a spec; a impl é follow-on registrado em
+  `docs/design/04-pending.md`.
+
 - `engine/integrations/mem.py::mem_inbox_reject` — wrapper degrade-soft sobre
   `mem inbox reject <id>`.
 

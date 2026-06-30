@@ -91,6 +91,17 @@ status correspondente no fim do próprio report.
   O gate de readiness re-renderiza e pausa (exit 130) sem recursar — nunca
   recursa no próprio gate ao re-checar prontidão.
   Guarda: `tests/unit/test_plan_readiness_no_recursion.py`.
+- ✓ **Tema 6 — qa sem vetor impl-vs-spec** — fechado na **Onda 1b**. O `forge qa`
+  ganha o 5º vetor core `impl-vs-spec`: snapshota a impl real via os
+  `allowed_files` dos task contracts (`engine/utils/task_contract.py`) e roda o
+  auditor Phase-1 static `agents/qa-auditor-impl-vs-spec.md` confrontando a impl
+  contra a spec. Fecha o "qa red-teia contratos, não a impl". Guardas:
+  `tests/engine/qa/test_snapshot_impl.py`,
+  `tests/engine/qa/test_core_auditors_impl.py`,
+  `tests/engine/utils/test_task_contract.py`,
+  `tests/integration/test_qa_lifecycle_feature.py`. *(As outras duas faces do
+  Tema 6 — gates nativos e runtime/visual — têm spec escrita e impl deferida;
+  ver Follow-on.)*
 
 ### Parciais
 
@@ -105,10 +116,12 @@ Agrupado por prioridade. Plano de ataque por onda na spec
 
 **P0**
 
-- **Tema 6 — verificação inerte (o loop de correctness)** — verify "verde
-  inerte" (6 stubs no-op + 4 built-in staged-blind), qa sem vetor impl-vs-spec,
-  nenhum passo runtime/visual. É o gap que deixa o "verde" mentir — **novo P0 #1**
-  e líder da spec (Onda 1). *Reentrar* via Onda 1.
+- **Tema 6 — verificação inerte (o loop de correctness)** — o gap que deixa o
+  "verde" mentir. A face **qa sem vetor impl-vs-spec** foi fechada na **Onda 1b**
+  (ver Fechados acima). As duas faces restantes — verify "verde inerte"
+  (gates nativos: 6 stubs no-op + 4 built-in staged-blind) e o passo
+  runtime/visual — ganharam **spec escrita** nesta onda e têm impl deferida pras
+  suas próprias ondas/decisões; ver Follow-on.
 
   *(BUG-5, BUG-2 e BUG-PLAN-1 — os outros P0 desta seção — foram fechados na
   Onda 3; ver seção Fechados acima.)*
@@ -120,6 +133,15 @@ Agrupado por prioridade. Plano de ataque por onda na spec
 
 **Follow-on (novos papercuts achados durante a remediação)**
 
+- **impl de gates-nativos (Tema 6, face 2)** — spec escrita em
+  `docs/superpowers/specs/2026-06-30-native-quality-gates-design.md`; a impl
+  (substituir os 6 stubs no-op + os 4 built-in staged-blind por gates nativos
+  com dentes) está PENDENTE e **pode exigir Decisão 33**. *Reentrar* em onda
+  própria, após brainstorm da decisão.
+- **impl de runtime/visual (Tema 6, face 3)** — spec escrita em
+  `docs/superpowers/specs/2026-06-30-runtime-visual-verification-design.md`; a
+  impl do passo de verificação runtime/visual está PENDENTE. *Reentrar* em onda
+  própria.
 - **forge upgrade ignora flags desconhecidas em silêncio** — `engine/upgrade.py`
   (~L333): flags não-reconhecidas passam batido sem aviso (cosmético, sem
   impacto de segurança; um typo de flag não dá feedback). *Reentrar* ao tocar o
