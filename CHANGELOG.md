@@ -14,6 +14,7 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 ### Added
 
 - feedback de progresso (spinner) nos steps longos do `forge init` — backend (~86s) e orphan-scan (~75s); GATEADO por `_is_tty` (no-op puro fora de TTY, sem poluir o transcript IA-first) (Fase 1 Track D, D1; fecha item P2 16).
+- `forge graph` Q4 (symbols por módulo) sugere o módulo mais próximo (did-you-mean) quando o nome não casa; novo helper `queries.list_modules` (Fase 1 Track D, D2; fecha item P2 17).
 
 ### Changed
 
