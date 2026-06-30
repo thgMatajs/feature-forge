@@ -59,6 +59,12 @@ def test_validate_qa_finding_accepts_impl_vs_spec():
     }
     # Não deve raise.
     validate_qa_finding(finding)
+    # LOW-001: o type segue o padrão qa-finding-<vector> que emit/synthesis
+    # esperam downstream (template usa qa-finding-{{vector_slug}}).
+    assert (
+        finding["proposed_evolution"]["type"]
+        == f"qa-finding-{finding['vector']}"
+    )
 
 
 def test_validate_qa_report_requires_impl_vs_spec_in_by_vector():
