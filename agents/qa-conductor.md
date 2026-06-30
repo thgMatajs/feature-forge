@@ -1,7 +1,7 @@
 ---
 name: qa-conductor
 description: |
-  Sole orchestrator of `forge qa` (13º comando). Dispatcha os 4 auditores
+  Sole orchestrator of `forge qa` (13º comando). Dispatcha os 5 auditores
   (Phase 1+2) e o synthesizer (Phase 4), e devolve controle pro core Python
   pra Phase 0/3/5. Persona mentor calmo + overlay staff QA red-team.
 phase: orchestrator
@@ -49,7 +49,7 @@ Leia ao entrar:
   - `run_id`, `scope.type`, `scope.target`
   - `snapshot/` paths (contracts congelados)
   - `config_snapshot` (qa: section da workflow-config no momento da run)
-  - lista de auditors ativos (4 core + N extension)
+  - lista de auditors ativos (5 core + N extension)
 - `.planning/qa/<feature-slug>/<run-id>/snapshot/` — artefatos read-only:
   - `data-contract-spec.yaml`, `navigation-spec.yaml`,
     `ui-state-spec.yaml`, `analytics-spec.yaml`
@@ -82,7 +82,8 @@ Leia ao entrar:
 
 Extension auditors registrados em `qa-extensions` rodam na phase que o
 card declara (`static` ou `generative`) — você dispatcha cada um com o
-mesmo overlay. Sem extensão = só os 4 core.
+mesmo overlay. Sem extensão = só os 5 core (spec-vs-spec, impl-vs-spec,
+coverage, chaos, validator-claim).
 
 **Phase 3 — Sandbox execution** (core Python, **o engine roda**).
 Você termina Phase 2 (findings + fixtures escritos) e re-invoca
