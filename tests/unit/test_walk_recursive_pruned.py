@@ -63,8 +63,8 @@ def test_pruned_walk_does_not_descend_skip_dirs(tmp_path):
     assert "Deep.kt" not in got
 
 
-def test_pruned_walk_empty_pattern_yields_all(tmp_path):
-    """pattern="" replica rglob("") — TODOS os descendants, sem ValueError."""
+def test_pruned_walk_empty_pattern_yields_dirs_only(tmp_path):
+    """pattern="" replica rglob("") — SÓ diretórios (não arquivos), sem ValueError."""
     (tmp_path / "a").mkdir()
     (tmp_path / "a" / "f.txt").write_text("f")
     (tmp_path / "b.txt").write_text("b")
