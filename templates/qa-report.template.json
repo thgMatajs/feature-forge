@@ -32,6 +32,7 @@
     },
     "by_vector": {
       "spec-vs-spec": 0,
+      "impl-vs-spec": 0,
       "coverage": 0,
       "chaos": 0,
       "validator-claim": 0

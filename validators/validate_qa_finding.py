@@ -21,7 +21,13 @@ class QAFindingValidationError(ValueError):
 
 
 _VALID_SEVERITY = {"critical", "high", "medium", "low", "info"}
-_CORE_VECTORS = {"spec-vs-spec", "coverage", "chaos", "validator-claim"}
+_CORE_VECTORS = {
+    "spec-vs-spec",
+    "impl-vs-spec",
+    "coverage",
+    "chaos",
+    "validator-claim",
+}
 # A9 (review pr27 r2): vetores DERIVADOS pelo engine na Phase 3/4 — não vêm de
 # um auditor LLM, mas de findings_from_sandbox_results (breach/timeout) e do
 # caminho de validator irresolvível (A4/A7). Hoje o engine nunca chama

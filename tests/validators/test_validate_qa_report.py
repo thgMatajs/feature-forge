@@ -63,7 +63,13 @@ def _minimal_valid_report() -> dict:
         "summary": {
             "total_findings": 0,
             "by_severity": {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0},
-            "by_vector": {"spec-vs-spec": 0, "coverage": 0, "chaos": 0, "validator-claim": 0},
+            "by_vector": {
+                "spec-vs-spec": 0,
+                "impl-vs-spec": 0,
+                "coverage": 0,
+                "chaos": 0,
+                "validator-claim": 0,
+            },
         },
         "findings": [],
     }

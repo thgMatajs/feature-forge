@@ -165,10 +165,53 @@ def test_conductor_handoff_carries_contract_fields(tmp_path: Path) -> None:
     assert "config_snapshot" in data
     assert data["config_snapshot"] == {"enabled": True}
 
-    # auditors — 4 core + extensões não-desabilitadas.
+    # auditors — 5 core + extensões não-desabilitadas.
     assert "auditors" in data
-    core = {"spec-vs-spec", "coverage", "chaos", "validator-claim"}
+    core = {
+        "spec-vs-spec",
+        "impl-vs-spec",
+        "coverage",
+        "chaos",
+        "validator-claim",
+    }
     assert core.issubset(set(data["auditors"]))
+
+
+def test_phase0_populates_snapshot_impl_from_allowed_files(tmp_path: Path) -> None:
+    """A3: Phase 0 chama snapshot_impl_files — o conteúdo dos allowed_files
+    declarados no task contract entra em snapshot/impl/ pro auditor impl-vs-spec.
+    """
+    from engine.qa import run_qa
+
+    slug = "feature-impl-snapshot"
+    proj = _make_feature_project(tmp_path, slug)
+    feature_dir = proj / "docs" / "forge-specs" / "features" / slug
+    # Impl real declarada pelo task contract.
+    impl = proj / "src" / "main" / "kotlin" / "RegisterScreen.kt"
+    impl.parent.mkdir(parents=True, exist_ok=True)
+    impl.write_text("class RegisterScreen // impl real", encoding="utf-8")
+    (feature_dir / "tasks" / "TASK-0001.yaml").write_text(
+        "task_id: TASK-0001\nallowed_files:\n  - src/main/kotlin/RegisterScreen.kt\n",
+        encoding="utf-8",
+    )
+    workflow_config = {"qa": {"enabled": True}}
+
+    exit_code = run_qa(slug, project_root=proj, workflow_config=workflow_config)
+    assert exit_code == 0
+
+    run_dirs = list((proj / ".planning" / "qa" / slug).iterdir())
+    assert len(run_dirs) == 1
+    dest = (
+        run_dirs[0]
+        / "snapshot"
+        / "impl"
+        / "src"
+        / "main"
+        / "kotlin"
+        / "RegisterScreen.kt"
+    )
+    assert dest.is_file(), "snapshot/impl/ deve conter a impl declarada no allowed_files"
+    assert dest.read_text(encoding="utf-8") == "class RegisterScreen // impl real"
 
 
 def test_synthesis_emit_block_verdict_with_critical_finding(tmp_path: Path) -> None:
