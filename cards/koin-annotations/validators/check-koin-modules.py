@@ -95,12 +95,31 @@ def check_dsl_banned_in_production(root: Path) -> list[str]:
 
 
 def main() -> int:
+    # Contrato canônico de validator (BUG-VERIFY-1, T2): o `forge verify`
+    # invoca todo validator com `--project-root <root> [--scope <kind>]
+    # [--id <target>]` (ver engine.verify._invoke_validator). Antes este
+    # script só aceitava `--root` → argparse estourava em "unrecognized
+    # arguments" (exit 2) → cegava a cascade. Scripts de card são subprocess
+    # isolados (sem módulo compartilhado), então o argparser é local — espelha
+    # cards/compose-screens/validators/check-screen-layout.py.
     parser = argparse.ArgumentParser(description="Validator stub for koin-annotations card.")
     parser.add_argument("--dsl-check", action="store_true", help="Run only the module { } DSL ban check.")
-    parser.add_argument("--root", default=".", help="Repository root to scan (default: cwd).")
+    parser.add_argument(
+        "--project-root",
+        default=".",
+        help="Project root to scan (default: cwd). Canonical verify contract.",
+    )
+    parser.add_argument("--scope", default=None, help="Tolerado (parse-only).")
+    parser.add_argument("--id", default=None, help="Tolerado (parse-only).")
+    parser.add_argument(
+        "--root",
+        default=None,
+        help="Alias legado de --project-root (deprecado). Use --project-root.",
+    )
     args = parser.parse_args()
 
-    root = Path(args.root).resolve()
+    # --project-root é canônico; --root permanece como alias legado tolerado.
+    root = Path(args.root if args.root is not None else args.project_root).resolve()
 
     failures: list[str] = []
     if args.dsl_check:
