@@ -15,6 +15,7 @@ Pure read. No prompts, no writes.
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -135,6 +136,10 @@ def _render_active_features(project_root: Path) -> None:
                 f"  · {slug:<28} {st.status:<12} "
                 f"last: {st.last_action_kind or '—'}  ({delta})"
             )
+            # BUG-STATUS-1/2: reconciliação git + qa verdict (read-only).
+            recon = _feature_reconcile_line(project_root, slug, st.status)
+            if recon:
+                renderer.write(f"      {recon}")
 
     if blocked:
         renderer.write("")
@@ -339,14 +344,20 @@ def _status_payload(project_root: Path, config: dict) -> dict:
     features: list[dict] = []
     for slug in list_active_features(project_root):
         st = read_l1_status(slug, project_root)
-        features.append(
-            {
-                "slug": slug,
-                "status": (st.status if st is not None else None),
-                "last_action_kind": (st.last_action_kind if st is not None else None),
-                "last_action_at": (st.last_action_at if st is not None else None),
-            }
-        )
+        status_value = st.status if st is not None else None
+        feature: dict[str, Any] = {
+            "slug": slug,
+            "status": status_value,
+            "last_action_kind": (st.last_action_kind if st is not None else None),
+            "last_action_at": (st.last_action_at if st is not None else None),
+            # BUG-STATUS-2: qa verdict reconciliado do qa-report.json (H-001).
+            "qa_verdict": _read_qa_verdict(project_root, slug),
+        }
+        # BUG-STATUS-1: bloco git só quando há repo (None → omite, honesto).
+        git_block = _feature_git_block(project_root, slug, status_value)
+        if git_block is not None:
+            feature["git"] = git_block
+        features.append(feature)
     doctor_block = (config.get("doctor") or {}) if isinstance(config, dict) else {}
     return {
         "project": {
@@ -432,6 +443,115 @@ def _suggested_next_command(features: list[dict]) -> str:
         "blocked-on-external": "reconfigure",
     }
     return mapping.get(state, "doctor")
+
+
+# ── Git reconcile + qa verdict (BUG-STATUS-1/2 — read-only) ───────────────────
+
+
+# In-flight states where invisible git commits indicate drift (a feature still
+# marked implementing/verifying while the code is already committed).
+_GIT_DRIFT_STATES = {"implementing", "verifying", "planning", "planned"}
+
+
+def _git_feature_commits(project_root: Path, slug: str) -> int | None:
+    """Count commits on HEAD touching any path containing the feature slug.
+
+    BUG-STATUS-1: ``forge status`` was forge-faithful but git-blind. This is a
+    PURE READ — only ``git log`` (never a mutating subcommand). Returns ``None``
+    when the project is not a git repo (or git is unavailable), so the caller
+    can omit the git block honestly instead of inventing a count.
+
+    The pathspec ``*<slug>*`` matches commits that touched feature-scoped paths
+    (e.g. ``src/<slug>/…`` or ``.planning/qa/<slug>/…``); slug is sanitised to
+    a git pathspec literal by rejecting empty/whitespace.
+    """
+    if not slug or not slug.strip():
+        return None
+    try:
+        proc = subprocess.run(
+            ["git", "log", "--format=%H", "--", f"*{slug}*"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (OSError, ValueError):
+        return None
+    if proc.returncode != 0:
+        # Not a git repo / bad ref / no commits yet → no git observation.
+        return None
+    return sum(1 for line in proc.stdout.splitlines() if line.strip())
+
+
+def _read_qa_verdict(project_root: Path, target: str) -> str | None:
+    """Read the verdict of the most recent qa run for ``target``.
+
+    BUG-STATUS-2: the qa verdict IS persisted (H-001) at
+    ``.planning/qa/<target>/<run-id>/qa-report.json`` (top-level ``verdict``).
+    Run-ids are ISO-timestamp-prefixed, so the lexically-greatest run dir is
+    the most recent. Returns ``None`` when no run exists for the target (no
+    fabricated "sem registro" — absence is honest absence).
+    """
+    qa_dir = project_root / ".planning" / "qa" / target
+    if not qa_dir.is_dir():
+        return None
+    run_dirs = sorted(
+        (d for d in qa_dir.iterdir() if d.is_dir()),
+        key=lambda d: d.name,
+    )
+    for run_dir in reversed(run_dirs):
+        report = run_dir / "qa-report.json"
+        if not report.is_file():
+            continue
+        try:
+            data = json.loads(report.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+            continue
+        verdict = data.get("verdict") if isinstance(data, dict) else None
+        if verdict is not None:
+            return str(verdict)
+    return None
+
+
+def _feature_git_block(
+    project_root: Path, slug: str, status_value: str | None
+) -> dict | None:
+    """Git observation block for a feature, or ``None`` when not a git repo."""
+    commits = _git_feature_commits(project_root, slug)
+    if commits is None:
+        return None
+    # Drift: an in-flight feature already has committed work in git — the board
+    # is lagging behind reality (signal, never an auto-advance — Tema 7 stays
+    # closed).
+    drift = bool(commits) and (status_value in _GIT_DRIFT_STATES)
+    return {"feature_commits": commits, "drift": drift}
+
+
+def _feature_reconcile_line(
+    project_root: Path, slug: str, status_value: str | None
+) -> str | None:
+    """Human one-liner reconciling a feature with git + qa (read-only).
+
+    Returns ``None`` when there is nothing to reconcile (no git repo and no qa
+    verdict) so the board stays quiet on greenfield/no-qa features.
+    """
+    parts: list[str] = []
+    git_block = _feature_git_block(project_root, slug, status_value)
+    if git_block is not None and git_block["feature_commits"]:
+        n = git_block["feature_commits"]
+        if git_block["drift"]:
+            parts.append(
+                f"git: {n} commit(s) já no histórico — board atrás da realidade "
+                f"(avance com forge implement/verify)"
+            )
+        else:
+            parts.append(f"git: {n} commit(s)")
+    verdict = _read_qa_verdict(project_root, slug)
+    if verdict is not None:
+        parts.append(f"qa: {verdict}")
+    if not parts:
+        return None
+    return "  ·  ".join(parts)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
