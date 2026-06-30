@@ -86,6 +86,8 @@ _VALID_KINDS = {
     "new-card-suggestion",
     "question-elimination",
     "convention-refinement",
+    # C1 (Fase 1): retrospective-agent kinds — válidos e roteados pro mem inbox.
+    "decay-signal",
     # Reuse-intelligence proposals (engine/graph/duplicates.py).
     "consolidate-duplicate-helper",
     "promote-to-shared-helper",
@@ -95,9 +97,17 @@ _VALID_KINDS = {
     "consolidate-ts-helper",
 }
 
-# W-ROUTE 6b: os 3 kinds de L2-knowledge que agora vão pro mem inbox em vez
-# de escrever L2. Compartilhado com engine/evolve.py (skip do overflow-guard).
-_KNOWLEDGE_KINDS = frozenset({"promote-to-l2", "l1-to-l2-promotion", "consolidate-l2"})
+# W-ROUTE 6b + C1 (Fase 1): kinds de L2-knowledge que vão pro mem inbox em vez
+# de escrever L2. Compartilhado com engine/evolve.py (skip do overflow-guard —
+# correto: o inbox não é o L2, o overflow-guard é sobre tamanho do L2).
+_KNOWLEDGE_KINDS = frozenset({
+    "promote-to-l2",
+    "l1-to-l2-promotion",
+    "consolidate-l2",
+    "convention-refinement",
+    "decay-signal",
+    "question-elimination",
+})
 
 
 # ── Dataclass ────────────────────────────────────────────────────────────────
@@ -468,12 +478,14 @@ def apply_proposal_to_l2(
       mem inbox como candidato curado (`mem inbox add --type reference`). O merge-
       semantic do consolidate-l2 é moot com L2 abandonado para conhecimento —
       vira candidato inbox como os outros dois (anti-envenenamento G11).
+    - `convention-refinement` / `decay-signal` / `question-elimination` →
+      kinds do retrospective-agent; roteados pro mem inbox como os knowledge kinds
+      acima (C1, Fase 1 — fecha limitação v1.1 §W-AGENTS).
     - `forget-l1` → arquiva a feature L1 indicada por `proposal.payload.target`
       (ou primeiro elemento de `provenance`).
     - Demais kinds (`distill-l2`, `template-patch`, `agent-prompt-addition`,
-      `new-card-suggestion`, `question-elimination`, `convention-refinement`):
-      ainda não implementados em v1 — `NotImplementedError` para evitar
-      silent no-op (a queue NÃO é drenada).
+      `new-card-suggestion`): ainda não implementados em v1 — `NotImplementedError`
+      para evitar silent no-op (a queue NÃO é drenada).
 
     Retorno (W-ROUTE 6d): o `mem-inbox-id` (de `result.data["id"]`) no branch de
     knowledge kinds; `None` em TODOS os outros branches (forget-l1, reuse-

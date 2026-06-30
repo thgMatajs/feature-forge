@@ -462,3 +462,50 @@ def test_apply_forget_l1_unchanged_no_mem_call(tmp_path, monkeypatch):
         pass
 
     assert inbox_add_calls == [], "forget-l1 não deve chamar mem_inbox_add"
+
+
+# ── C1 (Fase 1): retrospective kinds roteiam pro inbox ───────────────────────
+
+
+@pytest.mark.parametrize(
+    "kind",
+    ["convention-refinement", "decay-signal", "question-elimination"],
+)
+def test_retrospective_kinds_route_to_inbox(tmp_path, monkeypatch, kind):
+    """C1 (Fase 1): os 3 kinds do retrospective roteiam pro mem inbox como os
+    demais knowledge kinds — sem NotImplementedError."""
+    import engine.memory.distiller as _dist
+    from engine.integrations import mem as mem_mod
+
+    captured = {}
+
+    def _fake_inbox_add(project_root, **kwargs):
+        captured.update(kwargs)
+        return mem_mod.MemQuery(ok=True, data={"id": "01INBOX", "status": "pending"})
+
+    monkeypatch.setattr(_dist, "mem_inbox_add", _fake_inbox_add)
+    monkeypatch.setattr(_dist, "remove_from_queue", lambda *a, **k: None)
+    monkeypatch.setattr(_dist, "is_fingerprint_rejected", lambda *a, **k: False)
+
+    p = _dist.DistillationProposal(
+        id=f"P-{kind}",
+        kind=kind,
+        title=f"titulo {kind}",
+        description="corpo",
+        provenance=["feat-x"],
+        confidence=0.8,
+    )
+    inbox_id = _dist.apply_proposal_to_l2(tmp_path, p)
+
+    assert inbox_id == "01INBOX"
+    assert captured["mem_type"] == "reference"
+    assert captured["title"] == f"titulo {kind}"
+
+
+def test_decay_signal_is_a_valid_kind(tmp_path):
+    """decay-signal precisa estar em _VALID_KINDS, senão _validate_kind rejeita
+    antes do roteamento."""
+    import engine.memory.distiller as _dist
+
+    # Não deve levantar MemoryError de 'invalid proposal kind'.
+    _dist._validate_kind("decay-signal")

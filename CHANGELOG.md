@@ -22,6 +22,13 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   (decisão existente). Espelha o hook estendido pela Decisão 33; evita
   falso-positivo Critical em auditorias de decisões novas.
 
+### Fixed
+
+- `apply_proposal_to_l2` roteia `convention-refinement`/`decay-signal`/`question-elimination`
+  pro mem inbox (antes `NotImplementedError`); `decay-signal` agora é kind válido
+  (Fase 1 Track C, fecha limitação v1.1 §W-AGENTS). Nota para merge: item
+  "_KNOWLEDGE_KINDS cobre só 3 kinds" de `04-pending.md §W-AGENTS` fechado.
+
 ### Changed
 
 - `docs/design/04-pending.md`: o follow-on "impl de gates-nativos (Tema 6, face 2)"
