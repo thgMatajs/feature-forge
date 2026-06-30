@@ -122,9 +122,22 @@ def _map_external_result(
     *,
     gate_name: str,
     fail_on_violation: bool,
-    absent_message: str,
 ) -> _ValidatorResult:
-    """ExternalToolResult → _ValidatorResult (mapping LOCKED de status)."""
+    """ExternalToolResult → _ValidatorResult (mapping LOCKED de status).
+
+    SEM `absent_message`: a mensagem de gate ausente é responsabilidade de
+    `_skipped_gate_result` (esta função só é chamada quando o tool RESOLVEU e
+    rodou — ausência é tratada ANTES, no caller). Assinatura de 2 kwargs é o
+    contrato real, idêntico em A1 e A2.
+    """
+
+def _gate_timeout(config: dict, gate: str, *, default: int = 120) -> int:
+    """Timeout (segundos) do gate; estouro → degraded. `default` por call-site.
+
+    Default 120 (ktlint). O call-site do BUILD passa `default=600` (builds são
+    lentos — coerente com o schema `native-gates.build.timeout: 600`). A função
+    NÃO ramifica por gate: o default correto vem do call-site, não de um if interno.
+    """
 
 def _native_gate_block(config: dict) -> dict:
     """Lê o bloco `native-gates` do config; `{}` se ausente."""
@@ -160,7 +173,8 @@ Ponto de integração único em `run_scope()` (entre `_run_cascade` e o cálculo
 **Arquivo de produção:** `engine/verify.py`
 **Arquivo de teste:** `tests/engine/test_verify_native_gates.py`
 **Doc-sync (mesmo commit):** `CHANGELOG.md`, `docs/schemas/forge-config.md`,
-`docs/design/06-command-surface.md`.
+`docs/design/06-command-surface.md`, `docs/design/04-pending.md` (face
+gates-nativos parcialmente fechada aqui — build-only fecha em A2).
 
 **Config nova (bloco `native-gates.ktlint`):**
 
@@ -180,10 +194,11 @@ native-gates:
    for argv-lista, passa inalterado. Pra projetos que rodam ktlint fora do build.
 3. `"ktlint"` — `which ktlint` no PATH (last-resort).
 
-Saída estruturada quando possível no Nível 1: **acrescentar `--reporter=json` só ao
-candidato wrapper/bin do ktlint nativo** (não muda o mapping mínimo: exit code →
-status; o `stdout`/`stderr` vai no `message`). O parse JSON fica como follow-on
-anotado (YAGNI no Nível 1) — o mapping de Nível 1 é puramente exit-code.
+O Nível 1 mapeia **só o exit code** (não parseia saída estruturada), então os
+candidatos ficam mínimos — sem `--reporter=json`. Parsing de saída estruturada
+(reporter json) fica como follow-on de Nível 2 (ver §2). Nota: `--reporter=json`
+é flag do **ktlint CLI**, não do **Gradle wrapper** — no candidato
+`["./gradlew", "ktlintCheck"]` ela seria inerte/ignorada de qualquer forma.
 
 ---
 
@@ -323,17 +338,19 @@ def _native_gate_block(config: dict) -> dict:
 def _ktlint_candidates(config: dict, project_root: Path) -> list[list[str] | str]:
     """Candidatos de invocação do ktlint, em ordem de preferência.
 
-    1. ./gradlew ktlintCheck (wrapper — versão fixada, preferido). Saída
-       estruturada (--reporter=json) acoplada ao wrapper/bin nativo.
+    1. ./gradlew ktlintCheck (wrapper — versão fixada, preferido).
     2. native-gates.ktlint.bin (str → [bin]; argv-lista → inalterado).
     3. ktlint (which no PATH).
+
+    Nível 1 mapeia só exit code — candidatos mínimos, sem `--reporter=json`
+    (parsing de saída estruturada é follow-on de Nível 2; ver §2).
     """
-    candidates: list[list[str] | str] = [["./gradlew", "ktlintCheck", "--reporter=json"]]
+    candidates: list[list[str] | str] = [["./gradlew", "ktlintCheck"]]
     ktlint_cfg = _native_gate_block(config).get("ktlint")
     if isinstance(ktlint_cfg, dict):
         bin_value = ktlint_cfg.get("bin")
         if isinstance(bin_value, str) and bin_value.strip():
-            candidates.append([bin_value.strip(), "--reporter=json"])
+            candidates.append(bin_value.strip())
         elif isinstance(bin_value, list) and bin_value:
             candidates.append([str(x) for x in bin_value])
     candidates.append("ktlint")
@@ -351,13 +368,18 @@ def _gate_enabled(config: dict, gate: str) -> bool:
     return bool(_gate_cfg(config, gate).get("enabled", True))
 
 
-def _gate_timeout(config: dict, gate: str) -> int:
-    raw = _gate_cfg(config, gate).get("timeout", 120)
+def _gate_timeout(config: dict, gate: str, *, default: int = 120) -> int:
+    """Timeout (s) do gate; estouro → degraded. `default` vem do call-site.
+
+    ktlint usa o default 120; o build passa `default=600`. A função não
+    ramifica por gate — o call-site escolhe o default correto.
+    """
+    raw = _gate_cfg(config, gate).get("timeout", default)
     try:
         value = int(raw)
     except (TypeError, ValueError):
-        return 120
-    return value if value > 0 else 120
+        return default
+    return value if value > 0 else default
 
 
 def _gate_fail_on_violation(config: dict, gate: str) -> bool:
@@ -373,6 +395,8 @@ def _map_external_result(
 ) -> _ValidatorResult:
     """ExternalToolResult → _ValidatorResult (mapping LOCKED).
 
+    Só chamada quando o tool RESOLVEU e rodou (ausência é tratada antes, no
+    caller, via _skipped_gate_result — por isso NÃO há param `absent_message`).
     - status pelo _EXTERNAL_STATUS_MAP; `warn` vira `fail` só com opt-in.
     - coverage: pass externo é 'substantive' (rodou tool real sobre artefatos
       reais — não é stub/staged-blind/opaque). Não-pass não tem coverage.
@@ -719,6 +743,12 @@ validators. Violação é informativa (`warn`, exit 0) por default; opt-in
 `fail-on-violation` sobe pra `fail`. Tool ausente → `skipped`; timeout →
 `degraded`. (O step build-only entra na A2.)
 
+**`docs/design/04-pending.md`** — marque a face **gates-nativos (Tema 6, face 2)**
+como **parcialmente fechada aqui** (a face build-only fecha em A2). Registre que a
+impl do ktlint está em `engine/verify.py::_run_native_gates` / `_run_ktlint_gate`
+com guarda `tests/engine/test_verify_native_gates.py`; a marcação final em
+"Fechados" das duas faces (gates-nativos + build-only) consolida em A2 Step 5.
+
 **`CHANGELOG.md`** — em `## [Unreleased] § Added` (ou criar a subseção):
 `- Native gate ktlint no `forge verify` (Tema 6, Decisão 33): `./gradlew ktlintCheck`
 em modo check, informativo por default (`warn`), opt-in `fail-on-violation`,
@@ -731,7 +761,8 @@ sim — novos testes). Atualize o count se citado.
 confirme que `docs/schemas/forge-config.md` é YAML-válido nas cercas.
 
 **Done do A1:** lane rápida verde + os 8 testes do A1 verdes + não-regressão de
-verify + doc-sync no mesmo commit (CHANGELOG + schema + command-surface).
+verify + doc-sync no mesmo commit (CHANGELOG + schema + command-surface +
+04-pending parcial).
 
 ---
 
@@ -888,7 +919,7 @@ def _run_build_gates(config: dict, project_root: Path) -> list[_ValidatorResult]
         if argv is None:
             continue
         res = run_external_tool(
-            argv, project_root, timeout=_gate_timeout(config, "build")
+            argv, project_root, timeout=_gate_timeout(config, "build", default=600)
         )
         return [
             _map_external_result(
@@ -919,18 +950,17 @@ def _run_build_gates(config: dict, project_root: Path) -> list[_ValidatorResult]
 > **Reuso confirmado:** `_run_build_gates` não duplica resolve/run/map — chama
 > `resolve_invocation`, `run_external_tool` e `_map_external_result` (de A1). A
 > única lógica nova é `_build_candidates` (plataforma → comando) + a varredura de
-> `platforms.active`. O `_gate_timeout` default já cobre o build via o default do
-> schema (600s no doc; o código usa 120 a menos que o config diga outra coisa —
-> ver nota abaixo).
+> `platforms.active`.
 
-> **Coerência timeout default:** `_gate_timeout` retorna 120 quando o config não
-> declara `timeout`. O schema documenta default 600 pra build. Pra honrar isso
-> **sem ramificar `_gate_timeout` por gate**, o executor deve passar o default no
-> call-site do build: troque `timeout=_gate_timeout(config, "build")` por
-> `timeout=_gate_timeout(config, "build", default=600)` E estenda `_gate_timeout`
-> com um parâmetro `default: int = 120`. Atualize a assinatura no §1 mentalmente —
-> o teste de timeout do build não depende do valor exato (usa o stub), mas a
-> coerência doc↔código é parte do done.
+> **Coerência timeout default (resolvida no contrato §1):** `_gate_timeout` recebe
+> `default: int = 120` por keyword. O call-site do ktlint usa o default 120; o
+> call-site do BUILD passa explicitamente `default=600` —
+> `run_external_tool(argv, project_root, timeout=_gate_timeout(config, "build", default=600))`,
+> como já está no `_run_build_gates` acima. Coerente com o schema
+> (`native-gates.build.timeout: 600`). Sem ramificar `_gate_timeout` por gate: o
+> default correto vem do call-site. A assinatura formal está no §1 — não há nada
+> "mental" a resolver. Os testes de timeout do build usam stub (não dependem do
+> valor exato), mas a coerência doc↔código é parte do done.
 
 **Verify (GREEN):** `.venv/bin/pytest tests/engine/test_verify_build_only.py::test_build_android_pass -x` → PASSA.
 
@@ -1109,7 +1139,8 @@ ausente → `skipped`; timeout → `degraded`).
 **`docs/design/04-pending.md`:** mover as duas faces de Follow-on pra Fechados:
 - **impl de gates-nativos (Tema 6, face 2)** (`:148-153`) → marcar `✓` em Fechados,
   citando a impl (`engine/verify.py::_run_native_gates` / `_run_ktlint_gate`) e as
-  guardas (`tests/engine/test_verify_native_gates.py`).
+  guardas (`tests/engine/test_verify_native_gates.py`). (A face foi marcada como
+  parcialmente fechada em A1; A2 consolida.)
 - **impl de runtime/visual (Tema 6, face 3)** (`:154-157`) → marcar `✓` em Fechados
   **só o Nível 1 build-only**; deixar explícito que smoke (Nível 2) e screenshot
   (Nível 3) seguem deferidos com seus critérios de reentrada. Guarda:
@@ -1138,9 +1169,11 @@ verify + doc-sync no mesmo commit (CHANGELOG + schema + command-surface +
 
 Registrar em `04-pending.md` como follow-on, não implementar agora:
 
-1. **Parse JSON estruturado do ktlint** (`--reporter=json`) → violações
-   individuais no sumário, em vez do mapping exit-code. O `--reporter=json` já é
-   passado no candidato wrapper/bin; falta só o parse.
+1. **Parse JSON estruturado do ktlint (Nível 2)** — usar `--reporter=json` (flag do
+   ktlint CLI, NÃO do Gradle wrapper) pra extrair violações individuais no sumário,
+   em vez do mapping exit-code. Exige rodar o ktlint CLI direto (não via
+   `./gradlew ktlintCheck`, onde a flag é inerte). O Nível 1 fica puramente
+   exit-code; este follow-on é Nível 2.
 2. **Agrupamento visual por tool** em `_render_summary`. No Nível 1 o `name` do
    entry (`ktlint`/`build`) já identifica o tool — agrupar por tool é cosmético.
 3. **Gates nativos no caminho de validators-vazios** (`run_scope :359-392`
@@ -1184,9 +1217,12 @@ testes não regride sem justificativa no commit body.
   bate entre §1, A1 Step 2, A2 Step 2 e todos os testes (sempre `interactive=False`
   nos testes unitários do step; `run_scope` passa `interactive=interactive`).
   `_map_external_result(res, *, gate_name, fail_on_violation) -> _ValidatorResult`
-  bate entre A1 e A2 (A2 só muda `gate_name="build"`). `_build_candidates(platform)
+  bate entre §1, A1 Step 2 e A2 (sem `absent_message` — a mensagem de ausência é
+  responsabilidade de `_skipped_gate_result`, tratada no caller antes do map; A2 só
+  muda `gate_name="build"`). `_gate_timeout(config, gate, *, default: int = 120) -> int`
+  bate entre §1, A1 Step 2 (helper) e A2 Step 2 (call-site do build passa
+  `default=600`; ktlint usa o default 120). `_build_candidates(platform)
   -> list[list[str] | str]` e `_ktlint_candidates(config, project_root)` batem com
-  o que `resolve_invocation` espera (`list[list[str] | str]`). Mapping
-  `_EXTERNAL_STATUS_MAP` (pass→pass, fail→warn, degraded→degraded) consistente em
-  todos os testes. Ajuste de coerência: `_gate_timeout(config, gate, *, default=120)`
-  com o call-site do build passando `default=600` (anotado em A2 Step 2).
+  o que `resolve_invocation` espera (`list[list[str] | str]`); ambos mínimos no
+  Nível 1 (sem `--reporter=json` — exit-code only). Mapping `_EXTERNAL_STATUS_MAP`
+  (pass→pass, fail→warn, degraded→degraded) consistente em todos os testes.
