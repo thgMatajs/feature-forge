@@ -30,6 +30,14 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Added
 
+- `engine/external_exec.py` — fronteira de execução externa genérica (Decisão
+  33): `run_external_tool(argv, project_root, *, timeout)` roda binário do
+  consumidor com env reduzido (`build_safe_env`), `check=False`, timeout com
+  estouro → `degraded`; `resolve_invocation(candidates, project_root)` descobre
+  o binário (wrapper `./...` → path de config → `which`) com skip-se-ausente
+  (`None`). Base reusada pela Fase 1 (Tema 6 — gates nativos + build-only). Nada
+  tool-específico mora aqui.
+
 - Novo 5º vetor core `impl-vs-spec` no `forge qa` (Onda 1b da remediação do
   piloto MeoBonsai — fecha o gap do Tema 6 "qa red-teia contratos, não a
   impl"): o vetor snapshota a implementação real via os `allowed_files` dos

@@ -6,6 +6,7 @@ Internal API (underscore prefix). Consumidores autorizados:
 - engine.qa.__init__   (alert layer)
 - engine.cards.loader  (parse env-needs)
 - engine.cards.grant   (decisão sensitive)
+- engine.external_exec  (fronteira de execução externa, Decisão 33)
 
 Externos NÃO devem importar.
 
