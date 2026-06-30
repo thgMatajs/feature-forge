@@ -11,6 +11,10 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 - `forge upgrade` avisa (não-fatal, stderr) em flag desconhecida em vez de ignorá-la em silêncio (Fase 1 Track B, B1).
 
+### Added
+
+- feedback de progresso (spinner) nos steps longos do `forge init` — backend (~86s) e orphan-scan (~75s); GATEADO por `_is_tty` (no-op puro fora de TTY, sem poluir o transcript IA-first) (Fase 1 Track D, D1; fecha item P2 16).
+
 ### Changed
 
 - discovery cache do `forge init` ganha content-fingerprint top-level (invalida fora do replay mecânico) — hardening cinto-e-suspensório sobre o lifecycle de checkpoint (Fase 1 Track B, B2; fecha BUG-2 follow-on).

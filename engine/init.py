@@ -2504,7 +2504,9 @@ def _run_pipeline(project_root: Path) -> int:
     card_index = _index_cards(canonical_cards)
 
     normalized_for_composer = _normalize_cards_for_composer(canonical_cards)
-    composer_result = compose_backend_axes(project_root, normalized_for_composer)
+    # D1 (Fase 1): spinner gateado por TTY (H-001 — zero-stdout em não-TTY).
+    # B3 (Fase 1): resultado pré-computado passado ao handler (dedup).
+    composer_result = _scan_backend_with_spinner(project_root, normalized_for_composer)
     has_signals = any(
         cell is not None
         for axis_map in composer_result.values()
@@ -2518,7 +2520,7 @@ def _run_pipeline(project_root: Path) -> int:
     if has_signals:
         # Brownfield path — W7.1 handler.
         # B3 (Fase 1): passa composer_result pré-computado pra evitar recompute
-        # duplo no hot-path (a mesma varredura já foi feita em L2507 acima).
+        # duplo no hot-path (a mesma varredura já foi feita acima).
         result = _handle_backend_multi_axis_brownfield(
             project_root=project_root,
             active_cards=canonical_cards,
@@ -2675,7 +2677,8 @@ def _run_pipeline(project_root: Path) -> int:
         overlay_catalog = None
 
     if overlay_catalog is not None:
-        orphans = _check_orphan_signals(project_root, activated, overlay_catalog)
+        # D1 (Fase 1): spinner gateado por TTY (H-001 — zero-stdout em não-TTY).
+        orphans = _scan_orphan_with_spinner(project_root, activated, overlay_catalog)
         if orphans:
             decision = _surface_three_paths(orphans, project_root=project_root)
             if decision.choice == "abort":
@@ -3236,6 +3239,46 @@ def _card_platforms(card: CardManifest) -> list[str]:
         return [str(p) for p in declared if isinstance(p, str) and p]
     # Fallback KMP-mobile — fonte canônica do preset v1.0.
     return ["android", "ios", "kmp"]
+
+
+def _scan_backend_with_spinner(
+    project_root: Path,
+    normalized: list[dict[str, Any]],
+) -> "dict[str, dict[str, Cell | None]]":
+    """Roda compose_backend_axes com spinner gateado por TTY (D1 — Fase 1).
+
+    Embute o gate `_is_tty` OBRIGATÓRIO: em não-TTY a varredura roda direto,
+    sem spinner, sem nenhuma escrita em stdout — preserva o transcript IA-first
+    (Decisão 22: stdout limpo no loop mecânico). Em TTY, envolve a varredura
+    num spinner mentor-calmo (label "backend — varrendo signals").
+
+    Motivo do helper fino em vez de if/else inline: evita duplicar o padrão
+    nos dois lugares que chamam compose_backend_axes (reuso-first); facilita
+    monkeypatching nos testes (gate + scan como contrato observável separado).
+    """
+    if renderer._is_tty(sys.stdout):
+        with ui_progress.spinner("backend — varrendo signals"):
+            return compose_backend_axes(project_root, normalized)
+    else:
+        return compose_backend_axes(project_root, normalized)
+
+
+def _scan_orphan_with_spinner(
+    project_root: Path,
+    activated: list,
+    overlay_catalog: Any,
+) -> list:
+    """Roda _check_orphan_signals com spinner gateado por TTY (D1 — Fase 1).
+
+    Mesmo contrato de gate que `_scan_backend_with_spinner`: em não-TTY a
+    varredura roda direto, sem spinner, sem escrita em stdout — preserva o
+    transcript IA-first. Em TTY, envolve a varredura num spinner.
+    """
+    if renderer._is_tty(sys.stdout):
+        with ui_progress.spinner("verificando orphan signals"):
+            return _check_orphan_signals(project_root, activated, overlay_catalog)
+    else:
+        return _check_orphan_signals(project_root, activated, overlay_catalog)
 
 
 def _normalize_cards_for_composer(
