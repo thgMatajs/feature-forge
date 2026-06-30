@@ -434,6 +434,11 @@ def test_render_source_ref_literal_token_not_mangled(
     )
     monkeypatch.setattr(plan, "_templates_dir", lambda _root: fake_templates)
     monkeypatch.setattr(plan, "_continue_or_pause", lambda slug, label: "continuar")
+    # Onda 2: este teste cobre o RENDER (single-pass), não o content-gate. O
+    # argv cru carrega um literal `{{screenshots_count}}` no source-ref que
+    # sobrevive de propósito — o gate (que roda APÓS o render) o veria como
+    # stub. Neutralizamos o gate aqui pra isolar o que está sob teste.
+    monkeypatch.setattr(plan, "_run_content_gate", lambda *a, **k: None)
 
     feature_path = tmp_path / "feature"
     feature_path.mkdir()
