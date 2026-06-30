@@ -22,6 +22,12 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   (decisão existente). Espelha o hook estendido pela Decisão 33; evita
   falso-positivo Critical em auditorias de decisões novas.
 
+### Removed
+
+- `engine/memory/l3.py` (órfão desde W-ROUTE 6a — perdeu o único consumidor de produção;
+  zero imports confirmado por grep) — clean-break (Fase 1 Track C). Nota para merge:
+  item "`engine/memory/l3.py` órfão" de `04-pending.md §W-ROUTE 6a` fechado.
+
 ### Changed
 
 - Rename `apply_proposal_to_l2` → `route_proposal_to_inbox` (misnomer desde W-ROUTE 6b —
