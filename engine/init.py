@@ -225,6 +225,38 @@ def _discovery_cache_path(project_root: Path) -> Path:
     return claude_dir(project_root) / _DISCOVERY_CACHE_NAME
 
 
+def _discovery_source_fingerprint(project_root: Path) -> str:
+    """Fingerprint barato do estado top-level do projeto (B2 — hardening).
+
+    Hash do (nome, mtime_ns) dos filhos de 1º nível do project_root,
+    EXCLUINDO o diretório `.claude/` (gerenciado pelo forge — não é source do
+    usuário; o cache fica lá e causaria instabilidade circular no fingerprint).
+    Captura adições/remoções top-level SEM re-varrer a árvore (o custo que o
+    cache evita). Trade-off consciente: não detecta edição PROFUNDA que não
+    muda o mtime de um dir-pai top-level — cinto-e-suspensório sobre o
+    lifecycle (não substituto). O lifecycle de checkpoint segue sendo a
+    garantia primária; o fingerprint é o hardening fora do replay mecânico.
+    """
+    import hashlib
+
+    _EXCLUDED = {".claude"}
+    h = hashlib.sha256()
+    try:
+        for child in sorted(project_root.iterdir(), key=lambda p: p.name):
+            if child.name in _EXCLUDED:
+                continue
+            try:
+                h.update(child.name.encode())
+                h.update(b"\x00")
+                h.update(str(child.stat().st_mtime_ns).encode())
+                h.update(b"\x00")
+            except OSError:
+                continue
+    except OSError:
+        return ""
+    return h.hexdigest()
+
+
 def _save_discovery_cache(
     project_root: Path,
     ds_inv: "DesignSystemInventory | None",
@@ -240,7 +272,10 @@ def _save_discovery_cache(
     Não cacheia objetos ricos inteiros (DSComponent/I18nKey) — só o necessário
     pra reproduzir fielmente o output, mantendo o YAML enxuto e round-trippável.
     """
-    payload: dict[str, Any] = {"schema-version": 1}
+    payload: dict[str, Any] = {
+        "schema-version": 1,
+        "source-fingerprint": _discovery_source_fingerprint(project_root),
+    }
     if ds_inv is not None:
         payload["design-system"] = {
             "raw": ds_inv.raw,
@@ -266,28 +301,33 @@ def _load_discovery_cache(
     consome (contagens + `.raw`). `components`/`keys` viram listas de
     placeholders do tamanho correto — o downstream só usa `len(...)` deles.
 
-    **Invariante de correção (WR-03 — sem fingerprint de conteúdo, por design):**
-    este cache NÃO carrega um fingerprint (mtime/hash) do source do projeto.
-    A correção está garantida pelo LIFECYCLE, não por revalidação de conteúdo:
+    **Invariante de correção (WR-03 — com fingerprint barato top-level):**
+    O lifecycle de checkpoint segue sendo a garantia primária:
 
       - O cache só é CARREGADO sob `host_is_replaying` (loop mecânico de replay):
-        o host está respondendo prompts in-flight, NÃO editando source. O replay
-        é a MESMA invocação lógica — o source é tratado como imutável durante a
-        janela em que o cache vive.
+        o host está respondendo prompts in-flight, NÃO editando source.
       - O lifecycle é ATADO ao checkpoint: `_clear_checkpoint` →
-        `_clear_discovery_cache` (discard / abort / novo-init limpam). Logo o
-        cache nunca sobrevive a uma transição que poderia mudar o source.
+        `_clear_discovery_cache` (discard / abort / novo-init limpam).
 
-    O único modo de servir stale é o anti-padrão "editar source no MEIO do
-    replay mecânico", que contradiz o modelo de loop. Fingerprint de conteúdo
-    (cinto + suspensório contra esse anti-padrão) é hardening FUTURO deliberado
-    — registrado como follow-on no doc-sync de merge-back, NÃO implementado aqui.
+    Adicionalmente (B2 — Fase 1): o cache armazena um fingerprint barato
+    top-level (`_discovery_source_fingerprint`) para invalidação cinto-e-
+    suspensório fora do replay mecânico. Caches pré-B2 sem `source-fingerprint`
+    são automaticamente tratados como cache-miss (seguro: re-roda discovery
+    uma vez e re-popula com fingerprint).
     """
     path = _discovery_cache_path(project_root)
     if not path.exists():
         return None
     data = read_yaml_or_default(path, None)
     if not isinstance(data, dict):
+        return None
+
+    # B2 (Fase 1): cache-miss se o fingerprint do source divergiu do gravado.
+    # Hardening cinto-e-suspensório sobre o lifecycle de checkpoint.
+    # Caches pré-B2 sem 'source-fingerprint' → cache-miss seguro (re-roda
+    # discovery uma vez, re-popula com fingerprint).
+    cached_fp = data.get("source-fingerprint")
+    if cached_fp != _discovery_source_fingerprint(project_root):
         return None
 
     # Imports locais: evita custo no import-time do módulo + mantém a fronteira

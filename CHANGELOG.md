@@ -11,6 +11,10 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 - `forge upgrade` avisa (não-fatal, stderr) em flag desconhecida em vez de ignorá-la em silêncio (Fase 1 Track B, B1).
 
+### Changed
+
+- discovery cache do `forge init` ganha content-fingerprint top-level (invalida fora do replay mecânico) — hardening cinto-e-suspensório sobre o lifecycle de checkpoint (Fase 1 Track B, B2; fecha BUG-2 follow-on).
+
 ### Changed (load-bearing)
 
 - Nova decisão 33: o engine pode executar binários externos do projeto
