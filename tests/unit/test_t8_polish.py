@@ -32,6 +32,105 @@ def test_undo_reconfigure_noop_without_bak(tmp_forge_project: Path, monkeypatch)
     assert rc == 0, f"no-op sem .bak deveria sair 0 (era exit 1 bug), obtido {rc}"
 
 
+# ── MED-03: no-op→exit 0 consistente também no ramo task-commit ───────────────
+
+
+def test_undo_task_commit_no_commits_is_noop(tmp_forge_project: Path) -> None:
+    """MED-03: "sem commits registrados" é no-op legítimo → _NOOP (exit 0),
+    não False (exit 1). Nada a reverter ≠ erro."""
+    from engine import undo
+
+    result = undo._undo_task_commit(tmp_forge_project, "feature-sem-commits")
+    assert result is undo._NOOP, (
+        f"sem commits é no-op legítimo, deveria ser _NOOP, obtido {result!r}"
+    )
+    assert undo._rc_for(result) == 0
+
+
+def test_undo_task_commit_declined_confirmation_is_noop(
+    tmp_forge_project: Path, monkeypatch
+) -> None:
+    """MED-03: declinar a confirmação é no-op legítimo (nada mutado) → _NOOP."""
+    from engine import undo
+
+    # Há um commit registrado, mas o usuário declina a 1ª confirmação.
+    monkeypatch.setattr(
+        undo,
+        "_last_task_commit",
+        lambda *a, **k: {"commit_sha": "a" * 40, "task-id": "TASK-0001"},
+        raising=False,
+    )
+    monkeypatch.setattr(undo.question, "confirm", lambda *a, **k: False, raising=False)
+
+    result = undo._undo_task_commit(tmp_forge_project, "feat-x")
+    assert result is undo._NOOP, (
+        f"declínio de confirmação é no-op (nada mutado), deveria ser _NOOP, "
+        f"obtido {result!r}"
+    )
+    assert undo._rc_for(result) == 0
+
+
+def test_undo_task_commit_missing_sha_is_real_error(
+    tmp_forge_project: Path, monkeypatch
+) -> None:
+    """MED-03 (contra-prova): entry sem SHA é ERRO real → False (exit 1),
+    nunca forçado a 0."""
+    from engine import undo
+
+    monkeypatch.setattr(
+        undo,
+        "_last_task_commit",
+        lambda *a, **k: {"task-id": "TASK-0001"},  # sem commit_sha/sha
+        raising=False,
+    )
+    result = undo._undo_task_commit(tmp_forge_project, "feat-x")
+    assert result is not undo._NOOP, "erro real (sem SHA) não pode virar no-op"
+    assert undo._rc_for(result) == 1
+
+
+def test_undo_choice_3_uses_rc_for_for_noop(
+    tmp_forge_project: Path, monkeypatch
+) -> None:
+    """MED-03: o ramo choice=="3" do menu deve honrar _NOOP via _rc_for —
+    um no-op de task-commit (sem commits) sai 0, não 1."""
+    from engine import undo
+
+    (tmp_forge_project / ".claude" / "forge" / "forge-config.yaml").write_text(
+        "identity:\n  project-name: demo\n", encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_forge_project)
+    monkeypatch.setattr(undo.question, "ask", lambda *a, **k: "3", raising=False)
+    monkeypatch.setattr(undo, "_pick_feature", lambda *a, **k: "feat-x", raising=False)
+    # Sem commits registrados → _undo_task_commit devolve _NOOP.
+    monkeypatch.setattr(undo, "_last_task_commit", lambda *a, **k: None, raising=False)
+
+    rc = undo.run([])
+    assert rc == 0, f"no-op de task-commit no ramo 3 deveria sair 0, obtido {rc}"
+
+
+def test_undo_evolve_declined_confirmation_is_noop(
+    tmp_forge_project: Path, monkeypatch
+) -> None:
+    """MED-03: declinar a reversão de evolve (L2 fallback) é no-op legítimo →
+    _NOOP (exit 0), consistente com o ramo task-commit/reconfigure."""
+    from engine import undo
+
+    # Sem evento mem-inbox (routed_to None) → cai no fallback L2; L2 existe.
+    monkeypatch.setattr(
+        undo, "_evolve_apply_event_for", lambda *a, **k: None, raising=False
+    )
+    l2 = undo.memory_l2_path(tmp_forge_project)
+    l2.parent.mkdir(parents=True, exist_ok=True)
+    l2.write_text("notes: []\n", encoding="utf-8")
+    monkeypatch.setattr(undo.question, "confirm", lambda *a, **k: False, raising=False)
+
+    result = undo._undo_evolve(tmp_forge_project, "P-001")
+    assert result is undo._NOOP, (
+        f"declínio de reversão evolve é no-op, deveria ser _NOOP, obtido {result!r}"
+    )
+    assert undo._rc_for(result) == 0
+
+
 # ── BUG-EVOLVE-1/2: --help reconhecido + BrokenPipe tratado ───────────────────
 
 

@@ -328,7 +328,8 @@ def _undo_task_commit(project_root: Path, feature_slug: str) -> bool:
         renderer.write(renderer.colored(
             f"  Sem commits registrados para {feature_slug}.", "yellow"
         ))
-        return False
+        # MED-03: nada a reverter é no-op legítimo (não erro) → _NOOP (exit 0).
+        return _NOOP
     sha, is_legacy = _pick_commit_sha(entry)
     if not sha:
         renderer.write(renderer.colored(
@@ -352,12 +353,13 @@ def _undo_task_commit(project_root: Path, feature_slug: str) -> bool:
         f"Confirma reverter o commit {sha[:10]}? (1ª confirmação)",
         default=False,
     ):
-        return False
+        # MED-03: usuário declinou — nada mutado, no-op legítimo → _NOOP (exit 0).
+        return _NOOP
     if not question.confirm(
         "Tem certeza? `git revert` cria um novo commit. (2ª confirmação)",
         default=False,
     ):
-        return False
+        return _NOOP
 
     try:
         subprocess.run(
@@ -406,7 +408,8 @@ def _undo_evolve(project_root: Path, proposal_id: str) -> bool:
             f"(rejeitar candidato no mem inbox)?",
             default=False,
         ):
-            return False
+            # MED-03: declínio = no-op legítimo (nada rejeitado) → _NOOP (exit 0).
+            return _NOOP
         result = mem_inbox_reject(project_root, inbox_id)
         if not result.ok:
             renderer.write(renderer.colored(
@@ -456,7 +459,8 @@ def _undo_evolve(project_root: Path, proposal_id: str) -> bool:
     if not question.confirm(
         f"Reverter aplicação de {proposal_id}?", default=False
     ):
-        return False
+        # MED-03: declínio = no-op legítimo (L2 não tocado) → _NOOP (exit 0).
+        return _NOOP
 
     target_id = proposal_id.replace("P-", "L2-") if proposal_id.startswith("P-") else proposal_id
     try:
@@ -876,13 +880,16 @@ def run(argv: list[str]) -> int:
             if slug is None:
                 _clear_undo_checkpoint(project_root)
                 return 0
-            rc = 0 if _undo_task_commit(project_root, slug) else 1
+            # MED-03: _rc_for honra _NOOP (no-op legítimo → exit 0) — antes
+            # usava o padrão antigo `0 if ... else 1` que tratava no-op como erro.
+            rc = _rc_for(_undo_task_commit(project_root, slug))
             _clear_undo_checkpoint(project_root)
             return rc
 
         if choice == "4":
             pid = question.ask_text("ID da proposta (ex.: P-001):")
-            rc = 0 if _undo_evolve(project_root, pid) else 1
+            # MED-03: _rc_for honra _NOOP (declínio = no-op legítimo → exit 0).
+            rc = _rc_for(_undo_evolve(project_root, pid))
             _clear_undo_checkpoint(project_root)
             return rc
 
