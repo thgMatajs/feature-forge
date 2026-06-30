@@ -201,6 +201,140 @@ def _load_checkpoint(project_root: Path) -> dict[str, Any] | None:
 
 def _clear_checkpoint(project_root: Path) -> None:
     _clear_checkpoint_io(_checkpoint_path(project_root))
+    # BUG-2: o discovery cache segue o lifecycle do checkpoint — limpa junto
+    # (evita estado stale vazar entre features / pós-discard).
+    _clear_discovery_cache(project_root)
+
+
+# ── BUG-2 — discovery cache (persistente em disco, lifecycle=checkpoint) ──────
+#
+# O Step 2 (discovery) re-rodava os 3 extractors caros
+# (extract_design_system/i18n/conventions) a CADA invocação do init —
+# inclusive no loop mecânico (host replaying), onde cada response é um
+# PROCESSO NOVO (CLI). Em monorepo real isso custa ~220s/ciclo. LRU
+# intra-processo NÃO ajuda (cada processo zera o LRU); o cache TEM que ser
+# persistente em disco.
+#
+# L-001: nome concreto, persistente, sob `.claude/`, coberto pelo
+# `.claude/.gitignore` que `_write_claude_gitignores` semeia. Lifecycle =
+# checkpoint (some com `_clear_checkpoint`).
+_DISCOVERY_CACHE_NAME = ".init-discovery-cache.yaml"
+
+
+def _discovery_cache_path(project_root: Path) -> Path:
+    return claude_dir(project_root) / _DISCOVERY_CACHE_NAME
+
+
+def _save_discovery_cache(
+    project_root: Path,
+    ds_inv: "DesignSystemInventory | None",
+    i18n_inv: "I18nInventory | None",
+    conv_inv: "ConventionsInventory | None",
+) -> None:
+    """Persiste o resultado de discovery (os 3 `.raw` + contagens) em disco.
+
+    Cacheia o que o pipeline downstream consome dos inventories:
+      - ds_inv: `.raw` + `len(.components)` (summary L2827, _build_* L3881).
+      - i18n_inv: `.raw` + `len(.keys)` (summary L2828, _build_* L3871).
+      - conv_inv: `.raw` (_build_* L3838).
+    Não cacheia objetos ricos inteiros (DSComponent/I18nKey) — só o necessário
+    pra reproduzir fielmente o output, mantendo o YAML enxuto e round-trippável.
+    """
+    payload: dict[str, Any] = {"schema-version": 1}
+    if ds_inv is not None:
+        payload["design-system"] = {
+            "raw": ds_inv.raw,
+            "n-components": len(ds_inv.components),
+        }
+    if i18n_inv is not None:
+        payload["i18n"] = {"raw": i18n_inv.raw, "n-keys": len(i18n_inv.keys)}
+    if conv_inv is not None:
+        payload["conventions"] = {"raw": conv_inv.raw}
+    write_yaml(_discovery_cache_path(project_root), payload, atomic=True)
+
+
+def _load_discovery_cache(
+    project_root: Path,
+) -> tuple[
+    "DesignSystemInventory | None",
+    "I18nInventory | None",
+    "ConventionsInventory | None",
+] | None:
+    """Carrega o discovery cache; None em cache-miss (caller re-roda discovery).
+
+    Reconstrói os inventories preservando exatamente os campos que o pipeline
+    consome (contagens + `.raw`). `components`/`keys` viram listas de
+    placeholders do tamanho correto — o downstream só usa `len(...)` deles.
+    """
+    path = _discovery_cache_path(project_root)
+    if not path.exists():
+        return None
+    data = read_yaml_or_default(path, None)
+    if not isinstance(data, dict):
+        return None
+
+    # Imports locais: evita custo no import-time do módulo + mantém a fronteira
+    # com inventory clara (reuso das dataclasses canônicas, não re-derivação).
+    from engine.inventory.conventions import ConventionsInventory
+    from engine.inventory.design_system import (
+        DesignSystemInventory,
+        DSComponent,
+        DSTokens,
+    )
+    from engine.inventory.i18n import I18nInventory, I18nKey
+
+    ds_inv: DesignSystemInventory | None = None
+    ds_data = data.get("design-system")
+    if isinstance(ds_data, dict):
+        raw = ds_data.get("raw") or {}
+        n = int(ds_data.get("n-components") or 0)
+        tokens_raw = raw.get("tokens") or {}
+        ds_inv = DesignSystemInventory(
+            components=[
+                DSComponent(name="", level="unknown", status="unknown")
+                for _ in range(n)
+            ],
+            tokens=DSTokens(
+                colors=dict((tokens_raw.get("colors") or {}).get("values") or {}),
+                spacing=dict((tokens_raw.get("spacing") or {}).get("values") or {}),
+                radius=dict((tokens_raw.get("radii") or {}).get("values") or {}),
+                typography=dict(
+                    (tokens_raw.get("typography") or {}).get("values") or {}
+                ),
+            ),
+            raw=raw,
+        )
+
+    i18n_inv: I18nInventory | None = None
+    i18n_data = data.get("i18n")
+    if isinstance(i18n_data, dict):
+        raw = i18n_data.get("raw") or {}
+        n = int(i18n_data.get("n-keys") or 0)
+        sot = raw.get("source-of-truth") or {}
+        i18n_inv = I18nInventory(
+            keys=[I18nKey(key="") for _ in range(n)],
+            languages=list(sot.get("locales") or []),
+            source_of_truth=sot.get("path", "unknown"),
+            generated_paths=dict((raw.get("generation") or {}).get("outputs") or {}),
+            raw=raw,
+        )
+
+    conv_inv: ConventionsInventory | None = None
+    conv_data = data.get("conventions")
+    if isinstance(conv_data, dict):
+        conv_inv = ConventionsInventory(raw=conv_data.get("raw") or {})
+
+    return ds_inv, i18n_inv, conv_inv
+
+
+def _clear_discovery_cache(project_root: Path) -> None:
+    path = _discovery_cache_path(project_root)
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
 
 
 def _resume_option_labels() -> dict[str, str]:
@@ -1135,6 +1269,9 @@ def _write_claude_gitignores(project_root: Path) -> None:
             f"{memory_name}/",
             "locks/",
             ".memory-cli-checkpoint.yaml",
+            # BUG-2 (Onda 3): cache persistente de discovery (lifecycle =
+            # checkpoint). Derivado — não deve vazar num `git add .`.
+            _DISCOVERY_CACHE_NAME,
             _FORGE_GITIGNORE_END,
             "",
         ]
@@ -2033,6 +2170,10 @@ def _run_pipeline(project_root: Path) -> int:
     }
     _resume_step: str | None = None
     _resume_preset: str | None = None
+    # BUG-2: default False — só vira True no ramo de loop mecânico (host
+    # replaying). Inicializado FORA do `if existing_checkpoint` pra estar
+    # sempre definido no Step 2 (decisão cache-hit vs re-discovery).
+    _host_loop_in_progress = False
 
     existing_checkpoint = _load_checkpoint(project_root)
     if existing_checkpoint:
@@ -2163,6 +2304,15 @@ def _run_pipeline(project_root: Path) -> int:
     i18n_inv = None
     conv_inv = None
 
+    # BUG-2: no loop mecânico (host replaying — cada response é processo novo),
+    # tenta carregar o resultado de discovery do cache persistente em vez de
+    # re-rodar os 3 extractors caros (~220s/ciclo em monorepo). Cache-miss
+    # (1ª invocação, ou pós-discard que limpou o checkpoint) cai no caminho
+    # normal e re-popula o cache ao fim do Step 2.
+    _cached_discovery = (
+        _load_discovery_cache(project_root) if _host_loop_in_progress else None
+    )
+
     with ui_progress.progress(len(discovery_steps), "discovery", width=24) as bar:
         canonical_cards = load_all_cards(canonical_dir)
         bar.update(1)
@@ -2170,29 +2320,48 @@ def _run_pipeline(project_root: Path) -> int:
         # Stack detection happens per-card later; we just mark the step done.
         bar.update(1)
 
-        try:
-            ds_inv = extract_design_system(project_root)
-        except Exception as exc:  # noqa: BLE001 — broad catch: defensive at discovery-step boundary — heuristic scanner walks project tree parsing XML/Kotlin/Swift; init must not fail for any extract hiccup
+        if _cached_discovery is not None:
+            # Cache-hit: reusa o discovery do ciclo anterior. Os 3 extractors
+            # NÃO re-rodam (o custo cai de re-execução pra load do YAML).
+            ds_inv, i18n_inv, conv_inv = _cached_discovery
             renderer.write(
                 renderer.colored(
-                    f"design-system extract skipped: {exc}", "dim_grey"
+                    "discovery reaproveitado do cache (loop mecânico — "
+                    "sem re-varrer o repositório).",
+                    "dim_grey",
                 )
             )
-        bar.update(1)
+            bar.update(3)
+        else:
+            try:
+                ds_inv = extract_design_system(project_root)
+            except Exception as exc:  # noqa: BLE001 — broad catch: defensive at discovery-step boundary — heuristic scanner walks project tree parsing XML/Kotlin/Swift; init must not fail for any extract hiccup
+                renderer.write(
+                    renderer.colored(
+                        f"design-system extract skipped: {exc}", "dim_grey"
+                    )
+                )
+            bar.update(1)
 
-        try:
-            i18n_inv = extract_i18n(project_root)
-        except Exception as exc:  # noqa: BLE001 — broad catch: defensive at discovery-step boundary — heuristic i18n scanner; init must not fail for any extract hiccup
-            renderer.write(renderer.colored(f"i18n extract skipped: {exc}", "dim_grey"))
-        bar.update(1)
+            try:
+                i18n_inv = extract_i18n(project_root)
+            except Exception as exc:  # noqa: BLE001 — broad catch: defensive at discovery-step boundary — heuristic i18n scanner; init must not fail for any extract hiccup
+                renderer.write(
+                    renderer.colored(f"i18n extract skipped: {exc}", "dim_grey")
+                )
+            bar.update(1)
 
-        try:
-            conv_inv = extract_conventions(project_root)
-        except Exception as exc:  # noqa: BLE001 — broad catch: defensive at discovery-step boundary — heuristic conventions scanner; init must not fail for any extract hiccup
-            renderer.write(
-                renderer.colored(f"conventions extract skipped: {exc}", "dim_grey")
-            )
-        bar.update(1)
+            try:
+                conv_inv = extract_conventions(project_root)
+            except Exception as exc:  # noqa: BLE001 — broad catch: defensive at discovery-step boundary — heuristic conventions scanner; init must not fail for any extract hiccup
+                renderer.write(
+                    renderer.colored(f"conventions extract skipped: {exc}", "dim_grey")
+                )
+            bar.update(1)
+
+            # Persiste o resultado de discovery pro próximo ciclo mecânico
+            # (lifecycle = checkpoint; some com `_clear_checkpoint`).
+            _save_discovery_cache(project_root, ds_inv, i18n_inv, conv_inv)
 
     renderer.write("")
     renderer.write(f"  {len(canonical_cards)} cards canônicos disponíveis em {canonical_dir}")
