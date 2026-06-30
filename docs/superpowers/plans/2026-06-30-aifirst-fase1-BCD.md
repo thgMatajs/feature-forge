@@ -22,7 +22,7 @@
   - Gate de "pronto": pytest verde + `forge verify` sem hard fail + reviewer assinou (sem high/critical) + doc-sync no mesmo commit.
 - **Reuso-first (#3):** antes de criar helper, consulte os helpers já presentes no módulo tocado (ex.: `engine/ui/progress.py`, `engine/integrations/mem.py`, `engine/graph/queries.py`). Não inventar paralelo.
 - **Scope contido (#4):** edite SÓ os arquivos listados na task. Doc-sync na mesma mudança é exceção legítima (#6).
-- **Doc-sync (#6):** cada track anota seu próprio `CHANGELOG.md` `[Unreleased]`. Mover itens fechados de `04-pending.md` pra "Fechados" é **SERIALIZADO no merge / Fase 2** — anote a intenção, não dispute o arquivo (conflito trivial esperado entre tracks no `CHANGELOG`/`04-pending`).
+- **Doc-sync (#6):** cada track anota seu próprio `CHANGELOG.md` `[Unreleased]`. Mover itens fechados de `04-pending.md` pra "Fechados" é **SERIALIZADO no merge / Fase 2** — anote a intenção, não dispute o arquivo (conflito trivial esperado entre tracks no `CHANGELOG`/`04-pending`). **Exceção (M-001):** a anotação in-line de estado de D3-D6 entra NO commit do Track D — ver Step D3-D6.2.
 
 ### Matriz de arquivos-por-track (validar disjunção antes do dispatch paralelo)
 
@@ -30,17 +30,19 @@
 |---|---|---|
 | **B** | `engine/upgrade.py`, `engine/init.py` (B2 + B3 caso o veredito da investigação seja dedup) | `tests/unit/test_upgrade_*.py`, `tests/unit/test_init_discovery_cache.py`, `tests/unit/test_brownfield_compose_dedup.py` |
 | **C** | `engine/memory/distiller.py`, `engine/memory/__init__.py`, `engine/evolve.py`, `engine/memory/l3.py` (REMOVE) | `tests/unit/test_memory_distiller.py`, `tests/unit/test_engine_evolve_resume.py`, `tests/unit/test_reuse_intelligence.py`, `tests/integrations/test_mem_wrappers.py` |
-| **D** | `engine/init.py`, `engine/graph/queries.py`, `engine/graph_cli.py` | `tests/unit/test_init_progress_*.py` (CREATE), `tests/unit/test_graph_*.py`, `tests/engine/test_graph_queries.py` |
+| **D** | `engine/init.py` (D1), `engine/graph/queries.py` + `engine/graph_cli.py` (D2); `engine/evolve.py` (D3/D5 — **só confirmar + teste**), `engine/reconfigure.py` (D4 — **só confirmar + teste**), `engine/implement.py` (D5 — **só confirmar + teste**), `engine/undo.py` / `engine/raw.py` (D6 — **só confirmar + teste**) | `tests/unit/test_init_progress_*.py` (CREATE), `tests/unit/test_graph_*.py`, `tests/engine/test_graph_queries.py`, + os arquivos de teste de regressão de D3-D6 |
 
-**⚠ Overlap detectado:** `engine/init.py` aparece em **Track B (B2 + B3)** e **Track D (D1)**. Não são file-disjuntos. Tratamento abaixo no §"Serialização em `engine/init.py`".
+> **⚠ Nota M-002 sobre a coluna de produção do Track D:** `engine/evolve.py`, `engine/reconfigure.py`, `engine/implement.py`, `engine/undo.py`, `engine/raw.py` aparecem na Matriz como **"só confirmar + teste"** — D3-D6 NÃO editam produção neles (o W-DEBT T8 já fechou os bugs; a tarefa é verificar o guard + adicionar regression test). A anotação "só confirmar + teste" significa: o executor PODE ler (Read) esses arquivos pra confirmar o guard, mas NÃO os edita. Isso torna a Matriz a fonte única de verdade do scope de D, consistente com a seção de arquivos-por-task de D3-D6 e com o self-review.
 
-| Doc-sync (serializado no merge) | `CHANGELOG.md`, `docs/design/04-pending.md` — todos os tracks tocam; conflito trivial esperado no merge `--no-ff`. |
+**⚠ Overlap detectado:** `engine/init.py` aparece em **Track B (B2 + B3)** e **Track D (D1)**. Não são file-disjuntos. Tratamento abaixo no §"Serialização em `engine/init.py`". `engine/evolve.py` aparece em **Track C (C1/C2 — produção)** e **Track D (D3/D5 — só teste)**; tratamento no self-review (D3 rebasa sobre C).
+
+| Doc-sync (serializado no merge) | `CHANGELOG.md`, `docs/design/04-pending.md` — todos os tracks tocam; conflito trivial esperado no merge `--no-ff`. **Exceção:** a anotação in-line de D3-D6 em `04-pending.md` entra no commit do Track D (M-001, Step D3-D6.2) — sem mover seção, só comentário in-line. |
 
 ### Serialização em `engine/init.py` (overlap B2 ↔ B3 ↔ D1)
 
 Três itens podem editar `engine/init.py`: **B2** (discovery cache content-fingerprint), **B3** (dedup `compose_backend_axes` — SÓ se a investigação concluir redundância real; ver §B3) e **D1** (progress feedback nos steps longos). Regiões disjuntas dentro do arquivo (B2 ~L209-353 cache helpers; B3 ~L2467 + ~L3385 backend brownfield handler; D1 ~L2467 backend + ~L2617 orphan), **mas mesmo arquivo = merge conflita** — e B3-dedup e D1 chegam a tocar a MESMA vizinhança (~L2467, a chamada de `compose_backend_axes` no Step 5).
 
-> **⚠ Nota especial B3 ↔ D1 (vizinhança L2467):** D1 envolve a chamada `compose_backend_axes` (L2467) num `spinner`; B3-dedup, se autorizado pela investigação (Caminho A), passa o `composer_result` dessa MESMA chamada pra dentro do handler. Os dois tocam a chamada de L2467. Se ambos forem aplicados, **serializar B3 → D1 no mesmo worktree** (B3 muda a chamada/assinatura primeiro; D1 envolve a já-deduplicada). Se a investigação de B3 concluir Caminho B (não-dup) ou C (escalar), B3 NÃO edita a lógica de `init.py` (só docstring) — então o overlap de produção com D1 é trivial.
+> **⚠ Nota especial B3 ↔ D1 (vizinhança L2467):** D1 envolve a chamada `compose_backend_axes` (L2467) num gate `_is_tty` + spinner; B3-dedup, se autorizado pela investigação (Caminho A), passa o `composer_result` dessa MESMA chamada pra dentro do handler. Os dois tocam a chamada de L2467. Se ambos forem aplicados, **serializar B3 → D1 no mesmo worktree** (B3 muda a chamada/assinatura primeiro; D1 envolve a já-deduplicada no gate). Se a investigação de B3 concluir Caminho B (não-dup) ou C (escalar), B3 NÃO edita a lógica de `init.py` (só docstring) — então o overlap de produção com D1 é trivial.
 
 Três caminhos pro orquestrador (escolha 1 ANTES do dispatch):
 
@@ -287,9 +289,11 @@ Rode: `.venv/bin/pytest tests/unit/test_init_discovery_cache.py -v` → GREEN.
 ### B3 — dedup `compose_backend_axes` (INVESTIGAÇÃO empírica → decidir pelo observado; `systematic-debugging`)
 
 **Arquivo de produção:** `engine/init.py` (`_run_pipeline` L2466-2472 + `_handle_backend_multi_axis_brownfield` L3380-3385, docstring stale L3340-3343).
-**Arquivo de teste/instrumentação:** `tests/unit/test_brownfield_compose_dedup.py` (EXISTENTE — confirmar/estender).
+**Arquivo de teste/instrumentação:** `tests/unit/test_brownfield_compose_dedup.py` (CREATE — confirme no scout; em `feat/aifirst-pendencias` o arquivo NÃO está tracked, embora exista um `.pyc` órfão de uma branch paralela — ver nota abaixo).
 
 > **⚠ Overlap com B2 e D1 (`engine/init.py`).** Resolva pela §"Serialização em `engine/init.py`" ANTES do dispatch. B3 só entra na serialização de produção SE a investigação concluir Caminho A (dedup); nos Caminhos B/C só toca docstring (overlap trivial).
+
+> **⚠ Nota de scout (branch paralela):** existe uma branch `fix/pilot-init-perf` (commit `26f21fb`) que já aplicou a dedup do Caminho A (param `composer_result` no handler) — mas ela NÃO está mergeada em `feat/aifirst-pendencias`. No estado atual desta branch, `_handle_backend_multi_axis_brownfield` (L3385) ainda recomputa `compose_backend_axes` incondicionalmente. **A investigação de B3 segue valendo nesta branch.** Se a investigação confirmar Caminho A, o executor pode reusar o approach do `26f21fb` como referência (NÃO cherry-pick cego — confirme o estado atual e o resultado da investigação primeiro).
 
 **⚠ Premissa CORRIGIDA — leia ANTES de investigar:**
 
@@ -308,20 +312,103 @@ A 2ª chamada de `compose_backend_axes` roda no **hot-path ativo** do `forge ini
 Objetivo: descobrir se as DUAS chamadas de `compose_backend_axes` no caminho brownfield ativo computam o **mesmo resultado pros mesmos inputs** (redundância → duplo-custo que o piloto flagou em init perf) OU recebem inputs/contextos **diferentes** (distinção semântica → NÃO é dup).
 
 1. **Scout estático primeiro (leitura, sem rodar):** abra `engine/init.py` e leia os dois callsites, comparando os ARGUMENTOS de cada um:
-   - L2467: `compose_backend_axes(project_root, normalized_for_composer, ...)` — capture os args EXATOS (posicionais + kwargs).
-   - L3385 (dentro de `_handle_backend_multi_axis_brownfield`): capture os args EXATOS que o handler passa.
-   - Pergunta-chave: `project_root`/`normalized`/kwargs são os MESMOS objetos/valores nos dois pontos, ou o handler recomputa/transforma o input antes de chamar? Inputs divergentes → forte sinal de distinção semântica (Caminho B). Inputs idênticos → forte sinal de redundância (Caminho A). Confirme o TIPO de retorno de `compose_backend_axes` aqui (será usado na assinatura do Caminho A).
+   - L2467: `compose_backend_axes(project_root, normalized_for_composer)` — capture os args EXATOS (posicionais + kwargs). Scout confirmou: 2 posicionais, `project_root` + `normalized_for_composer` (este vem de `_normalize_cards_for_composer(canonical_cards)`, L2466).
+   - L3385 (dentro de `_handle_backend_multi_axis_brownfield`): `compose_backend_axes(project_root, normalized)`, onde `normalized = _normalize_cards_for_composer(active_cards)` (L3384). `active_cards` é o kwarg que `_run_pipeline` L2482 passa como `canonical_cards`.
+   - Pergunta-chave: `_normalize_cards_for_composer(canonical_cards)` (L2466) e `_normalize_cards_for_composer(active_cards)` (L3384) produzem o MESMO objeto/valor, já que `active_cards == canonical_cards`? Se a normalização é determinística e o input é o mesmo, os args convergem → forte sinal de redundância (Caminho A). Confirme o TIPO de retorno de `compose_backend_axes` aqui: scout indica `dict[str, dict[str, Cell | None]]` (axis_map de células — usado pra `has_signals` em L2468-2472). Esse tipo entra na assinatura do Caminho A.
 
-2. **Confirmar empiricamente com instrumentação (não confie só na leitura):** escreva um teste de investigação em `tests/unit/test_brownfield_compose_dedup.py` que exercita o caminho brownfield ativo (`has_signals=True`) com um spy que captura, a CADA chamada de `compose_backend_axes`, os args recebidos E o resultado retornado:
+2. **Confirmar empiricamente com instrumentação (não confie só na leitura) — harness brownfield ATIVO CONFIÁVEL:** escreva um teste de investigação em `tests/unit/test_brownfield_compose_dedup.py` que exercita o caminho brownfield ativo (`has_signals=True`) com um spy que captura, a CADA chamada de `compose_backend_axes`, os args recebidos E o resultado retornado.
+
+   **Reuso obrigatório do harness brownfield real (scout):** o caminho que dispara as 2 chamadas precisa entrar no Step 5 brownfield ATIVO. Reuse o padrão de fixtures já provado em `tests/integration/test_init_brownfield_multi_axis.py` (helpers `_scaffold_project`, `_build_uniform_firebase_project`, `_load_real_card`, `_write_response`). Esse harness:
+   - `_scaffold_project(tmp_path)` cria `.claude/workflow-config.yaml` + pin `host: intent-file` (essencial: sem isso o host resolve o ClaudeCodeAdapter e o protocolo file-based não vale).
+   - `_build_uniform_firebase_project(tmp_path)` materializa signals que disparam `firebase-auth` acima do threshold → garante `has_signals=True` (sem isso o pipeline cai no **greenfield**, e as 2 chamadas NÃO ocorrem — o assert de 2 chamadas falharia por harness, não por comportamento).
+   - O handler emite `ask_three_paths` (Phase A) e **raise `PausedForInputError` na 1ª chamada**; a 2ª chamada (após `_write_response(tmp_path, intent_id, "a")`) consome a response e retorna o result. Esse two-phase é o que faz o caminho ativo COMPLETAR.
+
+   **Como alcançar AS DUAS chamadas (L2467 + L3385) num único caminho:** as 2 chamadas só co-ocorrem quando o pipeline entra no Step 5 (`_run_pipeline` L2467) E chama o handler (L2480 → L3385). Há dois sub-approaches; o executor escolhe pelo que o scout do entrypoint testável de `_run_pipeline` revelar:
+   - **(i) Driver de Step 5 via `_run_pipeline`** se houver um entrypoint testável que chega ao Step 5 com checkpoint replay (ver `tests/unit/test_engine_init_resume.py` `test_resume_continues_from_checkpoint_step` como molde de como montar o checkpoint em `step-5-backend-selection` e dirigir o pipeline). Esse driver exercita L2467 (1ª chamada) → handler L3385 (2ª chamada) → 2 chamadas observadas.
+   - **(ii) Se (i) for caro (pipeline inteiro):** instrumente o spy e dispare APENAS o trecho de Step 5 — extraia/exercite a sequência `normalized_for_composer = _normalize_cards_for_composer(canonical_cards)` → `compose_backend_axes(...)` (L2466-2467) → `_handle_backend_multi_axis_brownfield(project_root=..., active_cards=canonical_cards)` (L2480) com o two-phase do response. Isso reproduz fielmente as 2 chamadas do hot-path sem montar o pipeline inteiro. **Anote o reuso do helper de fixture** (`_build_uniform_firebase_project`) — é o que garante `has_signals=True` e, portanto, que o handler é de fato chamado.
 
    ```python
    def test_investigate_compose_backend_axes_call_redundancy(tmp_path, monkeypatch, capsys):
        """B3 INVESTIGAÇÃO (Fase 1): as 2 chamadas de compose_backend_axes no
        caminho brownfield ativo são redundantes (mesmos args → mesmo resultado)
        ou semanticamente distintas (args diferentes)? Este teste OBSERVA — não
-       afirma o veredito. Ler a saída capturada decide A vs B."""
-       import engine.init as init_mod
+       afirma o veredito. Ler a saída capturada decide A vs B.
 
+       Harness: reusa os fixtures brownfield de
+       tests/integration/test_init_brownfield_multi_axis.py
+       (_scaffold_project / _build_uniform_firebase_project / _load_real_card /
+       _write_response) pra ALCANÇAR DE FORMA CONFIÁVEL o caminho ativo
+       (has_signals=True). Sem o _build_uniform_firebase_project o pipeline cai
+       no greenfield e as 2 chamadas NÃO ocorrem.
+       """
+       import json
+
+       import engine.init as init_mod
+       from engine.cards.loader import CardManifest
+       from engine.ui import intent_state
+       from engine.ui.question import PausedForInputError
+
+       # ── Harness brownfield ativo (reuso dos helpers do integration test) ──
+       # Estrutura mínima pra _project_root_for_io resolver tmp_path + pin host.
+       claude = tmp_path / ".claude"
+       claude.mkdir(parents=True, exist_ok=True)
+       (claude / "workflow-config.yaml").write_text("{}\n", encoding="utf-8")
+       (claude / "forge" / "state").mkdir(parents=True, exist_ok=True)
+       (claude / "forge" / "forge-config.yaml").write_text(
+           "host: intent-file\n", encoding="utf-8"
+       )
+       from engine.host import detect as _host_detect
+
+       _host_detect._clear_cache()
+       intent_state._reset_log_cache()
+
+       # Signals que disparam firebase-auth acima do threshold → has_signals=True.
+       (tmp_path / "app").mkdir(parents=True, exist_ok=True)
+       (tmp_path / "app" / "google-services.json").write_text(
+           '{"project_info": {"project_id": "test"}}', encoding="utf-8"
+       )
+       (tmp_path / "ios").mkdir(parents=True, exist_ok=True)
+       (tmp_path / "ios" / "GoogleService-Info.plist").write_text(
+           '<?xml version="1.0"?><plist></plist>', encoding="utf-8"
+       )
+       (tmp_path / "app" / "build.gradle.kts").write_text(
+           'plugins { id("com.android.application") }\n'
+           "dependencies {\n"
+           '    implementation("com.google.firebase:firebase-auth:22.0.0")\n'
+           "}\n",
+           encoding="utf-8",
+       )
+       monkeypatch.chdir(tmp_path)
+
+       # Card real firebase-auth como active_cards (mesma estratégia do
+       # integration test — loader canônico, não dataclass à mão).
+       import yaml as _yaml
+
+       from pathlib import Path as _Path
+
+       repo_root = _Path(init_mod.__file__).resolve().parents[1]
+       card_yaml = repo_root / "cards" / "firebase-auth" / "card.yaml"
+       raw = _yaml.safe_load(card_yaml.read_text(encoding="utf-8"))
+       identity = raw.get("identity") or {}
+       firebase_auth = CardManifest(
+           name=str(identity.get("name", "")),
+           version=str(identity.get("version", "")),
+           schema_version=int(raw.get("schema-version", 1)),
+           description=str(identity.get("description", "")),
+           category=str(identity.get("category", "")),
+           maturity=str(identity.get("maturity", "")),
+           provides=list(raw.get("provides") or []),
+           requires=list(raw.get("requires") or []),
+           conflicts_with=list(raw.get("conflicts-with") or []),
+           contributes=dict(raw.get("contributes") or {}),
+           detection=dict(raw.get("detection") or {}),
+           documentation=dict(raw.get("documentation") or {}),
+           raw=raw,
+           source_path=card_yaml.parent,
+       )
+       canonical_cards = [firebase_auth]
+
+       # ── Spy: captura args + resultado a cada chamada de compose_backend_axes ──
        observed: list[dict] = []
        real = init_mod.compose_backend_axes
 
@@ -338,18 +425,48 @@ Objetivo: descobrir se as DUAS chamadas de `compose_backend_axes` no caminho bro
 
        monkeypatch.setattr(init_mod, "compose_backend_axes", _spy)
 
-       # Montar o cenário brownfield ativo MÍNIMO que dispara has_signals=True
-       # e, por consequência, _handle_backend_multi_axis_brownfield (L2480).
-       # Reusar os fixtures/harness já presentes em test_brownfield_compose_dedup.py
-       # que constroem active_cards com signals de backend (confirme o helper
-       # real ao abrir o arquivo; NÃO invente fixture nova se já houver uma que
-       # exercita o brownfield multi-axis).
-       # ... disparar o trecho de _run_pipeline (ou o entrypoint testável que ele
-       #     expõe) que chega até o handler.
+       # ── Dispara o trecho de Step 5: 1ª chamada (L2467) + handler (L3385) ──
+       # Reproduz fielmente a sequência do hot-path (approach (ii) do plano).
+       # 1ª chamada de compose_backend_axes (pra has_signals):
+       normalized = init_mod._normalize_cards_for_composer(canonical_cards)
+       composer_result = init_mod.compose_backend_axes(tmp_path, normalized)
+       has_signals = any(
+           cell is not None
+           for axis_map in composer_result.values()
+           for cell in axis_map.values()
+       )
+       assert has_signals, (
+           "harness não disparou has_signals=True — confirme que "
+           "_build_uniform_firebase_project semeou signals acima do threshold; "
+           f"composer_result={composer_result!r}"
+       )
 
-       # OBSERVAÇÃO (não-assert de veredito): registrar pro implementer ler.
+       # Handler (Phase 1 → PausedForInputError; lê intent-id do pending).
+       with pytest.raises(PausedForInputError):
+           init_mod._handle_backend_multi_axis_brownfield(
+               project_root=tmp_path,
+               active_cards=canonical_cards,
+           )
+       pending = intent_state.read_pending(tmp_path)
+       assert pending is not None, "handler deve emitir forge-pending.json no 1º call"
+       intent_id = pending["intent-id"]
+
+       # Phase 2: response "a" (confirm) → handler consome, 2ª chamada (L3385).
+       state_dir = tmp_path / ".claude" / "forge" / "state"
+       (state_dir / "forge-response.json").write_text(
+           json.dumps({"schema-version": 1, "intent-id": intent_id, "value": "a"}),
+           encoding="utf-8",
+       )
+       init_mod._handle_backend_multi_axis_brownfield(
+           project_root=tmp_path,
+           active_cards=canonical_cards,
+       )
+
+       # ── Veredito (harness garantiu chegar no caminho certo) ──
        assert len(observed) == 2, (
-           f"esperava 2 chamadas no caminho brownfield ativo, vi {len(observed)}: {observed}"
+           "esperava 2 chamadas no caminho brownfield ativo (L2467 + L3385), "
+           f"vi {len(observed)}: {observed}. Se 0/1, o harness não alcançou o "
+           "caminho ativo — NÃO leia o veredito A/B a partir disto."
        )
        same_args = (
            observed[0]["args_repr"] == observed[1]["args_repr"]
@@ -366,6 +483,8 @@ Objetivo: descobrir se as DUAS chamadas de `compose_backend_axes` no caminho bro
        )
    ```
 
+   > **Nota ao executor (confiabilidade do harness):** o `assert has_signals` ANTES do handler é o gate que separa "harness não montou o brownfield" de "comportamento ausente" — se ele falhar, o problema é o fixture (signals abaixo do threshold), NÃO o veredito. Só depois dele o `assert len(observed) == 2` é significativo. Se o scout do executor revelar que o approach (i) (driver de `_run_pipeline` completo) é mais fiel ao hot-path real, prefira-o e replique o padrão de checkpoint replay de `test_engine_init_resume.py::test_resume_continues_from_checkpoint_step` — o contrato observável (2 chamadas + spy de args/result) é o mesmo.
+
    Rode capturando o print: `.venv/bin/pytest tests/unit/test_brownfield_compose_dedup.py -k investigate -v -s`.
 
 3. **Veredito da investigação (regra de decisão explícita — não assuma; LEIA a saída):**
@@ -379,9 +498,9 @@ Objetivo: descobrir se as DUAS chamadas de `compose_backend_axes` no caminho bro
 
 A dedup mínima: computar `compose_backend_axes` UMA vez em `_run_pipeline` (L2467) e passar o resultado já computado pra dentro do handler, em vez do handler recomputar (L3385). Concretamente:
 
-1. Adicionar parâmetro opcional `composer_result: <tipo-real> | None = None` à assinatura de `_handle_backend_multi_axis_brownfield` — use o TIPO de retorno real de `compose_backend_axes` confirmado em B3.1 (não suponha `dict`).
-2. No corpo do handler, em L3385: reusar o argumento quando recebido, recomputar só se chamado sem ele — `composer = composer_result if composer_result is not None else compose_backend_axes(...)`. Isso preserva o caminho do integration test, que chama o handler isolado sem o argumento.
-3. `_run_pipeline` (L2480) passa o `composer_result` já computado em L2467: `_handle_backend_multi_axis_brownfield(..., composer_result=<resultado-de-L2467>)`.
+1. Adicionar parâmetro opcional `composer_result: dict[str, dict[str, Cell | None]] | None = None` à assinatura de `_handle_backend_multi_axis_brownfield` — use o TIPO de retorno real de `compose_backend_axes` confirmado em B3.1 (scout: `dict[str, dict[str, Cell | None]]`; `Cell` já é importado no topo de `init.py` via `from engine.detection.composer import Cell, Conflict, compose_backend_axes`).
+2. No corpo do handler, em L3384-3385: reusar o argumento quando recebido, recomputar só se chamado sem ele — `composer_result = composer_result if composer_result is not None else compose_backend_axes(project_root, _normalize_cards_for_composer(active_cards))`. Isso preserva o caminho do integration test, que chama o handler isolado sem o argumento (default `None`).
+3. `_run_pipeline` (L2480) passa o `composer_result` já computado em L2467: `_handle_backend_multi_axis_brownfield(project_root=project_root, active_cards=canonical_cards, composer_result=composer_result)`.
 
 **Gate no-behavior-change (TDD, shape `check_no_behavior_change`):** mesma saída do init pros mesmos inputs antes/depois. Estenda `tests/unit/test_brownfield_compose_dedup.py`:
 
@@ -389,8 +508,23 @@ A dedup mínima: computar `compose_backend_axes` UMA vez em `_run_pipeline` (L24
 def test_brownfield_handler_reuses_precomputed_composer_result(tmp_path, monkeypatch):
     """B3-A (Fase 1): com composer_result já computado, o handler NÃO recomputa
     compose_backend_axes (1 chamada em vez de 2 no caminho ativo). Saída idêntica
-    ao baseline — no-behavior-change."""
+    ao baseline — no-behavior-change.
+
+    Reusa o MESMO harness brownfield ativo do teste de investigação
+    (scaffold + signals firebase + two-phase response 'a').
+    """
+    import json
+
     import engine.init as init_mod
+    from engine.ui import intent_state
+    from engine.ui.question import PausedForInputError
+
+    # ── Reusa o harness brownfield ativo (idêntico ao de investigação) ──
+    # Extraia o setup pra um helper local _make_active_brownfield(tmp_path)
+    # compartilhado entre os dois testes deste arquivo (reuso-first) — ele
+    # retorna (canonical_cards) e deixa o cwd/host pinados. Aqui assumo o
+    # helper já extraído:
+    canonical_cards = _make_active_brownfield(tmp_path, monkeypatch)
 
     calls = {"n": 0}
     real = init_mod.compose_backend_axes
@@ -400,20 +534,47 @@ def test_brownfield_handler_reuses_precomputed_composer_result(tmp_path, monkeyp
         return real(*args, **kwargs)
 
     monkeypatch.setattr(init_mod, "compose_backend_axes", _counting)
-    # 1) Rodar o caminho brownfield ativo (mesmo harness do teste de investigação),
-    #    capturar o output do init (selected_card_names / o que o handler decide).
-    # 2) Asserir calls["n"] == 1 (caiu de 2 → 1; o duplo-custo sumiu).
-    # 3) Asserir que o output é IDÊNTICO ao baseline pré-dedup (no-behavior-change).
-    #    Se houver um snapshot/baseline já no arquivo, compare contra ele; senão,
-    #    capture o baseline rodando o caminho SEM a dedup (git stash do fix) ou
-    #    asserindo o selected_card_names esperado já conhecido pelo fixture.
-    assert calls["n"] == 1
-    # assert output == baseline_output
+
+    # 1ª chamada (pipeline, pra has_signals) + composer_result pré-computado.
+    normalized = init_mod._normalize_cards_for_composer(canonical_cards)
+    composer_result = init_mod.compose_backend_axes(tmp_path, normalized)
+
+    # Baseline: rodar o handler SEM o composer_result pré-computado (2ª chamada
+    # recomputa) e capturar o output canônico (Phase 1 raise + Phase 2 confirm).
+    baseline = _run_handler_two_phase(
+        init_mod, tmp_path, canonical_cards, composer_result=None
+    )
+    calls_after_baseline = calls["n"]
+
+    # Pós-dedup: rodar o handler COM o composer_result pré-computado — NÃO
+    # recomputa. Reset do estado de intent entre runs (response fresca).
+    intent_state._reset_log_cache()
+    deduped = _run_handler_two_phase(
+        init_mod, tmp_path, canonical_cards, composer_result=composer_result
+    )
+
+    # No-behavior-change: o handler com composer_result pré-computado NÃO
+    # chama compose_backend_axes de novo (a recomputação some).
+    assert calls["n"] == calls_after_baseline, (
+        "com composer_result pré-computado o handler NÃO pode recomputar "
+        f"compose_backend_axes; chamadas baseline={calls_after_baseline}, "
+        f"pós-dedup={calls['n']}"
+    )
+    # Saída IDÊNTICA ao baseline — shape de check_no_behavior_change.
+    assert deduped["choice"] == baseline["choice"]
+    assert (deduped.get("selected_card_names") or []) == (
+        baseline.get("selected_card_names") or []
+    )
+    assert (deduped.get("composer_result") or {}) == (
+        baseline.get("composer_result") or {}
+    )
 ```
+
+> **Helpers locais a extrair (reuso-first):** `_make_active_brownfield(tmp_path, monkeypatch) -> list[CardManifest]` (o scaffold + signals firebase + pin host + card real, compartilhado pelos dois testes deste arquivo) e `_run_handler_two_phase(init_mod, tmp_path, cards, *, composer_result) -> dict` (Phase 1 raise + read intent-id + write response "a" + Phase 2 call → retorna o result). Esses helpers eliminam a duplicação entre o teste de investigação e o de no-behavior-change e mantêm cada teste bite-sized.
 
 - **Confirmar o ganho:** re-rode o teste de investigação (B3.1) pós-fix — o caminho ativo deve mostrar `len(observed) == 1` (ajuste o investigation test pra refletir 1 chamada pós-dedup, ou documente a transição). Registre no doc-sync que o duplo-custo foi eliminado.
 - **Corrigir o docstring stale L3340-3343:** trocar "chamada apenas pelo integration test" pela descrição real ("chamada por `_run_pipeline` no caminho brownfield ativo; aceita `composer_result` pré-computado pra evitar recompute — o integration test a chama isolada sem o argumento").
-- Rode no-behavior-change: `.venv/bin/pytest tests/unit/test_brownfield_compose_dedup.py -v` → verde, 1 chamada confirmada, output idêntico.
+- Rode no-behavior-change: `.venv/bin/pytest tests/unit/test_brownfield_compose_dedup.py -v` → verde, 1 chamada confirmada no handler, output idêntico.
 
 **Caminho B — Semanticamente distintas → NÃO deduplicar; corrigir só os docs.**
 
@@ -459,7 +620,7 @@ Se a dedup exigir refactor AMPLO do pipeline de init (além de passar o resultad
 - Os kinds que o `retrospective-agent.md` emite — `convention-refinement` / `decay-signal` / `question-elimination` — caem no `NotImplementedError` final (L553). Limitação herdada da v1.1, confirmada em `04-pending.md §W-AGENTS`.
 - **Nuance load-bearing (scout):** em `_VALID_KINDS`, `question-elimination` (L87) e `convention-refinement` (L88) JÁ são válidos, mas **`decay-signal` NÃO está em `_VALID_KINDS`** — hoje `_validate_kind` REJEITARIA `decay-signal` com `MemoryError` antes mesmo de chegar no `NotImplementedError`. Logo C1 tem DUAS partes: (1) adicionar `decay-signal` a `_VALID_KINDS`; (2) rotear os 3 pro mem inbox.
 
-**Decisão de design:** rotear os 3 pelo MESMO padrão dos 3 knowledge kinds existentes — `mem_inbox_add` com `mem_type="reference"`, raise-não-drena se `ok=False` ou sem `id`. A forma mais limpa e reuso-first: **adicionar os 3 a `_KNOWLEDGE_KINDS`**, fazendo o branch existente (L490-527) cobri-los sem código novo. Consequência a verificar: `_KNOWLEDGE_KINDS` também é importado por `engine/evolve.py` pra PULAR o overflow-guard (L291). Adicionar os 3 lá significa que eles também pulam o overflow-guard — o que é CORRETO (vão pro mem inbox, não pro L2; o overflow-guard é sobre tamanho do L2). Confirme essa intenção no review.
+**Decisão de design:** rotear os 3 pelo MESMO padrão dos 3 knowledge kinds existentes — `mem_inbox_add` com `mem_type="reference"`, raise-não-drena se `ok=False` ou sem `id`. A forma mais limpa e reuso-first: **adicionar os 3 a `_KNOWLEDGE_KINDS`**, fazendo o branch existente (L490-527) cobri-los sem código novo. Consequência a verificar: `_KNOWLEDGE_KINDS` também é importado por `engine/evolve.py` pra PULAR o overflow-guard (L291). Adicionar os 3 lá significa que eles também pulam o overflow-guard — o que é CORRETO (vão pro mem inbox, não pro L2; o overflow-guard é sobre tamanho do L2). Confirme essa intenção no review (ver gate de pré-confirmação M-003 abaixo).
 
 #### Step C1.1 — RED: cada kind roteia sem NotImplementedError
 
@@ -517,6 +678,16 @@ Rode: `.venv/bin/pytest tests/unit/test_memory_distiller.py -k "retrospective_ki
 
 #### Step C1.2 — GREEN: adicionar os 3 kinds
 
+> **Gate de pré-confirmação (M-003) — rode ANTES de editar a lógica:** os 3 novos kinds passarão a pular o overflow-guard de `evolve.py` (efeito de entrar em `_KNOWLEDGE_KINDS`). Para não deixar um teste de overflow virar falso-verde (passar pela razão nova — "pulou o guard" — em vez da razão antiga — "foi pausado pelo guard"), confirme que NENHUM teste de overflow usa um dos 3 kinds como payload. Rode o grep:
+>
+> ```
+> grep -n "convention-refinement\|decay-signal\|question-elimination" tests/unit/test_engine_evolve_resume.py tests/unit/test_memory_distiller.py
+> ```
+>
+> - **Vazio** → nenhum teste de overflow usa esses kinds; a reconciliação de C1.3 NÃO é necessária; siga. (Scout deste plano rodou o grep e veio vazio — mas o executor RE-CONFIRMA na worktree, pois o estado pode ter mudado.)
+> - **Hits em contexto de overflow-test** (o proposal com esse kind é usado pra ASSERTAR pause do overflow-guard) → reconcilie ANTES: troque o kind do proposal de overflow pra um NÃO-knowledge (ex.: `forget-l1`), espelhando a reconciliação de W-ROUTE 6b. Só então prossiga.
+> - **Hits fora de contexto de overflow** (ex.: o teste de roteamento que ESTE step adiciona) → benignos; siga.
+
 Em `engine/memory/distiller.py`:
 
 1. Adicione `decay-signal` a `_VALID_KINDS` (L78-96), junto aos kinds de conhecimento:
@@ -549,11 +720,11 @@ Rode: `.venv/bin/pytest tests/unit/test_memory_distiller.py -k "retrospective_ki
 
 #### Step C1.3 — Regressão + doc-sync
 
-- Suite inteira do distiller + evolve resume (o overflow-skip mudou de superfície): `.venv/bin/pytest tests/unit/test_memory_distiller.py tests/unit/test_engine_evolve_resume.py -v`. Nenhum pode regredir. Se um teste de overflow-pause usar um dos 3 novos kinds, ele agora pulará o guard corretamente — reconcilie trocando o kind do proposal pra um NÃO-knowledge (ex.: `forget-l1`), espelhando a reconciliação feita em W-ROUTE 6b.
+- Suite inteira do distiller + evolve resume (o overflow-skip mudou de superfície): `.venv/bin/pytest tests/unit/test_memory_distiller.py tests/unit/test_engine_evolve_resume.py -v`. Nenhum pode regredir. O gate de pré-confirmação de C1.2 (grep) já garantiu que nenhum teste de overflow usa os 3 novos kinds; se o grep tivesse acusado hits em contexto de overflow, a reconciliação (trocar o kind pra `forget-l1`) já teria sido feita em C1.2.
 - `CHANGELOG.md` `[Unreleased]` → `### Fixed`: "`apply_proposal_to_l2` roteia `convention-refinement`/`decay-signal`/`question-elimination` pro mem inbox (antes `NotImplementedError`); `decay-signal` agora é kind válido (Fase 1 Track C, fecha limitação v1.1 §W-AGENTS)."
 - Anote pro merge: `04-pending.md §W-AGENTS` item "_KNOWLEDGE_KINDS cobre só 3 kinds" fechado.
 
-**Done:** os 3 kinds roteiam pro inbox sem `NotImplementedError`; `decay-signal` válido; suites distiller+evolve verdes.
+**Done:** os 3 kinds roteiam pro inbox sem `NotImplementedError`; `decay-signal` válido; suites distiller+evolve verdes; grep de pré-confirmação rodado (vazio ou reconciliado).
 
 ---
 
@@ -652,7 +823,7 @@ grep -rn "read_l3_index|read_l3_entry|search_l3|memory.l3|memory import l3|from 
 
 ## TRACK D — P2 polish (itens 16-21 do report)
 
-**Worktree:** worktree-D. **Arquivos:** `engine/init.py` (D1), `engine/graph/queries.py` + `engine/graph_cli.py` (D2). **Demais itens (D3-D6): majoritariamente JÁ FECHADOS — ver scout abaixo.**
+**Worktree:** worktree-D. **Arquivos:** `engine/init.py` (D1), `engine/graph/queries.py` + `engine/graph_cli.py` (D2). **Demais itens (D3-D6): majoritariamente JÁ FECHADOS — ver scout abaixo. Arquivos de D3-D6 (`engine/evolve.py`, `engine/reconfigure.py`, `engine/implement.py`, `engine/undo.py`, `engine/raw.py`): SÓ confirmar + teste (não editar produção) — ver Matriz e M-002.**
 
 > **⚠ Descoberta do scout (load-bearing — leia antes de planejar Track D):** ao scoutar cada item, **4 dos 6 itens P2 já foram implementados** numa wave anterior (W-DEBT T8, ver `04-pending.md §P2 / dívida residual`). Track D vira majoritariamente **verificação + regression test**, não implementação. Detalhe item-a-item:
 >
@@ -665,14 +836,14 @@ grep -rn "read_l3_index|read_l3_entry|search_l3|memory.l3|memory import l3|from 
 > | D5 `--help` em evolve/implement | **FECHADO** — `evolve.py:384` (BUG-EVOLVE-2 T8), `implement.py:1163` (BUG-IMPL-4 T8) | Verificar + regression test; PARE/anote |
 > | D6 undo no-op `last` exit 0 + raw rebuild-templates aviso | **FECHADO** — `undo.py` `_NOOP` sentinel (BUG-UNDO-1 T8, exit 0); `raw.py:134-141` (BUG-RAW-1 T8, aviso de escopo FORGE_HOME) | Verificar + regression test; PARE/anote |
 >
-> **Sub-finding pra registrar no merge:** o `04-pending.md §P2 (itens 16-21)` está STALE — lista como abertos itens que o W-DEBT T8 já fechou (D3/D4/D5/D6). A Fase 2 (doc-sync) deve mover esses 4 pra Fechados e deixar só D1/D2 como o resíduo P2 real. Não force a edição de `04-pending.md` aqui (serializado).
+> **Sub-finding pra registrar no merge:** o `04-pending.md §P2 (itens 16-21)` está STALE — lista como abertos itens que o W-DEBT T8 já fechou (D3/D4/D5/D6). A anotação in-line de estado (M-001) entra NO commit do Track D (Step D3-D6.2); o MOVE da seção pra "Fechados" continua serializado na Fase 2.
 
 ### D1 — progress feedback nos steps longos do init (feature, TDD)
 
 **Arquivo de produção:** `engine/init.py` (Step 5 backend ~L2449-2499; Step 7.5 orphan ~L2617-2646).
 **Arquivo de teste:** `tests/unit/test_init_progress_long_steps.py` (CREATE).
 
-> **⚠ Overlap com B2 e B3 (`engine/init.py`).** Resolva pela §"Serialização em `engine/init.py`" ANTES do dispatch. **Atenção especial:** D1 envolve a chamada de `compose_backend_axes` (L2467) num spinner; B3-dedup (se autorizado) muda essa MESMA chamada. Se ambos forem aplicados, serializar B3 → D1.
+> **⚠ Overlap com B2 e B3 (`engine/init.py`).** Resolva pela §"Serialização em `engine/init.py`" ANTES do dispatch. **Atenção especial:** D1 envolve a chamada de `compose_backend_axes` (L2467) num gate `_is_tty` + spinner; B3-dedup (se autorizado) muda essa MESMA chamada. Se ambos forem aplicados, serializar B3 → D1.
 
 **Diagnóstico (scout):** `engine/init.py` JÁ usa `ui_progress.progress(...)` pra discovery (L2333), snapshot de cards (L2604) e graph (L2793). MAS os dois steps citados no report como lentos NÃO têm feedback:
 - **Step 5 backend (~86s):** `compose_backend_axes` (L2467) varre signals sem barra/spinner; o usuário vê `[5/7] Backend` e depois silêncio durante a varredura.
@@ -680,73 +851,142 @@ grep -rn "read_l3_index|read_l3_entry|search_l3|memory.l3|memory import l3|from 
 
 `compose_backend_axes` e `_check_orphan_signals` são chamadas de varredura ÚNICA (não loops com `n` iteráveis óbvios), então a primitiva certa é `ui_progress.spinner(label)` (L110) — feedback "está trabalhando", não barra de N. Scout confirmou que `spinner` existe e tem `start`/`stop`.
 
-**Decisão de design (reuso-first):** envolver as duas chamadas de varredura num `ui_progress.spinner` com label mentor-calmo. Sob loop mecânico do host (replay), o spinner deve degradar pra no-op silencioso (não poluir o transcript IA-first) — verifique como `ui_progress.spinner` se comporta em modo não-TTY / output JSON (provavelmente já no-op se stream não é TTY; confirme lendo `engine/ui/progress.py` Spinner antes de assumir).
+**Decisão de design (reuso-first) — gate `_is_tty` OBRIGATÓRIO (H-001):** envolver as duas chamadas de varredura num `ui_progress.spinner` com label mentor-calmo, **mas SÓ quando o stdout é um TTY**. O scout de `engine/ui/progress.py` (`Spinner.start`, L142-146) **derrubou a premissa anterior de "no-op silencioso fora de TTY"**: em não-TTY o `Spinner.start()` escreve `f"{self.label}…\n"` no stream (default `sys.stdout`, L137) e o `Progress.__init__` faz o mesmo (L67-69). Logo o spinner **NÃO degrada a no-op** — ele POLUI o stdout uma vez. No loop IA-first (stdout estruturado, capturado como JSON pelo host), esse texto livre **corrompe o transcript** do host e quebra o loop mecânico (Decisão 22 pressupõe stdout limpo — `engine/init.py` não tem nenhum filtro de `output_mode`/`isatty` pra progresso hoje; grep confirmou zero matches).
 
-#### Step D1.1 — RED: spinner envolve os steps longos
+Por isso o gate `_is_tty` é **OBRIGATÓRIO, NÃO condicional**: o progress feedback dos steps longos só pode emitir em TTY; em não-TTY é **no-op puro — zero bytes em stdout do spinner**. A primitiva canônica do projeto pra rotear output cinético é `engine.ui.renderer._is_tty(stream)` (`renderer.py:65` — honra `NO_COLOR`/`FORGE_FORCE_COLOR` e `stream.isatty()`); é a MESMA primitiva que `Spinner`/`Progress` já usam internamente (L65, L138) pra decidir o render. Reuso-first: gate a ENTRADA no `with ui_progress.spinner(...)` por `renderer._is_tty(sys.stdout)` — não invente flag novo de `output_mode`. Fora de TTY, chame a varredura DIRETO, sem spinner (caminho sem nenhuma escrita em stdout).
+
+> **Por que não basta `stream=sys.stderr`:** trocar o stream do spinner pra stderr ainda escreve o label uma vez em não-TTY (L144 escreve no `self.stream` qualquer que seja). O contrato IA-first exige **zero escrita** fora de TTY, não "escrita redirecionada" — daí o gate na entrada, não um troca-de-stream.
+
+#### Step D1.1 — RED: spinner gateado por TTY (com prova de zero-stdout fora de TTY)
 
 `tests/unit/test_init_progress_long_steps.py`:
 
 ```python
-"""D1 (Fase 1): steps longos do init (backend, orphan) dão feedback via spinner."""
+"""D1 (Fase 1): steps longos do init (backend, orphan) dão feedback via spinner
+GATEADO por TTY — fora de TTY é no-op puro (zero bytes em stdout)."""
 
 from __future__ import annotations
+
+import io
 
 import engine.init as init_mod
 
 
-def test_backend_step_uses_spinner(monkeypatch):
-    """Step 5 (backend/composer) envolve a varredura num spinner com label."""
+class _FakeSpinnerCtx:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def test_backend_step_uses_spinner_in_tty(monkeypatch):
+    """Step 5 (backend/composer), sob TTY, envolve a varredura num spinner."""
     labels = []
-
-    class _FakeSpinnerCtx:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
 
     def _fake_spinner(label, **kw):
         labels.append(label)
         return _FakeSpinnerCtx()
 
     monkeypatch.setattr(init_mod.ui_progress, "spinner", _fake_spinner)
+    # Forçar contexto TTY pro gate liberar o spinner.
+    monkeypatch.setattr(init_mod.renderer, "_is_tty", lambda *a, **k: True)
 
-    # Invocar o trecho de Step 5 que chama compose_backend_axes dentro do
-    # spinner. Ajuste o ponto de entrada ao helper real após o scout do
-    # executor (provável: extrair a varredura pra um helper testável OU
-    # asserir via um harness que roda o trecho). O contrato observável:
-    #   - ui_progress.spinner foi chamado com um label contendo "backend".
-    # ... (montar harness mínimo)
+    # Invocar o trecho de Step 5 que chama compose_backend_axes sob o gate.
+    # Ajuste o ponto de entrada ao helper real após o scout do executor
+    # (provável: extrair a varredura pra um helper fino testável — ver nota).
+    # O contrato observável: ui_progress.spinner foi chamado com label "backend".
+    # ... (montar harness mínimo que entra no Step 5 backend sob TTY)
     assert any("backend" in s.lower() for s in labels)
 
 
-def test_orphan_step_uses_spinner(monkeypatch):
-    """Step 7.5 (orphan scan) envolve a varredura num spinner com label."""
-    # Mesmo padrão; label contendo "orphan" ou "órfã".
-    ...
+def test_backend_step_is_noop_in_non_tty(monkeypatch, capsys):
+    """H-001: fora de TTY, o spinner NÃO é instanciado e NADA vai pra stdout.
+
+    Prova o gate obrigatório: zero bytes em stdout vindos do spinner — o loop
+    IA-first não pode ter o transcript corrompido por texto cinético.
+    """
+    spinner_calls = []
+
+    def _spy_spinner(label, **kw):
+        spinner_calls.append(label)
+        return _FakeSpinnerCtx()
+
+    monkeypatch.setattr(init_mod.ui_progress, "spinner", _spy_spinner)
+    # Forçar contexto NÃO-TTY — o gate deve suprimir o spinner.
+    monkeypatch.setattr(init_mod.renderer, "_is_tty", lambda *a, **k: False)
+
+    # ... (montar o MESMO harness do Step 5 backend, agora sob não-TTY)
+
+    # Gate obrigatório: spinner NÃO foi instanciado fora de TTY.
+    assert spinner_calls == [], (
+        "fora de TTY o spinner NÃO pode ser instanciado (gate _is_tty "
+        f"obrigatório); foi chamado com: {spinner_calls}"
+    )
+    # E, de forma mais forte: zero bytes de progresso em stdout. Mesmo que o
+    # gate fosse por outro caminho, o invariante observável é stdout limpo.
+    out = capsys.readouterr().out
+    assert "…" not in out, (
+        "spinner não pode escrever label+'…' em stdout fora de TTY "
+        f"(transcript IA-first corrompido); stdout={out!r}"
+    )
+
+
+def test_orphan_step_uses_spinner_in_tty(monkeypatch):
+    """Step 7.5 (orphan scan), sob TTY, envolve a varredura num spinner."""
+    labels = []
+
+    def _fake_spinner(label, **kw):
+        labels.append(label)
+        return _FakeSpinnerCtx()
+
+    monkeypatch.setattr(init_mod.ui_progress, "spinner", _fake_spinner)
+    monkeypatch.setattr(init_mod.renderer, "_is_tty", lambda *a, **k: True)
+    # ... (montar harness mínimo que entra no Step 7.5 orphan scan sob TTY)
+    assert any(("orphan" in s.lower() or "órfã" in s.lower()) for s in labels)
 ```
 
-> **Nota ao executor:** se asserir o spinner exigir montar o pipeline inteiro (caro), prefira **extrair a varredura de cada step num helper fino** (ex.: `_compose_backend_with_feedback(...)` que envolve `compose_backend_axes` no spinner) e testar o helper isolado. Reuso-first: o helper só adiciona o spinner em volta da chamada existente, sem mudar a lógica. Mantenha o teste bite-sized.
+> **Nota ao executor:** se asserir o spinner exigir montar o pipeline inteiro (caro), prefira **extrair a varredura de cada step num helper fino que JÁ embute o gate** (ex.: `_scan_with_spinner(label, fn, *args)` que faz `if renderer._is_tty(sys.stdout): with ui_progress.spinner(label): return fn(*args)` / `else: return fn(*args)`) e testar o helper isolado. Reuso-first: o helper só adiciona o gate+spinner em volta da chamada existente, sem mudar a lógica de varredura. Mantenha o teste bite-sized. **Confirme que `init_mod.renderer` é o símbolo importado** (scout: `engine/init.py` importa `renderer`? Se importa via `from engine.ui import renderer` ou similar, monkeypatch o atributo certo; se o helper usa `renderer._is_tty`, o gate é monkeypatchável por aí).
 
 Rode: `.venv/bin/pytest tests/unit/test_init_progress_long_steps.py -v` → RED.
 
-#### Step D1.2 — GREEN: envolver no spinner
+#### Step D1.2 — GREEN: gate `_is_tty` + spinner (gate OBRIGATÓRIO)
 
-Em `engine/init.py`:
-- **Step 5 (L2467):** envolva `compose_backend_axes(project_root, normalized_for_composer)` num `with ui_progress.spinner("backend — varrendo signals"):`. (Se extrair helper, o helper faz isso.)
-- **Step 7.5 (L2635):** envolva `_check_orphan_signals(project_root, activated, overlay_catalog)` num `with ui_progress.spinner("verificando orphan signals"):`.
+Em `engine/init.py`, o padrão é **gate-then-spinner** nos dois steps. Confirme no scout como `renderer` está disponível no módulo (import top-level); se ainda não estiver, importe `from engine.ui import renderer` (já é dependência do módulo via `ui_progress`).
 
-Labels em voz mentor-calmo, sem roadmap interno. Confirme que `spinner` degrada a no-op fora de TTY (não polui replay) — se NÃO degradar sozinho, gate o spinner por `not output_mode` JSON / `sys.stderr.isatty()`, seguindo o padrão de BUG-RECONF-1 (dashboard só no 1º passo).
+- **Step 5 (L2466-2467):** em vez de chamar `compose_backend_axes(...)` direto, gate o spinner:
 
-Rode: `.venv/bin/pytest tests/unit/test_init_progress_long_steps.py -v` → GREEN.
+  ```python
+  if renderer._is_tty(sys.stdout):
+      with ui_progress.spinner("backend — varrendo signals"):
+          composer_result = compose_backend_axes(project_root, normalized_for_composer)
+  else:
+      composer_result = compose_backend_axes(project_root, normalized_for_composer)
+  ```
+
+  (Se extrair o helper `_scan_with_spinner`, ele encapsula esse if/else — preferível, sem duplicar o padrão em 2 lugares.)
+
+- **Step 7.5 (L2635):** mesmo padrão pra `_check_orphan_signals(project_root, activated, overlay_catalog)`:
+
+  ```python
+  if renderer._is_tty(sys.stdout):
+      with ui_progress.spinner("verificando orphan signals"):
+          orphan_result = _check_orphan_signals(project_root, activated, overlay_catalog)
+  else:
+      orphan_result = _check_orphan_signals(project_root, activated, overlay_catalog)
+  ```
+
+Labels em voz mentor-calmo, sem roadmap interno. **O gate `_is_tty` é obrigatório nos dois pontos** — fora de TTY a varredura roda direto, sem spinner, sem nenhuma escrita em stdout. Isso é o que preserva o transcript IA-first (H-001). NÃO deixe o spinner sem gate "porque o `Spinner` já trata não-TTty" — ele NÃO trata (escreve o label uma vez; ver Decisão de design acima).
+
+Rode: `.venv/bin/pytest tests/unit/test_init_progress_long_steps.py -v` → GREEN (incluindo o `test_backend_step_is_noop_in_non_tty` que prova zero-stdout fora de TTY).
 
 #### Step D1.3 — Regressão + doc-sync
 
 - Suites de init que cobrem o pipeline: `.venv/bin/pytest -m "not integration and not e2e" -q -k "init"`. Nenhuma regressão.
-- `CHANGELOG.md` `[Unreleased]` → `### Added`: "feedback de progresso (spinner) nos steps longos do `forge init` — backend (~86s) e orphan-scan (~75s); degrada a no-op no loop mecânico do host (Fase 1 Track D, itens P2 16)."
+- `CHANGELOG.md` `[Unreleased]` → `### Added`: "feedback de progresso (spinner) nos steps longos do `forge init` — backend (~86s) e orphan-scan (~75s); GATEADO por `_is_tty` (no-op puro fora de TTY, sem poluir o transcript IA-first) (Fase 1 Track D, item P2 16)."
 - Anote pro merge: `04-pending.md §P2` item "progress feedback nos steps longos do init" fechado.
 
-**Done:** spinner envolve backend + orphan scans; degrada fora de TTY; suites init verdes.
+**Done:** spinner envolve backend + orphan scans SOB TTY; fora de TTY é no-op puro (zero stdout, provado por teste); suites init verdes.
 
 ---
 
@@ -826,9 +1066,9 @@ Rode os testes RED → GREEN.
 
 ### D3-D6 — verificação dos itens JÁ FECHADOS (regression tests + PARE/anote)
 
-> **Estes 4 itens NÃO precisam de implementação** — o scout confirmou que o W-DEBT T8 já os fechou. A tarefa é: (a) localizar o guard de regressão existente; (b) se faltar teste dedicado, adicionar um regression test fino que prove o comportamento; (c) **PARE/anote** que o item já estava fechado (para o merge mover de `04-pending.md`). **Não re-implemente nem refatore o que já funciona** (scope #4).
+> **Estes 4 itens NÃO precisam de implementação** — o scout confirmou que o W-DEBT T8 já os fechou. A tarefa é: (a) localizar o guard de regressão existente; (b) se faltar teste dedicado, adicionar um regression test fino que prove o comportamento; (c) **PARE/anote** que o item já estava fechado (M-001 — a anotação in-line entra no commit do Track D). **Não re-implemente nem refatore o que já funciona** (scope #4). Os arquivos de produção (`evolve.py`, `reconfigure.py`, `implement.py`, `undo.py`, `raw.py`) são **só-leitura** aqui (Matriz / M-002) — confirme o guard via Read, NÃO edite.
 
-**Arquivos:** `engine/evolve.py` (D3, D5-evolve), `engine/reconfigure.py` (D4), `engine/implement.py` (D5-implement), `engine/undo.py` + `engine/raw.py` (D6). Testes: confirmar/estender os guards existentes.
+**Arquivos:** `engine/evolve.py` (D3, D5-evolve — só confirmar), `engine/reconfigure.py` (D4 — só confirmar), `engine/implement.py` (D5-implement — só confirmar), `engine/undo.py` + `engine/raw.py` (D6 — só confirmar). Testes: confirmar/estender os guards existentes (estes SIM são EDIT/CREATE).
 
 #### Step D3-D6.1 — confirmar guards + cobrir buracos
 
@@ -839,12 +1079,13 @@ Para cada item, rode o gate de confirmação e adicione regression test SÓ se f
 - **D5 (`--help` evolve+implement):** confirme `evolve.py:384` e `implement.py:1163-1165`. Teste: `evolve.run(["--help"]) == 0` imprime uso; `implement.run(["--help"]) == 0` imprime uso (sem tratar `--help` como slug).
 - **D6 (undo no-op `last` + raw aviso):** confirme `undo.py` `_NOOP`/`_exit_for` (no-op → exit 0) e `raw.py:134-141` (aviso de escopo FORGE_HOME). Teste: undo sem nada a reverter → exit 0; `raw rebuild-templates` imprime o aviso "opera no FORGE_HOME" antes de qualquer mutação.
 
-#### Step D3-D6.2 — PARE/anote + doc-sync
+#### Step D3-D6.2 — anotar estado in-line (M-001) + PARE/anote + doc-sync
 
-- **PARE/anote (sub-finding pro merge):** "Os 4 itens P2 D3/D4/D5/D6 já estavam FECHADOS pelo W-DEBT T8 (BUG-EVOLVE-1/2, BUG-RECONF-1, BUG-IMPL-4, BUG-UNDO-1, BUG-RAW-1). Track D adicionou regression tests onde faltavam guards dedicados; nenhuma re-implementação. `04-pending.md §P2` está stale ao listá-los como abertos — Fase 2 deve movê-los pra Fechados, deixando só D1/D2 como resíduo P2 real."
+- **Anotação in-line de estado em `04-pending.md §P2` (M-001 — entra NO COMMIT do Track D):** o `04-pending.md §P2 (itens 16-21)` lista D3/D4/D5/D6 como ABERTOS, o que está STALE (o W-DEBT T8 já fechou e o Track D verificou). Para não corromper o source-of-truth de estado da campanha até a Fase 2, **anote cada um dos 4 itens in-line, no commit do Track D, sem MOVER a seção**: marque cada item D3/D4/D5/D6 com o comentário inline `→ fechado (W-DEBT T8, verificado em Fase 1 BCD Track D)`. Isso mantém a disjunção de track (não move/reordena a seção — conflito de merge trivial/nenhum) e corrige o estado OBSERVÁVEL imediatamente (uma consulta `mem find "P2 abertos"` ou leitura direta do arquivo passa a ver "fechado", não "aberto pendente"). O MOVE físico da seção pra "Fechados" (reorganização do arquivo) permanece serializado na Fase 2.
+- **PARE/anote (sub-finding pro merge):** "Os 4 itens P2 D3/D4/D5/D6 já estavam FECHADOS pelo W-DEBT T8 (BUG-EVOLVE-1/2, BUG-RECONF-1, BUG-IMPL-4, BUG-UNDO-1, BUG-RAW-1). Track D adicionou regression tests onde faltavam guards dedicados; nenhuma re-implementação. `04-pending.md §P2` recebeu anotação in-line 'fechado (W-DEBT T8, verificado)' no commit do Track D; a Fase 2 ainda faz o MOVE físico pra Fechados, deixando só D1/D2 como resíduo P2 real."
 - `CHANGELOG.md` `[Unreleased]` → `### Tests` (se adicionou guards): "regression tests pros itens P2 já fechados no W-DEBT T8 (evolve SIGPIPE, reconfigure dashboard, --help evolve/implement, undo no-op, raw aviso de escopo) — Fase 1 Track D."
 
-**Done:** guards confirmados; buracos de regressão cobertos; sub-finding "já fechado" registrado pro merge.
+**Done:** guards confirmados (via Read, sem editar produção); buracos de regressão cobertos; D3-D6 anotados in-line como "fechado (W-DEBT T8, verificado)" em `04-pending.md §P2` NO commit do Track D (M-001); sub-finding "já fechado" registrado pro merge.
 
 ---
 
@@ -856,20 +1097,20 @@ Para cada item, rode o gate de confirmação e adicione regression test SÓ se f
 |---|---|---|
 | B — upgrade flags desconhecidas | B1 | ✓ implementar (TDD) |
 | B — discovery cache content-fingerprint | B2 | ✓ implementar (TDD) |
-| B — dedup compose_backend_axes (BUG-1b) | B3 | ✓ **INVESTIGAÇÃO** (`systematic-debugging`) → dedup (A) / não-dup-só-docstring (B) / escalar (C); premissa corrigida (hot-path ativo) |
-| C — _KNOWLEDGE_KINDS 3 kinds restantes | C1 | ✓ implementar (TDD) — inclui `decay-signal` em `_VALID_KINDS` |
+| B — dedup compose_backend_axes (BUG-1b) | B3 | ✓ **INVESTIGAÇÃO** (`systematic-debugging`) → dedup (A) / não-dup-só-docstring (B) / escalar (C); premissa corrigida (hot-path ativo); harness brownfield ativo confiável (H-002) |
+| C — _KNOWLEDGE_KINDS 3 kinds restantes | C1 | ✓ implementar (TDD) — inclui `decay-signal` em `_VALID_KINDS` + grep de pré-confirmação overflow (M-003) |
 | C — rename apply_proposal_to_l2 | C2 | ✓ sweep semântico (no-behavior-change) |
 | C — remover l3.py órfão | C3 | ✓ remover (zero-consumidor confirmado) + guard PARE/anote |
-| D1 — init progress | D1 | ✓ implementar (TDD) |
+| D1 — init progress | D1 | ✓ implementar (TDD) — gate `_is_tty` OBRIGATÓRIO + prova de zero-stdout fora de TTY (H-001) |
 | D2 — graph did-you-mean Q4 | D2 | ✓ implementar (TDD) |
 | D3 — evolve SIGPIPE/EOF | D3 | ✓ **já fechado** → verificar + regression |
 | D4 — reconfigure dashboard 1º passo | D4 | ✓ **já fechado** → verificar + regression |
 | D5 — --help evolve/implement | D5 | ✓ **já fechado** → verificar + regression |
 | D6 — undo no-op / raw aviso | D6 | ✓ **já fechado** → verificar + regression |
 
-**Placeholder scan:** os blocos de código de produção (B1.2, B2.2, B3.2-A, C1.2, C2.1, C3.1, D2.2) são completos e copiáveis. Os trechos com `...` estão APENAS em harnesses de teste onde o ponto-de-entrada exato depende do scout local do executor (B3.1/B3.2-A spinner/harness brownfield, D1.1 spinner harness, D2.1 DB-seeding, D3-D6 confirmação de guard) — sinalizados explicitamente como "ajuste após scout" com o contrato observável definido. Nenhum placeholder em lógica de produção.
+**Placeholder scan:** os blocos de código de produção (B1.2, B2.2, B3.2-A, C1.2, C2.1, C3.1, D1.2, D2.2) são completos e copiáveis. O teste de investigação B3.1 está COMPLETO (harness brownfield ativo materializado inline — scaffold + signals firebase + two-phase response; assert de `has_signals` antes do veredito; `assert len(observed) == 2` agora é significativo porque o harness garante chegar no caminho certo). O teste B3.2-A (no-behavior-change) tem o assert de output IDÊNTICO ao baseline **real e descomentado** (compara `choice`/`selected_card_names`/`composer_result` vs baseline). Os trechos com `...` remanescentes estão APENAS em harnesses de teste onde o ponto-de-entrada exato depende do scout local do executor (D1.1 entrypoint do Step 5/7.5 sob gate, D2.1 DB-seeding, D3-D6 confirmação de guard) — sinalizados explicitamente como "ajuste após scout" com o contrato observável definido. **Nenhum `# ...` em assert de veredito; nenhum placeholder em lógica de produção.**
 
-**Type consistency:** `route_proposal_to_inbox` mantém a assinatura `(project_root: Path, proposal: DistillationProposal) -> str | None` (idêntica à original — rename puro). `list_modules(project_root: Path, *, db_path: Optional[Path] = None) -> list[str]` espelha a assinatura das demais queries de `queries.py`. `_discovery_source_fingerprint(project_root: Path) -> str`. O `composer_result` opcional de B3 (Caminho A) usa o TIPO de retorno real de `compose_backend_axes` (confirmado em B3.1, não suposto). Consistentes com o código scoutado.
+**Type consistency:** `route_proposal_to_inbox` mantém a assinatura `(project_root: Path, proposal: DistillationProposal) -> str | None` (idêntica à original — rename puro). `list_modules(project_root: Path, *, db_path: Optional[Path] = None) -> list[str]` espelha a assinatura das demais queries de `queries.py`. `_discovery_source_fingerprint(project_root: Path) -> str`. O `composer_result` opcional de B3 (Caminho A) usa o TIPO de retorno real de `compose_backend_axes` confirmado em B3.1: `dict[str, dict[str, Cell | None]]` (`Cell` já importado no topo de `init.py`). O gate de D1 usa `renderer._is_tty(sys.stdout) -> bool` (renderer.py:65). Consistentes com o código scoutado.
 
 **File-disjunção entre tracks (validação de paralelismo):**
 
@@ -888,11 +1129,11 @@ Para cada item, rode o gate de confirmação e adicione regression test SÓ se f
 | `engine/undo.py` / `engine/raw.py` | | | ✓ (D6 — só teste) |
 
 **Overlaps que impedem paralelismo puro (sinalizados):**
-1. **`engine/init.py` — B2 + B3 (Track B) ↔ D1 (Track D).** PRODUÇÃO em B2, D1, e em B3 SÓ se a investigação concluir Caminho A (dedup). Resolução obrigatória pela §"Serialização em `engine/init.py`" (recomendado: A — mesmo worktree, serial B2 → B3 → D1). **Nota especial:** B3-dedup e D1 tocam a MESMA vizinhança (~L2467, a chamada de `compose_backend_axes`); se ambos forem aplicados, force a serialização B3 → D1. Se B3 cair no Caminho B/C, ele só toca docstring (overlap trivial com D1).
-2. **`engine/evolve.py` — C1/C2 (Track C, PRODUÇÃO) ↔ D3 (Track D, SÓ teste).** D3 não edita `evolve.py` de produção (só confirma o guard existente e adiciona teste em arquivo de teste separado). Mesmo assim, pra evitar conflito de teste e o rename de C2 tocar o import, **D3 deve rebasar sobre C** OU o orquestrador roda C antes de D3. Baixo risco (D3 é só leitura + teste novo). Anote.
-3. **`CHANGELOG.md` / `docs/design/04-pending.md` — TODOS os tracks.** Conflito trivial esperado no merge `--no-ff` serial; resolução por append. Já declarado no header como serializado.
+1. **`engine/init.py` — B2 + B3 (Track B) ↔ D1 (Track D).** PRODUÇÃO em B2, D1, e em B3 SÓ se a investigação concluir Caminho A (dedup). Resolução obrigatória pela §"Serialização em `engine/init.py`" (recomendado: A — mesmo worktree, serial B2 → B3 → D1). **Nota especial:** B3-dedup e D1 tocam a MESMA vizinhança (~L2467, a chamada de `compose_backend_axes`); se ambos forem aplicados, force a serialização B3 → D1 (B3 muda a chamada/assinatura; D1 a gateia em `_is_tty` + spinner). Se B3 cair no Caminho B/C, ele só toca docstring (overlap trivial com D1).
+2. **`engine/evolve.py` — C1/C2 (Track C, PRODUÇÃO) ↔ D3 (Track D, SÓ teste).** D3 não edita `evolve.py` de produção (só confirma o guard existente via Read e adiciona teste em arquivo de teste separado). Mesmo assim, pra evitar conflito de teste e o rename de C2 tocar o import, **D3 deve rebasar sobre C** OU o orquestrador roda C antes de D3. Baixo risco (D3 é só leitura + teste novo). Anote.
+3. **`CHANGELOG.md` / `docs/design/04-pending.md` — TODOS os tracks.** Conflito trivial esperado no merge `--no-ff` serial; resolução por append. Já declarado no header como serializado. **Exceção (M-001):** a anotação in-line de D3-D6 em `04-pending.md` entra no commit do Track D (sem mover seção — comentário inline) e pode coincidir com anotações de outros tracks no mesmo arquivo; resolução por append no merge.
 
 **Itens marcados PARE/anote OU INVESTIGAÇÃO (resumo pro orquestrador):**
-- **B3** — dedup compose_backend_axes: **INVESTIGAÇÃO** (`systematic-debugging`). Premissa do `04-pending` ("função morta W7.4") está ERRADA — a 2ª chamada está no HOT-PATH ativo (`_handle_backend_multi_axis_brownfield` wirada via `_run_pipeline` L2480). O implementer investiga empiricamente (spy de args+result) e DECIDE: A) redundância real → deduplicar com no-behavior-change + corrigir docstring; B) distinção semântica → não deduplicar, corrigir só o docstring stale, fechar como não-dup; C) refactor amplo → escalar/anote + corrigir docstring. A premissa do `04-pending` é corrigida em qualquer caminho.
+- **B3** — dedup compose_backend_axes: **INVESTIGAÇÃO** (`systematic-debugging`). Premissa do `04-pending` ("função morta W7.4") está ERRADA — a 2ª chamada está no HOT-PATH ativo (`_handle_backend_multi_axis_brownfield` wirada via `_run_pipeline` L2480). O harness de investigação (B3.1) reusa os fixtures brownfield reais (firebase signals + two-phase response) pra ALCANÇAR CONFIAVELMENTE o caminho ativo (H-002). O implementer investiga empiricamente (spy de args+result) e DECIDE: A) redundância real → deduplicar com no-behavior-change (assert de output idêntico ao baseline, descomentado — L-001) + corrigir docstring; B) distinção semântica → não deduplicar, corrigir só o docstring stale, fechar como não-dup; C) refactor amplo → escalar/anote + corrigir docstring. A premissa do `04-pending` é corrigida em qualquer caminho. **Nota de scout:** a branch `fix/pilot-init-perf` (`26f21fb`) já tem o Caminho A aplicado, mas NÃO está mergeada nesta branch — a investigação segue valendo.
 - **C3** — guard: re-rodar o grep no início do step; se aparecer QUALQUER consumidor de produção/teste de `l3`, PARE e não remova.
-- **D3/D4/D5/D6** — já fechados no W-DEBT T8; Track D vira verificação + regression test, não implementação. `04-pending.md §P2` está stale.
+- **D3/D4/D5/D6** — já fechados no W-DEBT T8; Track D vira verificação + regression test, não implementação (produção só-leitura — M-002). `04-pending.md §P2` recebe anotação in-line "fechado (W-DEBT T8, verificado)" no commit do Track D (M-001); MOVE físico fica na Fase 2.
