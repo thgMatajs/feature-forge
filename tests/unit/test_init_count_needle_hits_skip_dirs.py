@@ -65,3 +65,28 @@ def test_skip_dirs_contains_expected_monorepo_culprits():
     """Garde-rail: _SKIP_DIRS deve cobrir os culpados clássicos."""
     expected = {"node_modules", "build", ".gradle", "Pods", "DerivedData", "dist"}
     assert expected.issubset(_SKIP_DIRS)
+
+
+def test_count_needle_hits_skips_hidden_dir(tmp_path):
+    """H-002 (Onda 3): o filtro hidden-dir (startswith('.')) é PRESERVADO após
+    a troca pro `_walk_recursive_pruned`. O helper só poda `_SKIP_DIRS`; o
+    filtro `startswith('.')` (que cobre dirs ocultos ARBITRÁRIOS, não só os
+    nomeados em _SKIP_DIRS) permanece pós-walk. Usamos `.hidden` — um dir
+    oculto que NÃO está em _SKIP_DIRS — pra isolar o filtro startswith('.').
+    Sem ele, `.hidden/x.kt` voltaria a contar.
+    """
+    project = tmp_path / "p"
+    hidden = project / ".hidden" / "modules"
+    hidden.mkdir(parents=True)
+    (hidden / "x.kt").write_text("import io.realm.kotlin.foo\n", encoding="utf-8")
+    assert ".hidden" not in _SKIP_DIRS  # garante que o teste isola o startswith
+    assert _count_needle_hits(project, "io.realm.kotlin") == 0
+
+
+def test_count_needle_hits_skips_deep_node_modules(tmp_path):
+    """Poda na descida: needle fundo em node_modules/a/b/c não conta."""
+    project = tmp_path / "p"
+    deep = project / "node_modules" / "a" / "b" / "c"
+    deep.mkdir(parents=True)
+    (deep / "Deep.kt").write_text("import io.realm.kotlin\n", encoding="utf-8")
+    assert _count_needle_hits(project, "io.realm.kotlin") == 0

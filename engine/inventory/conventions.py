@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from engine.detection._eval import _walk_recursive_pruned
 from engine.inventory._walk_cache import walk_project
 from engine.utils.paths import inventory_dir
 from engine.utils.yaml_io import read_yaml, write_yaml
@@ -303,14 +304,16 @@ def _count_features(project_root: Path) -> int:
 
 def _detect_folder_layout(project_root: Path) -> dict[str, str]:
     layout: dict[str, str] = {}
+    # BUG-5: `_walk_recursive_pruned` poda `_SKIP_DIR_PARTS` na descida. As
+    # checagens abaixo são `any(...)` booleanas — ordem não afeta resultado.
     has_android_screen_files = any(
         p.name.endswith("Screen.kt")
-        for p in project_root.rglob("*Screen.kt")
+        for p in _walk_recursive_pruned(project_root, "*Screen.kt", _SKIP_DIR_PARTS)
         if not _should_skip(p.relative_to(project_root))
     )
     has_android_content_files = any(
         p.name.endswith("Content.kt")
-        for p in project_root.rglob("*Content.kt")
+        for p in _walk_recursive_pruned(project_root, "*Content.kt", _SKIP_DIR_PARTS)
         if not _should_skip(p.relative_to(project_root))
     )
     if has_android_screen_files and has_android_content_files:
@@ -320,12 +323,16 @@ def _detect_folder_layout(project_root: Path) -> dict[str, str]:
 
     has_ios_screen_view = any(
         p.name.endswith("ScreenView.swift")
-        for p in project_root.rglob("*ScreenView.swift")
+        for p in _walk_recursive_pruned(
+            project_root, "*ScreenView.swift", _SKIP_DIR_PARTS
+        )
         if not _should_skip(p.relative_to(project_root))
     )
     has_ios_content_view = any(
         p.name.endswith("ScreenContentView.swift")
-        for p in project_root.rglob("*ScreenContentView.swift")
+        for p in _walk_recursive_pruned(
+            project_root, "*ScreenContentView.swift", _SKIP_DIR_PARTS
+        )
         if not _should_skip(p.relative_to(project_root))
     )
     if has_ios_screen_view and has_ios_content_view:
@@ -335,7 +342,7 @@ def _detect_folder_layout(project_root: Path) -> dict[str, str]:
 
     has_viewmodel = any(
         p.name.endswith("ViewModel.kt")
-        for p in project_root.rglob("*ViewModel.kt")
+        for p in _walk_recursive_pruned(project_root, "*ViewModel.kt", _SKIP_DIR_PARTS)
         if not _should_skip(p.relative_to(project_root))
     )
     if has_viewmodel:

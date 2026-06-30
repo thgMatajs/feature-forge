@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import functools
 import tomllib
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -63,16 +64,137 @@ _SKIP_DIRS = {
 }
 
 
+def _walk_recursive_pruned(
+    project_root: Path,
+    pattern: str,
+    skip_dirs: Iterable[str],
+) -> Iterator[Path]:
+    """Yield descendants matching ``pattern`` (rglob-style), podando ``skip_dirs``.
+
+    Substitui ``project_root.rglob(pattern)`` por um walk manual que NÃO desce
+    em diretórios cujo nome está em ``skip_dirs`` — mesma técnica de
+    poda-na-descida de ``_scan_build_gradle_for_coordinate``. Sem isso, em
+    monorepo real (node_modules 492M + .gradle 484M) o ``rglob`` materializa
+    centenas de milhares de paths antes do filtro agir, travando o init.
+
+    **Contrato no-behavior-change (conjunto), com ressalva de symlink-dirs:** o
+    conjunto yielded é idêntico ao de ``rglob(pattern)`` filtrado por
+    ``skip_dirs`` EXCETO por diretórios symlinkados — ver "Symlinks" abaixo.
+    Podar um skip-dir na descida remove exatamente os mesmos paths que o filtro
+    removeria depois (qualquer componente relativo em ``skip_dirs`` ⇒ path
+    ignorado). Yield inclui diretórios E arquivos, igual ao rglob.
+
+    **Contrato de ORDEM (H-001):** a saída é ORDENADA (sorted), tornando o
+    walk DETERMINÍSTICO. O ``rglob`` nativo yield em ordem de ``os.scandir``
+    (inode-order, dependente de filesystem) — sites que fazem ``break`` no
+    primeiro match (ex.: ``design_system._extract_tokens`` com 2 ``Spacing.kt``)
+    tinham vencedor não-determinístico. Ordenar fixa o vencedor sem alterar o
+    conjunto.
+
+    ``pattern == ""`` (vinda do glob literal ``"**/"``) replica EXATAMENTE o
+    comportamento de ``rglob("")`` / ``glob("**/")``: yield SÓ de diretórios
+    (incluindo o próprio ``project_root``), NÃO de arquivos. ``Path.match("")``
+    levantaria ValueError, então tratamos esse caso à parte. (O branch
+    `fix/pilot-init-perf` documentava "yield de TODOS os descendants", mas a
+    semântica real de ``rglob("")`` é só-diretórios — corrigido aqui.)
+
+    **Symlinks (WR-01 — divergência consciente do rglob no piso de runtime):**
+    diretórios symlinkados NÃO são seguidos (``not entry.is_symlink()``). Isso é
+    INTENCIONAL — anti-ciclo (symlink apontando pra um ancestral travaria o
+    walk) e contenção ao project tree (um symlink pra fora não vaza o scan).
+    Consequência: NÃO há paridade incondicional de conjunto com ``rglob`` no
+    piso ``requires-python = ">=3.11"``. No CPython 3.13 (gh-77609) o ``rglob``
+    também parou de seguir symlink-dirs por default → paridade exata. Mas em
+    3.11/3.12 o ``rglob`` SEGUIA symlink-dirs, então sob esses runtimes este
+    helper yield um conjunto MENOR (não vê arquivos só alcançáveis via um
+    symlink-dir). Decisão: mantemos o não-seguir (mais seguro) e documentamos a
+    divergência aqui em vez de reintroduzir symlink-following — gatilho realista
+    é baixo (repos mobile raramente symlinkam dirs pra dentro da árvore de scan).
+
+    ``skip_dirs`` é PARÂMETRO (não o ``_SKIP_DIRS`` global): cada site passa o
+    seu set atual, preservando o no-behavior-change por-site (há 4 sets
+    divergentes no codebase — não unificados nesta onda, por design).
+
+    **Implementação (WR-NEW-01 — DRY):** esta variante ordenada DELEGA pra
+    ``_walk_recursive_pruned_lazy`` e só aplica ``sorted()`` ao resultado. A
+    poda-na-descida, o caso ``pattern == ""`` (só-diretórios), o root-append e
+    o symlink-guard vivem em UM lugar (o lazy); aqui só se materializa + ordena.
+    A saída é idêntica à anterior — ``sorted(lazy(...))`` produz exatamente o
+    mesmo conjunto na mesma ordem.
+    """
+    yield from sorted(_walk_recursive_pruned_lazy(project_root, pattern, skip_dirs))
+
+
+def _walk_recursive_pruned_lazy(
+    project_root: Path,
+    pattern: str,
+    skip_dirs: Iterable[str],
+) -> Iterator[Path]:
+    """Variante LAZY de ``_walk_recursive_pruned`` — yield SEM ordenar/materializar.
+
+    Mesma poda-na-descida e mesma semântica de ``pattern == ""`` (só-diretórios)
+    do ``_walk_recursive_pruned``, mas yield em ordem de ``os.scandir``
+    (inode-order) à medida que desce, SEM coletar a árvore inteira nem ``sort()``.
+    Existe para o caminho de EXISTÊNCIA (``_glob_any``), que só precisa do 1º
+    match e portanto pode (e deve) curto-circuitar sem pagar materialização +
+    ordenação + cap.
+
+    NÃO use esta variante onde a ORDEM importa (sites com ``break`` no 1º match
+    que precisam de vencedor determinístico — H-001): esses continuam usando
+    ``_walk_recursive_pruned`` (ordenado). Aqui a ordem é irrelevante porque o
+    consumidor só pergunta "existe ALGUM match?".
+    """
+    skip = set(skip_dirs)
+    dirs_only = pattern == ""
+    # `rglob("")` inclui o próprio root (um diretório). Replicamos isso.
+    if dirs_only and project_root.is_dir():
+        yield project_root
+    stack: list[Path] = [project_root]
+    while stack:
+        current = stack.pop()
+        try:
+            entries = list(current.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            is_dir = entry.is_dir()
+            if is_dir and not entry.is_symlink():
+                if entry.name in skip:
+                    continue
+                stack.append(entry)
+            if dirs_only:
+                if is_dir:
+                    yield entry
+            elif entry.match(pattern):
+                yield entry
+
+
 def _glob_any(project_root: Path, glob: str, needle: str | None) -> bool:
-    """Best-effort glob walk with depth + count caps to keep init responsive."""
+    """Best-effort glob walk para check de EXISTÊNCIA — curto-circuita no 1º match.
+
+    Para padrões ``**/X`` usa ``_walk_recursive_pruned_lazy`` — walk manual que
+    poda ``_SKIP_DIRS`` NA DESCIDA (evita materializar node_modules / .gradle
+    inteiros) e yield LAZY, permitindo retornar ``True`` assim que o primeiro
+    match é encontrado.
+
+    **Independente de ordem e de cap (WR-02):** por ser um check de existência
+    ("existe ALGUM match?"), o resultado é o 1º match achado. NÃO ordenamos nem
+    capamos a árvore: o ``_walk_recursive_pruned`` ordenado + cap de 800
+    introduzia um viés lexicográfico que podia ESCONDER um match cujo nome
+    ordenava depois da posição 800 (divergindo do rglob lazy legado, que
+    curto-circuitava em inode-order). O short-circuit elimina esse viés — com
+    1 ou 1M de paths, basta UM match para retornar ``True``. O cap antigo
+    mitigava materialização de node_modules, hoje podada na descida.
+    """
     if not glob:
         return False
     if glob.startswith("**/"):
         pattern = glob[3:]
-        iterator = project_root.rglob(pattern)
+        iterator: Iterator[Path] = _walk_recursive_pruned_lazy(
+            project_root, pattern, _SKIP_DIRS
+        )
     else:
         iterator = project_root.glob(glob)
-    count = 0
     for path in iterator:
         # Match _SKIP_DIRS contra parts RELATIVO a project_root — não path.parts
         # absoluto. Sem isso, paths sob .claude/worktrees/<branch>/ ficam
@@ -83,9 +205,6 @@ def _glob_any(project_root: Path, glob: str, needle: str | None) -> bool:
             continue
         if any(part in _SKIP_DIRS for part in relative_parts):
             continue
-        if count > 800:
-            break
-        count += 1
         if not path.is_file():
             continue
         if needle is None:
@@ -159,8 +278,8 @@ def _scan_build_gradle_for_coordinate(project_root: Path, coordinate: str) -> bo
     Filtra linhas de comentário Groovy/KTS (`//` line-comment e blocos
     `/* ... */`) antes de testar substring — evita falso positivo de
     coordenadas mencionadas em comentários do tipo `// io.ktor:foo
-    retirado 2024` (M-5). Mantém o cap de arquivos visitados de
-    `_glob_any` (800) e o skip-dirs canônico. Walk manual em vez de
+    retirado 2024` (M-5). Mantém um cap próprio de 800 arquivos visitados
+    (defensivo) e o skip-dirs canônico. Walk manual em vez de
     rglob() para evitar descer em node_modules/.gradle/build.
     """
     stack: list[Path] = [project_root]

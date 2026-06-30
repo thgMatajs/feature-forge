@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from engine.detection._eval import _walk_recursive_pruned
 from engine.inventory._walk_cache import walk_project
 from engine.utils.paths import inventory_dir
 from engine.utils.yaml_io import read_yaml, write_yaml
@@ -441,18 +442,21 @@ def _count_imports(content: str, suffix: str) -> list[str]:
 
 def _extract_tokens(project_root: Path) -> DSTokens:
     tokens = DSTokens()
-    candidates_spacing = list(project_root.rglob("Spacing.kt")) + list(project_root.rglob("Spacing.swift"))
+
+    # BUG-5: `_walk_recursive_pruned` poda `_SKIP_DIR_PARTS` na descida e
+    # ORDENA a saída — o `break` no 1º match abaixo fica DETERMINÍSTICO
+    # (rglob nativo era inode-order; com 2 `Spacing.kt` o vencedor variava).
+    def _find(pat: str) -> list[Path]:
+        return list(_walk_recursive_pruned(project_root, pat, _SKIP_DIR_PARTS))
+
+    candidates_spacing = _find("Spacing.kt") + _find("Spacing.swift")
     candidates_radius = (
-        list(project_root.rglob("CornerRadius.kt"))
-        + list(project_root.rglob("BorderRadius.kt"))
-        + list(project_root.rglob("Radius.swift"))
+        _find("CornerRadius.kt") + _find("BorderRadius.kt") + _find("Radius.swift")
     )
     candidates_colors = (
-        list(project_root.rglob("MeoBonsaiColors.kt"))
-        + list(project_root.rglob("Colors.kt"))
-        + list(project_root.rglob("Color.kt"))
+        _find("MeoBonsaiColors.kt") + _find("Colors.kt") + _find("Color.kt")
     )
-    candidates_typo = list(project_root.rglob("*Typography.kt")) + list(project_root.rglob("FontFamilies.kt"))
+    candidates_typo = _find("*Typography.kt") + _find("FontFamilies.kt")
 
     for cand in candidates_spacing:
         if _should_skip(cand.relative_to(project_root)):
@@ -482,7 +486,7 @@ def _extract_tokens(project_root: Path) -> DSTokens:
         if tokens.typography:
             break
 
-    css_candidates = list(project_root.rglob("index.css")) + list(project_root.rglob("globals.css"))
+    css_candidates = _find("index.css") + _find("globals.css")
     for cand in css_candidates:
         if _should_skip(cand.relative_to(project_root)):
             continue
