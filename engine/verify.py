@@ -92,6 +92,20 @@ class _ValidatorResult:
     what_failed: str = ""
     where: str = ""
     why: list[str] = field(default_factory=list)
+    # BUG-VERIFY-2 (T3) — classe de cobertura de um PASS (vazio p/ não-pass):
+    #   "substantive"  — examinou artefatos reais e aprovou
+    #   "stub"         — stub/no-op que sempre passa
+    #   "staged-blind" — passou porque nada estava no escopo (vacuous)
+    #   "opaque"       — pass via exit-code (sem JSON): substância indeterminável
+    # Validators declaram via `coverage` no JSON tail; legados (sem JSON) caem
+    # em "opaque" — o verify nunca afirma substância que não pode provar.
+    coverage: str = ""
+
+
+# As 3 categorias NOMEADAS que o sumário honesto distingue (ACK M-001) +
+# "opaque" pro legado não-declarado. Ordem estável p/ render e p/ as chaves
+# do coverage_summary no --json.
+_COVERAGE_CLASSES: tuple[str, ...] = ("substantive", "stub", "staged-blind", "opaque")
 
 
 # ── Checkpoint (DRIFT-1 W2.T3b — intent-resume, outcome C) ───────────────────
@@ -369,6 +383,9 @@ def run_scope(
                 "scope": {"type": scope_type, "target": scope_target or None},
                 "overall": "pass",
                 "exit_code": 0,
+                # T3: shape estável — coverage_summary presente mesmo sem
+                # validators (todas as classes zeradas).
+                "coverage_summary": _coverage_breakdown([]),
                 "validators": [],
             }
             print(json.dumps(payload, indent=2, default=str))
@@ -423,6 +440,10 @@ def run_scope(
             "scope": {"type": scope_type, "target": scope_target or None},
             "overall": overall,
             "exit_code": (1 if hard_fail is not None else 0),
+            # BUG-VERIFY-2 (T3): sumário honesto de cobertura — distingue
+            # pass-substantivo de stub-no-op / staged-blind / opaque pro host
+            # IA-first não tratar "verde" como garantia que não existe.
+            "coverage_summary": _coverage_breakdown(results),
             "validators": [asdict(r) for r in results],
         }
         print(json.dumps(payload, indent=2, default=str))
@@ -1018,6 +1039,9 @@ def _invoke_validator(
             status=status,
             duration_ms=duration_ms,
             message=(proc.stderr or proc.stdout).strip()[:200],
+            # T3: pass via exit-code (sem JSON) é "opaque" — o verify não tem
+            # como afirmar que houve trabalho substantivo. Honesto por default.
+            coverage="opaque" if status == "pass" else "",
         )
 
     status = str(payload.get("status") or "pass").lower()
@@ -1032,7 +1056,38 @@ def _invoke_validator(
         what_failed=str(payload.get("what-failed") or ""),
         where=str(payload.get("where") or ""),
         why=list(payload.get("why") or []),
+        # T3: só PASS carrega classe de cobertura. Validator que declara
+        # `coverage` no JSON tem sua palavra honrada; se passou e não declarou,
+        # cai em "opaque" (o verify não inventa substância). Valor não-canônico
+        # é normalizado pra "opaque" pra não poluir o breakdown.
+        coverage=_normalize_coverage(payload.get("coverage")) if status == "pass" else "",
     )
+
+
+def _normalize_coverage(raw: object) -> str:
+    """Mapeia o `coverage` declarado por um validator pra uma das classes
+    canônicas. Ausente / não-string / fora do vocabulário → "opaque" (default
+    honesto — verify não afirma substância não-provada)."""
+    if isinstance(raw, str):
+        value = raw.strip().lower()
+        if value in _COVERAGE_CLASSES:
+            return value
+    return "opaque"
+
+
+def _coverage_breakdown(results: list[_ValidatorResult]) -> dict[str, int]:
+    """Conta os PASSES por classe de cobertura (ACK M-001).
+
+    Só `status == "pass"` entra — warn/fail/degraded/skipped não têm classe de
+    cobertura. Retorna sempre as 4 chaves canônicas (zeros inclusos) pra um
+    shape estável no --json e no render."""
+    breakdown = {cls: 0 for cls in _COVERAGE_CLASSES}
+    for r in results:
+        if r.status != "pass":
+            continue
+        cls = r.coverage if r.coverage in breakdown else "opaque"
+        breakdown[cls] += 1
+    return breakdown
 
 
 def _extract_json_tail(stdout: str) -> dict | None:
@@ -1101,6 +1156,18 @@ def _render_summary(results: list[_ValidatorResult]) -> None:
         f"Skipped:   {skipped}",
         f"Degraded:  {degraded}",
     ]
+    # BUG-VERIFY-2 (T3): quebra honesta dos passes — "verde" não conta como
+    # garantia uniforme. Só renderiza quando há pass que não é substantivo,
+    # pra não nag em projeto 100% substantivo.
+    if passed:
+        cov = _coverage_breakdown(results)
+        if cov["substantive"] != passed:
+            body.append("")
+            body.append("Pass por cobertura:")
+            body.append(f"  substantive:  {cov['substantive']}")
+            body.append(f"  stub:         {cov['stub']}")
+            body.append(f"  staged-blind: {cov['staged-blind']}")
+            body.append(f"  opaque:       {cov['opaque']}")
     renderer.write(renderer.box(title, body))
 
 
