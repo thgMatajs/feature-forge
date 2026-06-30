@@ -471,7 +471,7 @@ def route_proposal_to_inbox(
     project_root: Path,
     proposal: DistillationProposal,
 ) -> str | None:
-    """Apply a single proposal to L2 — discipline §5 (no batch).
+    """Route a single proposal to its inbox destination — discipline §5 (no batch).
 
     Behavior depends on `proposal.kind`:
     - `promote-to-l2` / `l1-to-l2-promotion` / `consolidate-l2` → enfileira no

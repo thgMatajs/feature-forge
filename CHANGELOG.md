@@ -42,6 +42,12 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   (Fase 1 Track C, fecha limitação v1.1 §W-AGENTS). Nota para merge: item
   "_KNOWLEDGE_KINDS cobre só 3 kinds" de `04-pending.md §W-AGENTS` fechado.
 
+- Docstring de `route_proposal_to_inbox` (`engine/memory/distiller.py`) e nota
+  honesta em `agents/retrospective-agent.md` atualizadas: `convention-refinement`,
+  `decay-signal` e `question-elimination` agora roteiam pro mem inbox normalmente
+  (C1) — bloco anterior dizia erroneamente "ainda não APLICA / NotImplementedError"
+  (Fase 1 Track C, review fix WARNING-01/02).
+
 ### Changed
 
 - `docs/design/04-pending.md`: o follow-on "impl de gates-nativos (Tema 6, face 2)"
