@@ -976,8 +976,12 @@ def _invoke_validator(
 
     Convention: validators print human output to stderr/stdout freely and
     emit one final JSON line with ``{"status": ..., "message": ..., ...}`` on
-    stdout when they want structured output. Missing JSON → degrade to the
-    exit-code contract (0 pass, 1 warn, 2 fail).
+    stdout when they want structured output. Missing JSON → cai no
+    exit-code contract: 0 → pass, 1 → warn, e **≥2 → degraded** (não `fail`).
+    Exit 2 é o sinal de argparse para validator quebrado / off-contract
+    (BUG-VERIFY-1): infra degradada, não código reprovado — `degraded` não
+    cega a cascade nem entra no overall. Detalhe abaixo no branch
+    ``payload is None``.
 
     C-43: quando ``scope_type``/``scope_target`` chegam, são anexados como
     ``--scope <kind> --id <target>`` ao argv do subprocess (contrato de
@@ -1195,7 +1199,19 @@ def _render_summary(results: list[_ValidatorResult]) -> None:
     degraded = sum(1 for r in results if r.status == "degraded")
 
     renderer.write("")
-    title = "Verify clean" if fails == 0 else "Verify block"
+    # IN-04: o título do box deriva do veredito agregado, não só de fails.
+    # Mesma precedência do `overall` em run() (fail > warn > incomplete > pass):
+    # um run all-degraded (degraded>0, sem fail/warn) é `incomplete` — "verify
+    # não pôde avaliar tudo", distinto de "clean". `incomplete` é NÃO-bloqueante
+    # (exit 0), por isso não vira "block".
+    if fails:
+        title = "Verify block"
+    elif warns:
+        title = "Verify clean"
+    elif degraded:
+        title = "Verify incomplete"
+    else:
+        title = "Verify clean"
     body = [
         f"Pass:      {passed}",
         f"Warn:      {warns}",

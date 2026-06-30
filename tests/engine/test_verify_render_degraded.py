@@ -19,7 +19,12 @@ from __future__ import annotations
 import pytest
 
 from engine import verify
-from engine.verify import _render_line, _STATUS_GLYPH, _ValidatorResult
+from engine.verify import (
+    _render_line,
+    _render_summary,
+    _STATUS_GLYPH,
+    _ValidatorResult,
+)
 
 
 @pytest.fixture
@@ -82,3 +87,46 @@ def test_warn_line_still_prints_message(captured_lines) -> None:
     )
     _render_line(warn)
     assert "ressalva importante" in captured_lines[0]
+
+
+# IN-04: o título do box-sumário deriva do veredito agregado, não só de fails.
+# Um run all-degraded (degraded>0, sem fail/warn) é `incomplete` — "verify não
+# pôde avaliar tudo" — e o título tem que dizer isso, não "Verify clean".
+
+
+def test_summary_title_incomplete_when_all_degraded(captured_lines) -> None:
+    """degraded>0, fails==0, warns==0 → título 'Verify incomplete' (não 'clean')."""
+    results = [
+        _ValidatorResult(name="koin", status="degraded", duration_ms=5, message="off-contract"),
+        _ValidatorResult(name="other", status="degraded", duration_ms=5, message="broken"),
+    ]
+    _render_summary(results)
+    box = "\n".join(captured_lines)
+    assert "Verify incomplete" in box, (
+        "run all-degraded deve titular 'Verify incomplete', não 'Verify clean' (IN-04)"
+    )
+    assert "Verify clean" not in box
+
+
+def test_summary_title_block_when_fail_dominates(captured_lines) -> None:
+    """fail tem precedência: mesmo com degraded presente, o título é 'Verify block'."""
+    results = [
+        _ValidatorResult(name="a", status="fail", duration_ms=5, message="reprovou"),
+        _ValidatorResult(name="b", status="degraded", duration_ms=5, message="off-contract"),
+    ]
+    _render_summary(results)
+    box = "\n".join(captured_lines)
+    assert "Verify block" in box
+    assert "Verify incomplete" not in box
+
+
+def test_summary_title_clean_when_all_pass(captured_lines) -> None:
+    """Guard-rail: sem fail/warn/degraded, o título continua 'Verify clean'."""
+    results = [
+        _ValidatorResult(name="a", status="pass", duration_ms=5),
+        _ValidatorResult(name="b", status="pass", duration_ms=5),
+    ]
+    _render_summary(results)
+    box = "\n".join(captured_lines)
+    assert "Verify clean" in box
+    assert "Verify incomplete" not in box

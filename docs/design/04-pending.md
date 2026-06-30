@@ -33,6 +33,19 @@ status correspondente no fim do próprio report.
   via filtro inline `_SKIP_DIRS` em `engine/detection/_eval.py:72`. Independente
   da branch `fix/pilot-init-perf` (que NÃO foi mergeada) — fechado por uma impl
   diferente da do report.
+- ✓ **BUG-VERIFY-1 (validator quebrado cega a cascade)** — fechado na **Onda 1**
+  da remediação. `_invoke_validator` agora classifica validator off-contract /
+  quebrado (exit ≥2 sem JSON tail) como `degraded` — não `fail` — então não conta
+  no overall nem para a cascade fail-fast (Decisão 23). Novo veredito agregado
+  `incomplete` (degraded sem fail/warn), distinto do `degraded` do contrato L1
+  verify-log. Koin migrado pro contrato canônico (`--project-root/--scope/--id`).
+  Guardas: `tests/engine/test_verify_broken_validator_degraded.py`,
+  `test_verify_overall_degraded.py`, `test_koin_validator_contract.py`.
+- ✓ **BUG-VERIFY-2 (verify sem sumário honesto de cobertura)** — fechado na
+  **Onda 1**. `forge verify --json` ganha `coverage_summary`
+  (`substantive`/`stub`/`staged-blind`/`opaque`) + campo `infra_degraded`; o box
+  interativo quebra os passes por cobertura quando não são todos substantivos.
+  Guarda: `tests/engine/test_verify_coverage_summary.py`.
 
 ### Parciais
 
@@ -71,19 +84,12 @@ Agrupado por prioridade. Plano de ataque por onda na spec
 - **BUG-PLAN-1 (recursão no gate de readiness)** — `engine/plan.py:1058`: path A
   recursa síncrono → RecursionError (~979 níveis, 1.3MB stdout). Fix:
   re-renderizar + PAUSAR (exit 2), nunca recursar. (Onda 3.)
-- **BUG-VERIFY-1 (validator quebrado cega a cascade)** — `engine/verify.py:985`
-  trata exit 2 como `fail` (não `degraded`); `check-koin-modules.py:100` usa
-  `--root` (off-contract) → cega 5 validators iOS/KMP via fail-fast (Decisão 23).
-  Fix: classificar validator-quebrado como `degraded` + atualizar koin pro
-  contrato canônico (`--scope`/`--id`). (Onda 1.)
 
 **P1**
 
 - **BUG-G2/MEM-4 (marker não anuncia response-schema-version)** —
   `engine/host/adapters/claude_code.py:422`: o `<FORGE_INTENT>` não declara
   `response-schema-version`; host ingênuo omite e toma exit 1. (Onda 4.)
-- **BUG-VERIFY-2 (verify sem sumário honesto de cobertura)** — falta o sumário
-  tipo "Pass: 10 — 6 stub no-op, 4 sem staged". (Onda 1.)
 - **BUG-STATUS-1/2 (status cego ao git/qa)** — `engine/status.py:47` não
   reconcilia com git nem expõe qa verdict (commits da feature invisíveis, BLOCK
   sem rastro). (Onda 4.)

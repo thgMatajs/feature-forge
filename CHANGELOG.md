@@ -167,6 +167,32 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Fixed
 
+- `forge verify` ganha dentes contra validator off-contract/quebrado (Onda 1 da
+  remediação do piloto MeoBonsai — fecha BUG-VERIFY-1 e BUG-VERIFY-2):
+  - **BUG-VERIFY-1** — validator que estoura exit ≥2 sem JSON tail (script
+    quebrado ou fora do contrato canônico `--project-root/--scope/--id`) agora é
+    classificado como `degraded`, NÃO `fail`. `degraded` não conta no overall nem
+    cega a cascade fail-fast (Decisão 23): um validator off-contract não pode
+    mais parar os validators a jusante (foi exatamente o caso do koin no piloto,
+    que só aceitava `--root`, estourava exit 2 e parava tudo). Exit 1 sem JSON
+    permanece `warn`; hard fail de código vem só pelo JSON tail `{"status":"fail"}`.
+  - Novo veredito AGREGADO `incomplete` (distinto de `degraded`/`warn`): quando
+    há `degraded` e nenhum `fail`/`warn`, o `overall` vira `incomplete` — "verify
+    não pôde avaliar tudo (infra off-contract); NÃO-bloqueante, NÃO dispara
+    block-forge-implement". `incomplete` é deliberadamente distinto do `degraded`
+    do contrato L1 verify-log (que exige warnings≥1 e atrela block-implement).
+    Precedência do overall: `fail > warn > incomplete > pass`.
+  - **BUG-VERIFY-2 (T3)** — sumário honesto de cobertura: os passes são quebrados
+    por classe (`substantive`/`stub`/`staged-blind`/`opaque`) pro host IA-first
+    não tratar "verde" como garantia uniforme. Novo campo `infra_degraded` e
+    `coverage_summary` no `forge verify --json`; valores possíveis de `overall`:
+    `{pass, warn, incomplete, degraded, fail}`.
+  - Glyph próprio (`⛒`) pra `degraded` na linha-a-linha (distinto do `⚠` do warn)
+    + o motivo da degradação impresso na linha; título do box-sumário deriva do
+    veredito agregado (run all-degraded titula "Verify incomplete", não "clean").
+  - Validator do koin (`cards/koin-annotations/validators/check-koin-modules.py`)
+    migrado pro contrato canônico (`--project-root/--scope/--id`).
+
 - Hook SessionStart (`.claude/hooks/session-start-orientation.sh`) resiliente
   a `created_at` malformado no JSONL do mem (cross-AI bot PR #32): a seleção
   da sessão mais recente agora valida que `created_at` é uma string ISO
