@@ -28,23 +28,27 @@
 
 | Track | Arquivos de produção (EDIT) | Arquivos de teste (EDIT/CREATE) |
 |---|---|---|
-| **B** | `engine/upgrade.py`, `engine/init.py` | `tests/unit/test_upgrade_*.py`, `tests/unit/test_init_discovery_cache.py`, `tests/unit/test_brownfield_compose_dedup.py` |
+| **B** | `engine/upgrade.py`, `engine/init.py` (B2 + B3 caso o veredito da investigação seja dedup) | `tests/unit/test_upgrade_*.py`, `tests/unit/test_init_discovery_cache.py`, `tests/unit/test_brownfield_compose_dedup.py` |
 | **C** | `engine/memory/distiller.py`, `engine/memory/__init__.py`, `engine/evolve.py`, `engine/memory/l3.py` (REMOVE) | `tests/unit/test_memory_distiller.py`, `tests/unit/test_engine_evolve_resume.py`, `tests/unit/test_reuse_intelligence.py`, `tests/integrations/test_mem_wrappers.py` |
 | **D** | `engine/init.py`, `engine/graph/queries.py`, `engine/graph_cli.py` | `tests/unit/test_init_progress_*.py` (CREATE), `tests/unit/test_graph_*.py`, `tests/engine/test_graph_queries.py` |
 
-**⚠ Overlap detectado:** `engine/init.py` aparece em **Track B (B2)** e **Track D (D1)**. Não são file-disjuntos. Tratamento abaixo no §"Serialização B2↔D1".
+**⚠ Overlap detectado:** `engine/init.py` aparece em **Track B (B2 + B3)** e **Track D (D1)**. Não são file-disjuntos. Tratamento abaixo no §"Serialização em `engine/init.py`".
 
 | Doc-sync (serializado no merge) | `CHANGELOG.md`, `docs/design/04-pending.md` — todos os tracks tocam; conflito trivial esperado no merge `--no-ff`. |
 
-### Serialização B2 ↔ D1 (overlap em `engine/init.py`)
+### Serialização em `engine/init.py` (overlap B2 ↔ B3 ↔ D1)
 
-B2 (discovery cache content-fingerprint) e D1 (progress feedback nos steps longos do init) ambos editam `engine/init.py`. Regiões disjuntas dentro do arquivo (B2 ~L209-353 cache helpers; D1 ~L2467 backend + ~L2617 orphan), mas **mesmo arquivo = merge conflita**. Três caminhos pro orquestrador (escolha 1 ANTES do dispatch):
+Três itens podem editar `engine/init.py`: **B2** (discovery cache content-fingerprint), **B3** (dedup `compose_backend_axes` — SÓ se a investigação concluir redundância real; ver §B3) e **D1** (progress feedback nos steps longos). Regiões disjuntas dentro do arquivo (B2 ~L209-353 cache helpers; B3 ~L2467 + ~L3385 backend brownfield handler; D1 ~L2467 backend + ~L2617 orphan), **mas mesmo arquivo = merge conflita** — e B3-dedup e D1 chegam a tocar a MESMA vizinhança (~L2467, a chamada de `compose_backend_axes` no Step 5).
 
-- **A) B2 e D1 no MESMO track/worktree, serializados** (B2 → merge → D1). Mais simples; perde paralelismo entre esses dois itens. **Recomendado.**
-- **B) B2 num worktree, D1 noutro, merge serial** (quem mergear segundo rebasa). Mantém paralelismo dos demais; aceita 1 conflito trivial de `init.py` no 2º merge.
+> **⚠ Nota especial B3 ↔ D1 (vizinhança L2467):** D1 envolve a chamada `compose_backend_axes` (L2467) num `spinner`; B3-dedup, se autorizado pela investigação (Caminho A), passa o `composer_result` dessa MESMA chamada pra dentro do handler. Os dois tocam a chamada de L2467. Se ambos forem aplicados, **serializar B3 → D1 no mesmo worktree** (B3 muda a chamada/assinatura primeiro; D1 envolve a já-deduplicada). Se a investigação de B3 concluir Caminho B (não-dup) ou C (escalar), B3 NÃO edita a lógica de `init.py` (só docstring) — então o overlap de produção com D1 é trivial.
+
+Três caminhos pro orquestrador (escolha 1 ANTES do dispatch):
+
+- **A) B2, B3 (se dedup) e D1 no MESMO track/worktree, serializados** (B2 → B3 → D1). Mais simples; perde paralelismo entre esses itens. **Recomendado.**
+- **B) Itens em worktrees separados, merge serial** (quem mergear depois rebasa). Mantém paralelismo dos demais; aceita conflitos triviais de `init.py` nos merges seguintes. **Atenção:** B3-dedup e D1 na vizinhança L2467 NÃO são triviais — se ambos editarem a lógica, force a serialização B3→D1.
 - **C) Diferir D1** pra uma onda própria pós-B. Só se o paralelismo B/C/D for prioridade absoluta.
 
-Os demais itens (B1, B3, C1-C3, D2) são genuinamente file-disjuntos e correm em paralelo.
+Os demais itens (B1, C1-C3, D2) são genuinamente file-disjuntos e correm em paralelo. B3 só entra na serialização de `init.py` SE a investigação concluir Caminho A (dedup); nos Caminhos B/C ele só toca docstring (overlap trivial).
 
 ---
 
@@ -161,7 +165,7 @@ Rode: `.venv/bin/pytest tests/unit/test_upgrade_unknown_flag_warns.py -v` → GR
 **Arquivo de produção:** `engine/init.py` (helpers `_save_discovery_cache` L228-253, `_load_discovery_cache` L256-344, e o ponto de carga em `_run_pipeline` L2325-2346).
 **Arquivo de teste:** `tests/unit/test_init_discovery_cache.py` (EXISTENTE — estender).
 
-> **⚠ Overlap com D1 (`engine/init.py`).** Resolva pela §"Serialização B2↔D1" ANTES do dispatch.
+> **⚠ Overlap com B3 (se dedup) e D1 (`engine/init.py`).** Resolva pela §"Serialização em `engine/init.py`" ANTES do dispatch.
 
 **Diagnóstico (scout):** o cache (`.init-discovery-cache.yaml`) é invalidado pelo LIFECYCLE do checkpoint (`_clear_discovery_cache` em discard/abort/novo-init), nunca por um fingerprint do conteúdo da árvore (docstring L269-284 documenta isso como decisão consciente; só é seguro porque carregado apenas sob `host_is_replaying`). O hardening pedido (cinto + suspensório): gravar um fingerprint do conjunto de arquivos relevantes e invalidar o cache se o conteúdo mudou — robustez fora do caminho mecânico de replay.
 
@@ -280,63 +284,164 @@ Rode: `.venv/bin/pytest tests/unit/test_init_discovery_cache.py -v` → GREEN.
 
 ---
 
-### B3 — dedup `compose_backend_axes` (refactor / no-behavior-change OU PARE/anote)
+### B3 — dedup `compose_backend_axes` (INVESTIGAÇÃO empírica → decidir pelo observado; `systematic-debugging`)
 
-**Arquivo de produção:** `engine/init.py` (`_run_pipeline` L2466-2472 + `_handle_backend_multi_axis_brownfield` L3380-3385).
-**Arquivo de teste:** `tests/unit/test_brownfield_compose_dedup.py` (EXISTENTE — confirmar/estender).
+**Arquivo de produção:** `engine/init.py` (`_run_pipeline` L2466-2472 + `_handle_backend_multi_axis_brownfield` L3380-3385, docstring stale L3340-3343).
+**Arquivo de teste/instrumentação:** `tests/unit/test_brownfield_compose_dedup.py` (EXISTENTE — confirmar/estender).
 
-**⚠ PARE/anote — leia ANTES de implementar:**
+> **⚠ Overlap com B2 e D1 (`engine/init.py`).** Resolva pela §"Serialização em `engine/init.py`" ANTES do dispatch. B3 só entra na serialização de produção SE a investigação concluir Caminho A (dedup); nos Caminhos B/C só toca docstring (overlap trivial).
 
-O `04-pending.md §Parciais` afirma: *"a 2ª chamada vive numa função W7.4 deferred/unused"*. **O scout CONTRADIZ isso parcialmente.** Estado real em main:
+**⚠ Premissa CORRIGIDA — leia ANTES de investigar:**
+
+O `04-pending.md §Parciais` afirma: *"a 2ª chamada vive numa função W7.4 deferred/unused"*. **Isso está STALE/ERRADO.** Estado real em main (scout):
 
 - `_run_pipeline` L2467 chama `compose_backend_axes` pra computar `has_signals` (L2468-2472).
 - Se `has_signals` for True, L2480 chama `_handle_backend_multi_axis_brownfield`, que **internamente chama `compose_backend_axes` DE NOVO** (L3385).
-- Logo `_handle_backend_multi_axis_brownfield` **NÃO é dead/unused** — está WIRADA no caminho ativo do `_run_pipeline` (L2480). O docstring da função (L3340-3343) que diz "chamada apenas pelo integration test" está STALE em relação ao código.
+- Logo `_handle_backend_multi_axis_brownfield` **NÃO é dead/unused** — está WIRADA no caminho ATIVO do `_run_pipeline` (L2480). O docstring da função (L3340-3343) que diz "chamada apenas pelo integration test" está STALE em relação ao código.
 
-**Conclusão do scout:** há duplicação REAL no caminho ATIVO (compose roda 2×: uma pra `has_signals`, outra dentro do handler). Como **toca caminho ativo**, a instrução do usuário é: **se a remoção tocar caminho ativo, PARE e anote (não force)**.
+A 2ª chamada de `compose_backend_axes` roda no **hot-path ativo** do `forge init` brownfield — exatamente o caminho cujo custo de init o piloto MeoBonsai flagou. **Mas "duas chamadas no caminho ativo" NÃO prova duplo-custo redundante:** as duas chamadas podem receber inputs/contextos diferentes e computar coisas semanticamente distintas. **Não assuma o veredito — investigue.**
 
-**Decisão (3-caminhos pro orquestrador — escolha ANTES do dispatch):**
+**Esta task é uma INVESTIGAÇÃO (`superpowers:systematic-debugging`), não uma implementação pré-decidida** (moldura tipo a Task 0c da Fase 0). O implementer DECIDE o desfecho pelo que OBSERVAR empiricamente. O Caminho A (dedup) é o esperado — mas só vale se a investigação confirmar redundância real.
 
-- **A) PARE/anote (default seguro, recomendado).** A 2ª chamada NÃO está numa função morta — está no hot-path. Dedup exige passar o `composer_result` já computado em L2467 pra dentro do handler (mudar a assinatura de `_handle_backend_multi_axis_brownfield` pra aceitar `composer_result` opcional e pular o recompute). Isso é refactor de assinatura num caminho que o init exercita — risco no-behavior-change real, mas precisa de cobertura cuidadosa. **Anote como sub-finding: "dedup compose_backend_axes é refactor de hot-path, não remoção de dead code — escopo maior que o `04-pending` sugeria; reentrar com brainstorm dedicado."** Não implemente neste dispatch.
+#### Step B3.1 — Investigar empiricamente (redundância real vs distinção semântica)
 
-- **B) Dedup conservador (só se o orquestrador autorizar explicitamente).** Adicionar parâmetro opcional `composer_result: dict | None = None` a `_handle_backend_multi_axis_brownfield`; quando o caller passa o resultado já computado, o handler reusa em vez de recomputar (L3385 vira condicional). `_run_pipeline` passa o `composer_result` de L2467. **Gate:** TDD no-behavior-change — `tests/unit/test_brownfield_compose_dedup.py` + um spy que conta as invocações de `compose_backend_axes` (deve cair de 2 pra 1 no caminho brownfield, com saída idêntica). Atualizar o docstring stale do handler.
+Objetivo: descobrir se as DUAS chamadas de `compose_backend_axes` no caminho brownfield ativo computam o **mesmo resultado pros mesmos inputs** (redundância → duplo-custo que o piloto flagou em init perf) OU recebem inputs/contextos **diferentes** (distinção semântica → NÃO é dup).
 
-- **C) Diferir** pra a wave de execução do Tema 6 face 3 (que vai tocar `verify`, não `init`) — sem ganho, descartar.
+1. **Scout estático primeiro (leitura, sem rodar):** abra `engine/init.py` e leia os dois callsites, comparando os ARGUMENTOS de cada um:
+   - L2467: `compose_backend_axes(project_root, normalized_for_composer, ...)` — capture os args EXATOS (posicionais + kwargs).
+   - L3385 (dentro de `_handle_backend_multi_axis_brownfield`): capture os args EXATOS que o handler passa.
+   - Pergunta-chave: `project_root`/`normalized`/kwargs são os MESMOS objetos/valores nos dois pontos, ou o handler recomputa/transforma o input antes de chamar? Inputs divergentes → forte sinal de distinção semântica (Caminho B). Inputs idênticos → forte sinal de redundância (Caminho A). Confirme o TIPO de retorno de `compose_backend_axes` aqui (será usado na assinatura do Caminho A).
 
-**Recomendação:** **A (PARE/anote).** O item é Parcial no backlog justamente por isso; o ganho (1 chamada de composer a menos) não justifica refactor de hot-path sem brainstorm. Registre o sub-finding e siga.
+2. **Confirmar empiricamente com instrumentação (não confie só na leitura):** escreva um teste de investigação em `tests/unit/test_brownfield_compose_dedup.py` que exercita o caminho brownfield ativo (`has_signals=True`) com um spy que captura, a CADA chamada de `compose_backend_axes`, os args recebidos E o resultado retornado:
 
-#### Step B3.1 (só se A) — registrar o PARE/anote
+   ```python
+   def test_investigate_compose_backend_axes_call_redundancy(tmp_path, monkeypatch, capsys):
+       """B3 INVESTIGAÇÃO (Fase 1): as 2 chamadas de compose_backend_axes no
+       caminho brownfield ativo são redundantes (mesmos args → mesmo resultado)
+       ou semanticamente distintas (args diferentes)? Este teste OBSERVA — não
+       afirma o veredito. Ler a saída capturada decide A vs B."""
+       import engine.init as init_mod
 
-- NÃO edite `engine/init.py`.
-- `CHANGELOG.md` `[Unreleased]` → `### Notes` (ou comentário no doc-sync de merge): "dedup compose_backend_axes mantido aberto — scout Fase 1 confirmou que a 2ª chamada está no hot-path ativo (`_handle_backend_multi_axis_brownfield` wirada via `_run_pipeline` L2480), não numa função morta; dedup é refactor de assinatura de hot-path, reentrar com brainstorm. Corrigir o docstring stale L3340-3343 do handler quando reentrar."
-- `04-pending.md §Parciais` (anote pro merge): atualizar o texto do BUG-1b — a função NÃO é unused; corrigir a afirmação "deferred/unused".
+       observed: list[dict] = []
+       real = init_mod.compose_backend_axes
 
-#### Step B3.2 (só se B foi autorizado) — RED→GREEN no-behavior-change
+       def _spy(*args, **kwargs):
+           result = real(*args, **kwargs)
+           observed.append(
+               {
+                   "args_repr": repr(args),
+                   "kwargs_repr": repr(sorted(kwargs.items())),
+                   "result_repr": repr(result),
+               }
+           )
+           return result
 
-`tests/unit/test_brownfield_compose_dedup.py` (estender):
+       monkeypatch.setattr(init_mod, "compose_backend_axes", _spy)
+
+       # Montar o cenário brownfield ativo MÍNIMO que dispara has_signals=True
+       # e, por consequência, _handle_backend_multi_axis_brownfield (L2480).
+       # Reusar os fixtures/harness já presentes em test_brownfield_compose_dedup.py
+       # que constroem active_cards com signals de backend (confirme o helper
+       # real ao abrir o arquivo; NÃO invente fixture nova se já houver uma que
+       # exercita o brownfield multi-axis).
+       # ... disparar o trecho de _run_pipeline (ou o entrypoint testável que ele
+       #     expõe) que chega até o handler.
+
+       # OBSERVAÇÃO (não-assert de veredito): registrar pro implementer ler.
+       assert len(observed) == 2, (
+           f"esperava 2 chamadas no caminho brownfield ativo, vi {len(observed)}: {observed}"
+       )
+       same_args = (
+           observed[0]["args_repr"] == observed[1]["args_repr"]
+           and observed[0]["kwargs_repr"] == observed[1]["kwargs_repr"]
+       )
+       same_result = observed[0]["result_repr"] == observed[1]["result_repr"]
+       print(
+           "B3-INVESTIGAÇÃO:"
+           f" same_args={same_args} same_result={same_result}\n"
+           f"  call#1 args={observed[0]['args_repr']} kwargs={observed[0]['kwargs_repr']}\n"
+           f"  call#2 args={observed[1]['args_repr']} kwargs={observed[1]['kwargs_repr']}\n"
+           f"  result#1={observed[0]['result_repr']}\n"
+           f"  result#2={observed[1]['result_repr']}"
+       )
+   ```
+
+   Rode capturando o print: `.venv/bin/pytest tests/unit/test_brownfield_compose_dedup.py -k investigate -v -s`.
+
+3. **Veredito da investigação (regra de decisão explícita — não assuma; LEIA a saída):**
+   - `same_args=True` **E** `same_result=True` → **REDUNDÂNCIA REAL** (duplo-custo confirmado) → siga **Caminho A** (Step B3.2-A).
+   - `same_args=False` (inputs divergem) **OU** `same_result=False` → **DISTINÇÃO SEMÂNTICA** (as duas chamadas computam coisas diferentes) → siga **Caminho B** (Step B3.2-B).
+   - A investigação revela que a dedup exige refactor AMPLO do pipeline de init (não basta passar o resultado já computado — ex.: a 2ª chamada está enterrada sob lógica de seleção que não dá pra contornar sem reestruturar o handler/pipeline inteiro) → siga **Caminho C** (Step B3.2-C / escalar).
+
+#### Step B3.2 — Bater o martelo (3 caminhos — DECIDIR pelo observado em B3.1)
+
+**Caminho A — Redundância real → deduplicar (no-behavior-change).**
+
+A dedup mínima: computar `compose_backend_axes` UMA vez em `_run_pipeline` (L2467) e passar o resultado já computado pra dentro do handler, em vez do handler recomputar (L3385). Concretamente:
+
+1. Adicionar parâmetro opcional `composer_result: <tipo-real> | None = None` à assinatura de `_handle_backend_multi_axis_brownfield` — use o TIPO de retorno real de `compose_backend_axes` confirmado em B3.1 (não suponha `dict`).
+2. No corpo do handler, em L3385: reusar o argumento quando recebido, recomputar só se chamado sem ele — `composer = composer_result if composer_result is not None else compose_backend_axes(...)`. Isso preserva o caminho do integration test, que chama o handler isolado sem o argumento.
+3. `_run_pipeline` (L2480) passa o `composer_result` já computado em L2467: `_handle_backend_multi_axis_brownfield(..., composer_result=<resultado-de-L2467>)`.
+
+**Gate no-behavior-change (TDD, shape `check_no_behavior_change`):** mesma saída do init pros mesmos inputs antes/depois. Estenda `tests/unit/test_brownfield_compose_dedup.py`:
 
 ```python
 def test_brownfield_handler_reuses_precomputed_composer_result(tmp_path, monkeypatch):
-    """B3: quando o caller passa composer_result, o handler não recomputa
-    compose_backend_axes (1 chamada em vez de 2). Saída idêntica."""
+    """B3-A (Fase 1): com composer_result já computado, o handler NÃO recomputa
+    compose_backend_axes (1 chamada em vez de 2 no caminho ativo). Saída idêntica
+    ao baseline — no-behavior-change."""
     import engine.init as init_mod
 
     calls = {"n": 0}
     real = init_mod.compose_backend_axes
 
-    def _counting(project_root, normalized, **kw):
+    def _counting(*args, **kwargs):
         calls["n"] += 1
-        return real(project_root, normalized, **kw)
+        return real(*args, **kwargs)
 
     monkeypatch.setattr(init_mod, "compose_backend_axes", _counting)
-    # ... construir active_cards mínimos com signals; chamar o handler
-    #     passando composer_result já computado e asserir calls["n"] == 0
-    #     (handler não recomputa) e selected_card_names idêntico ao baseline.
+    # 1) Rodar o caminho brownfield ativo (mesmo harness do teste de investigação),
+    #    capturar o output do init (selected_card_names / o que o handler decide).
+    # 2) Asserir calls["n"] == 1 (caiu de 2 → 1; o duplo-custo sumiu).
+    # 3) Asserir que o output é IDÊNTICO ao baseline pré-dedup (no-behavior-change).
+    #    Se houver um snapshot/baseline já no arquivo, compare contra ele; senão,
+    #    capture o baseline rodando o caminho SEM a dedup (git stash do fix) ou
+    #    asserindo o selected_card_names esperado já conhecido pelo fixture.
+    assert calls["n"] == 1
+    # assert output == baseline_output
 ```
 
-> O step B3.2 só roda sob autorização explícita do orquestrador (caminho B). Caso contrário, o Track B termina em B3.1.
+- **Confirmar o ganho:** re-rode o teste de investigação (B3.1) pós-fix — o caminho ativo deve mostrar `len(observed) == 1` (ajuste o investigation test pra refletir 1 chamada pós-dedup, ou documente a transição). Registre no doc-sync que o duplo-custo foi eliminado.
+- **Corrigir o docstring stale L3340-3343:** trocar "chamada apenas pelo integration test" pela descrição real ("chamada por `_run_pipeline` no caminho brownfield ativo; aceita `composer_result` pré-computado pra evitar recompute — o integration test a chama isolada sem o argumento").
+- Rode no-behavior-change: `.venv/bin/pytest tests/unit/test_brownfield_compose_dedup.py -v` → verde, 1 chamada confirmada, output idêntico.
 
-**Done (A):** sub-finding registrado, `init.py` intocado. **Done (B):** spy confirma 1 chamada de composer, saída idêntica, testes verdes, docstring corrigido.
+**Caminho B — Semanticamente distintas → NÃO deduplicar; corrigir só os docs.**
+
+Se a investigação mostrou inputs/resultados diferentes, as duas chamadas são legítimas — NÃO toque na lógica.
+
+1. **NÃO edite a lógica de `engine/init.py`** (sem mudança de assinatura, sem dedup).
+2. **Corrija o docstring stale L3340-3343** do `_handle_backend_multi_axis_brownfield`: documente que a função É chamada no caminho ativo via `_run_pipeline` L2480 (não "só pelo integration test"), E explique POR QUE há uma 2ª chamada de `compose_backend_axes` legítima (o que muda nos inputs entre L2467 e L3385 — ex.: contexto/normalização diferente — conforme o observado em B3.1). Inclua o achado empírico literal (os args que divergiram).
+3. **Fechar como não-dup:** registrar no doc-sync que a investigação concluiu distinção semântica.
+
+**Caminho C — Escalar (fora do escopo).**
+
+Se a dedup exigir refactor AMPLO do pipeline de init (além de passar o resultado já computado), **PARE e anote** — não force:
+
+- Anote o sub-finding: "dedup compose_backend_axes exige refactor amplo do pipeline de init (não cabe num passe no-behavior-change) — escopo maior que a Fase 1; reentrar com brainstorm dedicado." Inclua o que a investigação revelou (por que não cabe).
+- NÃO edite a lógica. Corrija no mínimo o docstring stale L3340-3343 (a premissa "só pelo integration test" está errada de qualquer forma).
+
+#### Step B3.3 — doc-sync (conforme o caminho escolhido)
+
+- **`04-pending.md §Parciais` (anote pro merge — corrige a PREMISSA em QUALQUER caminho):** o BUG-1b está descrito como "função morta W7.4 deferred/unused" — isso é FALSO. Atualizar pro estado real: `_handle_backend_multi_axis_brownfield` está wirada no hot-path ativo via `_run_pipeline` L2480. O texto final depende do veredito:
+  - **A:** "dedup aplicada — `compose_backend_axes` computado 1× e reusado no handler (eliminou duplo-custo no init brownfield); docstring corrigido. FECHADO."
+  - **B:** "investigação concluiu que as 2 chamadas são semanticamente distintas (inputs divergem) — NÃO é dup; só o docstring stale foi corrigido. FECHADO como não-dup."
+  - **C:** "investigação confirmou hot-path ativo; dedup exige refactor amplo do init — reaberto como item de brainstorm dedicado (não cabe na Fase 1). Docstring corrigido."
+- **`CHANGELOG.md` `[Unreleased]`** (conforme o caminho):
+  - **A** → `### Changed`: "`forge init` brownfield computa `compose_backend_axes` uma única vez (era 2× no hot-path) — `_handle_backend_multi_axis_brownfield` reusa o resultado pré-computado; no-behavior-change confirmado (Fase 1 Track B, fecha BUG-1b)."
+  - **B** → `### Fixed`: "docstring de `_handle_backend_multi_axis_brownfield` corrigido (estava stale: a função está no hot-path ativo via `_run_pipeline`, não 'só no integration test'); investigação confirmou que as 2 chamadas de `compose_backend_axes` são legítimas/distintas (Fase 1 Track B, fecha BUG-1b como não-dup)."
+  - **C** → `### Notes`: "investigação B3 confirmou hot-path ativo e premissa stale do `04-pending`; dedup é refactor amplo do init — reaberto pra brainstorm dedicado; docstring corrigido (Fase 1 Track B)."
+
+**Done (A):** investigação registrada; `compose_backend_axes` roda 1× no caminho brownfield; output idêntico ao baseline (no-behavior-change verde); docstring L3340-3343 corrigido. **Done (B):** investigação registrada; lógica intocada; docstring L3340-3343 corrigido com o porquê das 2 chamadas; fechado como não-dup. **Done (C):** investigação registrada; sub-finding de escalonamento anotado; docstring corrigido; lógica intocada.
 
 ---
 
@@ -567,7 +672,7 @@ grep -rn "read_l3_index|read_l3_entry|search_l3|memory.l3|memory import l3|from 
 **Arquivo de produção:** `engine/init.py` (Step 5 backend ~L2449-2499; Step 7.5 orphan ~L2617-2646).
 **Arquivo de teste:** `tests/unit/test_init_progress_long_steps.py` (CREATE).
 
-> **⚠ Overlap com B2 (`engine/init.py`).** Resolva pela §"Serialização B2↔D1" ANTES do dispatch.
+> **⚠ Overlap com B2 e B3 (`engine/init.py`).** Resolva pela §"Serialização em `engine/init.py`" ANTES do dispatch. **Atenção especial:** D1 envolve a chamada de `compose_backend_axes` (L2467) num spinner; B3-dedup (se autorizado) muda essa MESMA chamada. Se ambos forem aplicados, serializar B3 → D1.
 
 **Diagnóstico (scout):** `engine/init.py` JÁ usa `ui_progress.progress(...)` pra discovery (L2333), snapshot de cards (L2604) e graph (L2793). MAS os dois steps citados no report como lentos NÃO têm feedback:
 - **Step 5 backend (~86s):** `compose_backend_axes` (L2467) varre signals sem barra/spinner; o usuário vê `[5/7] Backend` e depois silêncio durante a varredura.
@@ -751,7 +856,7 @@ Para cada item, rode o gate de confirmação e adicione regression test SÓ se f
 |---|---|---|
 | B — upgrade flags desconhecidas | B1 | ✓ implementar (TDD) |
 | B — discovery cache content-fingerprint | B2 | ✓ implementar (TDD) |
-| B — dedup compose_backend_axes (BUG-1b) | B3 | ✓ **PARE/anote** (hot-path, não dead code) |
+| B — dedup compose_backend_axes (BUG-1b) | B3 | ✓ **INVESTIGAÇÃO** (`systematic-debugging`) → dedup (A) / não-dup-só-docstring (B) / escalar (C); premissa corrigida (hot-path ativo) |
 | C — _KNOWLEDGE_KINDS 3 kinds restantes | C1 | ✓ implementar (TDD) — inclui `decay-signal` em `_VALID_KINDS` |
 | C — rename apply_proposal_to_l2 | C2 | ✓ sweep semântico (no-behavior-change) |
 | C — remover l3.py órfão | C3 | ✓ remover (zero-consumidor confirmado) + guard PARE/anote |
@@ -762,16 +867,16 @@ Para cada item, rode o gate de confirmação e adicione regression test SÓ se f
 | D5 — --help evolve/implement | D5 | ✓ **já fechado** → verificar + regression |
 | D6 — undo no-op / raw aviso | D6 | ✓ **já fechado** → verificar + regression |
 
-**Placeholder scan:** os blocos de código de produção (B1.2, B2.2, C1.2, C2.1, C3.1, D2.2) são completos e copiáveis. Os trechos com `...` estão APENAS em harnesses de teste onde o ponto-de-entrada exato depende do scout local do executor (D1.1 spinner harness, D2.1 DB-seeding, D3-D6 confirmação de guard) — sinalizados explicitamente como "ajuste após scout" com o contrato observável definido. Nenhum placeholder em lógica de produção.
+**Placeholder scan:** os blocos de código de produção (B1.2, B2.2, B3.2-A, C1.2, C2.1, C3.1, D2.2) são completos e copiáveis. Os trechos com `...` estão APENAS em harnesses de teste onde o ponto-de-entrada exato depende do scout local do executor (B3.1/B3.2-A spinner/harness brownfield, D1.1 spinner harness, D2.1 DB-seeding, D3-D6 confirmação de guard) — sinalizados explicitamente como "ajuste após scout" com o contrato observável definido. Nenhum placeholder em lógica de produção.
 
-**Type consistency:** `route_proposal_to_inbox` mantém a assinatura `(project_root: Path, proposal: DistillationProposal) -> str | None` (idêntica à original — rename puro). `list_modules(project_root: Path, *, db_path: Optional[Path] = None) -> list[str]` espelha a assinatura das demais queries de `queries.py`. `_discovery_source_fingerprint(project_root: Path) -> str`. Consistentes com o código scoutado.
+**Type consistency:** `route_proposal_to_inbox` mantém a assinatura `(project_root: Path, proposal: DistillationProposal) -> str | None` (idêntica à original — rename puro). `list_modules(project_root: Path, *, db_path: Optional[Path] = None) -> list[str]` espelha a assinatura das demais queries de `queries.py`. `_discovery_source_fingerprint(project_root: Path) -> str`. O `composer_result` opcional de B3 (Caminho A) usa o TIPO de retorno real de `compose_backend_axes` (confirmado em B3.1, não suposto). Consistentes com o código scoutado.
 
 **File-disjunção entre tracks (validação de paralelismo):**
 
 | Arquivo | Track B | Track C | Track D |
 |---|:---:|:---:|:---:|
 | `engine/upgrade.py` | ✓ | | |
-| `engine/init.py` | ✓ (B2) | | ✓ (D1) |
+| `engine/init.py` | ✓ (B2 + B3-dedup se A) | | ✓ (D1) |
 | `engine/memory/distiller.py` | | ✓ | |
 | `engine/memory/__init__.py` | | ✓ | |
 | `engine/evolve.py` | | ✓ (C1/C2) | ✓ (D3 — só teste) |
@@ -783,11 +888,11 @@ Para cada item, rode o gate de confirmação e adicione regression test SÓ se f
 | `engine/undo.py` / `engine/raw.py` | | | ✓ (D6 — só teste) |
 
 **Overlaps que impedem paralelismo puro (sinalizados):**
-1. **`engine/init.py` — B2 (Track B) ↔ D1 (Track D).** PRODUÇÃO em ambos. Resolução obrigatória pela §"Serialização B2↔D1" (recomendado: A — mesmo worktree, serial). **Este é o único overlap de produção entre tracks.**
+1. **`engine/init.py` — B2 + B3 (Track B) ↔ D1 (Track D).** PRODUÇÃO em B2, D1, e em B3 SÓ se a investigação concluir Caminho A (dedup). Resolução obrigatória pela §"Serialização em `engine/init.py`" (recomendado: A — mesmo worktree, serial B2 → B3 → D1). **Nota especial:** B3-dedup e D1 tocam a MESMA vizinhança (~L2467, a chamada de `compose_backend_axes`); se ambos forem aplicados, force a serialização B3 → D1. Se B3 cair no Caminho B/C, ele só toca docstring (overlap trivial com D1).
 2. **`engine/evolve.py` — C1/C2 (Track C, PRODUÇÃO) ↔ D3 (Track D, SÓ teste).** D3 não edita `evolve.py` de produção (só confirma o guard existente e adiciona teste em arquivo de teste separado). Mesmo assim, pra evitar conflito de teste e o rename de C2 tocar o import, **D3 deve rebasar sobre C** OU o orquestrador roda C antes de D3. Baixo risco (D3 é só leitura + teste novo). Anote.
 3. **`CHANGELOG.md` / `docs/design/04-pending.md` — TODOS os tracks.** Conflito trivial esperado no merge `--no-ff` serial; resolução por append. Já declarado no header como serializado.
 
-**Itens marcados PARE/anote (resumo pro orquestrador):**
-- **B3** — dedup compose_backend_axes: a 2ª chamada está no HOT-PATH ativo (`_handle_backend_multi_axis_brownfield` wirada via `_run_pipeline` L2480), NÃO numa função morta como o `04-pending` afirmava. PARE/anote recomendado; dedup só sob autorização explícita (caminho B).
+**Itens marcados PARE/anote OU INVESTIGAÇÃO (resumo pro orquestrador):**
+- **B3** — dedup compose_backend_axes: **INVESTIGAÇÃO** (`systematic-debugging`). Premissa do `04-pending` ("função morta W7.4") está ERRADA — a 2ª chamada está no HOT-PATH ativo (`_handle_backend_multi_axis_brownfield` wirada via `_run_pipeline` L2480). O implementer investiga empiricamente (spy de args+result) e DECIDE: A) redundância real → deduplicar com no-behavior-change + corrigir docstring; B) distinção semântica → não deduplicar, corrigir só o docstring stale, fechar como não-dup; C) refactor amplo → escalar/anote + corrigir docstring. A premissa do `04-pending` é corrigida em qualquer caminho.
 - **C3** — guard: re-rodar o grep no início do step; se aparecer QUALQUER consumidor de produção/teste de `l3`, PARE e não remova.
 - **D3/D4/D5/D6** — já fechados no W-DEBT T8; Track D vira verificação + regression test, não implementação. `04-pending.md §P2` está stale.
