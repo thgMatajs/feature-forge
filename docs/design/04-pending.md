@@ -172,17 +172,38 @@ Agrupado por prioridade. Plano de ataque por onda na spec
   divergência de comportamento documentada entre Python 3.11 e 3.12 nesse ponto;
   a escolha é consciente. *Reentrar* se um consumidor real depender de inventory
   através de symlink-dir.
+- **MI-02 — gate de progresso fura o framing AI-first via `FORGE_FORCE_COLOR`**
+  (Fase 1 Track D, D1 — spinner de progresso) — o spinner é corretamente gateado
+  por `_is_tty` (sem poluir o transcript IA-first fora de TTY). Porém
+  `FORGE_FORCE_COLOR` força o `renderer` a emitir cores como se fosse TTY, e o
+  mesmo framing não é aplicado ao gate de spinner: `_is_tty` usa
+  `stream.isatty()` direto, sem inspecionar `FORGE_FORCE_COLOR`. Em
+  automação com `FORGE_FORCE_COLOR=1` e TTY falso, o spinner não dispara
+  (correto — `isatty()` retorna `False`), mas a inconsistência semântica pode
+  causar surpresa futura se um gate copiar a heurística de cor em vez da
+  heurística de TTY. A correção limpa é `_is_tty` usar `stream.isatty()` puro
+  e o `renderer` deixar de usar `FORGE_FORCE_COLOR` como proxy de TTY para
+  qualquer gate comportamental. Baixo impacto; pré-existente à Track D.
+  *Reentrar* ao tocar o renderer ou o gate de spinner.
+- **I-02 — dedup do helper de teste `_write_fake_gradlew`/`_fake_run` entre
+  `test_verify_build_only.py` e `test_verify_native_gates.py`** — ambos os
+  módulos definem helpers sintéticos quase-idênticos pra simular a presença/ausência
+  do `gradlew` e o comportamento do runner externo. A duplicação é de baixo risco
+  hoje (2 arquivos de teste; helpers pequenos). Quando um 3º gate (ex.: detekt,
+  swiftlint — Nível 2) chegar, a triplicação justifica extração pra um
+  `conftest.py` ou `tests/engine/helpers/external_exec.py` compartilhado.
+  *Reentrar* ao adicionar o 3º gate nativo.
 
 **P2 (polish — itens 16-21 do report)**
 
-- Progress feedback nos steps longos do init (backend ~86s, orphan ~75s).
-- graph "did-you-mean" no Q4 quando o módulo não casa.
+- Progress feedback nos steps longos do init (backend ~86s, orphan ~75s). → fechado (Fase 1 Track D, D1)
+- graph "did-you-mean" no Q4 quando o módulo não casa. → fechado (Fase 1 Track D, D2)
 - evolve: tratar SIGPIPE/EOF no loop de render. → fechado (W-DEBT T8, verificado em Fase 1 BCD Track D)
 - reconfigure: imprimir o dashboard só no 1º passo do loop. → fechado (W-DEBT T8, verificado em Fase 1 BCD Track D)
 - `--help` reconhecido em todos os subcomandos (evolve, implement). → fechado (W-DEBT T8, verificado em Fase 1 BCD Track D)
 - undo: exit 0 em no-op de `last`; raw: aviso de escopo no `rebuild-templates`. → fechado (W-DEBT T8, verificado em Fase 1 BCD Track D)
 
-*Reentrar* os P2 dobrando nos pontos baratos de cada onda da spec.
+*Todos os P2 do report fechados na Fase 1 (Track D + W-DEBT T8).*
 
 ## W-VENDOR — gaps pós Fase 1 Onda 3 (2026-06-25)
 

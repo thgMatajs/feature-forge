@@ -216,6 +216,22 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   organiza os gaps ABERTOS em 5 ondas (correctness → gates com dentes → P0s
   estruturais → hardening P1 → mem Fase 2), lideradas pelo loop de correctness,
   cada onda com gate de aceite testável.
+- **Fase 2 — holistic doc sync** (campanha AI-first, 2026-06-30):
+  - `docs/design/00-vision.md`: Layer 1 (Knowledge Substrate) atualizada — `mem`
+    curado (`.claude/bin/mem`, JSONL+SQLite) substitui a notação legada "memory
+    L1-L5"; codebase-graph.db e inventory/ preservados. Layer 2 marcada como
+    DEFERIDO pós-piloto. Nova nota "North star: AI-first lifecycle" torna explícito
+    o objetivo de ciclo dirigível por host IA. Nova nota "Capacidade de verificação
+    de execução (Decisão 33, Nível 1)" descreve os gates nativos (ktlint +
+    build-only) adicionados ao `forge verify` pela Fase 1 Track A; menciona que
+    Níveis 2/3 estão com spec escrita e impl pendente.
+  - `docs/design/04-pending.md`: P2 itens D1 (spinner) e D2 (did-you-mean) marcados
+    como fechados (Fase 1 Track D). Dois novos follow-ons adicionados: MI-02
+    (inconsistência semântica `FORGE_FORCE_COLOR` vs `isatty` no gate de spinner)
+    e I-02 (dedup de helpers de teste `_write_fake_gradlew`/`_fake_run` para
+    quando o 3º gate nativo chegar).
+  - `README.md`: counts de teste atualizados para rapid 2338 / integration 249 /
+    e2e 31 (medidos em 2026-06-30).
 
 ### Removed
 
