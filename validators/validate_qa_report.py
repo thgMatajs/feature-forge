@@ -16,7 +16,13 @@ class QAReportValidationError(ValueError):
 _VALID_VERDICTS = {"BLOCK", "FLAG", "PASS"}
 _VALID_SCOPE_TYPES = {"feature", "screen", "task", "paranoid"}
 _REQUIRED_SEVERITY_KEYS = {"critical", "high", "medium", "low", "info"}
-_REQUIRED_VECTOR_KEYS = {"spec-vs-spec", "coverage", "chaos", "validator-claim"}
+_REQUIRED_VECTOR_KEYS = {
+    "spec-vs-spec",
+    "impl-vs-spec",
+    "coverage",
+    "chaos",
+    "validator-claim",
+}
 _RUN_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z-[0-9a-f]{4}$")
 
 

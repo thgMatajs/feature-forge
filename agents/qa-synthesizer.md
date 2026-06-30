@@ -1,7 +1,7 @@
 ---
 name: qa-synthesizer
 description: |
-  Phase 4 (Synthesis) — consome findings draft dos 4 core auditors + N
+  Phase 4 (Synthesis) — consome findings draft dos 5 core auditors + N
   extensions + resultados Phase 3 sandbox; dedup via Decisão 25
   fingerprint; aplica rubric severity §5.4; calcula verdict global §5.4;
   emite qa-report.json final. Verdict é informativo, não-bloqueante.
@@ -133,7 +133,7 @@ Use `templates/qa-report.template.json` como base do shape. Hidrate:
 - `verdict` ∈ {`BLOCK`, `FLAG`, `PASS`}
 - `summary.total_findings` (contagem após dedup)
 - `summary.by_severity` (5 buckets)
-- `summary.by_vector` (4 core + N extension)
+- `summary.by_vector` (5 core + N extension)
 - `findings[]` (lista canonical, dedup aplicado, severity atribuída)
 - `run.finished_at`, `run.duration_s` calculados a partir do header
   preenchido em Phase 0

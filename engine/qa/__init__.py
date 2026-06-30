@@ -60,6 +60,7 @@ from engine.qa.ingest import (
     create_run_tree,
     parse_qa_config,
     snapshot_artefacts,
+    snapshot_impl_files,
 )
 from engine.qa.sandbox import (
     Fixture,
@@ -93,14 +94,16 @@ from engine.integrations.mem import mem_context_hint
 __all__ = ["run_qa"]
 
 
-# Auditores canonicos do contrato qa-conductor.md (Phase 1+2). Sao os 4
+# Auditores canonicos do contrato qa-conductor.md (Phase 1+2). Sao os 5
 # vetores estaticos+adversariais sempre presentes; extensoes de card entram
 # por cima e podem ser desabilitadas via qa.extensions.disabled. Hard-coded
 # aqui porque o contrato (agents/qa-conductor.md §Inputs) os trata como
 # garantidos — o filtro extensions_disabled e defensivo (core nao costuma
-# ser desabilitavel, mas documenta a intencao).
+# ser desabilitavel, mas documenta a intencao). impl-vs-spec fica junto de
+# spec-vs-spec (ambos Phase 1 STATIC).
 _CORE_AUDITORS: tuple[str, ...] = (
     "spec-vs-spec",
+    "impl-vs-spec",
     "coverage",
     "chaos",
     "validator-claim",
@@ -292,6 +295,12 @@ def run_qa(
             snapshot_copied = snapshot_artefacts(
                 scope, run_tree.snapshot_dir, project_root=project_root
             )
+            # Vetor impl-vs-spec: snapshota o conteúdo dos allowed_files dos
+            # task contracts em snapshot/impl/ (best-effort — impl ausente não
+            # quebra Phase 0). Concatena no snapshot pra fluir ao handoff.
+            snapshot_copied += snapshot_impl_files(
+                scope, run_tree.snapshot_dir, project_root=project_root
+            )
             _write_qa_report_skeleton(scope, run_tree, cfg)
             # QA-11 Wave 4: alert pre Phase 3 sandbox (informativo, nao bloqueia).
             _maybe_alert_sensitive_drops(project_root, workflow_config)
@@ -322,6 +331,14 @@ def run_qa(
         # possivel, fallback copy2. Best-effort: paths inexistentes ou
         # falhas de I/O nao quebram a run.
         snapshot_copied = snapshot_artefacts(
+            scope, run_tree.snapshot_dir, project_root=project_root
+        )
+
+        # Vetor impl-vs-spec: snapshota o conteúdo dos allowed_files dos task
+        # contracts em snapshot/impl/ (best-effort — impl ausente não quebra
+        # Phase 0). Concatena no snapshot pra o auditor impl-vs-spec ver a impl
+        # real (read-only) e fluir ao handoff.
+        snapshot_copied += snapshot_impl_files(
             scope, run_tree.snapshot_dir, project_root=project_root
         )
 

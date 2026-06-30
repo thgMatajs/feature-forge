@@ -27,6 +27,8 @@ from typing import Any
 
 from engine.qa.run_id import generate_run_id
 from engine.qa.scope import Scope
+from engine.utils.task_contract import parse_allowed_files
+from engine.utils.yaml_io import read_yaml
 
 
 # Whitelist conservadora pra scope.target virar componente de path
@@ -267,6 +269,44 @@ def create_run_tree(scope: Scope, *, project_root: Path) -> RunTree:
     )
 
 
+def _rel_for(file_path: Path, project_root_resolved: Path) -> Path:
+    """Path relativo a ``project_root`` pra preservar layout no snapshot.
+
+    Path absoluto fora do project_root (caso raro — Scope custom em
+    ``snapshot_artefacts``) achata pro nome do arquivo. Extraído pra escopo
+    de módulo (Mandamento #3) — reusado por ``snapshot_artefacts`` e
+    ``snapshot_impl_files``.
+    """
+    try:
+        return file_path.resolve().relative_to(project_root_resolved)
+    except ValueError:
+        return Path(file_path.name)
+
+
+def _copy_one(src_file: Path, dest: Path, copied: list[Path]) -> None:
+    """Copia UM arquivo regular ``src_file`` pra ``dest`` via hardlink→copy2.
+
+    DRY (Mandamento #3): a mesma cascata serve os ramos arquivo/diretório de
+    ``snapshot_artefacts`` e o snapshot da impl. Best-effort: falha de I/O
+    (disco cheio, permissão) é silenciada pra não explodir Phase 0. Em
+    sucesso, ``dest`` é anexado a ``copied``.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.link(src_file, dest)
+    except (OSError, NotImplementedError):
+        # Fallback: copy2 preserva metadata (mtime, permissions).
+        # OSError cobre cross-device link (EXDEV), permission errors,
+        # FS sem suporte. NotImplementedError em platforms exoticas.
+        try:
+            shutil.copy2(src_file, dest)
+        except OSError:
+            # Disk full / perm error mid-copy — silenciamos pra nao
+            # explodir Phase 0; snapshot e best-effort.
+            return
+    copied.append(dest)
+
+
 def snapshot_artefacts(
     scope: Scope, snapshot_dir: Path, *, project_root: Path
 ) -> list[Path]:
@@ -317,40 +357,6 @@ def snapshot_artefacts(
     copied: list[Path] = []
     project_root_resolved = project_root.resolve()
 
-    def _rel_for(file_path: Path) -> Path:
-        """Path relativo a project_root pra preservar layout no snapshot.
-
-        Path absoluto fora do project_root (caso raro — Scope custom)
-        achata pro nome do arquivo.
-        """
-        try:
-            return file_path.resolve().relative_to(project_root_resolved)
-        except ValueError:
-            return Path(file_path.name)
-
-    def _copy_one(src_file: Path) -> None:
-        """Copia UM arquivo regular pro snapshot via hardlink→copy2.
-
-        DRY (Mandamento #3): a mesma cascata serve o ramo arquivo e o ramo
-        diretorio. Best-effort: falha de I/O (disco cheio, permissao) e
-        silenciada pra nao explodir Phase 0.
-        """
-        dest = snapshot_dir / _rel_for(src_file)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            os.link(src_file, dest)
-        except (OSError, NotImplementedError):
-            # Fallback: copy2 preserva metadata (mtime, permissions).
-            # OSError cobre cross-device link (EXDEV), permission errors,
-            # FS sem suporte. NotImplementedError em platforms exoticas.
-            try:
-                shutil.copy2(src_file, dest)
-            except OSError:
-                # Disk full / perm error mid-copy — silenciamos pra nao
-                # explodir Phase 0; snapshot e best-effort.
-                return
-        copied.append(dest)
-
     for src in scope.paths:
         src_path = Path(src)
         if not src_path.exists():
@@ -363,9 +369,127 @@ def snapshot_artefacts(
             for f in sorted(src_path.rglob("*")):
                 if not f.is_file():
                     continue
-                _copy_one(f)
+                _copy_one(f, snapshot_dir / _rel_for(f, project_root_resolved), copied)
         else:
             # Arquivo regular — comportamento inalterado.
-            _copy_one(src_path)
+            _copy_one(
+                src_path,
+                snapshot_dir / _rel_for(src_path, project_root_resolved),
+                copied,
+            )
+
+    return copied
+
+
+def _is_contained(candidate: Path, root_resolved: Path) -> bool:
+    """True sse ``candidate`` resolve DENTRO de ``root_resolved`` (containment
+    real, não prefixo de string).
+
+    H-001: um ``allowed_files`` com ``../escape`` que resolve FORA do
+    project_root é rejeitado — o snapshot da impl só captura o que o task
+    legitimamente declarou dentro do projeto. Usa ``relative_to`` na forma
+    resolvida (segue ``..`` e symlinks) — boundary-safe, não aceita irmãos
+    com prefixo comum.
+    """
+    try:
+        candidate.resolve().relative_to(root_resolved)
+        return True
+    except ValueError:
+        return False
+
+
+def _iter_task_yamls(scope: Scope) -> list[Path]:
+    """Enumera os TASK-*.yaml do scope (dedup, ordenado).
+
+    - ``scope.paths`` com um arquivo ``TASK-*.yaml`` → usa direto (scope=task).
+    - ``scope.paths`` com um diretório (scope=feature) → enumera
+      ``tasks/TASK-*.yaml`` sob ele.
+    Outros paths (specs soltos) são ignorados — só task contracts declaram
+    ``allowed_files``.
+    """
+    seen: set[Path] = set()
+    out: list[Path] = []
+
+    def _add(p: Path) -> None:
+        rp = p.resolve()
+        if rp not in seen and p.is_file():
+            seen.add(rp)
+            out.append(p)
+
+    for src in scope.paths:
+        src_path = Path(src)
+        if not src_path.exists():
+            continue
+        if src_path.is_dir():
+            tasks_dir = src_path / "tasks"
+            if tasks_dir.is_dir():
+                for tf in sorted(tasks_dir.glob("TASK-*.yaml")):
+                    _add(tf)
+        elif src_path.name.startswith("TASK-") and src_path.suffix == ".yaml":
+            _add(src_path)
+    return out
+
+
+def snapshot_impl_files(
+    scope: Scope, snapshot_dir: Path, *, project_root: Path
+) -> list[Path]:
+    """Copia o conteúdo dos ``allowed_files`` declarados nos task contracts do
+    scope pra ``snapshot_dir/impl/`` (vetor ``impl-vs-spec``).
+
+    Diferente de :func:`snapshot_artefacts` (que snapshota os *specs* de
+    ``scope.paths``), este captura a *implementação real*: lê cada
+    ``TASK-*.yaml`` do scope, parseia ``allowed_files`` (via helper
+    compartilhado :func:`engine.utils.task_contract.parse_allowed_files` —
+    Mandamento #3, NÃO re-implementa o parse de ``engine/implement.py``), e
+    copia o conteúdo de cada arquivo declarado pro snapshot, preservando o
+    layout relativo a ``project_root``. O auditor impl-vs-spec lê essa cópia
+    (read-only, reproducibility §5.0) — nunca o working tree.
+
+    Containment (H-001): um ``allowed_files`` cujo path resolva FORA de
+    ``project_root`` (ex.: ``../secret.kt``) é **rejeitado** — o destino
+    nunca escapa de ``snapshot_dir/impl/`` e nada fora do projeto é copiado.
+
+    Best-effort (espelha ``snapshot_artefacts``): paths inexistentes (impl
+    ainda não escrita) ou erros de I/O são pulados sem raise — Phase 0 não
+    quebra. Dedup por destino (mesmo arquivo em 2 tasks copia 1x).
+
+    Args:
+        scope: ``Scope`` resolvido. ``scope.paths`` aponta o(s) task
+            contract(s) (scope=task) ou o dir da feature (scope=feature).
+        snapshot_dir: ``RunTree.snapshot_dir`` (já criado). A impl entra sob
+            ``snapshot_dir / "impl" / <rel-path>``.
+        project_root: raiz do projeto consumidor pra resolver ``allowed_files``
+            e calcular o layout relativo.
+
+    Returns:
+        Lista de ``Path`` dos destinos efetivamente criados em
+        ``snapshot_dir/impl/``. Vazia quando nenhum ``allowed_files`` existia,
+        resolveu, ou todos foram rejeitados por containment.
+    """
+    copied: list[Path] = []
+    project_root_resolved = project_root.resolve()
+    impl_dir = snapshot_dir / "impl"
+    seen_dest: set[Path] = set()
+
+    for task_yaml in _iter_task_yamls(scope):
+        try:
+            raw = read_yaml(task_yaml)
+        except (OSError, ValueError):
+            # YAML ilegível/inválido — best-effort, pula este contrato.
+            continue
+        for entry in parse_allowed_files(raw):
+            candidate = (project_root / entry)
+            # Containment real (H-001): rejeita ../escape fora do projeto.
+            if not _is_contained(candidate, project_root_resolved):
+                continue
+            if not candidate.is_file():
+                # Impl ainda não escrita ou aponta dir — pula (best-effort).
+                continue
+            rel = candidate.resolve().relative_to(project_root_resolved)
+            dest = impl_dir / rel
+            if dest in seen_dest:
+                continue
+            seen_dest.add(dest)
+            _copy_one(candidate, dest, copied)
 
     return copied
