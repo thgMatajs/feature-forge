@@ -434,11 +434,12 @@ def test_render_source_ref_literal_token_not_mangled(
     )
     monkeypatch.setattr(plan, "_templates_dir", lambda _root: fake_templates)
     monkeypatch.setattr(plan, "_continue_or_pause", lambda slug, label: "continuar")
-    # Onda 2: este teste cobre o RENDER (single-pass), não o content-gate. O
-    # argv cru carrega um literal `{{screenshots_count}}` no source-ref que
-    # sobrevive de propósito — o gate (que roda APÓS o render) o veria como
-    # stub. Neutralizamos o gate aqui pra isolar o que está sob teste.
-    monkeypatch.setattr(plan, "_run_content_gate", lambda *a, **k: None)
+    # H-01 (desmascarado): o gate NÃO é mais neutralizado. A Wave A (intake
+    # free-text) é isenta do placeholder-scan de `.md`, então o
+    # `_run_content_gate` REAL roda e deixa o `{{screenshots_count}}` LITERAL
+    # do source-ref passar naturalmente — sem pausa. Antes do fix H-01 este
+    # teste precisava neutralizar o gate, o que mascarava o false-positive
+    # (gate-histérico). Agora o gate real prova a isenção (assert abaixo).
 
     feature_path = tmp_path / "feature"
     feature_path.mkdir()
@@ -453,7 +454,7 @@ def test_render_source_ref_literal_token_not_mangled(
             "{{screenshots_relative_paths_csv_or_none}}": "screenshots/tela.png",
         }
     )
-    plan._run_static_wave(
+    result = plan._run_static_wave(
         "A",
         (("intake.template.md", "feature-intake.md"),),
         "tela-bonsai",
@@ -467,3 +468,11 @@ def test_render_source_ref_literal_token_not_mangled(
     assert "source-ref: add {{screenshots_count}} widget" in rendered
     # A linha REAL de screenshots foi preenchida normalmente.
     assert "screenshots: 1 file(s) — screenshots/tela.png" in rendered
+    # H-01 compensatório: o gate REAL rodou (não-neutralizado) e o literal
+    # `{{...}}` no source-ref do intake NÃO disparou a pausa — a Wave A é
+    # isenta do placeholder-scan de `.md`. deferred=False prova que o
+    # false-positive (gate-histérico) está fechado.
+    assert result.deferred is False, (
+        "intake com {{...}} literal no source-ref NÃO deve pausar — Wave A é "
+        "isenta do placeholder-scan (H-01)"
+    )
