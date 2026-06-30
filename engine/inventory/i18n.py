@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from engine.detection._eval import _walk_recursive_pruned
 from engine.inventory._walk_cache import walk_project
 from engine.utils.paths import inventory_dir
 from engine.utils.yaml_io import read_yaml, write_yaml
@@ -97,8 +98,13 @@ def _detect_source_of_truth(project_root: Path) -> Optional[Path]:
     for candidate in _SOT_PATH_CANDIDATES:
         path = project_root / candidate
         if path.is_dir():
+            # BUG-5: poda `_SKIP_DIR_PARTS` na descida (hot-path — varre cada
+            # SOT candidate inteiro). O filtro `_should_skip` pós-walk é
+            # preservado (cobre o relativo a project_root, incl. dirs ocultos).
             json_files = [
-                p for p in path.rglob("*.json") if not _should_skip(p.relative_to(project_root))
+                p
+                for p in _walk_recursive_pruned(path, "*.json", _SKIP_DIR_PARTS)
+                if not _should_skip(p.relative_to(project_root))
             ]
             if json_files:
                 return path
@@ -107,7 +113,10 @@ def _detect_source_of_truth(project_root: Path) -> Optional[Path]:
 
 def _collect_locale_files(sot: Path) -> dict[str, list[Path]]:
     by_locale: dict[str, list[Path]] = defaultdict(list)
-    for path in sorted(sot.rglob("*.json")):
+    # BUG-5: `_walk_recursive_pruned` já ORDENA a saída (substitui o
+    # `sorted(...)`). skip_dirs vazio: o código original não filtrava skip-dirs
+    # aqui (opera sob `sot` já reduzido) — preserva o conjunto idêntico.
+    for path in _walk_recursive_pruned(sot, "*.json", ()):
         match = _LOCALE_FILE_RE.match(path.name)
         if not match:
             continue
@@ -151,7 +160,7 @@ def _detect_generated_outputs(project_root: Path) -> dict[str, list[str]]:
             continue
         rel = path.relative_to(project_root)
         outputs["ios"].append(str(rel))
-    for path in project_root.rglob("locales"):
+    for path in _walk_recursive_pruned(project_root, "locales", _SKIP_DIR_PARTS):
         rel = path.relative_to(project_root)
         if _should_skip(rel) or not path.is_dir():
             continue

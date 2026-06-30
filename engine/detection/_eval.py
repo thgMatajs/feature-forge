@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import functools
 import tomllib
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -63,13 +64,93 @@ _SKIP_DIRS = {
 }
 
 
+def _walk_recursive_pruned(
+    project_root: Path,
+    pattern: str,
+    skip_dirs: Iterable[str],
+) -> Iterator[Path]:
+    """Yield descendants matching ``pattern`` (rglob-style), podando ``skip_dirs``.
+
+    Substitui ``project_root.rglob(pattern)`` por um walk manual que NÃO desce
+    em diretórios cujo nome está em ``skip_dirs`` — mesma técnica de
+    poda-na-descida de ``_scan_build_gradle_for_coordinate``. Sem isso, em
+    monorepo real (node_modules 492M + .gradle 484M) o ``rglob`` materializa
+    centenas de milhares de paths antes do filtro agir, travando o init.
+
+    **Contrato no-behavior-change (conjunto):** o conjunto yielded é IDÊNTICO
+    ao de ``rglob(pattern)`` filtrado por ``skip_dirs``, porque podar um
+    skip-dir na descida remove exatamente os mesmos paths que o filtro
+    removeria depois (qualquer componente relativo em ``skip_dirs`` ⇒ path
+    ignorado). Yield inclui diretórios E arquivos, igual ao rglob.
+
+    **Contrato de ORDEM (H-001):** a saída é ORDENADA (sorted), tornando o
+    walk DETERMINÍSTICO. O ``rglob`` nativo yield em ordem de ``os.scandir``
+    (inode-order, dependente de filesystem) — sites que fazem ``break`` no
+    primeiro match (ex.: ``design_system._extract_tokens`` com 2 ``Spacing.kt``)
+    tinham vencedor não-determinístico. Ordenar fixa o vencedor sem alterar o
+    conjunto.
+
+    ``pattern == ""`` (vinda do glob literal ``"**/"``) replica EXATAMENTE o
+    comportamento de ``rglob("")`` / ``glob("**/")``: yield SÓ de diretórios
+    (incluindo o próprio ``project_root``), NÃO de arquivos. ``Path.match("")``
+    levantaria ValueError, então tratamos esse caso à parte. (O branch
+    `fix/pilot-init-perf` documentava "yield de TODOS os descendants", mas a
+    semântica real de ``rglob("")`` é só-diretórios — corrigido aqui.)
+
+    Symlinks de diretório não são seguidos (evita ciclos).
+
+    ``skip_dirs`` é PARÂMETRO (não o ``_SKIP_DIRS`` global): cada site passa o
+    seu set atual, preservando o no-behavior-change por-site (há 4 sets
+    divergentes no codebase — não unificados nesta onda, por design).
+    """
+    skip = set(skip_dirs)
+    dirs_only = pattern == ""
+    collected: list[Path] = []
+    # `rglob("")` inclui o próprio root (um diretório). Replicamos isso.
+    if dirs_only and project_root.is_dir():
+        collected.append(project_root)
+    stack: list[Path] = [project_root]
+    while stack:
+        current = stack.pop()
+        try:
+            entries = list(current.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            is_dir = entry.is_dir()
+            if is_dir and not entry.is_symlink():
+                # Poda na descida: não recursa em skip-dirs. Match contra o
+                # NOME do dir — equivale ao filtro "qualquer part relativa em
+                # skip_dirs".
+                if entry.name in skip:
+                    continue
+                stack.append(entry)
+            if dirs_only:
+                # Paridade com rglob("")/glob("**/"): só diretórios.
+                if is_dir:
+                    collected.append(entry)
+            elif entry.match(pattern):
+                collected.append(entry)
+    collected.sort()
+    yield from collected
+
+
 def _glob_any(project_root: Path, glob: str, needle: str | None) -> bool:
-    """Best-effort glob walk with depth + count caps to keep init responsive."""
+    """Best-effort glob walk with depth + count caps to keep init responsive.
+
+    Para padrões ``**/X`` usa ``_walk_recursive_pruned`` — walk manual que poda
+    ``_SKIP_DIRS`` NA DESCIDA, evitando materializar node_modules / .gradle
+    inteiros antes do filtro agir. Conjunto de paths considerados e valor de
+    retorno são idênticos ao código rglob-based anterior (no-behavior-change);
+    o cap de 800 + filtro relativo abaixo são preservados.
+    """
     if not glob:
         return False
     if glob.startswith("**/"):
         pattern = glob[3:]
-        iterator = project_root.rglob(pattern)
+        iterator: Iterator[Path] = _walk_recursive_pruned(
+            project_root, pattern, _SKIP_DIRS
+        )
     else:
         iterator = project_root.glob(glob)
     count = 0

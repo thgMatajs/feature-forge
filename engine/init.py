@@ -56,7 +56,7 @@ from engine.cards.resolver import resolve
 from engine.cards.snapshotter import snapshot_card
 from engine.detection import _eval as _detection_eval
 from engine.detection._axes import BACKEND_AXES
-from engine.detection._eval import _SKIP_DIRS
+from engine.detection._eval import _SKIP_DIRS, _walk_recursive_pruned
 from engine.detection.composer import Cell, Conflict, compose_backend_axes
 from engine.graph.builder import build_full
 from engine.inventory.conventions import (
@@ -322,16 +322,18 @@ def _count_needle_hits(project_root: Path, needle: str, limit: int = 50) -> int:
     count = 0
     patterns = ("*.kt", "build.gradle", "build.gradle.kts", "settings.gradle*")
     for pattern in patterns:
-        for path in project_root.rglob(pattern):
+        # BUG-5: `_walk_recursive_pruned` poda `_SKIP_DIRS` NA DESCIDA (não
+        # materializa node_modules/.gradle inteiros antes de filtrar). O filtro
+        # `startswith(".")` (H-002) PERMANECE pós-walk: cobre dirs ocultos
+        # ARBITRÁRIOS (.hidden etc.) que não estão nomeados em `_SKIP_DIRS`.
+        for path in _walk_recursive_pruned(project_root, pattern, _SKIP_DIRS):
             try:
                 parts = path.relative_to(project_root).parts
             except ValueError:
                 continue
-            # C16: filtra dirs ocultos (.git etc.) + monorepo culprits
-            # declarados em `_SKIP_DIRS` (node_modules, build, .gradle,
-            # Pods, DerivedData, dist). Sem isso, init trava em
-            # monorepos varrendo deps/build artifacts.
-            if any(part.startswith(".") or part in _SKIP_DIRS for part in parts):
+            # C16: filtra dirs ocultos (.git etc.) — o helper já podou
+            # `_SKIP_DIRS`; este filtro cobre o startswith(".") arbitrário.
+            if any(part.startswith(".") for part in parts):
                 continue
             try:
                 text = path.read_text(encoding="utf-8", errors="ignore")
