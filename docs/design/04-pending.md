@@ -177,10 +177,10 @@ Agrupado por prioridade. Plano de ataque por onda na spec
 
 - Progress feedback nos steps longos do init (backend ~86s, orphan ~75s).
 - graph "did-you-mean" no Q4 quando o módulo não casa.
-- evolve: tratar SIGPIPE/EOF no loop de render.
-- reconfigure: imprimir o dashboard só no 1º passo do loop.
-- `--help` reconhecido em todos os subcomandos (evolve, implement).
-- undo: exit 0 em no-op de `last`; raw: aviso de escopo no `rebuild-templates`.
+- evolve: tratar SIGPIPE/EOF no loop de render. → fechado (W-DEBT T8, verificado em Fase 1 BCD Track D)
+- reconfigure: imprimir o dashboard só no 1º passo do loop. → fechado (W-DEBT T8, verificado em Fase 1 BCD Track D)
+- `--help` reconhecido em todos os subcomandos (evolve, implement). → fechado (W-DEBT T8, verificado em Fase 1 BCD Track D)
+- undo: exit 0 em no-op de `last`; raw: aviso de escopo no `rebuild-templates`. → fechado (W-DEBT T8, verificado em Fase 1 BCD Track D)
 
 *Reentrar* os P2 dobrando nos pontos baratos de cada onda da spec.
 

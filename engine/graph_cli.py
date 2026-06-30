@@ -175,8 +175,19 @@ def _q_orphans(project_root: Path) -> None:
 
 
 def _q_symbols(project_root: Path) -> None:
+    import difflib
+
     module = question.ask_text("Nome do módulo Gradle (ex.: :feature:auth):")
     rows = gq.find_symbols_in_module(project_root, module)
+    if not rows:
+        # D2 (Fase 1): did-you-mean quando o módulo não casa.
+        known = gq.list_modules(project_root)
+        suggestions = difflib.get_close_matches(module, known, n=3)
+        if suggestions:
+            renderer.write(
+                f"Nenhum símbolo encontrado em '{module}'. "
+                f"Você quis dizer: {', '.join(suggestions)}?"
+            )
     _render_result(f"symbols({module})", rows)
 
 
@@ -387,6 +398,14 @@ def _run_json_query(
             if not args:
                 return _missing_arg("module", "symbols")
             result = gq.find_symbols_in_module(project_root, args[0])
+            if not result:
+                # D2 (Fase 1): did-you-mean — inclui suggestions no JSON.
+                import difflib as _difflib
+
+                known = gq.list_modules(project_root)
+                suggestions = _difflib.get_close_matches(args[0], known, n=3)
+                if suggestions:
+                    result = {"symbols": [], "suggestions": suggestions}
         elif key == "5":
             if not args:
                 return _missing_arg("slug", "ds-used-in")

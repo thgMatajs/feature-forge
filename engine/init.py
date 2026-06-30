@@ -225,6 +225,38 @@ def _discovery_cache_path(project_root: Path) -> Path:
     return claude_dir(project_root) / _DISCOVERY_CACHE_NAME
 
 
+def _discovery_source_fingerprint(project_root: Path) -> str:
+    """Fingerprint barato do estado top-level do projeto (B2 — hardening).
+
+    Hash do (nome, mtime_ns) dos filhos de 1º nível do project_root,
+    EXCLUINDO o diretório `.claude/` (gerenciado pelo forge — não é source do
+    usuário; o cache fica lá e causaria instabilidade circular no fingerprint).
+    Captura adições/remoções top-level SEM re-varrer a árvore (o custo que o
+    cache evita). Trade-off consciente: não detecta edição PROFUNDA que não
+    muda o mtime de um dir-pai top-level — cinto-e-suspensório sobre o
+    lifecycle (não substituto). O lifecycle de checkpoint segue sendo a
+    garantia primária; o fingerprint é o hardening fora do replay mecânico.
+    """
+    import hashlib
+
+    _EXCLUDED = {".claude"}
+    h = hashlib.sha256()
+    try:
+        for child in sorted(project_root.iterdir(), key=lambda p: p.name):
+            if child.name in _EXCLUDED:
+                continue
+            try:
+                h.update(child.name.encode())
+                h.update(b"\x00")
+                h.update(str(child.stat().st_mtime_ns).encode())
+                h.update(b"\x00")
+            except OSError:
+                continue
+    except OSError:
+        return ""
+    return h.hexdigest()
+
+
 def _save_discovery_cache(
     project_root: Path,
     ds_inv: "DesignSystemInventory | None",
@@ -240,7 +272,10 @@ def _save_discovery_cache(
     Não cacheia objetos ricos inteiros (DSComponent/I18nKey) — só o necessário
     pra reproduzir fielmente o output, mantendo o YAML enxuto e round-trippável.
     """
-    payload: dict[str, Any] = {"schema-version": 1}
+    payload: dict[str, Any] = {
+        "schema-version": 1,
+        "source-fingerprint": _discovery_source_fingerprint(project_root),
+    }
     if ds_inv is not None:
         payload["design-system"] = {
             "raw": ds_inv.raw,
@@ -266,28 +301,33 @@ def _load_discovery_cache(
     consome (contagens + `.raw`). `components`/`keys` viram listas de
     placeholders do tamanho correto — o downstream só usa `len(...)` deles.
 
-    **Invariante de correção (WR-03 — sem fingerprint de conteúdo, por design):**
-    este cache NÃO carrega um fingerprint (mtime/hash) do source do projeto.
-    A correção está garantida pelo LIFECYCLE, não por revalidação de conteúdo:
+    **Invariante de correção (WR-03 — com fingerprint barato top-level):**
+    O lifecycle de checkpoint segue sendo a garantia primária:
 
       - O cache só é CARREGADO sob `host_is_replaying` (loop mecânico de replay):
-        o host está respondendo prompts in-flight, NÃO editando source. O replay
-        é a MESMA invocação lógica — o source é tratado como imutável durante a
-        janela em que o cache vive.
+        o host está respondendo prompts in-flight, NÃO editando source.
       - O lifecycle é ATADO ao checkpoint: `_clear_checkpoint` →
-        `_clear_discovery_cache` (discard / abort / novo-init limpam). Logo o
-        cache nunca sobrevive a uma transição que poderia mudar o source.
+        `_clear_discovery_cache` (discard / abort / novo-init limpam).
 
-    O único modo de servir stale é o anti-padrão "editar source no MEIO do
-    replay mecânico", que contradiz o modelo de loop. Fingerprint de conteúdo
-    (cinto + suspensório contra esse anti-padrão) é hardening FUTURO deliberado
-    — registrado como follow-on no doc-sync de merge-back, NÃO implementado aqui.
+    Adicionalmente (B2 — Fase 1): o cache armazena um fingerprint barato
+    top-level (`_discovery_source_fingerprint`) para invalidação cinto-e-
+    suspensório fora do replay mecânico. Caches pré-B2 sem `source-fingerprint`
+    são automaticamente tratados como cache-miss (seguro: re-roda discovery
+    uma vez e re-popula com fingerprint).
     """
     path = _discovery_cache_path(project_root)
     if not path.exists():
         return None
     data = read_yaml_or_default(path, None)
     if not isinstance(data, dict):
+        return None
+
+    # B2 (Fase 1): cache-miss se o fingerprint do source divergiu do gravado.
+    # Hardening cinto-e-suspensório sobre o lifecycle de checkpoint.
+    # Caches pré-B2 sem 'source-fingerprint' → cache-miss seguro (re-roda
+    # discovery uma vez, re-popula com fingerprint).
+    cached_fp = data.get("source-fingerprint")
+    if cached_fp != _discovery_source_fingerprint(project_root):
         return None
 
     # Imports locais: evita custo no import-time do módulo + mantém a fronteira
@@ -2464,7 +2504,9 @@ def _run_pipeline(project_root: Path) -> int:
     card_index = _index_cards(canonical_cards)
 
     normalized_for_composer = _normalize_cards_for_composer(canonical_cards)
-    composer_result = compose_backend_axes(project_root, normalized_for_composer)
+    # D1 (Fase 1): spinner gateado por TTY (H-001 — zero-stdout em não-TTY).
+    # B3 (Fase 1): resultado pré-computado passado ao handler (dedup).
+    composer_result = _scan_backend_with_spinner(project_root, normalized_for_composer)
     has_signals = any(
         cell is not None
         for axis_map in composer_result.values()
@@ -2477,9 +2519,12 @@ def _run_pipeline(project_root: Path) -> int:
     backend_cells: dict[str, Any] = {}
     if has_signals:
         # Brownfield path — W7.1 handler.
+        # B3 (Fase 1): passa composer_result pré-computado pra evitar recompute
+        # duplo no hot-path (a mesma varredura já foi feita acima).
         result = _handle_backend_multi_axis_brownfield(
             project_root=project_root,
             active_cards=canonical_cards,
+            composer_result=composer_result,
         )
         backend_cells = _composer_result_to_cells(result.get("composer_result") or {})
         bundle_cards = list(result.get("selected_card_names") or [])
@@ -2632,7 +2677,8 @@ def _run_pipeline(project_root: Path) -> int:
         overlay_catalog = None
 
     if overlay_catalog is not None:
-        orphans = _check_orphan_signals(project_root, activated, overlay_catalog)
+        # D1 (Fase 1): spinner gateado por TTY (H-001 — zero-stdout em não-TTY).
+        orphans = _scan_orphan_with_spinner(project_root, activated, overlay_catalog)
         if orphans:
             decision = _surface_three_paths(orphans, project_root=project_root)
             if decision.choice == "abort":
@@ -3195,6 +3241,46 @@ def _card_platforms(card: CardManifest) -> list[str]:
     return ["android", "ios", "kmp"]
 
 
+def _scan_backend_with_spinner(
+    project_root: Path,
+    normalized: list[dict[str, Any]],
+) -> "dict[str, dict[str, Cell | None]]":
+    """Roda compose_backend_axes com spinner gateado por TTY (D1 — Fase 1).
+
+    Embute o gate `_is_tty` OBRIGATÓRIO: em não-TTY a varredura roda direto,
+    sem spinner, sem nenhuma escrita em stdout — preserva o transcript IA-first
+    (Decisão 22: stdout limpo no loop mecânico). Em TTY, envolve a varredura
+    num spinner mentor-calmo (label "backend — varrendo signals").
+
+    Motivo do helper fino em vez de if/else inline: evita duplicar o padrão
+    nos dois lugares que chamam compose_backend_axes (reuso-first); facilita
+    monkeypatching nos testes (gate + scan como contrato observável separado).
+    """
+    if renderer._is_tty(sys.stdout):
+        with ui_progress.spinner("backend — varrendo signals"):
+            return compose_backend_axes(project_root, normalized)
+    else:
+        return compose_backend_axes(project_root, normalized)
+
+
+def _scan_orphan_with_spinner(
+    project_root: Path,
+    activated: list,
+    overlay_catalog: Any,
+) -> list:
+    """Roda _check_orphan_signals com spinner gateado por TTY (D1 — Fase 1).
+
+    Mesmo contrato de gate que `_scan_backend_with_spinner`: em não-TTY a
+    varredura roda direto, sem spinner, sem escrita em stdout — preserva o
+    transcript IA-first. Em TTY, envolve a varredura num spinner.
+    """
+    if renderer._is_tty(sys.stdout):
+        with ui_progress.spinner("verificando orphan signals"):
+            return _check_orphan_signals(project_root, activated, overlay_catalog)
+    else:
+        return _check_orphan_signals(project_root, activated, overlay_catalog)
+
+
 def _normalize_cards_for_composer(
     cards: list[CardManifest],
 ) -> list[dict[str, Any]]:
@@ -3333,18 +3419,19 @@ def _handle_backend_multi_axis_brownfield(
     *,
     project_root: Path,
     active_cards: list[CardManifest],
+    composer_result: "dict[str, dict[str, Cell | None]] | None" = None,
 ) -> dict[str, Any]:
     """Brownfield multi-axis backend handler — DET-6 W7.1, cobre AC-6.
 
-    Substitui (em projetos com signals matching) o legacy backend picker
-    inline em ``_run_pipeline`` linha ~1264. W7.1 só ADICIONA esta função;
-    o wiring real (decisão de qual handler chamar) entra em W7.4 com a
-    remoção do legacy. Até lá, esta função é chamada apenas pelo
-    integration test ``tests/integration/test_init_brownfield_multi_axis.py``.
+    Chamado por ``_run_pipeline`` no hot-path brownfield ativo (Step 5, L2520).
+    O wiring entrou em W7.4 (não é mais chamada isolada pelo integration test).
 
     Fluxo:
       1. Roda ``compose_backend_axes`` (W5) sobre ``active_cards``
-         normalizados pra shape do composer.
+         normalizados pra shape do composer. Se ``composer_result`` já foi
+         pré-computado pelo caller (B3 — dedup: evita recompute duplo no
+         hot-path ativo), reutiliza sem re-varrer. Integration tests que
+         chamam o handler isolado passam o default ``None``.
       2. Detecta uniformity per axis (adaptive UX — SPEC §"Adaptive UX").
       3. Renderiza tabela (axis × platform → card / conflict / null).
       4. Emit ``ask_three_paths`` (Phase A) com 3 opções:
@@ -3364,6 +3451,10 @@ def _handle_backend_multi_axis_brownfield(
     Args:
         project_root: raiz do projeto sob análise (composer + signals).
         active_cards: lista de ``CardManifest`` que o pipeline já tem em mão.
+        composer_result: resultado pré-computado de ``compose_backend_axes``
+            (B3 — dedup). Se ``None`` (default), o handler computa internamente.
+            O caller (``_run_pipeline``) passa o resultado já computado pra
+            ``has_signals`` — elimina o duplo-custo no hot-path brownfield.
 
     Returns:
         Dict com keys:
@@ -3380,9 +3471,12 @@ def _handle_backend_multi_axis_brownfield(
     """
     # Cycle broken in Phase B (PR #13 review): _eval_detection_signals
     # moved to engine.detection._eval, composer now imports from there.
-    # ``compose_backend_axes`` é import top-level deste módulo.
-    normalized = _normalize_cards_for_composer(active_cards)
-    composer_result = compose_backend_axes(project_root, normalized)
+    # B3 (Fase 1): reutiliza composer_result pré-computado quando disponível
+    # (evita o duplo-custo no hot-path brownfield ativo — L2507 + aqui).
+    # Integration tests que chamam o handler isolado passam None → recomputa.
+    if composer_result is None:
+        normalized = _normalize_cards_for_composer(active_cards)
+        composer_result = compose_backend_axes(project_root, normalized)
     uniformity = _detect_axis_uniformity(composer_result)
     table = _render_axes_table(composer_result, uniformity)
 

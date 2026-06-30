@@ -226,3 +226,38 @@ def test_discovery_not_recomputed_on_mechanical_reinvoke(monkeypatch, tmp_path):
     assert counters == {"ds": 0, "i18n": 0, "conv": 0}, (
         f"extractors re-rodaram no loop mecânico apesar do cache: {counters}"
     )
+
+
+# ── B2 (Fase 1): content-fingerprint hardening ────────────────────────────────
+
+
+def test_discovery_cache_invalidated_by_content_fingerprint(tmp_path):
+    """B2 (Fase 1): se o fingerprint do source mudou, o cache é cache-miss
+    mesmo com o arquivo presente — hardening fora do replay mecânico."""
+    # Semeia um cache válido com fingerprint do estado atual.
+    init._save_discovery_cache(
+        tmp_path,
+        None,
+        None,
+        ConventionsInventory(raw={"k": "v"}),
+    )
+    # Carrega com o MESMO fingerprint → cache-hit.
+    assert init._load_discovery_cache(tmp_path) is not None
+
+    # Muda o conteúdo da árvore (novo dir top-level) → fingerprint diverge.
+    (tmp_path / "novo-modulo").mkdir()
+
+    # Agora o load deve ser cache-miss (fingerprint não casa).
+    assert init._load_discovery_cache(tmp_path) is None
+
+
+def test_discovery_cache_hit_when_fingerprint_matches(tmp_path):
+    """Sem mudança de conteúdo entre save e load → cache-hit (preserva o ganho
+    de não re-varrer no replay mecânico)."""
+    init._save_discovery_cache(
+        tmp_path, None, None, ConventionsInventory(raw={"k": "v"})
+    )
+    loaded = init._load_discovery_cache(tmp_path)
+    assert loaded is not None
+    _, _, conv = loaded
+    assert conv is not None and conv.raw == {"k": "v"}
