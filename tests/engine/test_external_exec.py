@@ -59,7 +59,8 @@ def test_run_timeout_is_degraded(tmp_path: Path) -> None:
     res = run_external_tool([sys.executable, str(stub)], tmp_path, timeout=1)
     assert res.status == "degraded"
     assert res.exit_code is None
-    assert "timeout" in res.skipped_reason.lower() or "timeout" in res.stderr.lower()
+    # No path TimeoutExpired, stderr=="" e skipped_reason sempre carrega "timeout".
+    assert "timeout" in res.skipped_reason.lower()
 
 
 def test_run_oserror_is_degraded(tmp_path: Path) -> None:

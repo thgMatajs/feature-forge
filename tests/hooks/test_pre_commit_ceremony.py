@@ -15,8 +15,6 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HOOK = REPO_ROOT / ".claude" / "hooks" / "pre-commit-feature-forge.sh"
 # Prefixo literal do heredoc de BLOCK (espelha pre-commit-feature-forge.sh).

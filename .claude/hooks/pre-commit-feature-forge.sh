@@ -2,7 +2,7 @@
 # feature-forge — git pre-commit (canonical, called by hooks/git-pre-commit).
 # Two checks:
 #   (1) HARD BLOCK: docs/design/01-decisions.md staged without "Revisita
-#       decisão" in staged CHANGELOG.md → exit 1.
+#       decisão"/"Nova decisão" ceremony in staged CHANGELOG.md → exit 1.
 #   (2) SOFT WARNING: code "vivo" staged sem CHANGELOG/README staged.
 #
 # Override consciente: git commit --no-verify (registra bypass deliberado).
