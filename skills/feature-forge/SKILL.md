@@ -136,8 +136,17 @@ response, move tier-1 pro mem, e exibe a proposta de 3-caminhos (G1/G2).
 | `forge init` | install no projeto (interativo via intent loop) |
 | `forge plan "<ticket\|frase\|slug>"` | planejamento — ver abaixo |
 | `forge implement` | dirige a execução das waves |
-| `forge verify` | cascade de validators |
-| `forge status` | estado da feature |
+| `forge verify` | cascade de validators (gate "verde antes de pronto") |
+| `forge status` | board read-only do projeto (features, memória, git, qa verdict) |
+| `forge qa "<slug\|paranoid>"` | red-team adversarial da feature; emite verdict (PASS/BLOCK) |
+| `forge doctor` | diagnóstico do setup (paths, version-lock, secrets-tools, .bak) |
+| `forge reconfigure` | re-ajusta config/cards/external-deps do projeto |
+| `forge graph` | consultas Q1–Q17 ao grafo (reuso, dependências, impacto) |
+| `forge memory` | drena/consulta a memória (mem) — tier-1 e proposals |
+| `forge evolve` | revisa e aplica proposed-evolutions (3-caminhos) |
+| `forge undo` | reverte a última operação destrutiva (last/reconfigure) |
+| `forge raw` | utilitários de manutenção do FORGE_HOME (ex.: rebuild-templates) |
+| `forge upgrade` | atualiza o forge no FORGE_HOME (use `--dry-run` pra preview) |
 
 **Ao rodar `forge plan`:** o comando é interativo wave-a-wave. Duas coisas
 acontecem interleaved — não confunda:

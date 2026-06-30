@@ -56,7 +56,13 @@ swiftui_validations:
     command:  "./scripts/swift-style.sh --lint"
     severity: error
   - name:     ios-build
-    command:  "./scripts/run-ios-simulator.sh --build-only"
+    # BUG-IMPL-2 (T5): NÃO assuma um script fixo (run-ios-simulator.sh pode não
+    # existir no projeto). Derive o build command do projeto: prefira o
+    # xcodebuild scheme do inventory; só use um script se ele realmente existir
+    # no repo. O agente preenche {ios_build_command} a partir de
+    # inventory.conventions.build (scheme/workspace) — não chuta.
+    command:  "{ios_build_command}"
+    derive_from: "inventory.conventions.build (xcodebuild -scheme <Scheme> build) ou script de build real do repo, se existir"
     severity: error
   - name:     card-validator-no-suppress
     command:  "python3 .claude/cards/swiftui-screens/validators/check-no-swiftlint-disable.py"

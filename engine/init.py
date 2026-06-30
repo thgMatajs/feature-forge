@@ -1075,6 +1075,84 @@ def _merge_forge_hooks_into_settings(project_root: Path) -> None:
 # `templates/AGENTS.md.template` recebe o marker prefixado no install.
 _FORGE_DRIVER_MARKER = "<!-- FORGE_AI_DRIVER -->"
 
+# BUG-4/MEM-5 (T4): marker pra o bloco auto-gerido do .claude/.gitignore.
+# Append-only + idempotente (mesma filosofia do AGENTS.md driver).
+_FORGE_GITIGNORE_MARKER = "# >>> feature-forge — auto-managed (derived artifacts) >>>"
+_FORGE_GITIGNORE_END = "# <<< feature-forge — auto-managed <<<"
+
+
+def _write_claude_gitignores(project_root: Path) -> None:
+    """Semeia os .gitignore que mantêm os artefatos derivados fora do git.
+
+    Dois alvos (BUG-4/MEM-5):
+
+    - ``.claude/forge/.gitignore`` — estado interno do forge (checkpoints,
+      drafts, ``state/``, ``*.bak``). Reescrito (canonical wins, conteúdo
+      totalmente gerido pelo forge neste sub-namespace).
+    - ``.claude/.gitignore`` — irmãos derivados de ``forge/`` que um
+      ``git add .`` commitaria por engano: ``graph.db`` (+ working files
+      SQLite), ``cards/``, ``memory/``, ``locks/`` e o
+      ``.memory-cli-checkpoint.yaml`` do mem-CLI. Este alvo é
+      **append-only e idempotente**: se o usuário já tem um ``.gitignore``
+      em ``.claude/``, o conteúdo dele é preservado e o bloco do forge é
+      anexado via marker (no-op se o marker já existe).
+
+    Os nomes a ignorar derivam dos helpers canônicos de ``paths`` (não
+    hardcode que drifta do layout) — exceto ``locks/`` e o checkpoint do
+    mem-CLI, que são artefatos de runtime do mem vendorizado sob ``.claude/``.
+    """
+    # ── Alvo 1: .claude/forge/.gitignore (gerido pelo forge) ────────────────
+    forge_gi = forge_dir(project_root) / ".gitignore"
+    ensure_dir(forge_gi.parent)
+    forge_gi.write_text(
+        "# feature-forge — auto-managed\n"
+        "state/\n"
+        ".init-checkpoint.yaml\n"
+        ".reconfigure-draft.yaml\n"
+        ".evolve-checkpoint.yaml\n"
+        "*.bak\n",
+        encoding="utf-8",
+    )
+
+    # ── Alvo 2: .claude/.gitignore (append-only, cobre os irmãos derivados) ──
+    claude = claude_dir(project_root)
+    graph_db_name = graph_db_path(project_root).name  # canonical (paths helper)
+    cards_name = cards_dir(project_root).name
+    memory_name = memory_dir(project_root).name
+    block = "\n".join(
+        [
+            _FORGE_GITIGNORE_MARKER,
+            f"{graph_db_name}",
+            # SQLite sidecars. O graph.db roda em WAL mode (engine/assets/mem),
+            # que cria -wal E -shm; -journal cobre o rollback-journal mode.
+            # MED-02: -shm faltava → um `git add .` commitava o sidecar.
+            f"{graph_db_name}-journal",
+            f"{graph_db_name}-wal",
+            f"{graph_db_name}-shm",
+            f"{cards_name}/",
+            f"{memory_name}/",
+            "locks/",
+            ".memory-cli-checkpoint.yaml",
+            _FORGE_GITIGNORE_END,
+            "",
+        ]
+    )
+    claude_gi = claude / ".gitignore"
+    ensure_dir(claude)
+    if not claude_gi.exists():
+        claude_gi.write_text(block, encoding="utf-8")
+        return
+    try:
+        existing = claude_gi.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError):
+        # Não-decodável → trata como do usuário; anexa em modo binário-safe
+        # seria arriscado. Preserva e não anexa (raro; o usuário gerencia).
+        return
+    if _FORGE_GITIGNORE_MARKER in existing:
+        return  # idempotente — bloco já presente
+    sep = "" if existing.endswith("\n") else "\n"
+    claude_gi.write_text(existing + sep + block, encoding="utf-8")
+
 
 def _source_template_name(target: str) -> str:
     """Mapeia o `target` de um card (nome de OUTPUT) pro template-fonte.
@@ -2665,21 +2743,14 @@ def _run_pipeline(project_root: Path) -> int:
 
     checkpoint.step = "step-12.6-gitignore"
 
-    # ── Step 12.6 — .claude/forge/.gitignore ────────────────────────────────
-    # Auto-managed gitignore per docs/design/05-filesystem-layout.md so that
-    # forge-internal state (init checkpoints, reconfigure drafts) stays out
-    # of git. Task 0.10 (v1.3 pilot-ready): vive em ``.claude/forge/``.
-    gitignore_path = forge_dir(project_root) / ".gitignore"
-    gitignore_content = (
-        "# feature-forge — auto-managed\n"
-        "state/\n"
-        ".init-checkpoint.yaml\n"
-        ".reconfigure-draft.yaml\n"
-        ".evolve-checkpoint.yaml\n"
-        "*.bak\n"
-    )
-    ensure_dir(gitignore_path.parent)
-    gitignore_path.write_text(gitignore_content, encoding="utf-8")
+    # ── Step 12.6 — .gitignore (forge sub-namespace + irmãos derivados) ──────
+    # Auto-managed gitignores per docs/design/05-filesystem-layout.md.
+    # BUG-4/MEM-5 (T4): além do ``.claude/forge/.gitignore`` (estado interno),
+    # semeia um ``.claude/.gitignore`` append-only cobrindo os artefatos
+    # derivados que vivem como irmãos de ``forge/`` (graph.db, cards/, memory/,
+    # locks/, .memory-cli-checkpoint.yaml) — senão um ``git add .`` commitava
+    # ~2.3 MB de graph.db + snapshots.
+    _write_claude_gitignores(project_root)
 
     checkpoint.step = "step-14-history"
 

@@ -131,6 +131,14 @@ def _rebuild_templates(argv: list[str]) -> int:
     target fails to render, 2 when there is no project / no cards.
     """
     del argv
+    # BUG-RAW-1 (T8): rebuild-templates muta o FORGE_HOME (instalação do forge),
+    # NÃO o projeto consumidor. Avisa o escopo antes de mutar — mesma filosofia
+    # do guard de escopo do upgrade (comando que muta fora do projeto-alvo avisa).
+    print(
+        "forge raw rebuild-templates: opera no FORGE_HOME "
+        f"({forge_home()}) — re-mescla contribuições de card nos templates da "
+        "INSTALAÇÃO do forge, não no seu projeto."
+    )
     project_root = try_find_project_root()
     if project_root is None:
         print("forge raw rebuild-templates: no project root", file=sys.stderr)

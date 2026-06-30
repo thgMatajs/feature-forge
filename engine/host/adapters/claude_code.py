@@ -427,6 +427,13 @@ class ClaudeCodeAdapter(HostAdapter):
             # ``default=None`` → literal "null". See docstring.
             "default": "null" if default is None else default,
             "allow-pause": "true" if allow_pause else "false",
+            # BUG-G2/MEM-4 (T2): auto-descritivo — anuncia a wire-version que a
+            # response deve declarar. Sem isto, um host ingênuo omitia
+            # ``schema-version`` e tomava exit 1 silencioso no leitor estrito
+            # de response (intent_state._check_schema_version). O leitor segue
+            # estrito por contrato (IN-03 holistic review W-DEBT); o marker é
+            # quem ensina o host a devolver o campo certo (Tema 4).
+            "response-schema-version": str(_SCHEMA_VERSION),
         }
         # Optional Task 0.7a attributes — present only when set, matching
         # the conditional payload behaviour of question._build_pending.

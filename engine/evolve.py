@@ -379,6 +379,35 @@ def _filter_rejected(
 
 def run(argv: list[str]) -> int:
     """Entry point. Detects `.evolve-checkpoint.yaml` for resume support."""
+    # BUG-EVOLVE-2 (T8): reconhece --help/-h antes do fluxo normal (mesma forma
+    # do upgrade.run). Sem isto, --help caía no loop e confundia o usuário.
+    if argv and argv[0] in ("--help", "-h"):
+        sys.stdout.write(
+            "forge evolve — revisa e aplica proposed-evolutions, uma por uma.\n"
+            "\n"
+            "Uso: forge evolve\n"
+            "\n"
+            "Sem flags (Decisão 10). Abre cada proposta pendente e oferece\n"
+            "3-caminhos (aplicar / deferir / rejeitar). Resume de\n"
+            ".claude/.evolve-checkpoint.yaml quando há pausa anterior.\n"
+        )
+        return 0
+
+    try:
+        return _run_evolve(argv)
+    except BrokenPipeError:
+        # BUG-EVOLVE-1 (T8): SIGPIPE/EOF (ex.: `forge evolve | head`) fechava o
+        # stdout cedo e o loop de render estourava BrokenPipe (exit 143). Trata
+        # como saída limpa — o consumidor já fechou o pipe de propósito.
+        try:
+            sys.stdout.close()
+        except OSError:
+            pass
+        return 0
+
+
+def _run_evolve(argv: list[str]) -> int:
+    """Núcleo do evolve (extraído pra o wrapper de --help/BrokenPipe envolvê-lo)."""
     _ = argv
 
     try:
