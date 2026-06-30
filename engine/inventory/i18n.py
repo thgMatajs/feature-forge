@@ -144,8 +144,9 @@ def _pick_primary_locale(locales: list[str]) -> str:
 
 
 def _detect_generated_outputs(project_root: Path) -> dict[str, list[str]]:
-    # Usa walk cache compartilhado para .xml/.strings; pasta `locales` ainda via rglob
-    # (cache é keyed por suffix, não por nome de diretório).
+    # Usa walk cache compartilhado para .xml/.strings; pasta `locales` via
+    # `_walk_recursive_pruned` (poda `_SKIP_DIR_PARTS` na descida) — o walk cache
+    # é keyed por suffix, não por nome de diretório, daí o caminho separado.
     outputs: dict[str, list[str]] = {"android": [], "ios": [], "web": []}
     xml_paths = walk_project(str(project_root), (".xml",))
     for path in xml_paths:

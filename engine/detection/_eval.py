@@ -77,9 +77,10 @@ def _walk_recursive_pruned(
     monorepo real (node_modules 492M + .gradle 484M) o ``rglob`` materializa
     centenas de milhares de paths antes do filtro agir, travando o init.
 
-    **Contrato no-behavior-change (conjunto):** o conjunto yielded é IDÊNTICO
-    ao de ``rglob(pattern)`` filtrado por ``skip_dirs``, porque podar um
-    skip-dir na descida remove exatamente os mesmos paths que o filtro
+    **Contrato no-behavior-change (conjunto), com ressalva de symlink-dirs:** o
+    conjunto yielded é idêntico ao de ``rglob(pattern)`` filtrado por
+    ``skip_dirs`` EXCETO por diretórios symlinkados — ver "Symlinks" abaixo.
+    Podar um skip-dir na descida remove exatamente os mesmos paths que o filtro
     removeria depois (qualquer componente relativo em ``skip_dirs`` ⇒ path
     ignorado). Yield inclui diretórios E arquivos, igual ao rglob.
 
@@ -97,7 +98,18 @@ def _walk_recursive_pruned(
     `fix/pilot-init-perf` documentava "yield de TODOS os descendants", mas a
     semântica real de ``rglob("")`` é só-diretórios — corrigido aqui.)
 
-    Symlinks de diretório não são seguidos (evita ciclos).
+    **Symlinks (WR-01 — divergência consciente do rglob no piso de runtime):**
+    diretórios symlinkados NÃO são seguidos (``not entry.is_symlink()``). Isso é
+    INTENCIONAL — anti-ciclo (symlink apontando pra um ancestral travaria o
+    walk) e contenção ao project tree (um symlink pra fora não vaza o scan).
+    Consequência: NÃO há paridade incondicional de conjunto com ``rglob`` no
+    piso ``requires-python = ">=3.11"``. No CPython 3.13 (gh-77609) o ``rglob``
+    também parou de seguir symlink-dirs por default → paridade exata. Mas em
+    3.11/3.12 o ``rglob`` SEGUIA symlink-dirs, então sob esses runtimes este
+    helper yield um conjunto MENOR (não vê arquivos só alcançáveis via um
+    symlink-dir). Decisão: mantemos o não-seguir (mais seguro) e documentamos a
+    divergência aqui em vez de reintroduzir symlink-following — gatilho realista
+    é baixo (repos mobile raramente symlinkam dirs pra dentro da árvore de scan).
 
     ``skip_dirs`` é PARÂMETRO (não o ``_SKIP_DIRS`` global): cada site passa o
     seu set atual, preservando o no-behavior-change por-site (há 4 sets

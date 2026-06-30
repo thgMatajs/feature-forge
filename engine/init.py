@@ -265,6 +265,23 @@ def _load_discovery_cache(
     Reconstrói os inventories preservando exatamente os campos que o pipeline
     consome (contagens + `.raw`). `components`/`keys` viram listas de
     placeholders do tamanho correto — o downstream só usa `len(...)` deles.
+
+    **Invariante de correção (WR-03 — sem fingerprint de conteúdo, por design):**
+    este cache NÃO carrega um fingerprint (mtime/hash) do source do projeto.
+    A correção está garantida pelo LIFECYCLE, não por revalidação de conteúdo:
+
+      - O cache só é CARREGADO sob `host_is_replaying` (loop mecânico de replay):
+        o host está respondendo prompts in-flight, NÃO editando source. O replay
+        é a MESMA invocação lógica — o source é tratado como imutável durante a
+        janela em que o cache vive.
+      - O lifecycle é ATADO ao checkpoint: `_clear_checkpoint` →
+        `_clear_discovery_cache` (discard / abort / novo-init limpam). Logo o
+        cache nunca sobrevive a uma transição que poderia mudar o source.
+
+    O único modo de servir stale é o anti-padrão "editar source no MEIO do
+    replay mecânico", que contradiz o modelo de loop. Fingerprint de conteúdo
+    (cinto + suspensório contra esse anti-padrão) é hardening FUTURO deliberado
+    — registrado como follow-on no doc-sync de merge-back, NÃO implementado aqui.
     """
     path = _discovery_cache_path(project_root)
     if not path.exists():
