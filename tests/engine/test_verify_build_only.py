@@ -47,7 +47,7 @@ def android_project(tmp_path: Path) -> Path:
 # ── A2 Step 1 (RED): android build pass ──────────────────────────────────────
 
 def test_build_android_pass(android_project, monkeypatch):
-    """android com gradlew presente + exit 0 → build gate pass."""
+    """android com gradlew presente + exit 0 → build gate pass (gate name: build:android)."""
     monkeypatch.setattr(verify, "run_external_tool", _fake_run("pass", exit_code=0))
     config = {
         "platforms": {"active": ["android"]},
@@ -56,7 +56,8 @@ def test_build_android_pass(android_project, monkeypatch):
 
     results = verify._run_native_gates(config, android_project, interactive=False)
 
-    build = [r for r in results if r.name == "build"]
+    # FIX #2: gate name é agora por-plataforma (build:android, build:ios, etc.)
+    build = [r for r in results if r.name == "build:android"]
     assert len(build) == 1
     assert build[0].status == "pass"
 
@@ -71,7 +72,7 @@ def test_build_failure_maps_to_warn(android_project, monkeypatch):
     }
     build = next(
         r for r in verify._run_native_gates(config, android_project, interactive=False)
-        if r.name == "build"
+        if r.name == "build:android"
     )
     assert build.status == "warn"
 
@@ -87,13 +88,13 @@ def test_build_failure_opt_in_fail(android_project, monkeypatch):
     }
     build = next(
         r for r in verify._run_native_gates(config, android_project, interactive=False)
-        if r.name == "build"
+        if r.name == "build:android"
     )
     assert build.status == "fail"
 
 
 def test_build_web_only_produces_no_build_gate(tmp_path, monkeypatch):
-    """web não tem build-only no Nível 1 → nenhum _ValidatorResult 'build'."""
+    """web não tem build-only no Nível 1 → nenhum _ValidatorResult com prefixo 'build:'."""
     monkeypatch.setattr(
         verify, "run_external_tool", _fake_run("pass", exit_code=0)
     )
@@ -102,7 +103,7 @@ def test_build_web_only_produces_no_build_gate(tmp_path, monkeypatch):
         "native-gates": {"build": {"enabled": True}, "ktlint": {"enabled": False}},
     }
     results = verify._run_native_gates(config, tmp_path, interactive=False)
-    assert [r for r in results if r.name == "build"] == []
+    assert [r for r in results if r.name.startswith("build")] == []
 
 
 def test_build_toolchain_absent_skips(tmp_path, monkeypatch):
@@ -114,7 +115,7 @@ def test_build_toolchain_absent_skips(tmp_path, monkeypatch):
     }
     build = next(
         r for r in verify._run_native_gates(config, tmp_path, interactive=False)
-        if r.name == "build"
+        if r.name == "build:ios"
     )
     assert build.status == "skipped"
     assert "não foi reprovada" in build.message
@@ -132,7 +133,7 @@ def test_build_timeout_maps_to_degraded(android_project, monkeypatch):
     }
     build = next(
         r for r in verify._run_native_gates(config, android_project, interactive=False)
-        if r.name == "build"
+        if r.name == "build:android"
     )
     assert build.status == "degraded"
     assert "timeout" in build.message.lower()
@@ -185,7 +186,8 @@ def test_ktlint_and_build_both_merge_into_run_scope(android_project, monkeypatch
     payload = _json.loads(capsys.readouterr().out)
     names = [v["name"] for v in payload["validators"]]
     assert "ktlint" in names
-    assert "build" in names
+    # FIX #2: gate name agora é por-plataforma (build:android para stack android)
+    assert any(n.startswith("build:") for n in names), f"Esperado gate 'build:*', obtido: {names}"
     assert payload["overall"] == "pass"
     assert exit_code == 0
 
@@ -272,7 +274,7 @@ def test_map_external_result_message_when_fail_on_violation_false(android_projec
     }
     build = next(
         r for r in verify._run_native_gates(config, android_project, interactive=False)
-        if r.name == "build"
+        if r.name == "build:android"
     )
     assert build.status == "warn"
     assert "informativo" in build.message.lower()
@@ -295,10 +297,113 @@ def test_map_external_result_message_when_fail_on_violation_true(android_project
     }
     build = next(
         r for r in verify._run_native_gates(config, android_project, interactive=False)
-        if r.name == "build"
+        if r.name == "build:android"
     )
     assert build.status == "fail"
     # Mensagem NÃO deve dizer "não reprova" quando fail_on_violation=True
     assert "não reprova" not in build.message.lower()
     # Mensagem deve indicar que reprova
     assert "fail-on-violation" in build.message.lower() or "reprova" in build.message.lower()
+
+
+# ── FIX #2 (TDD — RED first): multi-platform build deve rodar TODAS as plataformas ──
+
+def test_build_all_active_platforms_run_not_just_first(tmp_path, monkeypatch):
+    """FIX #2 (cross-AI review): com android+ios ambos buildáveis, AMBOS os gates devem rodar.
+
+    Comportamento buggy atual: o loop faz `return` no primeiro que resolve
+    (android com gradlew) → ios nunca roda → quebra de build de iOS invisível.
+    Comportamento correto: iterar TODAS as plataformas buildable, acumulando um
+    _ValidatorResult por plataforma com gate name distinto (build:android, build:ios).
+
+    TDD: este teste falha com o código atual (só 1 resultado, nome 'build').
+    """
+    import stat as _stat
+
+    # Gradlew presente → android resolve
+    gradlew = tmp_path / "gradlew"
+    gradlew.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    gradlew.chmod(gradlew.stat().st_mode | _stat.S_IXUSR | _stat.S_IXGRP | _stat.S_IXOTH)
+
+    calls: list[str] = []
+
+    def _fake_resolve(candidates, project_root):
+        # resolve_invocation real: usa o candidates para decidir.
+        # Simplificamos: se o primeiro candidato contém "gradlew", resolve.
+        # Se contém "xcodebuild", também resolve (simulamos xcode presente via monkeypatch).
+        first = candidates[0] if candidates else []
+        if isinstance(first, list):
+            tool = first[0]
+        else:
+            tool = first
+        if "gradlew" in str(tool) or "xcodebuild" in str(tool):
+            return first if isinstance(first, list) else [first]
+        return None
+
+    def _fake_run_tracking(argv, project_root, *, timeout=120):
+        calls.append(str(argv[0]))
+        return ExternalToolResult(
+            tool=argv[0],
+            status="pass",
+            exit_code=0,
+            stdout="",
+            stderr="",
+            duration_ms=10,
+            skipped_reason="",
+        )
+
+    monkeypatch.setattr(verify, "resolve_invocation", _fake_resolve)
+    monkeypatch.setattr(verify, "run_external_tool", _fake_run_tracking)
+
+    config = {
+        "platforms": {"active": ["android", "ios"]},
+        "native-gates": {"build": {"enabled": True}, "ktlint": {"enabled": False}},
+    }
+
+    results = verify._run_native_gates(config, tmp_path, interactive=False)
+    build_results = [r for r in results if r.name.startswith("build")]
+
+    # FIX #2: ambas as plataformas devem produzir um resultado cada
+    assert len(build_results) == 2, (
+        f"Esperado 2 resultados de build (um por plataforma), obtido {len(build_results)}: "
+        f"{[r.name for r in build_results]}"
+    )
+    names = {r.name for r in build_results}
+    assert "build:android" in names, f"Esperado 'build:android', obtido: {names}"
+    assert "build:ios" in names, f"Esperado 'build:ios', obtido: {names}"
+
+
+def test_build_android_ios_one_absent_still_runs_other(tmp_path, monkeypatch):
+    """FIX #2: se uma plataforma é buildável mas toolchain ausente, a outra ainda roda.
+
+    android presente (gradlew), ios ausente (sem xcodebuild) →
+    build:android pass, build:ios skipped (não fail, não omitido).
+    """
+    import stat as _stat
+
+    gradlew = tmp_path / "gradlew"
+    gradlew.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    gradlew.chmod(gradlew.stat().st_mode | _stat.S_IXUSR | _stat.S_IXGRP | _stat.S_IXOTH)
+
+    def _partial_resolve(candidates, project_root):
+        first = candidates[0] if candidates else []
+        tool = first[0] if isinstance(first, list) else first
+        if "gradlew" in str(tool):
+            return first if isinstance(first, list) else [first]
+        return None  # xcodebuild ausente
+
+    monkeypatch.setattr(verify, "resolve_invocation", _partial_resolve)
+    monkeypatch.setattr(verify, "run_external_tool", _fake_run("pass", exit_code=0))
+
+    config = {
+        "platforms": {"active": ["android", "ios"]},
+        "native-gates": {"build": {"enabled": True}, "ktlint": {"enabled": False}},
+    }
+
+    results = verify._run_native_gates(config, tmp_path, interactive=False)
+    build_results = [r for r in results if r.name.startswith("build")]
+
+    assert len(build_results) == 2
+    statuses = {r.name: r.status for r in build_results}
+    assert statuses.get("build:android") == "pass"
+    assert statuses.get("build:ios") == "skipped"

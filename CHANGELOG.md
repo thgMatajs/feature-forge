@@ -9,6 +9,11 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`forge verify` — cross-AI review (feat/aifirst-pendencias, 2026-06-30):** 4 findings remediados:
+  - **#1 (MED)** `_run_native_gates` agora roda MESMO quando `validators==[]` — o early-return "pass" só ocorre quando validators E native-gate-results são ambos vazios. Fecha IM-01 de `04-pending`.
+  - **#2 (HIGH)** `_run_build_gates` itera TODAS as plataformas buildable (antes: `return` no primeiro resolve silenciava quebras de iOS/KMP). Gate name agora é por-plataforma (`build:android`, `build:ios`, etc.).
+  - **#3 (MED)** verify-log grava `validators-run` com `[r.name for r in results]` (incluindo native gates) em vez de `[v.name for v in validators]` (só cascade). Log era auto-inconsistente: `result:"warn"` com `hard-fails:["ktlint"]` mas `validators-run:[]`.
+  - **#4 (MED)** gate de build agora é **opt-in** (default `False`), alinhando com spec §4. Linters read-only (ktlint) permanecem default-enabled. Microcopy de `verify.py`, doc `06-command-surface.md` e schema `forge-config.md §native-gates` corrigidos: a contradição "read-only / não muta artefatos" é agora precisa (validators + lint são read-only; build escreve artefatos de build — esperado e documentado).
 - `forge upgrade` avisa (não-fatal, stderr) em flag desconhecida em vez de ignorá-la em silêncio (Fase 1 Track B, B1).
 - `route_proposal_to_inbox` (ex-`apply_proposal_to_l2`) roteia `convention-refinement`/`decay-signal`/`question-elimination`
   pro mem inbox (antes `NotImplementedError`); `decay-signal` agora é kind válido

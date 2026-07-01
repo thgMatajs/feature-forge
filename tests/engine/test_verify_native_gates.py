@@ -146,20 +146,44 @@ def test_ktlint_timeout_maps_to_degraded(project_with_wrapper, monkeypatch):
     assert "timeout" in ktlint.message.lower()
 
 
-def test_run_scope_early_return_skips_native_gates(tmp_path, monkeypatch, capsys):
-    """FR-04: run_scope com validators=[] retorna pass sem chamar gates nativos.
+def test_run_scope_validators_empty_native_gates_still_run(tmp_path, monkeypatch, capsys):
+    """FIX #1 (cross-AI review): run_scope com validators=[] deve rodar gates nativos.
 
-    O early-return (validators vazio) dispara ANTES do ponto de mescla dos gates
-    nativos — `run_external_tool` não deve ser chamado. O guard é documentado no
-    plano (Nível 1: gates acompanham a cascade; sem validators → sem gates nativos).
+    O comportamento CORRETO: gates nativos são independentes do cascade de validators.
+    Mesmo quando validators==[], _run_native_gates deve ser chamado. O early-return
+    "pass" só vale se validators E native-gate-results forem ambos vazios.
+
+    Antes (comportamento buggy, documentado como FR-04): o early-return (validators
+    vazio) disparava ANTES dos gates nativos — run_external_tool nunca era chamado.
+    Este teste INVERTE o comportamento: com validators=[] mas gate nativo configurado
+    e resolvível, o gate RODA e aparece no resultado.
+
+    TDD: falha com o código antigo (early-return antes dos gates), passa após o fix.
     """
     import json as _json
     from engine.ui import output_mode
+    import stat as _stat
 
-    def _boom(*a, **k):
-        raise AssertionError("run_external_tool não devia ser chamado no early-return path")
+    # Gradlew presente → ktlint e build resolvem (monkeypatch do run_external_tool).
+    gradlew = tmp_path / "gradlew"
+    gradlew.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    gradlew.chmod(gradlew.stat().st_mode | _stat.S_IXUSR | _stat.S_IXGRP | _stat.S_IXOTH)
 
-    monkeypatch.setattr(verify, "run_external_tool", _boom)
+    gate_called = {"hit": False}
+
+    def _fake_run(argv, project_root, *, timeout=120):
+        gate_called["hit"] = True
+        return ExternalToolResult(
+            tool=argv[0],
+            status="pass",
+            exit_code=0,
+            stdout="",
+            stderr="",
+            duration_ms=10,
+            skipped_reason="",
+        )
+
+    monkeypatch.setattr(verify, "run_external_tool", _fake_run)
     monkeypatch.setattr(verify, "_discover_validators", lambda *a, **k: [])
     monkeypatch.setattr(verify, "_write_verify_log_entry", lambda *a, **k: None)
     monkeypatch.setattr(verify, "_restore_l1_status", lambda *a, **k: None)
@@ -170,7 +194,7 @@ def test_run_scope_early_return_skips_native_gates(tmp_path, monkeypatch, capsys
         "read_yaml_or_default",
         lambda path, default: {
             "platforms": {"active": ["android"]},
-            "native-gates": {"ktlint": {"enabled": True}, "build": {"enabled": True}},
+            "native-gates": {"ktlint": {"enabled": True}, "build": {"enabled": False}},
         },
     )
     monkeypatch.setattr(output_mode, "is_json_mode", lambda: True)
@@ -178,9 +202,13 @@ def test_run_scope_early_return_skips_native_gates(tmp_path, monkeypatch, capsys
     exit_code = verify.run_scope("feature", "demo", tmp_path, interactive=False)
 
     payload = _json.loads(capsys.readouterr().out)
-    assert payload["overall"] == "pass"
+    # Gate nativo ktlint rodou → aparece no payload
+    assert gate_called["hit"] is True, (
+        "run_external_tool devia ter sido chamado: gates nativos são independentes dos validators"
+    )
+    names = [v["name"] for v in payload["validators"]]
+    assert "ktlint" in names, f"ktlint devia estar no payload validators, obtido: {names}"
     assert exit_code == 0
-    # Não houve chamada a run_external_tool — se houvesse, _boom teria disparado.
 
 
 def test_native_gate_merges_into_run_scope_json(project_with_wrapper, monkeypatch, capsys):
@@ -233,3 +261,66 @@ def test_native_gate_merges_into_run_scope_json(project_with_wrapper, monkeypatc
     assert "ktlint" in names
     assert payload["overall"] == "warn"   # warn não reprova
     assert exit_code == 0                  # warn → exit 0
+
+
+# ── FIX #3: verify-log validators-run inclui native gates ────────────────────
+
+def test_verify_log_validators_run_includes_native_gate(project_with_wrapper, monkeypatch):
+    """FIX #3 (cross-AI review): o verify-log deve listar native gates em validators-run.
+
+    Comportamento buggy: `_write_verify_log_entry` gravava `[v.name for v in validators]`
+    (só o cascade), omitindo native gates mesmo quando eles contribuíram pro overall.
+    Resultado: entrada auto-inconsistente — `result: "warn"` com `hard-fails: ["ktlint"]`
+    mas `validators-run: []` (sem mencionar ktlint).
+
+    Fix: `[r.name for r in results]` — inclui todos os gates que rodaram.
+    """
+    import json as _json
+    from engine.utils.paths import lifecycle_root
+
+    log_calls: list[dict] = []
+
+    def _capture_log(*args, **kwargs):
+        """Captura os kwargs de _write_verify_log_entry sem escrever no disco."""
+        log_calls.append(kwargs)
+
+    monkeypatch.setattr(verify, "_write_verify_log_entry", _capture_log)
+    monkeypatch.setattr(verify, "_restore_l1_status", lambda *a, **k: None)
+    monkeypatch.setattr(verify, "_clear_verify_checkpoint", lambda *a, **k: None)
+    monkeypatch.setattr(verify, "_scope_to_feature_slug", lambda *a, **k: "")
+
+    # 1 validator no cascade (evita early-return) + ktlint nativo em warn.
+    monkeypatch.setattr(
+        verify,
+        "_discover_validators",
+        lambda root, cfg, scope: [
+            verify._ValidatorSpec(name="dummy", script_path=Path("/x"))
+        ],
+    )
+    monkeypatch.setattr(
+        verify,
+        "_run_cascade",
+        lambda validators, **k: [
+            verify._ValidatorResult(name="dummy", status="pass", coverage="substantive")
+        ],
+    )
+    monkeypatch.setattr(verify, "run_external_tool", _fake_run("fail", exit_code=1))
+    monkeypatch.setattr(
+        verify,
+        "read_yaml_or_default",
+        lambda path, default: {"native-gates": {"ktlint": {"enabled": True}}},
+    )
+
+    verify.run_scope("feature", "demo", project_with_wrapper, interactive=False)
+
+    assert len(log_calls) == 1, f"Esperado 1 chamada ao log, obtido {len(log_calls)}"
+    validators_run = log_calls[0].get("validators", [])
+
+    # FIX #3: ktlint (native gate) deve aparecer em validators-run
+    assert "ktlint" in validators_run, (
+        f"'ktlint' devia estar em validators-run (FIX #3). Obtido: {validators_run}"
+    )
+    # O validator do cascade também deve aparecer
+    assert "dummy" in validators_run, (
+        f"'dummy' (cascade) devia estar em validators-run. Obtido: {validators_run}"
+    )

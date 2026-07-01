@@ -193,13 +193,10 @@ Agrupado por prioridade. Plano de ataque por onda na spec
   swiftlint — Nível 2) chegar, a triplicação justifica extração pra um
   `conftest.py` ou `tests/engine/helpers/external_exec.py` compartilhado.
   *Reentrar* ao adicionar o 3º gate nativo.
-- **IM-01 — verificar early-return de validators vazios (Tema 6, gates nativos)**
-  — um projeto com ktlint/build configurado (até `fail-on-violation: true`) mas
-  SEM `validators/` reportaria `overall=pass` com exit 0 sem rodar os gates nativos.
-  INALCANÇÁVEL em operação normal (os 4 validators built-in estão sempre presentes),
-  mas é verde-inerte latente. *Reentrar*: rodar `_run_native_gates` ANTES do
-  early-return, OU emitir aviso no early-return quando gates nativos estão
-  configurados. Ref: review holístico final 2026-06-30.
+- ~~**IM-01 — verificar early-return de validators vazios (Tema 6, gates nativos)**~~
+  FECHADO em cross-AI review fix 2026-06-30: `_run_native_gates` agora roda MESMO
+  quando `validators==[]`. O early-return "pass" só ocorre quando validators E
+  native-gate-results são ambos vazios. Ref: `feat/aifirst-pendencias`, FIX #1.
 
 **P2 (polish — itens 16-21 do report)**
 

@@ -268,7 +268,7 @@ sobrevive ao modo independentemente.
 side-effects de L1** (C-34d): mesmo em JSON mode ele transita o status da feature
 pra `verifying` enquanto roda (restaurando ao status anterior no pass; anotando
 `verify-failed` no `raw.notes` no fail) e dá append num registro por invocação em
-`.claude/forge/state/lifecycle/{slug}/verify-log.jsonl`. NÃO muta código nem artefatos — daí
+`.claude/forge/state/lifecycle/{slug}/verify-log.jsonl`. NÃO muta código nem artefatos de feature nos validators e lint-check (read-only); o gate de build (opt-in) executa o build nativo do projeto, que escreve artefatos de build por natureza (esperado — o forge não versiona/limpa). Daí
 "observador" — mas a observabilidade de L1 é idêntica entre os modos
 interativo e JSON. Em scope `task` ambíguo (≥2 features ativas, sem
 `--feature-slug`) o JSON mode emite erro determinístico + exit 1 ANTES de

@@ -686,12 +686,12 @@ default (`warn`, não reprova); subir pra `fail` é opt-in por gate. Tool ausent
 ```yaml
 native-gates:
   ktlint:
-    enabled: true             # default true; ausência do tool ainda → skipped
+    enabled: true             # default true; linter read-only; ausência do tool → skipped
     bin: /opt/ktlint          # opcional; path/argv quando não há ./gradlew
     timeout: 120              # segundos; default 120; estouro → degraded
     fail-on-violation: false  # opt-in: true sobe warn→fail (default informativo)
   build:
-    enabled: true             # default true; toolchain ausente → skipped/degraded
+    enabled: true             # default FALSE (opt-in); builds escrevem artefatos — habilite explicitamente
     timeout: 600              # builds são lentos; default 600s; estouro → degraded
     fail-on-violation: false  # opt-in: true sobe warn→fail
 ```
@@ -700,7 +700,8 @@ native-gates:
 
 | Campo | Tipo | Default | Notas |
 |---|---|---|---|
-| `<gate>.enabled` | bool | `true` | `false` desliga o gate inteiro (não invoca tool) |
+| `ktlint.enabled` | bool | `true` | `false` desliga o gate inteiro; ktlint é read-only (modo check) |
+| `build.enabled` | bool | **`false`** | Gate de build é **opt-in** — padrão desabilitado (builds escrevem artefatos de build, ~600s); habilite explicitamente quando quiser verificar compilação |
 | `ktlint.bin` | str \| argv | — | path/argv do ktlint quando não há `./gradlew`; ignorado se o wrapper existe |
 | `<gate>.timeout` | int > 0 | ktlint 120 / build 600 | estouro → `degraded` (não `fail`) |
 | `<gate>.fail-on-violation` | bool | `false` | `true` sobe `warn → fail` (gate com dentes, opt-in) |
