@@ -55,7 +55,7 @@ Como despachar: `.claude/bin/mem find "qual subagent_type gsd-executor reviewer 
 
 ---
 
-## Os 6 mandamentos (não-negociáveis)
+## Os 7 mandamentos (não-negociáveis)
 
 ### 1. Decisões locked são imutáveis sem revisitar
 
@@ -110,11 +110,26 @@ sessão.
 
 Matriz código→docs: `.claude/bin/mem find "matriz código docs sincronizar ao tocar engine"`.
 
+### 7. mem é a primeira fonte de contexto passado
+
+Antes de responder perguntas de estado / status / "o que falta" / histórico,
+e antes de despachar subagente ou decidir algo com precedente, consulte
+`.claude/bin/mem find "<tema>"` — no PRIMEIRO turno, em paralelo com Read/git,
+não depois. O mem carrega a disciplina de processo, o handoff de estado (via
+`mem session`) e os temas abertos ativos (notas `reference` que apontam pro
+backlog). Os docs (`04-pending.md`, specs) enumeram o detalhe canônico; o mem
+surfa o relevante. Recall raso = falha de processo, não do mem.
+
+Detalhe: `.claude/bin/mem find "mem-first primeira fonte de contexto estado status"`.
+
 ---
 
 ## Memória persistente (mem) — índice das rules
 
-Este repo tem memória persistente curada via `.claude/bin/mem` (123 notas:
+> O **Mandamento #7** (Tier-0) torna o mem-first invariante; esta seção é o
+> índice de recuperação das rules por tema.
+
+Este repo tem memória persistente curada via `.claude/bin/mem` (acervo curado:
 decisões, disciplinas, despacho de subagente, reuso, testing, doc-sync,
 plan-auditor, e learnings de sessão). As rules detalhadas de
 `.claude/rules/` foram enxugadas pra ponteiros — o detalhe vive no acervo
@@ -147,7 +162,7 @@ Queries de partida (tema → consulta):
 | Escolher skill superpowers | `.claude/bin/mem find "10 skills superpowers triggers"` |
 | Navegar o repo | `.claude/bin/mem find "onde cada coisa vive mapa de navegação"` |
 
-O Tier-0 acima (Mandamento 0 + os 6 mandamentos + fluxo único) permanece
+O Tier-0 acima (Mandamento 0 + os 7 mandamentos + fluxo único) permanece
 sempre-on e não depende do mem.
 
 ---
