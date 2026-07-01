@@ -49,9 +49,9 @@ sem deletar os docs, que ganham papel claro.
    docs; NÃO toca a Decisão 20 (`persistence = SQLite + arquivos: config, memory,
    docs`). Docs preservados como índice enumerável + registro de design diffável.
 2. **Sincronia — doc canônico + notas dos temas ativos.** `04-pending.md` segue
-   a fonte enumerável canônica; o mem carrega notas `project` só dos TEMAS
+   a fonte enumerável canônica; o mem carrega notas `reference` só dos TEMAS
    ABERTOS ATIVOS (um punhado). Fechar um item no doc → arquivar/supersede a nota
-   `project` correspondente NO MESMO commit (matriz doc-sync).
+   `reference` correspondente NO MESMO commit (matriz doc-sync).
 3. **Enforcement — Mandamento Tier-0 + SessionStart, sem hook por-prompt.**
    Eleva mem-first a Mandamento always-on + mantém a injeção que o SessionStart
    já faz. Sem hook `UserPromptSubmit` (sem custo de token/ruído por turno).
@@ -96,8 +96,9 @@ mudança.
 
 ### Frente 3 — Espelhar abertos (conteúdo)
 
-Escrever notas `project` no mem (`.claude/bin/mem add`) só pros temas ABERTOS
-ATIVOS do `04-pending`. Levantamento inicial (~6, reconferir na implementação):
+Escrever notas `reference` no mem (`.claude/bin/mem add`) só pros temas ABERTOS
+ATIVOS do `04-pending` (mem não tem type `project`; `reference` é o tipo de
+ponteiro pro doc canônico). Levantamento inicial (~6, reconferir na implementação):
 
 - Tema 6 Nível 2 (smoke) — próximo trabalho, spec escrita
 - Tema 6 Nível 3 (screenshot) — deferido pós-piloto de N2
@@ -111,7 +112,7 @@ NÃO espelhar: histórico fechado, deferidos especulativos profundos (ex.: os 6
 non-goals graph-ia).
 
 **Disciplina de sincronia (nova entrada na matriz doc-sync):** fechar um item no
-`04-pending` → arquivar/supersede a nota `project` correspondente no mesmo commit.
+`04-pending` → arquivar/supersede a nota `reference` correspondente no mesmo commit.
 Registrar essa regra no mem (nota da matriz doc-sync) e no ponteiro de
 `.claude/rules/doc-sync.md`.
 
@@ -133,7 +134,7 @@ Registrar essa regra no mem (nota da matriz doc-sync) e no ponteiro de
 - `CLAUDE.md` — Mandamento #7 + eventual ajuste na seção "Memória persistente".
 - `.claude/hooks/session-start-orientation.sh` — nomear o Mandamento #7 (1 linha).
 - `.claude/rules/` — ponteiro/índice (doc-sync + README index).
-- `.claude/bin/mem add` — ~6 notas `project` (temas abertos ativos).
+- `.claude/bin/mem add` — ~6 notas `reference` (temas abertos ativos).
 - `CHANGELOG.md` — entrada do Mandamento #7 + frente de conteúdo.
 - (esta spec.)
 
@@ -158,7 +159,7 @@ mão), mas registrado pra não se perder.
 - plan-auditor 2 rodadas sobre o plano.
 - Review zero-tolerância (11 dimensões) + cross-AI.
 - Verificação de que o SessionStart ainda injeta o handoff + índice corretamente.
-- Notas `project` recuperáveis por `mem find` de 1º turno (recall dos temas ativos).
+- Notas `reference` recuperáveis por `mem find` de 1º turno (recall dos temas ativos).
 
 ---
 

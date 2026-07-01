@@ -12,6 +12,10 @@ MESMO commit: `CHANGELOG.md` (Unreleased) + `README.md` (se stats mudaram)
 + guides/diagrams (se comportamento documentado mudou). O pre-commit emite
 SOFT WARNING quando código vivo é staged sem CHANGELOG/README.
 
+- **Sincronia mem↔backlog:** fechar um item em `docs/design/04-pending.md` →
+  arquivar/supersede a nota `reference` correspondente do mem NO MESMO commit
+  (o mem surfa só os temas ABERTOS ATIVOS; o doc enumera tudo). Mandamento #7.
+
 O **estado de sessão** saiu do gate per-commit: rode `.claude/bin/mem
 session` no fim de sessão (handoff curado, committed). O
 `docs/design/08-session-handoff.md` congelou — snapshot histórico +
