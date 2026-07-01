@@ -1,9 +1,14 @@
-"""`forge verify` — read-only validator cascade.
+"""`forge verify` — validator cascade e gates de execução externa.
 
 Resolves the verification scope (task / feature / inferred), discovers the
 registered validators for that scope from `workflow-config.yaml` (re-resolved
 against the snapshotted cards), and runs them sequentially with the cascade
 policy documented in `docs/design/07-discipline.md §2`:
+
+Validators e lint-check (ktlint em modo check) são read-only. O gate de build
+(Nível 1, opt-in) executa `./gradlew assembleDebug` / `xcodebuild build` por
+plataforma ativa — escreve artefatos de build por natureza (esperado e
+documentado; o forge não versiona/limpa esses artefatos).
 
 - `fail-fast: true` (default) — stop at the first hard fail.
 - `fail-fast: false`           — collect every error before returning.
@@ -25,7 +30,6 @@ block on hard fail.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 import time
@@ -37,6 +41,7 @@ from engine._sandbox.env import build_safe_env
 from engine.memory import MemoryError as MemoryStoreError  # WR-02: avoid shadowing the CPython builtin OOM `MemoryError` (engine.memory.MemoryError is a domain subclass of Exception, NOT BaseException).
 from engine.memory.l1 import (
     L1State,
+    append_verify_log,
     list_active_features,
     read_l1_status,
     write_l1_status,
@@ -51,9 +56,7 @@ from engine.utils.paths import (
     active_config_path,
     cards_dir,
     claude_dir,
-    ensure_dir,
     find_project_root,
-    lifecycle_root,
     memory_dir,
 )
 from engine.utils.yaml_io import read_yaml_or_default, write_yaml
@@ -63,6 +66,11 @@ from engine.utils.checkpoint_io import (
     save_yaml_checkpoint as _save_yaml_checkpoint_io,
 )
 from engine.utils.iso import utc_now_iso
+from engine.external_exec import (
+    ExternalToolResult,
+    resolve_invocation,
+    run_external_tool,
+)
 
 _DEFAULT_RUNS_ON = "verify-task"
 
@@ -106,6 +114,17 @@ class _ValidatorResult:
 # "opaque" pro legado não-declarado. Ordem estável p/ render e p/ as chaves
 # do coverage_summary no --json.
 _COVERAGE_CLASSES: tuple[str, ...] = ("substantive", "stub", "staged-blind", "opaque")
+
+# Track A (Tema 6) — mapping ExternalToolResult.status → _ValidatorResult.status.
+# LOCKED: violação reportada (exit≠0, tool rodou) é INFORMATIVA (warn), não fail.
+# Subir warn→fail é opt-in por gate (`fail-on-violation: true`). Não cria
+# vermelho inerte — espelha a lição do Tema 6 (verde inerte mente).
+_EXTERNAL_STATUS_MAP: dict[str, str] = {
+    "pass": "pass",
+    "fail": "warn",
+    "degraded": "degraded",
+    "skipped": "skipped",
+}
 
 
 # ── Checkpoint (DRIFT-1 W2.T3b — intent-resume, outcome C) ───────────────────
@@ -328,7 +347,10 @@ def run_scope(
                 f"forge verify — {scope_type}: {scope_target or '(empty)'}"
             )
         )
-        renderer.write(renderer.dim("Read-only. Nada de mudar código."))
+        renderer.write(renderer.dim(
+            "Read-only nos validators e lint-check. "
+            "O gate de build (opt-in) escreve artefatos de build por natureza."
+        ))
         renderer.write("")
 
     # L1 status: park feature as `verifying` so concurrent commands see the
@@ -363,34 +385,97 @@ def run_scope(
             renderer.write(renderer.dim("Nenhum validator pra este scope."))
             renderer.write(
                 "Cards reais publicam seus validators em Phase 5+. "
-                "Sem nada registrado, verify só confirma estado."
+                "Sem nada registrado, verify confirma estado via gates nativos."
             )
+        # FIX #1 (cross-AI review): gates nativos são independentes do cascade de
+        # validators. Rodamos _run_native_gates MESMO quando validators==[], mesclando
+        # seu retorno antes do early-return. O early-return "pass" só vale se
+        # validators E native-gate-results forem ambos vazios.
+        native_results = _run_native_gates(config, project_root, interactive=interactive)
+        if not native_results:
+            # Nenhum validator e nenhum gate nativo → early-return limpo (pass).
+            _write_verify_log_entry(
+                project_root,
+                feature_slug=feature_slug,
+                scope_type=scope_type,
+                scope_id=scope_target,
+                validators=[],
+                result="pass",
+                hard_fails=[],
+                warnings_list=[],
+            )
+            _restore_l1_status(project_root, previous_state, failed=False, note="")
+            # DRIFT-1 W2.T3b — clear intent-resume checkpoint on clean completion.
+            _clear_verify_checkpoint(project_root)
+            if output_mode.is_json_mode():
+                payload = {
+                    "scope": {"type": scope_type, "target": scope_target or None},
+                    "overall": "pass",
+                    "exit_code": 0,
+                    # WR-02: shape estável — sem validators nem gates não há infra degradada.
+                    "infra_degraded": 0,
+                    # T3: shape estável — coverage_summary presente mesmo sem
+                    # validators (todas as classes zeradas).
+                    "coverage_summary": _coverage_breakdown([]),
+                    "validators": [],
+                }
+                print(json.dumps(payload, indent=2, default=str))
+            return 0
+        # Há gate(s) nativo(s) — continuamos com `results = native_results` e
+        # calculamos o overall como no path normal (fail > warn > incomplete > pass).
+        # O cascade de validators foi pulado (lista vazia), mas os gates nativos
+        # precisam fluir pro overall/log/JSON como se fossem o resultado completo.
+        results = native_results
+        if interactive:
+            _render_summary(results)
+
+        hard_fail = next((r for r in results if r.status == "fail"), None)
+        warnings_list = [r.name for r in results if r.status == "warn"]
+        hard_fails = [r.name for r in results if r.status == "fail"]
+        degraded_list = [r.name for r in results if r.status == "degraded"]
+        overall = (
+            "fail" if hard_fail
+            else "warn" if warnings_list
+            else "incomplete" if degraded_list
+            else "pass"
+        )
+
         _write_verify_log_entry(
             project_root,
             feature_slug=feature_slug,
             scope_type=scope_type,
             scope_id=scope_target,
-            validators=[],
-            result="pass",
-            hard_fails=[],
-            warnings_list=[],
+            validators=[r.name for r in results],
+            result=overall,
+            hard_fails=hard_fails,
+            warnings_list=warnings_list,
         )
-        _restore_l1_status(project_root, previous_state, failed=False, note="")
-        # DRIFT-1 W2.T3b — clear intent-resume checkpoint on clean completion.
-        _clear_verify_checkpoint(project_root)
+
         if output_mode.is_json_mode():
             payload = {
                 "scope": {"type": scope_type, "target": scope_target or None},
-                "overall": "pass",
-                "exit_code": 0,
-                # WR-02: shape estável — sem validators não há infra degradada.
-                "infra_degraded": 0,
-                # T3: shape estável — coverage_summary presente mesmo sem
-                # validators (todas as classes zeradas).
-                "coverage_summary": _coverage_breakdown([]),
-                "validators": [],
+                "overall": overall,
+                "exit_code": (1 if hard_fail is not None else 0),
+                "infra_degraded": len(degraded_list),
+                "coverage_summary": _coverage_breakdown(results),
+                "validators": [asdict(r) for r in results],
             }
             print(json.dumps(payload, indent=2, default=str))
+
+        if hard_fail is not None:
+            if interactive:
+                _render_hard_fail_block(hard_fail)
+            _restore_l1_status(
+                project_root,
+                previous_state,
+                failed=True,
+                note=f"verify-failed: {hard_fail.name}",
+            )
+            _clear_verify_checkpoint(project_root)
+            return 1
+
+        _restore_l1_status(project_root, previous_state, failed=False, note="")
+        _clear_verify_checkpoint(project_root)
         return 0
 
     # W-ROUTE 6c: hint educacional pré-cascade — renderizado pro usuário ANTES
@@ -414,6 +499,10 @@ def run_scope(
         scope_type=scope_type,
         scope_target=scope_target,
     )
+    # Track A (Tema 6): gates de execução externa (Decisão 33). Mesclados na
+    # lista `results` ANTES do overall → fluem natural pro overall/coverage/
+    # infra_degraded/JSON/render sem refactor do cascade.
+    results = results + _run_native_gates(config, project_root, interactive=interactive)
     if interactive:
         _render_summary(results)
 
@@ -449,12 +538,18 @@ def run_scope(
         else "pass"
     )
 
+    # FIX #3 (cross-AI review): `validators-run` deve listar TODOS os gates que
+    # contribuíram pro overall — incluindo native gates mesclados em `results`.
+    # Antes: `[v.name for v in validators]` capturava só o cascade, omitindo
+    # ktlint/build:android/build:ios do log. Inconsistência: `result`/`hard-fails`/
+    # `warnings` eram computados sobre `results` completo (inclui native gates),
+    # mas `validators-run` só registrava o cascade. Log auto-inconsistente.
     _write_verify_log_entry(
         project_root,
         feature_slug=feature_slug,
         scope_type=scope_type,
         scope_id=scope_target,
-        validators=[v.name for v in validators],
+        validators=[r.name for r in results],
         result=overall,
         hard_fails=hard_fails,
         warnings_list=warnings_list,
@@ -664,32 +759,47 @@ def _write_verify_log_entry(
 ) -> None:
     """Append one line to ``.claude/forge/state/lifecycle/{slug}/verify-log.jsonl``.
 
+    Roteia pela fronteira VALIDADA ``append_verify_log`` (engine/memory/l1.py) —
+    uma só porta de escrita do verify-log, com a validação MEM-L1-VL-001..005
+    aplicada. Antes (Fase 0c), este caminho serializava JSON DIRETO, bypassando a
+    validação: gravava ``scope`` como dict ``{"type","id"}`` e ``warnings`` como
+    list, formas que ``append_verify_log`` rejeita (o dict chega a estourar
+    ``TypeError`` no membership test do set ``_VERIFY_SCOPES``). A investigação da
+    Fase 0c confirmou que ambos os caminhos escreviam no MESMO arquivo, então a
+    assimetria era drift real — consolidado aqui (DRY).
+
+    Mapeamento pra forma validável (sem perda de info):
+    - ``scope`` (campo validado) = ``scope_type`` cru (string ∈ _VERIFY_SCOPES);
+      o id vai em ``scope-id`` (preservado, fora do enum).
+    - ``warnings-list`` guarda os nomes humanos; ``warnings`` é a CONTAGEM (int),
+      exigida por MEM-L1-VL-005 quando ``result == "degraded"`` e inofensiva nos
+      demais vereditos.
+
     Silently no-ops when there is no resolvable feature slug — the log is
-    per-feature by design (schema MEM-L1-VL-001..005).
+    per-feature by design (schema MEM-L1-VL-001..005). Best-effort: uma entrada
+    malformada ou um erro de I/O NÃO derruba o verify (o log é bônus, não gate).
     """
     if not feature_slug:
         return
     ts = utc_now_iso()
     compact = ts.replace(":", "").replace("-", "").replace(".", "")
+    warnings_named = list(warnings_list)
     entry = {
         "schema-version": 1,
         "verify-id": f"verify-{compact}",
         "at": ts,
-        "scope": {"type": scope_type, "id": scope_id},
+        "timestamp": ts,  # IN-02: único clock-read — at e timestamp idênticos
+        "scope": scope_type,
+        "scope-id": scope_id,
         "validators-run": list(validators),
         "result": result,
         "hard-fails": list(hard_fails),
-        "warnings": list(warnings_list),
+        "warnings": len(warnings_named),
+        "warnings-list": warnings_named,
     }
-    log_path = lifecycle_root(project_root) / feature_slug / "verify-log.jsonl"
     try:
-        ensure_dir(log_path.parent)
-        line = json.dumps(entry, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        with log_path.open("a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
-            fh.flush()
-            os.fsync(fh.fileno())
-    except OSError:
+        append_verify_log(feature_slug, project_root, entry)
+    except (OSError, MemoryStoreError):
         pass
 
 
@@ -1148,6 +1258,307 @@ def _extract_json_tail(stdout: str) -> dict | None:
     except json.JSONDecodeError:
         return None
     return data if isinstance(data, dict) else None
+
+
+# ── Native gates (Tema 6, Decisão 33) ────────────────────────────────────────
+
+
+def _native_gate_block(config: dict) -> dict:
+    """Bloco `native-gates` do config; `{}` se ausente/malformado."""
+    block = config.get("native-gates")
+    return block if isinstance(block, dict) else {}
+
+
+def _ktlint_candidates(config: dict, project_root: Path) -> list[list[str] | str]:
+    """Candidatos de invocação do ktlint, em ordem de preferência.
+
+    1. ./gradlew ktlintCheck (wrapper — versão fixada, preferido).
+    2. native-gates.ktlint.bin (str → [bin]; argv-lista → inalterado).
+    3. ktlint (which no PATH).
+
+    Nível 1 mapeia só exit code — candidatos mínimos, sem `--reporter=json`
+    (parsing de saída estruturada é follow-on de Nível 2).
+    """
+    candidates: list[list[str] | str] = [["./gradlew", "ktlintCheck"]]
+    ktlint_cfg = _native_gate_block(config).get("ktlint")
+    if isinstance(ktlint_cfg, dict):
+        bin_value = ktlint_cfg.get("bin")
+        if isinstance(bin_value, str) and bin_value.strip():
+            candidates.append(bin_value.strip())
+        elif isinstance(bin_value, list) and bin_value:
+            candidates.append([str(x) for x in bin_value])
+    candidates.append("ktlint")
+    return candidates
+
+
+def _gate_cfg(config: dict, gate: str) -> dict:
+    """Sub-bloco `native-gates.<gate>`; `{}` se ausente."""
+    sub = _native_gate_block(config).get(gate)
+    return sub if isinstance(sub, dict) else {}
+
+
+def _gate_enabled(config: dict, gate: str) -> bool:
+    """Retorna se o gate está habilitado segundo o config.
+
+    FIX #4 (cross-AI review): o build gate é **opt-in** (default False), alinhando
+    com a spec §4 "Nível 1 (build-only, opt-in)". O ktlint é read-only (modo check,
+    sem efeito colateral) e fica default-enabled (True). Divergência anterior:
+    build gate com default True disparava builds (~600s) sem o usuário pedir —
+    surpreende automação que assume verify read-only.
+
+    Defaults por gate:
+    - "build"   → False (opt-in: habilita explicitamente em forge-config.yaml)
+    - qualquer outro (incluindo "ktlint") → True
+    """
+    _OPT_IN_GATES = {"build"}
+    default = False if gate in _OPT_IN_GATES else True
+    return bool(_gate_cfg(config, gate).get("enabled", default))
+
+
+def _gate_timeout(config: dict, gate: str, *, default: int = 120) -> int:
+    """Timeout (s) do gate; estouro → degraded. `default` vem do call-site.
+
+    ktlint usa o default 120; o build passa `default=600`. A função não
+    ramifica por gate — o call-site escolhe o default correto.
+    """
+    raw = _gate_cfg(config, gate).get("timeout", default)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def _gate_fail_on_violation(config: dict, gate: str) -> bool:
+    """Opt-in: True sobe warn→fail. Default False (informativo)."""
+    return bool(_gate_cfg(config, gate).get("fail-on-violation", False))
+
+
+def _map_external_result(
+    res: ExternalToolResult,
+    *,
+    gate_name: str,
+    fail_on_violation: bool,
+) -> _ValidatorResult:
+    """ExternalToolResult → _ValidatorResult (mapping LOCKED).
+
+    Só chamada quando o tool RESOLVEU e rodou (ausência é tratada antes, no
+    caller, via _skipped_gate_result — por isso NÃO há param `absent_message`).
+    - status pelo _EXTERNAL_STATUS_MAP; `warn` vira `fail` só com opt-in.
+    - coverage: pass externo é 'substantive' (rodou tool real sobre artefatos
+      reais — não é stub/staged-blind/opaque). Não-pass não tem coverage.
+    """
+    mapped = _EXTERNAL_STATUS_MAP.get(res.status, "degraded")
+    if mapped == "warn" and fail_on_violation:
+        mapped = "fail"
+
+    message = ""
+    if res.status == "degraded":
+        message = res.skipped_reason or "gate não terminou — classificado como degraded"
+    elif res.status == "fail":
+        tail = (res.stdout or res.stderr or "").strip().splitlines()
+        # FR-01: mensagem condicional — contradição se sempre diz "não reprova" quando
+        # fail_on_violation=True (nesse path mapped="fail", reprova de verdade).
+        if fail_on_violation:
+            suffix = f" {tail[-1][:80]}" if tail else ""
+            message = (
+                f"{gate_name} acusou violações (fail-on-violation: true — feature reprova).{suffix}"
+            )
+        else:
+            suffix = f" {tail[-1][:80]}" if tail else ""
+            message = (
+                f"{gate_name} acusou violações (informativo; não reprova por default).{suffix}"
+            )
+
+    return _ValidatorResult(
+        name=gate_name,
+        status=mapped,
+        duration_ms=res.duration_ms,
+        message=message,
+        coverage="substantive" if mapped == "pass" else "",
+    )
+
+
+def _skipped_gate_result(gate_name: str, message: str) -> _ValidatorResult:
+    """Gate ausente → skipped com mensagem mentor-calmo nomeando como habilitar."""
+    return _ValidatorResult(name=gate_name, status="skipped", message=message)
+
+
+def _active_platforms(config: dict) -> list[str]:
+    """Lê `platforms.active` do config; [] se ausente ou malformado."""
+    platforms = config.get("platforms")
+    if not isinstance(platforms, dict):
+        return []
+    active = platforms.get("active")
+    return [str(p) for p in active] if isinstance(active, list) else []
+
+
+def _ktlint_applies(config: dict) -> bool:
+    """FR-02: guard de stack — ktlint só roda em projetos Kotlin (android/kmp).
+
+    Regra:
+    - active contém android ou kmp → roda (projeto Kotlin).
+    - active definido mas sem android/kmp (ex.: ["ios","web"]) → não roda
+      (projeto não-Kotlin — evita verde inerte via which-fallback).
+    - active vazio OU platforms ausente → roda (stack desconhecida; pode ser Kotlin).
+    """
+    active = _active_platforms(config)
+    if not active:
+        # Vazio ou ausente: não sabemos a stack → tenta (pode ser Kotlin).
+        return True
+    return bool(set(active) & {"android", "kmp"})
+
+
+def _run_ktlint_gate(config: dict, project_root: Path) -> list[_ValidatorResult]:
+    if not _gate_enabled(config, "ktlint"):
+        return []
+    # FR-02: guard de stack compartilhado — ktlint só se stack é Kotlin.
+    if not _ktlint_applies(config):
+        return []
+    argv = resolve_invocation(_ktlint_candidates(config, project_root), project_root)
+    if argv is None:
+        return [
+            _skipped_gate_result(
+                "ktlint",
+                "Gate nativo `ktlint` não encontrado (nem `./gradlew ktlintCheck`, "
+                "nem `native-gates.ktlint.bin`, nem no PATH). Pulei este gate — a "
+                "feature não foi reprovada por isso. Pra habilitá-lo, instale o "
+                "ktlint ou aponte o binário em `forge-config.yaml`.",
+            )
+        ]
+    res = run_external_tool(
+        argv, project_root, timeout=_gate_timeout(config, "ktlint")
+    )
+    return [
+        _map_external_result(
+            res,
+            gate_name="ktlint",
+            fail_on_violation=_gate_fail_on_violation(config, "ktlint"),
+        )
+    ]
+
+
+# Plataforma → comando de build-only (modo build, sem rodar o app). web não tem
+# build-only no Nível 1 (skip). android/kmp compartilham o gradle wrapper.
+_BUILD_CMD_BY_PLATFORM: dict[str, list[str]] = {
+    "android": ["./gradlew", "assembleDebug"],
+    "kmp": ["./gradlew", "assembleDebug"],
+    "ios": ["xcodebuild", "build"],
+}
+
+
+def _build_candidates(platform: str) -> list[list[str] | str]:
+    """Candidatos de invocação do build-only pra uma plataforma.
+
+    Um candidato por plataforma no Nível 1 (o wrapper/binário canônico). web e
+    plataformas desconhecidas devolvem [] → o caller pula (sem _ValidatorResult).
+    """
+    cmd = _BUILD_CMD_BY_PLATFORM.get(platform)
+    return [cmd] if cmd else []
+
+
+def _run_build_gates(config: dict, project_root: Path) -> list[_ValidatorResult]:
+    """Build-only por plataforma ativa. Reusa resolve/run/map do A1.
+
+    FIX #2 (cross-AI review): itera TODAS as plataformas buildable de
+    `platforms.active`, acumulando um _ValidatorResult POR plataforma com gate
+    name distinto (ex.: `build:android`, `build:ios`). Antes, o `return`
+    no primeiro resolve silenciava quebras de build das demais plataformas.
+
+    Semântica por plataforma:
+    - toolchain presente + exit 0 → pass (gate name `build:<platform>`)
+    - toolchain presente + exit ≠ 0 → warn (ou fail se fail-on-violation)
+    - toolchain ausente → skipped com mensagem mentor-calmo
+    - só web/desconhecidas → lista vazia (sem build-only no Nível 1)
+    """
+    if not _gate_enabled(config, "build"):
+        return []
+
+    platforms = _active_platforms(config)
+    buildable = [p for p in platforms if _build_candidates(p)]
+    if not buildable:
+        return []  # só web/desconhecidas → sem build-only no Nível 1
+
+    results: list[_ValidatorResult] = []
+    fail_on_violation = _gate_fail_on_violation(config, "build")
+    timeout = _gate_timeout(config, "build", default=600)
+    # WR-01: dedup por argv resolvido — android e kmp compartilham ./gradlew
+    # assembleDebug. Sem dedup, o loop roda assembleDebug 2× (~600s cada) sem
+    # valor extra. Mantemos 1 result por plataforma (transparência), mas só 1
+    # execução real por argv único.
+    executed_argvs: list[tuple[str, ...]] = []  # argvs já executados nesta run
+
+    for platform in buildable:
+        gate_name = f"build:{platform}"
+        argv = resolve_invocation(_build_candidates(platform), project_root)
+        if argv is None:
+            results.append(
+                _skipped_gate_result(
+                    gate_name,
+                    f"Build-only pulado pra `{platform}`: toolchain não encontrada "
+                    f"(nem `./gradlew assembleDebug` pra android/kmp, nem `xcodebuild` "
+                    f"pra ios). A feature não foi reprovada por isso. Instale o "
+                    f"SDK/toolchain pra habilitar o build-only em `{platform}`.",
+                )
+            )
+            continue
+        argv_key = tuple(argv)
+        if argv_key in executed_argvs:
+            # Mesmo toolchain que uma plataforma anterior — pulamos a 2ª execução.
+            # Identificamos a plataforma anterior pelo índice da primeira ocorrência.
+            prior_idx = executed_argvs.index(argv_key)
+            prior_platform = buildable[prior_idx]
+            results.append(
+                _skipped_gate_result(
+                    gate_name,
+                    f"Build-only de `{platform}` usa o mesmo toolchain que "
+                    f"`build:{prior_platform}` (`{' '.join(argv)}`). "
+                    f"Pulado pra não duplicar o build — veja o resultado de "
+                    f"`build:{prior_platform}` acima.",
+                )
+            )
+            executed_argvs.append(argv_key)
+            continue
+        executed_argvs.append(argv_key)
+        res = run_external_tool(argv, project_root, timeout=timeout)
+        results.append(
+            _map_external_result(
+                res,
+                gate_name=gate_name,
+                fail_on_violation=fail_on_violation,
+            )
+        )
+
+    return results
+
+
+def _run_native_gates(
+    config: dict,
+    project_root: Path,
+    *,
+    interactive: bool,
+) -> list[_ValidatorResult]:
+    """Gates de execução externa (Decisão 33). Ver contrato no plano §1.
+
+    Gates cobertos (Tema 6, Nível 1):
+      - ktlint  (A1) — `./gradlew ktlintCheck` em modo check, read-only.
+      - build   (A2) — `./gradlew assembleDebug` / `xcodebuild` conforme stack.
+
+    Guard greenfield: se `config` é vazio (mid-init, config ainda não escrito),
+    devolve `[]` — não tenta rodar gate sem config. Os callers de run_scope
+    mesclam o retorno na lista `results` ANTES do cálculo do `overall`.
+
+    Cada gate é INFORMATIVO por default: violação → `warn` (exit do verify fica 0).
+    Opt-in `fail-on-violation: true` por gate sobe `warn → fail`.
+    """
+    if not config:
+        # Guard greenfield: config vazio (mid-init) → não roda gate algum.
+        return []
+
+    results: list[_ValidatorResult] = []
+    results.extend(_run_ktlint_gate(config, project_root))
+    results.extend(_run_build_gates(config, project_root))
+    return results
 
 
 # ── Rendering ────────────────────────────────────────────────────────────────

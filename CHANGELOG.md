@@ -7,7 +7,130 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`forge verify` — delta cross-AI review (feat/aifirst-pendencias, 2026-06-30, 2ª passagem):**
+  - **BL-01 (BLOCKER — doc-sync)** `forge-config.md §Notas de runtime` corrigia texto stale que dizia "os gates acompanham a cascade de validators: num scope sem validators, os gates nativos também não rodam" — comportamento ANTIGO removido pelo FIX #1. Texto agora diz que gates nativos rodam independentemente; early-return "pass" só ocorre quando validators E gates nativos estão ambos vazios/desabilitados.
+  - **WR-01 (WARNING — bug real)** `_run_build_gates`: `android` e `kmp` mapeavam pro mesmo `./gradlew assembleDebug` — em `platforms.active=[android,kmp]`, o loop rodava `assembleDebug` 2× (~600s cada) sem valor extra. Fix: dedup por argv resolvido. Antes de executar cada plataforma, compara o argv resolvido com os já executados; se idêntico, emite result `skipped` mentor-calmo referenciando a plataforma anterior (transparência: 1 result por plataforma, mas 1 execução real por argv único). TDD: RED→GREEN (2 novos testes; android+ios — toolchains distintas — permanecem ambos executando).
+
+- **`forge verify` — cross-AI review (feat/aifirst-pendencias, 2026-06-30):** 4 findings remediados:
+  - **#1 (MED)** `_run_native_gates` agora roda MESMO quando `validators==[]` — o early-return "pass" só ocorre quando validators E native-gate-results são ambos vazios. Fecha IM-01 de `04-pending`.
+  - **#2 (HIGH)** `_run_build_gates` itera TODAS as plataformas buildable (antes: `return` no primeiro resolve silenciava quebras de iOS/KMP). Gate name agora é por-plataforma (`build:android`, `build:ios`, etc.).
+  - **#3 (MED)** verify-log grava `validators-run` com `[r.name for r in results]` (incluindo native gates) em vez de `[v.name for v in validators]` (só cascade). Log era auto-inconsistente: `result:"warn"` com `hard-fails:["ktlint"]` mas `validators-run:[]`.
+  - **#4 (MED)** gate de build agora é **opt-in** (default `False`), alinhando com spec §4. Linters read-only (ktlint) permanecem default-enabled. Microcopy de `verify.py`, doc `06-command-surface.md` e schema `forge-config.md §native-gates` corrigidos: a contradição "read-only / não muta artefatos" é agora precisa (validators + lint são read-only; build escreve artefatos de build — esperado e documentado).
+- `forge upgrade` avisa (não-fatal, stderr) em flag desconhecida em vez de ignorá-la em silêncio (Fase 1 Track B, B1).
+- `route_proposal_to_inbox` (ex-`apply_proposal_to_l2`) roteia `convention-refinement`/`decay-signal`/`question-elimination`
+  pro mem inbox (antes `NotImplementedError`); `decay-signal` agora é kind válido
+  (Fase 1 Track C, fecha limitação v1.1 §W-AGENTS). Nota para merge: item
+  "_KNOWLEDGE_KINDS cobre só 3 kinds" de `04-pending.md §W-AGENTS` fechado.
+- Docstring de `route_proposal_to_inbox` (`engine/memory/distiller.py`) e nota
+  honesta em `agents/retrospective-agent.md` atualizadas: `convention-refinement`,
+  `decay-signal` e `question-elimination` agora roteiam pro mem inbox normalmente
+  (C1) — bloco anterior dizia erroneamente "ainda não APLICA / NotImplementedError"
+  (Fase 1 Track C, review fix WARNING-01/02).
+
 ### Added
+
+- feedback de progresso (spinner) nos steps longos do `forge init` — backend (~86s) e orphan-scan (~75s); GATEADO por `_is_tty` (no-op puro fora de TTY, sem poluir o transcript IA-first) (Fase 1 Track D, D1; fecha item P2 16).
+- `forge graph` Q4 (symbols por módulo) sugere o módulo mais próximo (did-you-mean) quando o nome não casa; novo helper `queries.list_modules` (Fase 1 Track D, D2; fecha item P2 17).
+
+### Changed
+
+- discovery cache do `forge init` ganha content-fingerprint top-level (invalida fora do replay mecânico) — hardening cinto-e-suspensório sobre o lifecycle de checkpoint (Fase 1 Track B, B2; fecha BUG-2 follow-on).
+- `forge init` brownfield computa `compose_backend_axes` uma única vez (era 2× por fase no hot-path) — `_handle_backend_multi_axis_brownfield` aceita `composer_result` pré-computado; no-behavior-change confirmado; docstring de `_handle_backend_multi_axis_brownfield` corrigido (estava stale: "só pelo integration test" — a função está no hot-path ativo via `_run_pipeline`) (Fase 1 Track B, B3; fecha BUG-1b — CAMINHO A confirmado empiricamente).
+- Rename `apply_proposal_to_l2` → `route_proposal_to_inbox` (misnomer desde W-ROUTE 6b —
+  knowledge kinds vão pro mem inbox, não L2); sweep semântico em callers + testes + docs vivos
+  (Fase 1 Track C, clean-break sem alias — pré-produção). Nota para merge: item
+  "`apply_proposal_to_l2` misnomer" de `04-pending.md §W-ROUTE 6b` fechado.
+- `docs/design/04-pending.md`: o follow-on "impl de gates-nativos (Tema 6, face 2)"
+  deixa de dizer "pode exigir Decisão 33" — a Decisão 33 foi tomada nesta fase,
+  destravando a impl da Fase 1.
+
+### Changed (load-bearing)
+
+- Nova decisão 33: o engine pode executar binários externos do projeto
+  consumidor (linters, build tools) via uma fronteira de execução dedicada,
+  distinta do sandbox de validators da Decisão 30. Garantias: modo check
+  read-only onde aplicável; env reduzido (build_safe_env); timeout por gate com
+  estouro → degraded; skip-se-ausente; sem auto-fix; sem instalar toolchain. A
+  Decisão 30 segue valendo integralmente pro sandbox de validators — a 33 é
+  fronteira separada, não afrouxa a 30.
+- Hook `.claude/hooks/pre-commit-feature-forge.sh` e check **C1** do plan-auditor
+  (`.claude/rules/plan-auditor.md` + nota `mem`) agora reconhecem "Nova decisão N"
+  (decisão nova) como cerimônia de primeira classe, além de "Revisita decisão N"
+  (decisão existente). Espelha o hook estendido pela Decisão 33; evita
+  falso-positivo Critical em auditorias de decisões novas.
+
+### Removed
+
+- `engine/memory/l3.py` (órfão desde W-ROUTE 6a — perdeu o único consumidor de produção;
+  zero imports confirmado por grep) — clean-break (Fase 1 Track C). Nota para merge:
+  item "`engine/memory/l3.py` órfão" de `04-pending.md §W-ROUTE 6a` fechado.
+
+### Fixed
+
+- `engine/memory/l1.py::append_verify_log`: guard VL-003a — `scope` não-str
+  (ex.: dict) agora levanta `MemoryError` canônico com mensagem VL-003 antes do
+  membership test no set `_VERIFY_SCOPES`, evitando `TypeError: unhashable type`
+  cru. Cobre o caminho de drift documentado em `test_verify_log_write_paths.py`
+  (Fase 0 cleanup, Fix #6).
+
+- `engine/verify.py::_write_verify_log_entry` agora roteia pela fronteira
+  validada `engine/memory/l1.py::append_verify_log` (Fase 0c, campanha AI-first).
+  Antes serializava JSON DIRETO, bypassando a validação MEM-L1-VL-001..005:
+  gravava `scope` como dict `{"type","id"}` e `warnings` como list — formas que
+  `append_verify_log` rejeita (o dict chega a estourar `TypeError` no membership
+  test do set `_VERIFY_SCOPES`). A investigação (`superpowers:systematic-debugging`)
+  confirmou que os DOIS write-paths escreviam no MESMO arquivo
+  (`lifecycle_root/slug/verify-log.jsonl`), então a assimetria era drift real. A
+  consolidação mapeia `scope` → string validável + `scope-id` preservado, e
+  `warnings` → contagem int (VL-005) com a lista humana sob `warnings-list`.
+  Guardas: `tests/engine/test_verify_log_write_paths.py` (investigação) +
+  `tests/engine/test_verify_log_consolidation.py` (regressão).
+
+### Added
+
+- Native gate ktlint no `forge verify` (Tema 6, Decisão 33, Fase 1 Track A1):
+  `./gradlew ktlintCheck` em modo check read-only, guard de stack FR-02 (só roda
+  em projetos com `platforms.active` contendo `android` ou `kmp`). Violação é
+  informativa (`warn`, exit 0) por default; opt-in `fail-on-violation: true` sobe
+  `warn→fail`; tool ausente → `skipped`; timeout → `degraded`. Config em
+  `native-gates.ktlint`. Implementado em `engine/verify.py::_run_ktlint_gate`;
+  guarda `tests/engine/test_verify_native_gates.py` (8 testes, inclui FR-04
+  early-return).
+
+- Build-only no `forge verify` (Tema 6, Nível 1, Decisão 33, Fase 1 Track A2):
+  `./gradlew assembleDebug` (android/kmp) / `xcodebuild build` (ios) conforme
+  `platforms.active`; web sem build-only no Nível 1. Reusa o step de gates externos
+  de A1 (`_run_native_gates` / `_map_external_result` / `resolve_invocation`).
+  Informativo por default, opt-in `fail-on-violation`, skip-se-ausente, timeout →
+  `degraded`. O build escreve artefatos no working tree (esperado; forge não
+  versiona/limpa). Config em `native-gates.build`.
+  Implementado em `engine/verify.py::_run_build_gates` / `_build_candidates`;
+  guarda `tests/engine/test_verify_build_only.py` (13 testes, inclui FR-01/02/03).
+
+- FR-01 fix em `_map_external_result`: mensagem agora é condicional a
+  `fail_on_violation` — quando `true`, diz "fail-on-violation: true — feature
+  reprova" (antes dizia "informativo; não reprova por default" mesmo ao reprovar).
+
+- FR-02 guard de stack compartilhado (`_ktlint_applies`): ktlint só roda quando
+  `platforms.active` tem `android`/`kmp`; stack desconhecida (active vazio ou
+  ausente) → tenta (conservador). Evita verde inerte em repos não-Kotlin com
+  ktlint no PATH.
+
+- FR-03 removido import `os` morto de `tests/engine/test_verify_native_gates.py`.
+
+- FR-04 adicionado teste `test_run_scope_early_return_skips_native_gates`:
+  validators=[] aciona early-return sem chamar gates nativos (comportamento Nível 1
+  documentado — gates acompanham cascade).
+
+- `engine/external_exec.py` — fronteira de execução externa genérica (Decisão
+  33): `run_external_tool(argv, project_root, *, timeout)` roda binário do
+  consumidor com env reduzido (`build_safe_env`), `check=False`, timeout com
+  estouro → `degraded`; `resolve_invocation(candidates, project_root)` descobre
+  o binário (wrapper `./...` → path de config → `which`) com skip-se-ausente
+  (`None`). Base reusada pela Fase 1 (Tema 6 — gates nativos + build-only). Nada
+  tool-específico mora aqui.
 
 - Novo 5º vetor core `impl-vs-spec` no `forge qa` (Onda 1b da remediação do
   piloto MeoBonsai — fecha o gap do Tema 6 "qa red-teia contratos, não a
@@ -102,6 +225,22 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   organiza os gaps ABERTOS em 5 ondas (correctness → gates com dentes → P0s
   estruturais → hardening P1 → mem Fase 2), lideradas pelo loop de correctness,
   cada onda com gate de aceite testável.
+- **Fase 2 — holistic doc sync** (campanha AI-first, 2026-06-30):
+  - `docs/design/00-vision.md`: Layer 1 (Knowledge Substrate) atualizada — `mem`
+    curado (`.claude/bin/mem`, JSONL+SQLite) substitui a notação legada "memory
+    L1-L5"; codebase-graph.db e inventory/ preservados. Layer 2 marcada como
+    DEFERIDO pós-piloto. Nova nota "North star: AI-first lifecycle" torna explícito
+    o objetivo de ciclo dirigível por host IA. Nova nota "Capacidade de verificação
+    de execução (Decisão 33, Nível 1)" descreve os gates nativos (ktlint +
+    build-only) adicionados ao `forge verify` pela Fase 1 Track A; menciona que
+    Níveis 2/3 estão com spec escrita e impl pendente.
+  - `docs/design/04-pending.md`: P2 itens D1 (spinner) e D2 (did-you-mean) marcados
+    como fechados (Fase 1 Track D). Dois novos follow-ons adicionados: MI-02
+    (inconsistência semântica `FORGE_FORCE_COLOR` vs `isatty` no gate de spinner)
+    e I-02 (dedup de helpers de teste `_write_fake_gradlew`/`_fake_run` para
+    quando o 3º gate nativo chegar).
+  - `README.md`: counts de teste atualizados para rapid 2338 / integration 249 /
+    e2e 31 (medidos em 2026-06-30).
 
 ### Removed
 

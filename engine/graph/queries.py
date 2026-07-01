@@ -187,6 +187,28 @@ def find_symbols_in_module(
         conn.close()
 
 
+def list_modules(
+    project_root: Path,
+    *,
+    db_path: Optional[Path] = None,
+) -> list[str]:
+    """Módulos Gradle distintos conhecidos no grafo (D2 — did-you-mean da Q4).
+
+    Retorna lista ordenada de módulos únicos com coluna `module` preenchida.
+    Usado pelo `graph_cli` pra sugerir o módulo mais próximo quando Q4 não
+    encontra símbolo no módulo digitado.
+    """
+    conn = _connect(project_root, db_path)
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT module FROM files "
+            "WHERE module IS NOT NULL AND module != '' ORDER BY module"
+        ).fetchall()
+        return [row["module"] for row in rows]
+    finally:
+        conn.close()
+
+
 def find_ds_components_used_in(
     project_root: Path,
     feature_slug: str,

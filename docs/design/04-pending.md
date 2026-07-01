@@ -102,6 +102,18 @@ status correspondente no fim do próprio report.
   `tests/integration/test_qa_lifecycle_feature.py`. *(As outras duas faces do
   Tema 6 — gates nativos e runtime/visual — têm spec escrita e impl deferida;
   ver Follow-on.)*
+- ✓ **Divergência scope dict/string no verify-log** — fechado na **Fase 0c** da
+  campanha AI-first. A investigação (`superpowers:systematic-debugging`) confirmou
+  que os dois write-paths escreviam no MESMO arquivo
+  (`lifecycle_root/slug/verify-log.jsonl`) e que `engine/verify.py::_write_verify_log_entry`
+  bypassava a validação de `engine/memory/l1.py::append_verify_log` (gravava `scope`
+  como dict e `warnings` como list — o dict chega a estourar `TypeError` no
+  membership test do set `_VERIFY_SCOPES`, rejeição ainda mais grosseira que um
+  `MemoryError` de schema). `_write_verify_log_entry` passou a rotear pela
+  fronteira validada (DRY): `scope` → string + `scope-id` preservado; `warnings`
+  → contagem int (VL-005) + lista humana sob `warnings-list`. Guardas:
+  `tests/engine/test_verify_log_write_paths.py` (investigação),
+  `tests/engine/test_verify_log_consolidation.py` (regressão).
 
 ### Parciais
 
@@ -118,10 +130,10 @@ Agrupado por prioridade. Plano de ataque por onda na spec
 
 - **Tema 6 — verificação inerte (o loop de correctness)** — o gap que deixa o
   "verde" mentir. A face **qa sem vetor impl-vs-spec** foi fechada na **Onda 1b**
-  (ver Fechados acima). As duas faces restantes — verify "verde inerte"
-  (gates nativos: 6 stubs no-op + 4 built-in staged-blind) e o passo
-  runtime/visual — ganharam **spec escrita** nesta onda e têm impl deferida pras
-  suas próprias ondas/decisões; ver Follow-on.
+  (ver Fechados acima). A face **gates nativos** (ktlint + build-only, Nível 1)
+  foi **fechada na Fase 1 Track A** (A1 + A2, 2026-06-30 — ver Follow-on). A face
+  **runtime/visual** (smoke Nível 2 + screenshot Nível 3) segue com spec escrita e
+  impl PENDENTE; ver Follow-on.
 
   *(BUG-5, BUG-2 e BUG-PLAN-1 — os outros P0 desta seção — foram fechados na
   Onda 3; ver seção Fechados acima.)*
@@ -133,15 +145,18 @@ Agrupado por prioridade. Plano de ataque por onda na spec
 
 **Follow-on (novos papercuts achados durante a remediação)**
 
-- **impl de gates-nativos (Tema 6, face 2)** — spec escrita em
-  `docs/superpowers/specs/2026-06-30-native-quality-gates-design.md`; a impl
-  (substituir os 6 stubs no-op + os 4 built-in staged-blind por gates nativos
-  com dentes) está PENDENTE e **pode exigir Decisão 33**. *Reentrar* em onda
-  própria, após brainstorm da decisão.
+- ✓ **impl de gates-nativos (Tema 6, face 2)** — **FECHADA** na Fase 1 Track A
+  (A1 + A2, 2026-06-30): gate ktlint (`./gradlew ktlintCheck`, modo check
+  read-only, guard de stack android/kmp FR-02) em `engine/verify.py::_run_ktlint_gate`;
+  gate build-only (`./gradlew assembleDebug` pra android/kmp, `xcodebuild build`
+  pra ios, web skip) em `engine/verify.py::_run_build_gates`; ambos mesclados via
+  `_run_native_gates`. Guardas: `tests/engine/test_verify_native_gates.py`,
+  `tests/engine/test_verify_build_only.py`.
 - **impl de runtime/visual (Tema 6, face 3)** — spec escrita em
   `docs/superpowers/specs/2026-06-30-runtime-visual-verification-design.md`; a
-  impl do passo de verificação runtime/visual está PENDENTE. *Reentrar* em onda
-  própria.
+  impl do passo de verificação runtime/visual (smoke Nível 2 + screenshot Nível 3)
+  está PENDENTE. *Reentrar* em onda própria (critério: piloto MeoBonsai com
+  gates nativos A1/A2 estabilizados).
 - **forge upgrade ignora flags desconhecidas em silêncio** — `engine/upgrade.py`
   (~L333): flags não-reconhecidas passam batido sem aviso (cosmético, sem
   impacto de segurança; um typo de flag não dá feedback). *Reentrar* ao tocar o
@@ -157,17 +172,42 @@ Agrupado por prioridade. Plano de ataque por onda na spec
   divergência de comportamento documentada entre Python 3.11 e 3.12 nesse ponto;
   a escolha é consciente. *Reentrar* se um consumidor real depender de inventory
   através de symlink-dir.
+- **MI-02 — gate de progresso fura o framing AI-first via `FORGE_FORCE_COLOR`**
+  (Fase 1 Track D, D1 — spinner de progresso) — o spinner é corretamente gateado
+  por `_is_tty` (sem poluir o transcript IA-first fora de TTY). Porém
+  `FORGE_FORCE_COLOR` força o `renderer` a emitir cores como se fosse TTY, e o
+  mesmo framing não é aplicado ao gate de spinner: `_is_tty` usa
+  `stream.isatty()` direto, sem inspecionar `FORGE_FORCE_COLOR`. Em
+  automação com `FORGE_FORCE_COLOR=1` e TTY falso, o spinner não dispara
+  (correto — `isatty()` retorna `False`), mas a inconsistência semântica pode
+  causar surpresa futura se um gate copiar a heurística de cor em vez da
+  heurística de TTY. A correção limpa é `_is_tty` usar `stream.isatty()` puro
+  e o `renderer` deixar de usar `FORGE_FORCE_COLOR` como proxy de TTY para
+  qualquer gate comportamental. Baixo impacto; pré-existente à Track D.
+  *Reentrar* ao tocar o renderer ou o gate de spinner.
+- **I-02 — dedup do helper de teste `_write_fake_gradlew`/`_fake_run` entre
+  `test_verify_build_only.py` e `test_verify_native_gates.py`** — ambos os
+  módulos definem helpers sintéticos quase-idênticos pra simular a presença/ausência
+  do `gradlew` e o comportamento do runner externo. A duplicação é de baixo risco
+  hoje (2 arquivos de teste; helpers pequenos). Quando um 3º gate (ex.: detekt,
+  swiftlint — Nível 2) chegar, a triplicação justifica extração pra um
+  `conftest.py` ou `tests/engine/helpers/external_exec.py` compartilhado.
+  *Reentrar* ao adicionar o 3º gate nativo.
+- ~~**IM-01 — verificar early-return de validators vazios (Tema 6, gates nativos)**~~
+  FECHADO em cross-AI review fix 2026-06-30: `_run_native_gates` agora roda MESMO
+  quando `validators==[]`. O early-return "pass" só ocorre quando validators E
+  native-gate-results são ambos vazios. Ref: `feat/aifirst-pendencias`, FIX #1.
 
 **P2 (polish — itens 16-21 do report)**
 
-- Progress feedback nos steps longos do init (backend ~86s, orphan ~75s).
-- graph "did-you-mean" no Q4 quando o módulo não casa.
-- evolve: tratar SIGPIPE/EOF no loop de render.
-- reconfigure: imprimir o dashboard só no 1º passo do loop.
-- `--help` reconhecido em todos os subcomandos (evolve, implement).
-- undo: exit 0 em no-op de `last`; raw: aviso de escopo no `rebuild-templates`.
+- Progress feedback nos steps longos do init (backend ~86s, orphan ~75s). → fechado (Fase 1 Track D, D1)
+- graph "did-you-mean" no Q4 quando o módulo não casa. → fechado (Fase 1 Track D, D2)
+- evolve: tratar SIGPIPE/EOF no loop de render. → fechado (W-DEBT T8, verificado em Fase 1 BCD Track D)
+- reconfigure: imprimir o dashboard só no 1º passo do loop. → fechado (W-DEBT T8, verificado em Fase 1 BCD Track D)
+- `--help` reconhecido em todos os subcomandos (evolve, implement). → fechado (W-DEBT T8, verificado em Fase 1 BCD Track D)
+- undo: exit 0 em no-op de `last`; raw: aviso de escopo no `rebuild-templates`. → fechado (W-DEBT T8, verificado em Fase 1 BCD Track D)
 
-*Reentrar* os P2 dobrando nos pontos baratos de cada onda da spec.
+*Todos os P2 do report fechados na Fase 1 (Track D + W-DEBT T8).*
 
 ## W-VENDOR — gaps pós Fase 1 Onda 3 (2026-06-25)
 
@@ -224,9 +264,8 @@ Agrupado por prioridade. Plano de ataque por onda na spec
   distill` → `mem evolve`. Candidato a `mem-report` upstream: um `mem archive
   <id>`.
 
-- **`engine/memory/l3.py` órfão (W-ROUTE 6a)** — perdeu o único consumidor de
-  produção (`memory_cli` parou de inspecionar L3). Slated pra remoção num
-  passo clean-break posterior; mantido agora pra não expandir o escopo de 6a.
+- **`engine/memory/l3.py` órfão (W-ROUTE 6a)** — ✅ FECHADO: removido na Fase 1
+  Track C (zero consumidores confirmado).
 
 ## W-ROUTE 6b/6c — gaps pós re-roteamento de knowledge proposals (2026-06-26)
 
@@ -239,8 +278,8 @@ Agrupado por prioridade. Plano de ataque por onda na spec
   era roteado via `_KNOWLEDGE_KINDS → mem_inbox_add` desde 6b; a função era
   dead code confirmado por grep.
 
-- **`apply_proposal_to_l2` misnomer (W-ROUTE 6b)** — PENDENTE: misnomer mantido.
-  O rename ripplaria em callers/tests — candidato a sweep semântico posterior (6d+).
+- **`apply_proposal_to_l2` misnomer (W-ROUTE 6b)** — ✅ FECHADO: renomeado para
+  `route_proposal_to_inbox` na Fase 1 Track C (clean-break, sweep completo).
 
 - **`forge undo` de evolve-apply é no-op pra knowledge kinds (W-ROUTE 6b)**
   — após 6b, proposals de conhecimento vão pro inbox do mem (não pro L2), mas

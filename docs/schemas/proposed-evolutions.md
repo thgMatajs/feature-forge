@@ -235,7 +235,7 @@ All six share these conventions:
 
 ### Apply / reject mechanics
 
-`apply_proposal_to_l2` dispatches the six kinds to
+`route_proposal_to_inbox` dispatches the six kinds to
 `engine.graph.reuse_apply.apply_reuse_intelligence_proposal(project_root, proposal)`
 which:
 1. Computes the kebab-case slug `refactor-{receiver}-{name}`.

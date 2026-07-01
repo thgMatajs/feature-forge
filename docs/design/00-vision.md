@@ -15,11 +15,11 @@ and reduces ambiguity to zero across feature lifecycles.
 │  State machine, file-driven, plan→apply→verify→commit              │
 ├────────────────────────────────────────────────────────────────────┤
 │ Layer 1: Knowledge Substrate                                       │
+│  mem acervo curado (.claude/bin/mem — JSONL + SQLite)              │
 │  codebase-graph.db (live)                                          │
 │  inventory/{design-system, i18n, conventions}.yaml                 │
-│  memory L1-L5                                                      │
 ├────────────────────────────────────────────────────────────────────┤
-│ Layer 2: External Integrations                                     │
+│ Layer 2: External Integrations (MCP — DEFERIDO pós-piloto)         │
 │  ticketing MCP (Jira/Linear/etc)                                   │
 │  docs MCP (Context7)                                               │
 │  vision (screenshot analysis)                                      │
@@ -44,6 +44,27 @@ and reduces ambiguity to zero across feature lifecycles.
 │  evolve (review/apply proposals)                                   │
 └────────────────────────────────────────────────────────────────────┘
 ```
+
+### North star: AI-first lifecycle
+
+O objetivo é um ciclo de feature **dirigível por host IA sem passos manuais
+fora do forge**. O engine emite intents (exit 2 + marker `<FORGE_INTENT/>`);
+o host fecha o loop via `AskUserQuestion` (Claude Code) ou intent-file
+(opencode/CI). O usuário avalia decisões de produto — nunca roda CLIs
+manualmente dentro de um ciclo em progresso.
+
+### Capacidade de verificação de execução (Decisão 33, Nível 1)
+
+`forge verify` agora roda gates externos junto da cascade de validators
+(Layer 0). No Nível 1: **ktlint** (`./gradlew ktlintCheck`, leitura pura,
+só em stacks android/kmp) e **build-only** (`./gradlew assembleDebug` para
+android/kmp, `xcodebuild build` para ios), conforme `platforms.active`. Web
+sem build-only no Nível 1. Violação é informativa por default; opt-in
+`fail-on-violation: true` por gate. Tool ausente → `skipped`; timeout →
+`degraded`. Fronteira de execução em `engine/external_exec.py` (Decisão 33
+— camada separada do sandbox de validators da Decisão 30). Os Níveis 2
+(smoke) e 3 (screenshot) têm spec escrita e impl pendente — ver
+`docs/design/04-pending.md §Follow-on`.
 
 ## Capability cards (the composition unit)
 

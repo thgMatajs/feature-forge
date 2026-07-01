@@ -92,6 +92,38 @@ def test_find_symbols_in_module(tmp_path):
     assert "AuthViewModel" in names
 
 
+def test_list_modules_returns_distinct_sorted(tmp_path):
+    """D2 (Fase 1): list_modules lista os módulos distintos conhecidos no grafo."""
+    db = tmp_path / "g.db"
+    _seed_db(db)
+    mods = queries.list_modules(tmp_path, db_path=db)
+    # Os 3 módulos semeados em _seed_db: "shared:auth", "shared:bonsai", "ios:auth"
+    assert mods == sorted({"shared:auth", "shared:bonsai", "ios:auth"})
+
+
+def test_list_modules_excludes_null_and_empty(tmp_path):
+    """list_modules exclui entradas NULL e string vazia (arquivos sem módulo)."""
+    db = tmp_path / "g.db"
+    conn = open_db(db, create=True)
+    try:
+        with transaction(conn):
+            conn.executemany(
+                "INSERT INTO files(path, language, module) VALUES (?, ?, ?)",
+                [
+                    ("src/Main.kt", "kotlin", ":app"),
+                    ("src/Raw.kt", "kotlin", None),
+                    ("src/Empty.kt", "kotlin", ""),
+                ],
+            )
+    finally:
+        conn.close()
+
+    mods = queries.list_modules(tmp_path, db_path=db)
+    assert mods == [":app"]
+    assert None not in mods
+    assert "" not in mods
+
+
 def test_blast_radius_returns_dict_shape(tmp_path):
     db = tmp_path / "g.db"
     _seed_db(db)

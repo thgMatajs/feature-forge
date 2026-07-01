@@ -674,6 +674,78 @@ permanece em workflow-config. Revoke explícito: edite manualmente OU
 aguarde gap opt-in `forge reconfigure --revoke-grants` (não
 implementado v1.2).
 
+## `native-gates` (opt-in, Tema 6 / Decisão 33)
+
+Configura os gates de **execução externa** — o engine roda os binários de
+qualidade/build do projeto consumidor (linters, build tools) via a fronteira da
+Decisão 33 (distinta do sandbox de validators da Decisão 30). Bloco opcional —
+sem ele, os gates usam defaults. **Filosofia:** violação é **informativa** por
+default (`warn`, não reprova); subir pra `fail` é opt-in por gate. Tool ausente
+→ `skipped` (não reprova); timeout → `degraded`. Nunca auto-fix.
+
+```yaml
+native-gates:
+  ktlint:
+    enabled: true             # default true; linter read-only; ausência do tool → skipped
+    bin: /opt/ktlint          # opcional; path/argv quando não há ./gradlew
+    timeout: 120              # segundos; default 120; estouro → degraded
+    fail-on-violation: false  # opt-in: true sobe warn→fail (default informativo)
+  build:
+    enabled: true             # default FALSE (opt-in); builds escrevem artefatos — habilite explicitamente
+    timeout: 600              # builds são lentos; default 600s; estouro → degraded
+    fail-on-violation: false  # opt-in: true sobe warn→fail
+```
+
+### Semântica de campos
+
+| Campo | Tipo | Default | Notas |
+|---|---|---|---|
+| `ktlint.enabled` | bool | `true` | `false` desliga o gate inteiro; ktlint é read-only (modo check) |
+| `build.enabled` | bool | **`false`** | Gate de build é **opt-in** — padrão desabilitado (builds escrevem artefatos de build, ~600s); habilite explicitamente quando quiser verificar compilação |
+| `ktlint.bin` | str \| argv | — | path/argv do ktlint quando não há `./gradlew`; ignorado se o wrapper existe |
+| `<gate>.timeout` | int > 0 | ktlint 120 / build 600 | estouro → `degraded` (não `fail`) |
+| `<gate>.fail-on-violation` | bool | `false` | `true` sobe `warn → fail` (gate com dentes, opt-in) |
+
+### Descoberta do binário (skip-se-ausente)
+
+Ordem de preferência (primeiro que resolver vence):
+
+- **ktlint:** `./gradlew ktlintCheck` → `native-gates.ktlint.bin` → `which ktlint`.
+- **build:** por plataforma de `platforms.active` — android/kmp → `./gradlew assembleDebug`;
+  ios → `xcodebuild build` (forma mínima); web → sem build-only no Nível 1 (skip).
+
+Nenhum resolve → o gate é `skipped` com aviso mentor-calmo nomeando como habilitar.
+Skip-se-ausente é **requisito**, não conveniência: um gate que falha por ausência
+tornaria o forge refém da toolchain de cada consumidor.
+
+### Guard de stack (FR-02)
+
+O ktlint roda apenas em projetos Kotlin. A decisão usa `platforms.active`:
+
+- `active` contém `android` ou `kmp` → ktlint tenta resolver (projeto Kotlin).
+- `active` definido mas sem `android`/`kmp` (ex.: `["ios","web"]`) → ktlint não
+  roda (projeto não-Kotlin; evita verde inerte via which-fallback num repo não-Kotlin).
+- `active` vazio ou bloco `platforms` ausente → ktlint tenta (stack desconhecida;
+  pode ser Kotlin — conservador).
+
+O build gate usa `platforms.active` para escolher o comando por plataforma (ver
+seção §Descoberta do binário). Plataformas sem build-only no Nível 1 (`web`,
+desconhecidas) são silenciosamente puladas.
+
+### Notas de runtime
+
+- **Modo check, read-only (ktlint).** O ktlint roda só em `ktlintCheck` — nunca
+  `ktlintFormat`/`--fix`. A garantia "não escreve" vem de escolher o subcomando.
+- **O build ESCREVE artefatos** (binários, caches) no working tree do projeto.
+  Isso é esperado e legítimo (é o build do próprio projeto); o forge **não
+  versiona nem limpa** esses artefatos.
+- **`degraded` é cidadão de primeira classe.** Ausente/estourado → `degraded`,
+  distinto de `pass`/`fail`. Ataca o "verde inerte" do Tema 6: o usuário vê que o
+  gate não rodou, em vez de um falso verde.
+- Os gates nativos rodam **independentemente** dos validators do cascade —
+  o early-return "pass" só ocorre quando validators E gates nativos estão
+  ambos vazios/desabilitados para o scope.
+
 ## Deliberately OUT of config
 
 | Decision | Why not in config |
