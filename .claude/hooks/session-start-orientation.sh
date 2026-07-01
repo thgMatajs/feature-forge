@@ -154,6 +154,8 @@ Antes de qualquer trabalho:
   3. Verification → doc-sync → commit
 
 Regras: CLAUDE.md · Mandamento 0: .claude/rules/orchestrator-persona.md
+Mandamento #7 (mem-first): consulte \`.claude/bin/mem find\` no PRIMEIRO turno em
+perguntas de estado / status / "o que falta" / histórico — em paralelo com Read/git.
 EOF
 
 exit 0
