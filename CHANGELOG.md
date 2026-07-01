@@ -9,6 +9,10 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`forge verify` — delta cross-AI review (feat/aifirst-pendencias, 2026-06-30, 2ª passagem):**
+  - **BL-01 (BLOCKER — doc-sync)** `forge-config.md §Notas de runtime` corrigia texto stale que dizia "os gates acompanham a cascade de validators: num scope sem validators, os gates nativos também não rodam" — comportamento ANTIGO removido pelo FIX #1. Texto agora diz que gates nativos rodam independentemente; early-return "pass" só ocorre quando validators E gates nativos estão ambos vazios/desabilitados.
+  - **WR-01 (WARNING — bug real)** `_run_build_gates`: `android` e `kmp` mapeavam pro mesmo `./gradlew assembleDebug` — em `platforms.active=[android,kmp]`, o loop rodava `assembleDebug` 2× (~600s cada) sem valor extra. Fix: dedup por argv resolvido. Antes de executar cada plataforma, compara o argv resolvido com os já executados; se idêntico, emite result `skipped` mentor-calmo referenciando a plataforma anterior (transparência: 1 result por plataforma, mas 1 execução real por argv único). TDD: RED→GREEN (2 novos testes; android+ios — toolchains distintas — permanecem ambos executando).
+
 - **`forge verify` — cross-AI review (feat/aifirst-pendencias, 2026-06-30):** 4 findings remediados:
   - **#1 (MED)** `_run_native_gates` agora roda MESMO quando `validators==[]` — o early-return "pass" só ocorre quando validators E native-gate-results são ambos vazios. Fecha IM-01 de `04-pending`.
   - **#2 (HIGH)** `_run_build_gates` itera TODAS as plataformas buildable (antes: `return` no primeiro resolve silenciava quebras de iOS/KMP). Gate name agora é por-plataforma (`build:android`, `build:ios`, etc.).

@@ -1482,6 +1482,11 @@ def _run_build_gates(config: dict, project_root: Path) -> list[_ValidatorResult]
     results: list[_ValidatorResult] = []
     fail_on_violation = _gate_fail_on_violation(config, "build")
     timeout = _gate_timeout(config, "build", default=600)
+    # WR-01: dedup por argv resolvido — android e kmp compartilham ./gradlew
+    # assembleDebug. Sem dedup, o loop roda assembleDebug 2× (~600s cada) sem
+    # valor extra. Mantemos 1 result por plataforma (transparência), mas só 1
+    # execução real por argv único.
+    executed_argvs: list[tuple[str, ...]] = []  # argvs já executados nesta run
 
     for platform in buildable:
         gate_name = f"build:{platform}"
@@ -1497,6 +1502,24 @@ def _run_build_gates(config: dict, project_root: Path) -> list[_ValidatorResult]
                 )
             )
             continue
+        argv_key = tuple(argv)
+        if argv_key in executed_argvs:
+            # Mesmo toolchain que uma plataforma anterior — pulamos a 2ª execução.
+            # Identificamos a plataforma anterior pelo índice da primeira ocorrência.
+            prior_idx = executed_argvs.index(argv_key)
+            prior_platform = buildable[prior_idx]
+            results.append(
+                _skipped_gate_result(
+                    gate_name,
+                    f"Build-only de `{platform}` usa o mesmo toolchain que "
+                    f"`build:{prior_platform}` (`{' '.join(argv)}`). "
+                    f"Pulado pra não duplicar o build — veja o resultado de "
+                    f"`build:{prior_platform}` acima.",
+                )
+            )
+            executed_argvs.append(argv_key)
+            continue
+        executed_argvs.append(argv_key)
         res = run_external_tool(argv, project_root, timeout=timeout)
         results.append(
             _map_external_result(

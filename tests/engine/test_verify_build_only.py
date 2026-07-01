@@ -407,3 +407,133 @@ def test_build_android_ios_one_absent_still_runs_other(tmp_path, monkeypatch):
     statuses = {r.name: r.status for r in build_results}
     assert statuses.get("build:android") == "pass"
     assert statuses.get("build:ios") == "skipped"
+
+
+# ── WR-01 (TDD — RED first): android+kmp compartilham toolchain → dedup por argv ─
+
+
+def test_build_android_kmp_same_argv_runs_external_once(tmp_path, monkeypatch):
+    """WR-01: android+kmp → mesmo argv (./gradlew assembleDebug) → run_external_tool chamado 1× só.
+
+    Comportamento buggy: loop roda assembleDebug duas vezes (build:android e
+    build:kmp), ~600s cada, zero valor extra — o mesmo binário e mesmo artefato.
+    Comportamento correto (Caminho A — dedup por argv resolvido): quando o argv
+    resolvido já foi executado nesta run, NÃO re-executa. Emite _ValidatorResult
+    'skipped' pra 2ª plataforma com razão mentor-calmo. Há 2 results no output
+    (transparência), mas só 1 execução real de run_external_tool.
+
+    TDD: este teste deve FALHAR antes da implementação (roda 2× hoje).
+    """
+    import stat as _stat
+
+    gradlew = tmp_path / "gradlew"
+    gradlew.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    gradlew.chmod(gradlew.stat().st_mode | _stat.S_IXUSR | _stat.S_IXGRP | _stat.S_IXOTH)
+
+    call_count = {"n": 0}
+
+    def _counting_run(argv, project_root, *, timeout=120):
+        call_count["n"] = call_count["n"] + 1
+        return ExternalToolResult(
+            tool=argv[0],
+            status="pass",
+            exit_code=0,
+            stdout="",
+            stderr="",
+            duration_ms=10,
+            skipped_reason="",
+        )
+
+    monkeypatch.setattr(verify, "run_external_tool", _counting_run)
+
+    config = {
+        "platforms": {"active": ["android", "kmp"]},
+        "native-gates": {"build": {"enabled": True}, "ktlint": {"enabled": False}},
+    }
+
+    results = verify._run_native_gates(config, tmp_path, interactive=False)
+    build_results = [r for r in results if r.name.startswith("build")]
+
+    # Deve haver 2 results (1 por plataforma — transparência)
+    assert len(build_results) == 2, (
+        f"Esperado 2 results de build (um por plataforma), obtido {len(build_results)}: "
+        f"{[r.name for r in build_results]}"
+    )
+    # Mas run_external_tool chamado UMA vez só (dedup)
+    assert call_count["n"] == 1, (
+        f"run_external_tool deveria ser chamado 1× (dedup por argv), mas foi chamado "
+        f"{call_count['n']}× — android e kmp compartilham ./gradlew assembleDebug"
+    )
+    # O 2º result deve ser skipped (não pass nem fail)
+    statuses = {r.name: r.status for r in build_results}
+    skipped_platforms = [name for name, st in statuses.items() if st == "skipped"]
+    assert len(skipped_platforms) == 1, (
+        f"Esperado 1 result skipped (toolchain duplicada), obtido: {statuses}"
+    )
+    # A mensagem do skipped deve mencionar a plataforma anterior (mentor-calmo)
+    skipped_result = next(r for r in build_results if r.status == "skipped")
+    assert skipped_result.message, "Result skipped deve ter mensagem mentor-calmo"
+
+
+def test_build_android_kmp_ios_distinct_argv_all_run(tmp_path, monkeypatch):
+    """WR-01 não-regressão: android+kmp+ios — gradlew e xcodebuild são DISTINTOS → 2 execuções reais.
+
+    android e kmp compartilham ./gradlew (1 execução); ios tem xcodebuild (distinto).
+    Total: 2 execuções reais (gradlew 1× + xcodebuild 1×), 3 results.
+    """
+    import stat as _stat
+
+    gradlew = tmp_path / "gradlew"
+    gradlew.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    gradlew.chmod(gradlew.stat().st_mode | _stat.S_IXUSR | _stat.S_IXGRP | _stat.S_IXOTH)
+
+    argv_calls: list[list[str]] = []
+
+    def _fake_resolve(candidates, project_root):
+        first = candidates[0] if candidates else []
+        tool = first[0] if isinstance(first, list) else first
+        if "gradlew" in str(tool) or "xcodebuild" in str(tool):
+            return first if isinstance(first, list) else [first]
+        return None
+
+    def _tracking_run(argv, project_root, *, timeout=120):
+        argv_calls.append(list(argv))
+        return ExternalToolResult(
+            tool=argv[0],
+            status="pass",
+            exit_code=0,
+            stdout="",
+            stderr="",
+            duration_ms=10,
+            skipped_reason="",
+        )
+
+    monkeypatch.setattr(verify, "resolve_invocation", _fake_resolve)
+    monkeypatch.setattr(verify, "run_external_tool", _tracking_run)
+
+    config = {
+        "platforms": {"active": ["android", "kmp", "ios"]},
+        "native-gates": {"build": {"enabled": True}, "ktlint": {"enabled": False}},
+    }
+
+    results = verify._run_native_gates(config, tmp_path, interactive=False)
+    build_results = [r for r in results if r.name.startswith("build")]
+
+    # 3 results (um por plataforma — transparência)
+    assert len(build_results) == 3, (
+        f"Esperado 3 results (android, kmp, ios), obtido {len(build_results)}: "
+        f"{[r.name for r in build_results]}"
+    )
+    # 2 execuções reais: gradlew (android ou kmp) + xcodebuild (ios)
+    assert len(argv_calls) == 2, (
+        f"Esperado 2 execuções reais (gradlew 1× + xcodebuild 1×), obtido {len(argv_calls)}: "
+        f"{argv_calls}"
+    )
+    # O result skipped deve ser kmp (vem depois de android na lista)
+    statuses = {r.name: r.status for r in build_results}
+    assert statuses.get("build:ios") == "pass"
+    # android e kmp: um pass e um skipped
+    android_kmp_statuses = {k: v for k, v in statuses.items() if k in ("build:android", "build:kmp")}
+    assert set(android_kmp_statuses.values()) == {"pass", "skipped"}, (
+        f"android+kmp devem ter 1 pass + 1 skipped, obtido: {android_kmp_statuses}"
+    )

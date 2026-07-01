@@ -742,8 +742,9 @@ desconhecidas) são silenciosamente puladas.
 - **`degraded` é cidadão de primeira classe.** Ausente/estourado → `degraded`,
   distinto de `pass`/`fail`. Ataca o "verde inerte" do Tema 6: o usuário vê que o
   gate não rodou, em vez de um falso verde.
-- Os gates acompanham a **cascade de validators**: num scope sem validators
-  registrados, os gates nativos também não rodam (Nível 1).
+- Os gates nativos rodam **independentemente** dos validators do cascade —
+  o early-return "pass" só ocorre quando validators E gates nativos estão
+  ambos vazios/desabilitados para o scope.
 
 ## Deliberately OUT of config
 
