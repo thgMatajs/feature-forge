@@ -132,8 +132,9 @@ Agrupado por prioridade. Plano de ataque por onda na spec
   "verde" mentir. A face **qa sem vetor impl-vs-spec** foi fechada na **Onda 1b**
   (ver Fechados acima). A face **gates nativos** (ktlint + build-only, Nível 1)
   foi **fechada na Fase 1 Track A** (A1 + A2, 2026-06-30 — ver Follow-on). A face
-  **runtime/visual** (smoke Nível 2 + screenshot Nível 3) segue com spec escrita e
-  impl PENDENTE; ver Follow-on.
+  **runtime/visual**: o **smoke Nível 2** foi shipado (2026-07-01 — ver Follow-on);
+  o **screenshot Nível 3** segue com spec escrita e impl deferida pós-piloto;
+  ver Follow-on.
 
   *(BUG-5, BUG-2 e BUG-PLAN-1 — os outros P0 desta seção — foram fechados na
   Onda 3; ver seção Fechados acima.)*
@@ -153,10 +154,12 @@ Agrupado por prioridade. Plano de ataque por onda na spec
   `_run_native_gates`. Guardas: `tests/engine/test_verify_native_gates.py`,
   `tests/engine/test_verify_build_only.py`.
 - **impl de runtime/visual (Tema 6, face 3)** — spec escrita em
-  `docs/superpowers/specs/2026-06-30-runtime-visual-verification-design.md`; a
-  impl do passo de verificação runtime/visual (smoke Nível 2 + screenshot Nível 3)
-  está PENDENTE. *Reentrar* em onda própria (critério: piloto MeoBonsai com
-  gates nativos A1/A2 estabilizados).
+  `docs/superpowers/specs/2026-06-30-runtime-visual-verification-design.md`. O
+  **Nível 2 (smoke)** foi **SHIPADO** (2026-07-01, Caminho A: o consumidor
+  declara `native-gates.smoke.cmd`; `engine/verify.py::_run_smoke_gate`; guarda
+  em `tests/engine/test_verify_smoke_gate.py`). O **Nível 3 (screenshot diff)**
+  segue **deferido pós-piloto**. *Reentrar* no Nível 3 em onda própria (critério:
+  piloto MeoBonsai com o smoke estabilizado).
 - **forge upgrade ignora flags desconhecidas em silêncio** — `engine/upgrade.py`
   (~L333): flags não-reconhecidas passam batido sem aviso (cosmético, sem
   impacto de segurança; um typo de flag não dá feedback). *Reentrar* ao tocar o
@@ -185,14 +188,10 @@ Agrupado por prioridade. Plano de ataque por onda na spec
   e o `renderer` deixar de usar `FORGE_FORCE_COLOR` como proxy de TTY para
   qualquer gate comportamental. Baixo impacto; pré-existente à Track D.
   *Reentrar* ao tocar o renderer ou o gate de spinner.
-- **I-02 — dedup do helper de teste `_write_fake_gradlew`/`_fake_run` entre
-  `test_verify_build_only.py` e `test_verify_native_gates.py`** — ambos os
-  módulos definem helpers sintéticos quase-idênticos pra simular a presença/ausência
-  do `gradlew` e o comportamento do runner externo. A duplicação é de baixo risco
-  hoje (2 arquivos de teste; helpers pequenos). Quando um 3º gate (ex.: detekt,
-  swiftlint — Nível 2) chegar, a triplicação justifica extração pra um
-  `conftest.py` ou `tests/engine/helpers/external_exec.py` compartilhado.
-  *Reentrar* ao adicionar o 3º gate nativo.
+- ✓ **I-02 — dedup do helper de teste `_write_fake_gradlew`/`_fake_run`** —
+  FECHADO com o smoke gate (Nível 2): helpers extraídos pra
+  `tests/engine/helpers/external_exec.py`; `test_verify_build_only.py` e
+  `test_verify_native_gates.py` migrados. O 3º gate nativo chegou (smoke).
 - ~~**IM-01 — verificar early-return de validators vazios (Tema 6, gates nativos)**~~
   FECHADO em cross-AI review fix 2026-06-30: `_run_native_gates` agora roda MESMO
   quando `validators==[]`. O early-return "pass" só ocorre quando validators E

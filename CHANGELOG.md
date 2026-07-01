@@ -31,6 +31,12 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Added
 
+- **Smoke gate (Tema 6 Nível 2, Caminho A)** — `forge verify` ganha o step
+  `smoke` (opt-in, default off): o consumidor declara `native-gates.smoke.cmd`
+  e o forge roda como gate nativo (reusa `external_exec`). Device/toolchain
+  ausente → `skipped`/`degraded`, nunca `fail`. Fecha o follow-on I-02 (helper
+  de teste `external_exec` compartilhado). Spec:
+  `docs/superpowers/specs/2026-07-01-smoke-gate-n2-design.md`.
 - **Mandamento #7 (mem-first)** — mem é a primeira fonte de contexto passado
   (CLAUDE.md Tier-0). Remedia gap da integração mem Fase 0/1: a disciplina
   mem-first era ponteiro soft, agora é invariante always-on. SessionStart nomeia
