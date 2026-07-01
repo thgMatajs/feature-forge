@@ -30,6 +30,7 @@ block on hard fail.
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 import sys
 import time
@@ -1542,7 +1543,11 @@ def _smoke_candidates(config: dict) -> list[list[str] | str]:
     if isinstance(cmd, list) and cmd:
         return [[str(x) for x in cmd]]
     if isinstance(cmd, str) and cmd.strip():
-        return [cmd.strip()]
+        # WR-01: string multi-palavra ("./gradlew test") vira argv via shlex —
+        # senão resolve_invocation trata a string inteira como um binário só
+        # (which("./gradlew test") → None → skipped enganoso). shlex normaliza:
+        # "ktlint" → ["ktlint"]; "./gradlew test" → ["./gradlew", "test"].
+        return [shlex.split(cmd.strip())]
     return []
 
 

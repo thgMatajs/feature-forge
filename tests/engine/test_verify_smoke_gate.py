@@ -89,3 +89,19 @@ def test_smoke_real_degraded_on_oserror(tmp_path):
 def test_smoke_greenfield_empty_config(tmp_path):
     """config vazio (mid-init) → _run_native_gates devolve [] (não roda smoke)."""
     assert verify._run_native_gates({}, tmp_path, interactive=False) == []
+
+
+def test_smoke_cmd_as_string_shlex(tmp_path, monkeypatch):
+    """cmd como string multi-palavra → shlex.split → resolve OK (não skip enganoso)."""
+    _write_fake_gradlew(tmp_path, exit_code=0)
+    monkeypatch.setattr(verify, "run_external_tool", _fake_run("pass", exit_code=0))
+    results = verify._run_native_gates(_cfg(enabled=True, cmd="./gradlew test"), tmp_path, interactive=False)
+    smoke = [r for r in results if r.name == "smoke"]
+    assert len(smoke) == 1 and smoke[0].status == "pass"
+
+
+def test_smoke_cmd_non_string_or_list_skipped(tmp_path):
+    """cmd malformado (int/None) → tratado como ausente → skipped (não crash)."""
+    results = verify._run_native_gates(_cfg(enabled=True, cmd=123), tmp_path, interactive=False)
+    smoke = [r for r in results if r.name == "smoke"]
+    assert len(smoke) == 1 and smoke[0].status == "skipped"
