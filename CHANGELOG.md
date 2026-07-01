@@ -31,6 +31,12 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Added
 
+- **Mandamento #7 (mem-first)** — mem é a primeira fonte de contexto passado
+  (CLAUDE.md Tier-0). Remedia gap da integração mem Fase 0/1: a disciplina
+  mem-first era ponteiro soft, agora é invariante always-on. SessionStart nomeia
+  o mandamento; temas abertos ativos do backlog espelhados no mem como notas
+  `reference`; regra de sincronia mem↔04-pending na matriz doc-sync.
+  Spec: `docs/superpowers/specs/2026-07-01-mem-first-context-source-design.md`.
 - feedback de progresso (spinner) nos steps longos do `forge init` — backend (~86s) e orphan-scan (~75s); GATEADO por `_is_tty` (no-op puro fora de TTY, sem poluir o transcript IA-first) (Fase 1 Track D, D1; fecha item P2 16).
 - `forge graph` Q4 (symbols por módulo) sugere o módulo mais próximo (did-you-mean) quando o nome não casa; novo helper `queries.list_modules` (Fase 1 Track D, D2; fecha item P2 17).
 

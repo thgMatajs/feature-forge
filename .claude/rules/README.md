@@ -7,7 +7,7 @@ calmo.
 > **Enxugue Fase 0 (mem dogfood, 2026-06-25):** o detalhe das rules migrou
 > pro acervo `mem` (recuperável via `.claude/bin/mem find "<tema>"`). Cada
 > arquivo aqui virou ponteiro + invariante de enforcement always-on. O
-> Tier-0 (Mandamento 0 + 6 mandamentos + fluxo único) vive em `CLAUDE.md` e
+> Tier-0 (Mandamento 0 + 7 mandamentos + fluxo único) vive em `CLAUDE.md` e
 > não depende do mem.
 
 ## Map (tema → consulta mem)
