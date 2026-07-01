@@ -7,27 +7,13 @@ mescla no run_scope / o opt-in warn→fail.
 """
 from __future__ import annotations
 
-import stat
 from pathlib import Path
 
 import pytest
 
 from engine import verify
 from engine.external_exec import ExternalToolResult
-
-
-def _write_fake_gradlew(project_root: Path, *, exit_code: int) -> Path:
-    """Cria um ./gradlew trivial que sai com `exit_code`.
-
-    Serve só pra `resolve_invocation` enxergar o wrapper como arquivo presente;
-    a execução real é interceptada por monkeypatch de run_external_tool nos
-    testes que precisam de um resultado controlado.
-    """
-    gradlew = project_root / "gradlew"
-    gradlew.write_text(f"#!/bin/sh\nexit {exit_code}\n", encoding="utf-8")
-    mode = gradlew.stat().st_mode
-    gradlew.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    return gradlew
+from tests.engine.helpers.external_exec import _write_fake_gradlew, _fake_run
 
 
 @pytest.fixture
@@ -35,23 +21,6 @@ def project_with_wrapper(tmp_path: Path) -> Path:
     """Project root com ./gradlew presente (exit 0 por default)."""
     _write_fake_gradlew(tmp_path, exit_code=0)
     return tmp_path
-
-
-def _fake_run(status: str, *, exit_code: int | None, skipped_reason: str = "") -> object:
-    """Factory de stub pra monkeypatch de run_external_tool."""
-
-    def _runner(argv, project_root, *, timeout=120):
-        return ExternalToolResult(
-            tool=argv[0],
-            status=status,
-            exit_code=exit_code,
-            stdout="",
-            stderr="",
-            duration_ms=12,
-            skipped_reason=skipped_reason,
-        )
-
-    return _runner
 
 
 def test_ktlint_pass_maps_to_pass(project_with_wrapper, monkeypatch):
