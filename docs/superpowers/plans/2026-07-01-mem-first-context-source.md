@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development. Steps usam checkbox (`- [ ]`).
 
+> **r1 do plan-auditor:** H-001 (contagem stale "123 notas") endereçado na Task 1 Step 3 via des-hardcode (Caminho B).
+
 **Goal:** Promover mem-first a Mandamento Tier-0, reforçar o SessionStart, e espelhar os temas abertos ativos do backlog no mem como notas `reference` — fechando o split-brain de recall sem deletar docs nem tocar a Decisão 20.
 
 **Architecture:** Governança (CLAUDE.md/hooks/rules) + conteúdo mem. Zero código de `engine/`. Remediação de gap da integração Fase 0/1 (ver spec §1).
@@ -52,6 +54,12 @@ Detalhe: `.claude/bin/mem find "mem-first primeira fonte de contexto estado stat
 > índice de recuperação das rules por tema.
 ```
 Inserir logo após o título "## Memória persistente (mem) — índice das rules". Manter o corpo da seção existente.
+
+Além do reframe: **des-hardcodar a contagem de notas** — no mesmo parágrafo
+(`CLAUDE.md`, ~L117), trocar "(123 notas: decisões, disciplinas, …)" por
+"(acervo curado: decisões, disciplinas, despacho de subagente, reuso, testing,
+doc-sync, plan-auditor, e learnings de sessão)". Elimina a classe de staleness
+(o número driftava a cada nota nova). Endereça H-001 (plan-auditor r1, Caminho B).
 
 - [ ] **Step 4: rodar teste estrutural**
 
