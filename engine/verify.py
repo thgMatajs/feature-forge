@@ -1310,7 +1310,7 @@ def _gate_enabled(config: dict, gate: str) -> bool:
     - "build"   → False (opt-in: habilita explicitamente em forge-config.yaml)
     - qualquer outro (incluindo "ktlint") → True
     """
-    _OPT_IN_GATES = {"build"}
+    _OPT_IN_GATES = {"build", "smoke"}
     default = False if gate in _OPT_IN_GATES else True
     return bool(_gate_cfg(config, gate).get("enabled", default))
 
@@ -1532,6 +1532,61 @@ def _run_build_gates(config: dict, project_root: Path) -> list[_ValidatorResult]
     return results
 
 
+def _smoke_candidates(config: dict) -> list[list[str] | str]:
+    """Candidato de invocação do smoke: o cmd DECLARADO pelo consumidor.
+
+    Nível 2 Caminho A: o forge NÃO adivinha o smoke. Sem cmd → [] (caller emite
+    skipped ensinando a declarar).
+    """
+    cmd = _gate_cfg(config, "smoke").get("cmd")
+    if isinstance(cmd, list) and cmd:
+        return [[str(x) for x in cmd]]
+    if isinstance(cmd, str) and cmd.strip():
+        return [cmd.strip()]
+    return []
+
+
+def _run_smoke_gate(config: dict, project_root: Path) -> list[_ValidatorResult]:
+    """Smoke test (Tema 6 Nível 2, Caminho A). Reusa resolve/run/map do A1/A2.
+
+    O consumidor declara `native-gates.smoke.cmd`; o forge só roda. Opt-in
+    (default off). Device/toolchain ausente → skipped/degraded, nunca fail.
+    """
+    if not _gate_enabled(config, "smoke"):
+        return []
+    candidates = _smoke_candidates(config)
+    if not candidates:
+        return [
+            _skipped_gate_result(
+                "smoke",
+                "Gate `smoke` habilitado mas sem comando declarado. Declare "
+                "`native-gates.smoke.cmd` em `forge-config.yaml` (ex.: "
+                '`["./gradlew", "testDebugUnitTest"]`) — o forge roda o smoke que '
+                "você escolher, não adivinha o teste. A feature não foi reprovada por isso.",
+            )
+        ]
+    argv = resolve_invocation(candidates, project_root)
+    if argv is None:
+        return [
+            _skipped_gate_result(
+                "smoke",
+                "Gate `smoke` declarado mas a toolchain não resolveu (o comando de "
+                "`native-gates.smoke.cmd` não foi encontrado no projeto nem no PATH). "
+                "Pulei — a feature não foi reprovada. Instale a toolchain do smoke.",
+            )
+        ]
+    res = run_external_tool(
+        argv, project_root, timeout=_gate_timeout(config, "smoke", default=600)
+    )
+    return [
+        _map_external_result(
+            res,
+            gate_name="smoke",
+            fail_on_violation=_gate_fail_on_violation(config, "smoke"),
+        )
+    ]
+
+
 def _run_native_gates(
     config: dict,
     project_root: Path,
@@ -1540,9 +1595,12 @@ def _run_native_gates(
 ) -> list[_ValidatorResult]:
     """Gates de execução externa (Decisão 33). Ver contrato no plano §1.
 
-    Gates cobertos (Tema 6, Nível 1):
-      - ktlint  (A1) — `./gradlew ktlintCheck` em modo check, read-only.
-      - build   (A2) — `./gradlew assembleDebug` / `xcodebuild` conforme stack.
+    Gates cobertos (Tema 6):
+      - ktlint  (A1, Nível 1) — `./gradlew ktlintCheck` em modo check, read-only.
+      - build   (A2, Nível 1) — `./gradlew assembleDebug` / `xcodebuild` conforme stack.
+      - smoke   (Nível 2, Caminho A) — cmd DECLARADO pelo consumidor em
+        `native-gates.smoke.cmd`; opt-in, default off. Toolchain ausente →
+        skipped/degraded, nunca fail.
 
     Guard greenfield: se `config` é vazio (mid-init, config ainda não escrito),
     devolve `[]` — não tenta rodar gate sem config. Os callers de run_scope
@@ -1558,6 +1616,7 @@ def _run_native_gates(
     results: list[_ValidatorResult] = []
     results.extend(_run_ktlint_gate(config, project_root))
     results.extend(_run_build_gates(config, project_root))
+    results.extend(_run_smoke_gate(config, project_root))
     return results
 
 
