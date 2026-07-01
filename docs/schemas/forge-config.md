@@ -694,6 +694,11 @@ native-gates:
     enabled: true             # default FALSE (opt-in); builds escrevem artefatos — habilite explicitamente
     timeout: 600              # builds são lentos; default 600s; estouro → degraded
     fail-on-violation: false  # opt-in: true sobe warn→fail
+  smoke:
+    enabled: true             # default FALSE (opt-in, Nível 2); o forge só RODA o smoke que você declara
+    cmd: ["./gradlew", "testDebugUnitTest"]  # o comando declarado; lista argv é a forma preferida
+    timeout: 600              # default 600s; estouro → degraded (nunca fail)
+    fail-on-violation: false  # opt-in: true sobe warn→fail (default informativo)
 ```
 
 ### Semântica de campos
@@ -702,8 +707,10 @@ native-gates:
 |---|---|---|---|
 | `ktlint.enabled` | bool | `true` | `false` desliga o gate inteiro; ktlint é read-only (modo check) |
 | `build.enabled` | bool | **`false`** | Gate de build é **opt-in** — padrão desabilitado (builds escrevem artefatos de build, ~600s); habilite explicitamente quando quiser verificar compilação |
+| `smoke.enabled` | bool | **`false`** | Gate de smoke é **opt-in** (Nível 2) — o forge só RODA o smoke que você declara; sem `cmd` → `skipped` ensinando a declarar |
+| `smoke.cmd` | argv \| str | — | O comando de smoke que o consumidor declara. Lista argv preferida (ex.: `["./gradlew", "testDebugUnitTest"]`); string também é aceita e passa por `shlex.split` (`"./gradlew test"` → `["./gradlew", "test"]`) |
 | `ktlint.bin` | str \| argv | — | path/argv do ktlint quando não há `./gradlew`; ignorado se o wrapper existe |
-| `<gate>.timeout` | int > 0 | ktlint 120 / build 600 | estouro → `degraded` (não `fail`) |
+| `<gate>.timeout` | int > 0 | ktlint 120 / build 600 / smoke 600 | estouro → `degraded` (não `fail`) |
 | `<gate>.fail-on-violation` | bool | `false` | `true` sobe `warn → fail` (gate com dentes, opt-in) |
 
 ### Descoberta do binário (skip-se-ausente)
@@ -731,6 +738,28 @@ O ktlint roda apenas em projetos Kotlin. A decisão usa `platforms.active`:
 O build gate usa `platforms.active` para escolher o comando por plataforma (ver
 seção §Descoberta do binário). Plataformas sem build-only no Nível 1 (`web`,
 desconhecidas) são silenciosamente puladas.
+
+### Smoke (Nível 2, Caminho A — o consumidor declara, o forge roda)
+
+O `smoke` é o Nível 2 dos native-gates: um teste de fumaça que o **consumidor
+declara** e o forge apenas **executa**. É Caminho A por design — o forge não
+adivinha o smoke, não gera teste, e não gerencia emulador/device. Você diz o
+que rodar em `native-gates.smoke.cmd`; o forge roda e reporta.
+
+- **Opt-in.** `enabled` é `false` por default — habilite explicitamente.
+- **`cmd` é obrigatório quando habilitado.** Lista argv é a forma preferida
+  (`["./gradlew", "testDebugUnitTest"]`). String também é aceita e normalizada
+  por `shlex.split` — `"./gradlew test"` vira `["./gradlew", "test"]`. Sem `cmd`
+  declarado → `skipped` com aviso mentor-calmo ensinando a declarar (a feature
+  não é reprovada por isso).
+- **Toolchain ausente → `skipped`.** Se o comando de `cmd` não resolve (nem no
+  projeto nem no PATH), o gate é `skipped` — nunca `fail`. Skip-se-ausente é
+  requisito, igual aos outros gates.
+- **Timeout / device ausente → `degraded`, nunca `fail`.** Um smoke que estoura
+  o `timeout` (default 600s) ou tropeça numa dependência externa quebrada degrada;
+  ele não reprova a feature. Reprovar é opt-in via `fail-on-violation`.
+- **Informativo por default.** `fail-on-violation` é `false` — exit ≠ 0 vira
+  `warn`, não `fail`. Suba pra `fail` só quando quiser o gate com dentes.
 
 ### Notas de runtime
 
