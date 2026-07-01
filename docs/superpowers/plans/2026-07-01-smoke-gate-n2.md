@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development. Steps usam checkbox (`- [ ]`). TDD estrito: teste falha ANTES da impl.
 
+> **r1 do plan-auditor:** H-001 (teste do path real degraded), H-002 (docstring de reconciliação do helper), M-001 (supersede a nota N2 shipada) endereçados.
+
 **Goal:** Adicionar o smoke gate (Nível 2, Caminho A) ao `forge verify` — o consumidor declara `native-gates.smoke.cmd`, o forge roda como step do verify reusando a fronteira `external_exec`. Fecha o I-02 de brinde (helper de teste compartilhado).
 
 **Architecture:** `_run_smoke_gate` espelha `_run_build_gates` (mesma fronteira: resolve_invocation → run_external_tool → _map_external_result). Opt-in default off. Device/toolchain ausente → skipped/degraded, nunca fail.
@@ -34,9 +36,10 @@
 ```python
 """Helpers compartilhados pros testes de gates de execução externa.
 
-Extraídos de test_verify_build_only.py + test_verify_native_gates.py (I-02):
-o fake gradle wrapper + o factory de stub de run_external_tool eram idênticos
-nos dois módulos. Ao chegar o 3º gate (smoke), consolidados aqui.
+Extraídos de test_verify_build_only.py + test_verify_native_gates.py (I-02).
+Reconciliação de assinatura: build_only tinha `exit_code=0` (default) e
+native_gates tinha `exit_code` required — adotado o SUPERSET (`exit_code=0`
+default), compatível com ambos os call-sites.
 """
 from __future__ import annotations
 
@@ -177,6 +180,20 @@ def test_smoke_timeout_degraded(tmp_path, monkeypatch):
     assert len(smoke) == 1 and smoke[0].status == "degraded"
 
 
+def test_smoke_real_degraded_on_oserror(tmp_path):
+    """Path REAL (sem stub): ./gradlew não-executável → run_external_tool levanta
+    OSError (PermissionError) → degraded, nunca fail. Exercita engine/external_exec.py
+    (não o stub), cobrindo a razão-de-ser do gate: dependência externa quebrada degrada."""
+    gradlew = tmp_path / "gradlew"
+    gradlew.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")  # SEM chmod +x de propósito
+    # NÃO monkeypatcha run_external_tool — o real roda e captura o OSError.
+    results = verify._run_native_gates(
+        _cfg(enabled=True, cmd=["./gradlew", "test"]), tmp_path, interactive=False
+    )
+    smoke = [r for r in results if r.name == "smoke"]
+    assert len(smoke) == 1 and smoke[0].status == "degraded"
+
+
 def test_smoke_greenfield_empty_config(tmp_path):
     """config vazio (mid-init) → _run_native_gates devolve [] (não roda smoke)."""
     assert verify._run_native_gates({}, tmp_path, interactive=False) == []
@@ -259,7 +276,7 @@ def _run_smoke_gate(config: dict, project_root: Path) -> list[_ValidatorResult]:
 - [ ] **Step 4: rodar → GREEN**
 
 Run: `.venv/bin/pytest tests/engine/test_verify_smoke_gate.py -q`
-Expected: PASS (8 testes).
+Expected: PASS (9 testes).
 
 - [ ] **Step 5: commit**
 
@@ -306,6 +323,15 @@ Capture o id da nota "Aberto: I-02…", crie a nota de closure e supersede:
 .claude/bin/mem supersede <NEW_ID> <OLD_ID_DA_NOTA_ABERTA>
 ```
 
+Além do I-02: este plano ENTREGA o Nível 2 (smoke) → a nota aberta do próprio
+tema deve ser superseded (Mandamento #7). Rode `.claude/bin/mem find "Tema 6 Nível 2 smoke"`,
+capture o id da nota "Aberto: Tema 6 Nível 2 (smoke)" (ex.: 01KWF58RM3TNMQGNEAA9KW1VQB),
+crie a nota de shipped e supersede:
+```bash
+.claude/bin/mem add --type reference -t "Shipado: Tema 6 Nível 2 (smoke) no forge verify" --tags "tema6,smoke,verify,shipado" "Nível 2 (smoke) SHIPADO: forge verify roda native-gates.smoke.cmd (Caminho A, opt-in, degraded-on-device-absent). Reusa external_exec. Nível 3 (screenshot) segue deferido pós-piloto. Canônico: 04-pending §Follow-on runtime/visual."
+.claude/bin/mem supersede <NEW_ID> <OLD_ID_DA_NOTA_ABERTA_N2>
+```
+
 - [ ] **Step 4: rodar full lane + commit**
 
 Run: `.venv/bin/pytest -q | tail -3`
@@ -328,7 +354,7 @@ git commit -m "docs(smoke): doc-sync — CHANGELOG + fecha I-02 (04-pending + me
 
 ## Self-Review (autor)
 
-- **Cobertura da spec:** §3 config→Task2; §4 semântica→Task2 (8 testes); §6 I-02→Task1+Task3; §7 testes→Task2; §8 escopo→Tasks 1-3.
+- **Cobertura da spec:** §3 config→Task2; §4 semântica→Task2 (9 testes); §6 I-02→Task1+Task3; §7 testes→Task2; §8 escopo→Tasks 1-3.
 - **Placeholders:** nenhum — código real em todos os steps.
 - **Consistência:** `_run_smoke_gate` usa exatamente as funções existentes (resolve_invocation/run_external_tool/_map_external_result/_skipped_gate_result/_gate_*); helper importado do módulo novo.
 
