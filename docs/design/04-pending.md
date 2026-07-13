@@ -4157,6 +4157,26 @@ aqui pra não virarem dívida silenciosa (Mandamentos #6/#7).
   column-aware (garantir colunas antes de criar índices, ou criar índices
   tolerando coluna ausente).
 
+## GRAPH-REUSE-STAGE2 — follow-ons deferidos
+
+Follow-ons deferidos pelo spec da wave GRAPH-REUSE-STAGE2
+(`docs/superpowers/plans/2026-07-13-graph-reuse-stage2.md`). Registrados aqui pra
+não virarem dívida silenciosa (Mandamentos #6/#7).
+
+- **(a) Parser gap `symbols.modifiers` vazio.** Todas as funções têm
+  `modifiers` vazio → não dá pra special-casar `override`/`private` na
+  detecção de reuse. O piso por token sidesteppa a necessidade hoje; fixar o
+  parser é pré-requisito pra qualquer regra baseada em modifier.
+- **(b) Parser gap `line_end == line_start` pra 100% das funções.** Sem extent
+  de função rastreado → impossível piso baseado em linhas. O piso por
+  `body_tokens` evita isso; um piso por linhas exige fixar o extent primeiro.
+- **(c) `kmp-migration` sub-track (SEPARADO).** O match cross-lang atual
+  (nome + `receiver_type` exato entre Kotlin/Swift) nunca casa. Precisa de
+  match name-only + similaridade ou type-map. Non-goal do Stage 2.
+- **(d) Member-functions no universo de reuse.** O Stage 2 mediu top-level
+  `fun` + `composable_fun` (os kinds que carregam `body_hash` hoje). Membros de
+  classe não foram medidos — considerar num incremento futuro, com re-spike.
+
 ---
 
 **For a fresh session retomando o projeto, use o handoff:**

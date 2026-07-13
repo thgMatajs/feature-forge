@@ -122,7 +122,7 @@ Detalhe: `CLAUDE.md` + `.claude/rules/README.md`.
 | Validators Python | 22 + 3 helpers (`_gate_infra`, `_diff`, `_common`) — inclui `check_cyclomatic_complexity` (Kotlin/Swift/TS/Python via Detekt/SwiftLint/eslint/Radon), `check_secrets` (gitleaks + trufflehog), `check_no_behavior_change` (refactor), `validate_extension_feature` (extends-feature cross-cutting), `validate_presets` (Phase B DET-6 — bundle YAML schema) |
 | Hooks | 9 + 1 reuse incremental (`post-edit-detect-duplications.sh`) |
 | Graph parsers | 6 (Kotlin / Swift / TypeScript + Java / XML / Objective-C — Java/XML/ObjC novos em v1.3.0 graph-ia-evolution). Body extraction (`symbols.body`) cobre brace-delimited bodies (5 linguagens; XML é NULL). |
-| Tests | rapid **2390 passed** (11 skipped) / integration **249 passed** / e2e **31 (3 default + 28 gated RUN_E2E=1)** (GRAPH-REAL-REPO Stage 1: import-resolution O(imports+symbols) + coluna `files.platform` + reuse-queries plataforma-aware). Histórico: 2338/249/31 em Fase 2 docs holistic sync; 2126/234/31 em 6d (pós-merge PR#32); 2124/234/31 em 6d (re-rota undo); 2068/234/31 em Fase 0 mem dogfood; 2067/234/31 em 6b T3 (status→mem stats); 2020/233/31 em Fase 0 dogfood; 2012/233/31 em 1.6.1 (qa-pilot remediation + doctor schema-version fix); 2003/233/31 em 1.6.0 (release de piloto); 1946/222/31 em pilot R8; 1863/204/30 em 1.5.0; 1797/190/30 na série AI-first; 1611/168/30 em 1.4.0 pilot-ready. Baseline histórico em CHANGELOG.md. |
+| Tests | rapid **2396 passed** (11 skipped) / integration **249 passed** / e2e **31 (3 default + 28 gated RUN_E2E=1)** (GRAPH-REAL-REPO Stage 1: import-resolution O(imports+symbols) + coluna `files.platform` + reuse-queries plataforma-aware; GRAPH-REUSE-STAGE2: universo de dup ampliado + piso de trivialidade). Histórico: 2338/249/31 em Fase 2 docs holistic sync; 2126/234/31 em 6d (pós-merge PR#32); 2124/234/31 em 6d (re-rota undo); 2068/234/31 em Fase 0 mem dogfood; 2067/234/31 em 6b T3 (status→mem stats); 2020/233/31 em Fase 0 dogfood; 2012/233/31 em 1.6.1 (qa-pilot remediation + doctor schema-version fix); 2003/233/31 em 1.6.0 (release de piloto); 1946/222/31 em pilot R8; 1863/204/30 em 1.5.0; 1797/190/30 na série AI-first; 1611/168/30 em 1.4.0 pilot-ready. Baseline histórico em CHANGELOG.md. |
 | LOC total | ~52.500 (Python) |
 | Engine LOC | ~42.500 (Python; engine/ apenas — validators/ adicional ~7.700). O asset `engine/assets/mem/mem` (2.363 linhas, shell) é vendorizado/pinado e fica FORA da contagem de LOC Python do engine. |
 | Files total | ~404 (inclui `engine/integrations/mem.py`, `engine/integrations/__init__.py`, `engine/assets/mem/mem`, `engine/assets/mem/VERSION`) |
@@ -195,7 +195,7 @@ explicitamente.
   presets/kmp-mobile/                   canonical preset v1
   validators/                           22 validators + 3 helpers (inclui check_cyclomatic_complexity + check_secrets + check_unfilled_placeholders + validate_extension_feature)
   hooks/                                9 hooks + reuse incremental script
-  tests/                                rapid 2390 / integration 249 / e2e 31 (unit + integration + e2e)
+  tests/                                rapid 2396 / integration 249 / e2e 31 (unit + integration + e2e)
 
 [per project install via `forge init`]
 {project}/.claude/forge/                sub-namespace forge (v1.3+)
