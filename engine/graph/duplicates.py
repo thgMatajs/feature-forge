@@ -50,6 +50,33 @@ CATEGORY_CONFIDENCE: dict[str, float] = {
     "duplicate-ts-helper": 0.95,
 }
 
+# Piso de trivialidade (GRAPH-REUSE-STAGE2). Grupos within-module cujo corpo
+# compartilhado tem menos de REUSE_MIN_BODY_TOKENS tokens DISTINTOS são
+# descartados — ruído (setter de 1 linha, boilerplate de adapter, fixture de
+# teste). Medido no precision spike vs inchurch-app-main: o piso >= 5 subiu a
+# precisão de 72% (sem piso) pra ~98% sem perder nenhum finding REAL. Grupos
+# CROSS-MODULE (>= 2 módulos, Q13) NÃO passam pelo piso (sinal mais forte) —
+# preservam duplicatas cross-module GENUÍNAS de mesma plataforma que por acaso
+# têm poucos tokens (ex.: helper de 2 tokens copiado entre dois módulos
+# android). (Pares android↔commonMain byte-idênticos são território do Q16
+# redundant-platform-specific, categoria separada e FORA deste piso — não é o
+# que o bypass protege.) Constante nomeada = tunável por-app sem edição espalhada.
+REUSE_MIN_BODY_TOKENS = 5
+
+
+def _distinct_body_token_count(body_tokens_json: Optional[str]) -> int:
+    """Número de tokens DISTINTOS do corpo (base do piso de trivialidade).
+
+    Replica a contagem do precision spike (``len(json.loads(body_tokens))``):
+    ``symbols.body_tokens`` é um array JSON já deduplicado
+    (``tokens_to_json(frozenset)``), então o tamanho do conjunto == nº de
+    tokens distintos. Feito em Python de propósito — não assume a extensão
+    JSON1 do SQLite e reusa ``tokens_from_json`` (já importado). NULL/malformado
+    → 0 (degrade seguro; grupo abaixo de qualquer piso positivo).
+    """
+    return len(tokens_from_json(body_tokens_json))
+
+
 # Cross-language token-similarity gates — anything below 0.40 is dropped.
 _KMP_SIMILARITY_FLOOR = 0.40
 _KMP_SIMILARITY_TIERS: list[tuple[float, float]] = [
@@ -107,6 +134,13 @@ def detect_all_reuse_findings(
     within_rows = _q_duplicates_within_module(conn)
     counts["duplicate-within-module"] = 0
     for row in within_rows:
+        # Piso de trivialidade (GRAPH-REUSE-STAGE2): within-module abaixo de
+        # REUSE_MIN_BODY_TOKENS tokens distintos é ruído. O `continue` fica
+        # ANTES de claimar a key pra não bloquear um finding cross-module
+        # legítimo com a mesma (receiver, name, sig, body_hash) — Q13 roda
+        # depois e ainda pode capturá-lo (cross bypassa o piso).
+        if _distinct_body_token_count(row.get("body_tokens")) < REUSE_MIN_BODY_TOKENS:
+            continue
         key = (
             row["receiver_type"] or "",
             row["name"],
@@ -185,7 +219,7 @@ def detect_all_reuse_findings(
 def _q_duplicates_within_module(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute(
         """
-        SELECT s.name, s.receiver_type, s.signature, s.body_hash, s.modifiers,
+        SELECT s.name, s.receiver_type, s.signature, s.body_hash, s.body_tokens, s.modifiers,
                f.module AS module, f.source_set AS source_set,
                GROUP_CONCAT(f.id || ':' || s.line_start || ':' || f.path, char(31)) AS occurrences,
                COUNT(*) AS n
@@ -194,6 +228,13 @@ def _q_duplicates_within_module(conn: sqlite3.Connection) -> list[dict]:
         WHERE s.kind IN ('fun', 'composable_fun')
           AND s.body_hash IS NOT NULL
           AND f.path LIKE '%.kt'
+          AND f.path NOT LIKE '%/src/test/%'
+          AND f.path NOT LIKE '%/src/androidTest/%'
+          AND f.path NOT LIKE '%/src/androidUnitTest/%'
+          AND f.path NOT LIKE '%/src/androidHostTest/%'
+          AND f.path NOT LIKE '%/src/commonTest/%'
+          AND f.path NOT LIKE '%/src/iosTest/%'
+          AND f.path NOT LIKE '%/src/jvmTest/%'
         GROUP BY f.module, COALESCE(f.source_set, ''),
                  COALESCE(s.receiver_type, ''), s.name, s.signature, s.body_hash
         HAVING COUNT(*) > 1
@@ -217,6 +258,13 @@ def _q_duplicates_cross_module(conn: sqlite3.Connection) -> list[dict]:
         WHERE s.kind IN ('fun', 'composable_fun')
           AND s.body_hash IS NOT NULL
           AND f.path LIKE '%.kt'
+          AND f.path NOT LIKE '%/src/test/%'
+          AND f.path NOT LIKE '%/src/androidTest/%'
+          AND f.path NOT LIKE '%/src/androidUnitTest/%'
+          AND f.path NOT LIKE '%/src/androidHostTest/%'
+          AND f.path NOT LIKE '%/src/commonTest/%'
+          AND f.path NOT LIKE '%/src/iosTest/%'
+          AND f.path NOT LIKE '%/src/jvmTest/%'
         GROUP BY COALESCE(s.receiver_type, ''), s.name, s.signature, s.body_hash
         HAVING COUNT(DISTINCT f.module) > 1
         ORDER BY n_modules DESC, n_files DESC, COALESCE(s.receiver_type, ''), s.name

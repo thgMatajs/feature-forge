@@ -63,6 +63,7 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
   deixa de dizer "pode exigir Decisão 33" — a Decisão 33 foi tomada nesta fase,
   destravando a impl da Fase 1.
 - **Reuse-intelligence: universo de dup exata ampliado (GRAPH-REUSE-STAGE2):** a detecção within/cross-module (`_q_duplicates_within_module` / `_q_duplicates_cross_module`) deixa de exigir `receiver_type IS NOT NULL` e passa a incluir `kind IN ('fun','composable_fun')` (os únicos kinds que carregam `body_hash`). Extension funs continuam cobertas; entram top-level funs e composables. Agrupamento por `COALESCE(receiver_type,'')`. Medido no precision spike vs `inchurch-app-main`: 1 finding → ~89 grupos brutos (piso + exclusão de teste na sequência).
+- **Reuse-intelligence: piso de trivialidade + exclusão de test-source (GRAPH-REUSE-STAGE2):** constante nomeada `REUSE_MIN_BODY_TOKENS = 5` filtra grupos **within-module** com menos de 5 `body_tokens` distintos (contagem em Python via `_distinct_body_token_count`, replicando o precision spike — sobe precisão 72%→98% sem perder finding REAL). Grupos **cross-module** (>=2 módulos) bypassam o piso (sinal mais forte). Símbolos em paths de teste (`src/test`, `src/androidTest`, `src/androidUnitTest`, `src/androidHostTest`, `src/commonTest`, `src/iosTest`, `src/jvmTest`) são excluídos da detecção — predicado **path-based** (o `src/test/` padrão tem `source_set` NULL, e `NULL NOT IN (...)` descartaria produção). Advise-only: nenhum gate novo; findings seguem pela pipeline de proposals existente.
 
 ### Changed (load-bearing)
 
