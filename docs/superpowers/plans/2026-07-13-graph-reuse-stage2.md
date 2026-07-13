@@ -7,7 +7,7 @@
 **Architecture:** Três mudanças cirúrgicas, todas dentro do subsistema de reuse-intelligence, todas espelhadas entre a detecção build-time (`engine/graph/duplicates.py`) e o read-time interativo (`engine/graph/queries.py`) para que os dois caminhos fiquem consistentes:
 
 1. **Universo ampliado** — as queries de dup within-module e cross-module deixam de exigir `receiver_type IS NOT NULL` e passam a filtrar `kind IN ('fun','composable_fun')`. Extension funs (fun com receiver) permanecem cobertas; entram top-level funs e composables. O `GROUP BY` passa a agrupar por `COALESCE(s.receiver_type, '')` (top-level funs têm receiver NULL) — espelha exatamente o probe SQL do precision spike (variantes C/D) que mediu 87 within + 4 cross.
-2. **Piso de trivialidade** — constante nomeada `REUSE_MIN_BODY_TOKENS = 5`. Grupos **within-module** cujo corpo compartilhado tem menos de 5 `body_tokens` DISTINTOS são descartados (ruído: setter de 1 linha, boilerplate de adapter). Grupos **cross-module** (≥2 módulos) **bypassam** o piso — sinal mais forte, preserva ex.: `MutableState.update` (2 tokens, 3× cross android+shared). O piso lê uma coluna que já existe (`symbols.body_tokens`), replica a contagem do spike (`len(json.loads(body_tokens))`) e não depende de extensão JSON1 do SQLite (ver "Global Constraints").
+2. **Piso de trivialidade** — constante nomeada `REUSE_MIN_BODY_TOKENS = 5`. Grupos **within-module** cujo corpo compartilhado tem menos de 5 `body_tokens` DISTINTOS são descartados (ruído: setter de 1 linha, boilerplate de adapter). O piso é aplicado **só ao Q12 within-module**; grupos **cross-module** (≥2 módulos, Q13) **bypassam** o piso — sinal mais forte. Propósito real do bypass: preservar duplicatas cross-module *genuínas de mesma plataforma* que por acaso têm poucos tokens (ex.: um helper de 2 tokens copiado entre dois módulos `android`, como `androidApp` e `feature`). As demais categorias — Q16 `redundant-platform-specific` e Q14 `kmp-migration` — ficam **inteiramente fora** do piso do Stage 2 (não são tocadas). Em particular, pares `android`↔`commonMain` byte-idênticos como `MutableState.update` são detectados pelo **Q16** (categoria separada), nunca passaram pelo piso, e NÃO são o que o bypass cross-module protege. O piso lê uma coluna que já existe (`symbols.body_tokens`), replica a contagem do spike (`len(json.loads(body_tokens))`) e não depende de extensão JSON1 do SQLite (ver "Global Constraints").
 3. **Exclusão de test-source** — símbolos em paths de teste (`src/test/`, `src/androidTest/`, `src/androidUnitTest/`, `src/androidHostTest/`, `src/commonTest/`, `src/iosTest/`, `src/jvmTest/`) NÃO entram na detecção (within OU cross). Predicado **path-based** — ver "Decisão de design: por que path, não source_set" abaixo.
 
 **Advise-only (AC-4):** nenhum gate/hard-block novo. Os findings continuam materializando em `reuse_findings` e fluindo pela distillation pipeline existente (`queue_proposals_from_table → proposed-evolutions.yaml`) com o mesmo `confidence`. Top-level funs (sem receiver) já renderizam via o caminho existente `receiver or "(top-level)"` em `_build_proposal_title` — zero código novo de pipeline.
@@ -420,20 +420,29 @@ def test_within_module_floor_filters_trivial_keeps_substantial(tmp_path: Path) -
 
 
 def test_cross_module_bypasses_floor(tmp_path: Path) -> None:
+    """Cross-module PURO (dois módulos AMBOS `platform="android"`) com corpo de
+    só 2 `body_tokens` distintos: se fosse within-module cairia no piso, mas o
+    Q13 cross-module bypassa o piso. Ambos android de propósito — o Q16
+    `redundant-platform-specific` (que roda ANTES do Q13 e reivindicaria a
+    chave via `claimed_exact`) exige um par common↔android e NÃO dispara aqui,
+    então o par sobra pro Q13 e o finding materializa como
+    `duplicate-cross-module`, que é o que este teste precisa exercitar.
+    """
     db = tmp_path / "g.db"
     conn = open_db(db, create=True)
     try:
         with transaction(conn):
             f1 = _file(conn, "androidApp/src/main/kotlin/State.kt", "androidApp")
-            f2 = _file(conn, "shared/src/commonMain/kotlin/State.kt", "shared",
-                       source_set="commonMain", platform="common")
-            # 2 tokens distintos, mas cross-module (2 módulos) → mantido (bypass).
-            _sym(conn, f1, name="update", body_hash="hu", tokens='["a","b"]',
-                 line=5, receiver="MutableState")
-            _sym(conn, f2, name="update", body_hash="hu", tokens='["a","b"]',
-                 line=5, receiver="MutableState")
+            f2 = _file(conn, "feature/src/main/kotlin/State.kt", "feature")
+            # top-level fun (receiver NULL), 2 tokens distintos, em 2 módulos
+            # distintos AMBOS android → Q16 não casa (exige common+android), Q12
+            # não agrupa (módulos diferentes), Q13 cross-module o mantém (bypass).
+            _sym(conn, f1, name="resetState", body_hash="hr", tokens='["a","b"]',
+                 line=5)
+            _sym(conn, f2, name="resetState", body_hash="hr", tokens='["a","b"]',
+                 line=5)
             detect_all_reuse_findings(conn, gradle_modules={}, module_dep_rows=[])
-        assert _names(conn, "duplicate-cross-module") == {"update"}
+        assert _names(conn, "duplicate-cross-module") == {"resetState"}
     finally:
         conn.close()
 
@@ -472,9 +481,12 @@ Em `engine/graph/duplicates.py`, imediatamente após o dict `CATEGORY_CONFIDENCE
 # descartados — ruído (setter de 1 linha, boilerplate de adapter, fixture de
 # teste). Medido no precision spike vs inchurch-app-main: o piso >= 5 subiu a
 # precisão de 72% (sem piso) pra ~98% sem perder nenhum finding REAL. Grupos
-# CROSS-MODULE (>= 2 módulos) NÃO passam pelo piso (sinal mais forte; preserva
-# ex.: MutableState.update, 2 tokens, 3x cross android+shared). Constante
-# nomeada = tunável por-app sem edição espalhada.
+# CROSS-MODULE (>= 2 módulos, Q13) NÃO passam pelo piso (sinal mais forte) —
+# preservam duplicatas cross-module GENUÍNAS de mesma plataforma que por acaso
+# têm poucos tokens (ex.: helper de 2 tokens copiado entre dois módulos
+# android). (Pares android↔commonMain byte-idênticos são território do Q16
+# redundant-platform-specific, categoria separada e FORA deste piso — não é o
+# que o bypass protege.) Constante nomeada = tunável por-app sem edição espalhada.
 REUSE_MIN_BODY_TOKENS = 5
 
 
@@ -658,7 +670,7 @@ git commit -m "feat(graph): piso de trivialidade + exclusão de test-source na d
 
 **Interfaces:**
 - Consome: `REUSE_MIN_BODY_TOKENS` + `_distinct_body_token_count` de `duplicates.py` (Task 2).
-- Produz: `find_duplicates_within_module` / `find_duplicates_cross_module` (read-time, `forge graph`) espelham EXATAMENTE a detecção build-time — mesmo universo, mesma exclusão de teste (SQL idêntico), mesmo piso (Python idêntico, within-only). Shape das rows preservado (mais a coluna `body_tokens` no within-module, usada pelo filtro).
+- Produz: `find_duplicates_within_module` / `find_duplicates_cross_module` (read-time, `forge graph`) espelham EXATAMENTE a detecção build-time — mesmo universo, mesma exclusão de teste (SQL idêntico), mesmo piso (Python idêntico, within-only). Shape das rows preservado: no within-module, `s.body_tokens` entra no SELECT SÓ pra alimentar o piso em Python e é **removido (`pop`) de cada dict antes do `return`**, pra não vazar no output interativo do `forge graph` (o `render_tree` despeja todas as chaves do dict). O cross-module não carrega `body_tokens` (sem piso), então o shape lá é literalmente inalterado.
 
 **Duplicação SQL `duplicates.py` ↔ `queries.py` (contexto).** As duas queries carregam SQL quase-idêntica — a extração num helper/constante compartilhada é o follow-on JÁ anotado no `04-pending` do Stage 1 e NÃO é do escopo aqui (Mandamento #4). Edite ambas; mantenha os blocos idênticos.
 
@@ -804,11 +816,24 @@ Estado atual (linhas 441-474): `WHERE s.kind = 'fun' AND s.receiver_type IS NOT 
             ORDER BY n DESC, f.module, COALESCE(s.receiver_type, ''), s.name
             """
         ).fetchall()
-        return [
-            dict(row)
-            for row in rows
-            if _distinct_body_token_count(row["body_tokens"]) >= REUSE_MIN_BODY_TOKENS
-        ]
+        out: list[dict] = []
+        for row in rows:
+            d = dict(row)
+            # `body_tokens` entra no SELECT SÓ pra alimentar o piso em Python —
+            # NÃO pode vazar no output. O consumidor read-side é o
+            # `forge graph` (`graph_cli._q_dup_within` → `render_tree`), que
+            # despeja TODAS as chaves do dict como árvore; deixar `body_tokens`
+            # aí jogaria o array (~62 tokens) na UI interativa. Lê via `.get`
+            # (alinhado ao build-side `row.get(...)` do loop de detecção) e
+            # remove com `pop` antes de devolver, preservando o shape da row.
+            floor_ok = (
+                _distinct_body_token_count(d.get("body_tokens"))
+                >= REUSE_MIN_BODY_TOKENS
+            )
+            d.pop("body_tokens", None)
+            if floor_ok:
+                out.append(d)
+        return out
     finally:
         conn.close()
 ```
@@ -1060,6 +1085,6 @@ Se G2 confirmar ~65 @ ~98%, o incremento Stage 2 está validado. NÃO iniciar su
 
 **Placeholder scan:** nenhum — cada step de código mostra o SQL/Python verbatim antes/depois contra as âncoras de linha reais (`duplicates.py:185-227`, `queries.py:441-510`, loop `detect_all_reuse_findings:107-123`); cada step de teste mostra o código de teste completo; cada step de run dá o comando `.venv/bin/pytest …` exato + saída esperada.
 
-**Type/name consistency:** `REUSE_MIN_BODY_TOKENS` (int, `duplicates.py`) e `_distinct_body_token_count(body_tokens_json: Optional[str]) -> int` são definidos na Task 2 e importados identicamente pela `queries.py` na Task 3. O filtro de kind `kind IN ('fun', 'composable_fun')` é literal-idêntico nas 4 queries (2 em `duplicates.py`, 2 em `queries.py`). O bloco de 7 `AND f.path NOT LIKE '%/src/<test-set>/%'` é literal-idêntico nas 4 queries. `COALESCE(s.receiver_type, '')` no GROUP BY/ORDER BY é idêntico nas 4. O piso (Python) aparece só no caminho within-module (loop de detecção + list-comprehension read-side); cross-module NUNCA aplica piso nas 2 metades.
+**Type/name consistency:** `REUSE_MIN_BODY_TOKENS` (int, `duplicates.py`) e `_distinct_body_token_count(body_tokens_json: Optional[str]) -> int` são definidos na Task 2 e importados identicamente pela `queries.py` na Task 3. O filtro de kind `kind IN ('fun', 'composable_fun')` é literal-idêntico nas 4 queries (2 em `duplicates.py`, 2 em `queries.py`). O bloco de 7 `AND f.path NOT LIKE '%/src/<test-set>/%'` é literal-idêntico nas 4 queries. `COALESCE(s.receiver_type, '')` no GROUP BY/ORDER BY é idêntico nas 4. O piso (Python) aparece só no caminho within-module (loop de detecção em `duplicates.py` + loop read-side em `queries.py`), com leitura de `body_tokens` via `.get` **idêntica nas duas metades** (`row.get("body_tokens")` no build-side; `dict(row).get("body_tokens")` no read-side, já que `sqlite3.Row` não tem `.get`); o read-side remove (`pop`) `body_tokens` de cada dict antes do `return` pra não vazar no output do `forge graph`; cross-module NUNCA aplica piso nas 2 metades e não carrega `body_tokens`.
 
 **Sweep completo (aprendizado do Stage 1):** varredura em `tests/` por `detect_all_reuse_findings`/`find_duplicates_within_module`/`find_duplicates_cross_module` retornou 7 arquivos. 1 quebra (`test_query_q12` — corrigido na Task 3, mesmo commit) + 6 verificados-verdes com raciocínio (tabela "Sweep de testes existentes"). A Task 3 Step 5 roda os 9 (6 do sweep + 3 novos) juntos como safety net.
