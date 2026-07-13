@@ -121,6 +121,63 @@ def infer_module_and_source_set(
     return module, source_set
 
 
+# Plataforma derivada por source-set KMP explícito. Source-sets fora deste
+# mapa (jsMain / wasmJsMain / nativeMain) não têm plataforma mobile-nativa
+# e caem em NULL (degrade seguro).
+_KMP_PLATFORM_BY_SOURCE_SET: dict[str, str] = {
+    "commonMain": "common",
+    "commonTest": "common",
+    "androidMain": "android",
+    "androidTest": "android",
+    "androidUnitTest": "android",
+    "iosMain": "ios",
+    "iosTest": "ios",
+    "iosArm64Main": "ios",
+    "iosSimulatorArm64Main": "ios",
+    "iosX64Main": "ios",
+    "appleMain": "ios",
+    "jvmMain": "jvm",
+    "jvmTest": "jvm",
+}
+
+# Diretório de source-set Gradle não-KMP (layout Android/JVM padrão):
+# `.../src/<algo>/...` (ex.: `/src/main/`, `/src/debug/`, `/src/release/`).
+_SRC_SOURCESET_RE = re.compile(r"(?:^|/)src/[^/]+/")
+
+
+def infer_platform(
+    module: str,
+    source_set: Optional[str],
+    rel_path: str,
+    language: str,
+) -> Optional[str]:
+    """Derive a file's platform: ``common`` | ``android`` | ``ios`` | ``jvm`` | None.
+
+    Distinta de ``source_set`` (nome literal do source-set KMP): ``platform`` é
+    a plataforma *derivada*, para que as reuse-queries enxerguem código
+    Android em ``/src/main/`` e Swift em layout Xcode, não só naming KMP.
+
+    - Source-set KMP explícito → plataforma mapeada (``commonMain→common`` etc.).
+      Source-sets sem plataforma mobile (``jsMain``/``wasmJsMain``/``nativeMain``)
+      → ``None``.
+    - Sem source-set KMP: Swift/ObjC → ``ios``; ``.java`` → ``android``;
+      Kotlin/XML sob um dir ``src/<sourceSet>/`` (layout Android/JVM padrão)
+      → ``android``.
+    - Caso contrário → ``None`` (degrade seguro; queries ignoram NULL).
+    """
+    if source_set is not None:
+        return _KMP_PLATFORM_BY_SOURCE_SET.get(source_set)
+
+    rel = rel_path.replace("\\", "/")
+    if language in ("swift", "objc"):
+        return "ios"
+    if language == "java":
+        return "android"
+    if language in ("kotlin", "xml") and _SRC_SOURCESET_RE.search(rel):
+        return "android"
+    return None
+
+
 def module_dir(gradle_name: str) -> str:
     """Convert ``:shared:feature:auth`` (or ``shared:feature:auth``) → ``shared/feature/auth``."""
     name = gradle_name.lstrip(":")

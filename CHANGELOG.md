@@ -32,6 +32,7 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Added
 
+- **`infer_platform(module, source_set, rel_path, language)` (GRAPH-REAL-REPO Stage 1):** helper em `engine/graph/gradle_modules.py` que deriva a plataforma de cada arquivo (source-set KMP explícito, senão Swift/ObjC→ios, `.java`→android, Kotlin/XML sob `src/<sourceSet>/`→android).
 - **Smoke gate (Tema 6 Nível 2, Caminho A)** — `forge verify` ganha o step
   `smoke` (opt-in, default off): o consumidor declara `native-gates.smoke.cmd`
   e o forge roda como gate nativo (reusa `external_exec`). Device/toolchain
