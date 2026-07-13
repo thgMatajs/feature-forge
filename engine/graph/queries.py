@@ -11,6 +11,7 @@ import sqlite3
 from pathlib import Path
 from typing import Optional
 
+from engine.graph.duplicates import REUSE_MIN_BODY_TOKENS, _distinct_body_token_count
 from engine.utils.paths import graph_db_path
 from engine.utils.sqlite_io import open_db
 
@@ -443,33 +444,58 @@ def find_duplicates_within_module(
     *,
     db_path: Optional[Path] = None,
 ) -> list[dict]:
-    """Q12 — same Kotlin extension declared 2+ times within ONE Gradle module.
+    """Q12 — mesma função Kotlin declarada 2+ vezes dentro de UM módulo Gradle.
 
-    Groups by (module, source_set, receiver_type, name, signature, body_hash);
-    only rows with COUNT > 1 are returned. Powers the
-    ``consolidate-duplicate-helper`` evolution proposal.
+    Universo ampliado (GRAPH-REUSE-STAGE2): top-level `fun`, `composable_fun` e
+    extensions (`kind IN ('fun','composable_fun')`) — não só extensions.
+    Agrupa por (module, source_set, receiver_type, name, signature, body_hash).
+    Filtra grupos com < ``REUSE_MIN_BODY_TOKENS`` tokens distintos (piso de
+    trivialidade) e exclui código de teste. Alimenta ``consolidate-duplicate-helper``.
     """
     conn = _connect(project_root, db_path)
     try:
         rows = conn.execute(
             """
-            SELECT s.name, s.receiver_type, s.signature, s.body_hash, s.modifiers,
+            SELECT s.name, s.receiver_type, s.signature, s.body_hash, s.body_tokens, s.modifiers,
                    f.module AS module, f.source_set AS source_set,
                    GROUP_CONCAT(f.id || ':' || s.line_start || ':' || f.path, char(31)) AS occurrences,
                    COUNT(*) AS n
             FROM symbols s
             JOIN files f ON s.file_id = f.id
-            WHERE s.kind = 'fun'
-              AND s.receiver_type IS NOT NULL
+            WHERE s.kind IN ('fun', 'composable_fun')
               AND s.body_hash IS NOT NULL
               AND f.path LIKE '%.kt'
+              AND f.path NOT LIKE '%/src/test/%'
+              AND f.path NOT LIKE '%/src/androidTest/%'
+              AND f.path NOT LIKE '%/src/androidUnitTest/%'
+              AND f.path NOT LIKE '%/src/androidHostTest/%'
+              AND f.path NOT LIKE '%/src/commonTest/%'
+              AND f.path NOT LIKE '%/src/iosTest/%'
+              AND f.path NOT LIKE '%/src/jvmTest/%'
             GROUP BY f.module, COALESCE(f.source_set, ''),
-                     s.receiver_type, s.name, s.signature, s.body_hash
+                     COALESCE(s.receiver_type, ''), s.name, s.signature, s.body_hash
             HAVING COUNT(*) > 1
-            ORDER BY n DESC, f.module, s.receiver_type, s.name
+            ORDER BY n DESC, f.module, COALESCE(s.receiver_type, ''), s.name
             """
         ).fetchall()
-        return [dict(row) for row in rows]
+        out: list[dict] = []
+        for row in rows:
+            d = dict(row)
+            # `body_tokens` entra no SELECT SÓ pra alimentar o piso em Python —
+            # NÃO pode vazar no output. O consumidor read-side é o
+            # `forge graph` (`graph_cli._q_dup_within` → `render_tree`), que
+            # despeja TODAS as chaves do dict como árvore; deixar `body_tokens`
+            # aí jogaria o array (~62 tokens) na UI interativa. Lê via `.get`
+            # (alinhado ao build-side `row.get(...)` do loop de detecção) e
+            # remove com `pop` antes de devolver, preservando o shape da row.
+            floor_ok = (
+                _distinct_body_token_count(d.get("body_tokens"))
+                >= REUSE_MIN_BODY_TOKENS
+            )
+            d.pop("body_tokens", None)
+            if floor_ok:
+                out.append(d)
+        return out
     finally:
         conn.close()
 
@@ -479,11 +505,12 @@ def find_duplicates_cross_module(
     *,
     db_path: Optional[Path] = None,
 ) -> list[dict]:
-    """Q13 — same Kotlin extension declared in 2+ different Gradle modules.
+    """Q13 — mesma função Kotlin declarada em 2+ módulos Gradle distintos.
 
-    Groups by (receiver_type, name, signature, body_hash); only entries that
-    span more than one module are returned. Powers
-    ``promote-to-shared-helper``.
+    Universo ampliado (GRAPH-REUSE-STAGE2): `kind IN ('fun','composable_fun')`.
+    Agrupa por (receiver_type, name, signature, body_hash) com COUNT(DISTINCT
+    module) > 1. Exclui código de teste. Cross-module BYPASSA o piso de
+    trivialidade (sinal mais forte). Alimenta ``promote-to-shared-helper``.
     """
     conn = _connect(project_root, db_path)
     try:
@@ -496,13 +523,19 @@ def find_duplicates_cross_module(
                    COUNT(*) AS n_files
             FROM symbols s
             JOIN files f ON s.file_id = f.id
-            WHERE s.kind = 'fun'
-              AND s.receiver_type IS NOT NULL
+            WHERE s.kind IN ('fun', 'composable_fun')
               AND s.body_hash IS NOT NULL
               AND f.path LIKE '%.kt'
-            GROUP BY s.receiver_type, s.name, s.signature, s.body_hash
+              AND f.path NOT LIKE '%/src/test/%'
+              AND f.path NOT LIKE '%/src/androidTest/%'
+              AND f.path NOT LIKE '%/src/androidUnitTest/%'
+              AND f.path NOT LIKE '%/src/androidHostTest/%'
+              AND f.path NOT LIKE '%/src/commonTest/%'
+              AND f.path NOT LIKE '%/src/iosTest/%'
+              AND f.path NOT LIKE '%/src/jvmTest/%'
+            GROUP BY COALESCE(s.receiver_type, ''), s.name, s.signature, s.body_hash
             HAVING COUNT(DISTINCT f.module) > 1
-            ORDER BY n_modules DESC, n_files DESC, s.receiver_type, s.name
+            ORDER BY n_modules DESC, n_files DESC, COALESCE(s.receiver_type, ''), s.name
             """
         ).fetchall()
         return [dict(row) for row in rows]
