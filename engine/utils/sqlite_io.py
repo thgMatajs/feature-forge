@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS files (
   language        TEXT,
   module          TEXT,
   source_set      TEXT,
+  platform        TEXT,
   lines           INTEGER,
   last_modified   TEXT,
   sha256          TEXT
@@ -39,6 +40,12 @@ CREATE TABLE IF NOT EXISTS files (
 CREATE INDEX IF NOT EXISTS idx_files_module     ON files(module);
 CREATE INDEX IF NOT EXISTS idx_files_language   ON files(language);
 CREATE INDEX IF NOT EXISTS idx_files_source_set ON files(source_set);
+-- `idx_files_platform` NÃO vive aqui de propósito: `platform` é coluna
+-- adicionada mid-version, e um `CREATE INDEX ... ON files(platform)` no DDL
+-- canônico crasharia `init_schema` em DB legado (CREATE TABLE IF NOT EXISTS
+-- não backfilla a coluna → o índice referencia coluna ausente). O índice é
+-- criado por `_ensure_platform_column` (fresh via build_full/incremental E
+-- legado via migração idempotente). Ver docs/design/04-pending.md.
 
 -- ``symbols`` deliberadamente NÃO carrega UNIQUE(file_id, name, kind):
 -- o invariante de unicidade vem do purge-before-insert pattern

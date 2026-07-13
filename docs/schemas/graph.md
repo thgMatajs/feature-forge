@@ -53,6 +53,7 @@ CREATE TABLE files (
   language        TEXT,                          -- kotlin | swift | typescript | java | objc | xml | ...
   module          TEXT,                          -- shared | androidApp | iosApp | webApp
   source_set      TEXT,                          -- KMP source-set (commonMain | androidMain | iosMain | …) — NULL fora de KMP
+  platform        TEXT,                          -- plataforma derivada: common | android | ios | jvm — NULL quando indeterminado
   lines           INTEGER,
   last_modified   TEXT,                          -- ISO8601
   sha256          TEXT
@@ -60,6 +61,8 @@ CREATE TABLE files (
 CREATE INDEX idx_files_module ON files(module);
 CREATE INDEX idx_files_language ON files(language);
 CREATE INDEX idx_files_source_set ON files(source_set);
+-- idx_files_platform NÃO está no DDL canônico (é criado por _ensure_platform_column;
+-- ver nota abaixo + docs/design/04-pending.md).
 ```
 
 > **`files.language`** carrega o slug curto da linguagem detectada na
@@ -69,6 +72,22 @@ CREATE INDEX idx_files_source_set ON files(source_set);
 > no DDL canônico (`engine/utils/sqlite_io.py`) e fica `NULL` em projetos
 > sem layout KMP. Documentação detalhada da semântica está em §Reuse
 > Intelligence > New columns.
+
+> **`files.platform`** (GRAPH-REAL-REPO Stage 1) é a plataforma *derivada* do
+> arquivo — distinta de `source_set` (o nome literal do source-set KMP). Vem
+> de `infer_platform(module, source_set, rel_path, language)`
+> (`engine/graph/gradle_modules.py`): source-set KMP explícito mapeia direto
+> (`commonMain→common`, `androidMain/androidTest/androidUnitTest→android`,
+> `iosMain`/variantes iOS`→ios`, `jvmMain→jvm`); sem source-set KMP, Swift/ObjC
+> → `ios`, `.java` → `android`, e Kotlin/XML sob um dir `src/<sourceSet>/`
+> (layout Android/JVM padrão, ex.: `/src/main/`) → `android`. Casos sem sinal
+> (js/wasm/native, flavors custom) ficam `NULL` (degrade seguro — as queries
+> plataforma-específicas ignoram `NULL`). A **coluna** aparece no DDL canônico
+> (`engine/utils/sqlite_io.py`); o **índice** `idx_files_platform` é criado por
+> `_ensure_platform_column` (migração idempotente, roda no build full e no
+> incremental), NÃO no DDL canônico — de propósito, porque um `CREATE INDEX`
+> sobre coluna adicionada mid-version crasharia `init_schema` em DB legado.
+> SEM bump de `SCHEMA_VERSION` (mesmo padrão de coluna de `body`/`source_set`).
 
 ### `symbols`
 

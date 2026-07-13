@@ -20,6 +20,7 @@ from engine.graph.builder import (
     _LANGUAGE_EXTENSIONS,
     _ensure_graph_body_column,
     _ensure_imports_to_file_id_column,
+    _ensure_platform_column,
     _ensure_reuse_intelligence_columns,
     _infer_feature_slug,
     _infer_test_framework,
@@ -53,7 +54,7 @@ from engine.utils.sqlite_io import open_db, transaction
 # múltiplas queries de introspecção (PRAGMA table_info) por chamada —
 # isso virava overhead linear em batches grandes. Marker fica em ``meta``
 # (canonical key/value table), persistido entre invocações.
-_MIGRATIONS_KEY = "migrations_applied_v1_3"
+_MIGRATIONS_KEY = "migrations_applied_v1_4"
 
 
 def _migrations_applied(conn: sqlite3.Connection) -> bool:
@@ -105,6 +106,7 @@ def _apply_ensure_migrations(conn: sqlite3.Connection) -> None:
         _ensure_imports_to_file_id_column(conn)
         _ensure_reuse_intelligence_columns(conn)
         _ensure_graph_body_column(conn)
+        _ensure_platform_column(conn)
     except sqlite3.OperationalError as exc:
         msg = str(exc).lower()
         if "duplicate column name" in msg:

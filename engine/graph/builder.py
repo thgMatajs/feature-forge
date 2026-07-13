@@ -104,6 +104,7 @@ def build_full(
             _ensure_imports_to_file_id_column(conn)
             _ensure_reuse_intelligence_columns(conn)
             _ensure_graph_body_column(conn)
+            _ensure_platform_column(conn)
         except sqlite3.Error as exc:
             _logger.error(
                 "schema migration failed during build_full: %s", exc, exc_info=True
@@ -1242,6 +1243,20 @@ def _ensure_reuse_intelligence_columns(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_reuse_finding_locations_file "
         "ON reuse_finding_locations(file_id)"
     )
+
+
+def _ensure_platform_column(conn: sqlite3.Connection) -> None:
+    """Migration: add ``files.platform TEXT`` + index for legacy DBs (schema v2).
+
+    Plataforma derivada (``common`` | ``android`` | ``ios`` | ``jvm`` | NULL)
+    via ``infer_platform``. Adicionada por ALTER idempotente — mesmo padrão do
+    ``source_set`` — sem bump de SCHEMA_VERSION; DBs novos já recebem a coluna
+    do DDL canônico em ``engine/utils/sqlite_io.py``.
+    """
+    cols = {c["name"] for c in conn.execute("PRAGMA table_info(files)").fetchall()}
+    if "platform" not in cols:
+        conn.execute("ALTER TABLE files ADD COLUMN platform TEXT")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_files_platform ON files(platform)")
 
 
 _FEATURE_DIR_RE = re.compile(r"(?:^|/)(?:feature|features)/([a-zA-Z0-9_\-]+)/")
