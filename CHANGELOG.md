@@ -34,6 +34,7 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 - **Coluna `files.platform` (GRAPH-REAL-REPO Stage 1):** plataforma derivada (`common`|`android`|`ios`|`jvm`|NULL). A **coluna** é adicionada via DDL canônico (DBs novos) + ALTER idempotente (`_ensure_platform_column`, DBs legados), SEM bump de `SCHEMA_VERSION`. O **índice** `idx_files_platform` vive em `_ensure_platform_column`, NÃO no DDL canônico — de propósito, pra não crashar `init_schema` em DB legado (`CREATE INDEX` sobre coluna mid-version ausente); ver `04-pending`. Marker de migração incremental bumpado `migrations_applied_v1_3` → `migrations_applied_v1_4` para DBs legados aplicarem o ALTER no path incremental.
 - **`infer_platform(module, source_set, rel_path, language)` (GRAPH-REAL-REPO Stage 1):** helper em `engine/graph/gradle_modules.py` que deriva a plataforma de cada arquivo (source-set KMP explícito, senão Swift/ObjC→ios, `.java`→android, Kotlin/XML sob `src/<sourceSet>/`→android).
+- **`files.platform` populada no build full (`_ingest_file`) e incremental (`_refresh_file`)** via `infer_platform`; re-ingest mantém a plataforma consistente pelo `ON CONFLICT ... platform=excluded.platform` (GRAPH-REAL-REPO Stage 1).
 - **Smoke gate (Tema 6 Nível 2, Caminho A)** — `forge verify` ganha o step
   `smoke` (opt-in, default off): o consumidor declara `native-gates.smoke.cmd`
   e o forge roda como gate nativo (reusa `external_exec`). Device/toolchain

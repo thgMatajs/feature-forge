@@ -29,6 +29,7 @@ from engine.graph.gradle_deps import (
 )
 from engine.graph.gradle_modules import (
     infer_module_and_source_set,
+    infer_platform,
     load_gradle_modules,
 )
 from engine.graph.parser_java import JavaFileInfo, parse_java_file
@@ -520,6 +521,7 @@ def _ingest_file(
     language = _LANGUAGE_EXTENSIONS[ext]
     rel = _relpath(project_root, file_path)
     module, source_set = infer_module_and_source_set(rel, gradle_modules or {})
+    platform = infer_platform(module, source_set, rel, language)
 
     try:
         raw = file_path.read_bytes()
@@ -533,14 +535,14 @@ def _ingest_file(
     ).isoformat()
 
     conn.execute(
-        "INSERT INTO files(path, language, module, source_set, lines, last_modified, sha256) "
-        "VALUES(?, ?, ?, ?, ?, ?, ?) "
+        "INSERT INTO files(path, language, module, source_set, platform, lines, last_modified, sha256) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(path) DO UPDATE SET "
         "  language=excluded.language, module=excluded.module, "
-        "  source_set=excluded.source_set, "
+        "  source_set=excluded.source_set, platform=excluded.platform, "
         "  lines=excluded.lines, last_modified=excluded.last_modified, "
         "  sha256=excluded.sha256",
-        (rel, language, module, source_set, line_count, last_modified, sha256),
+        (rel, language, module, source_set, platform, line_count, last_modified, sha256),
     )
     file_id = conn.execute("SELECT id FROM files WHERE path = ?", (rel,)).fetchone()["id"]
 
