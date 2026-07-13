@@ -4128,6 +4128,35 @@ padrão: comentário/instrução de "ler L2" → "consulte o acervo: `mem find
 \"<tema>\"`" com degrade-soft). Distinguir, como na Onda 7, write-path
 target-files e schema-refs (que FICAM) das leituras acionáveis (que migram).
 
+## GRAPH-REAL-REPO Stage 1 — follow-ons (deferidos por escopo, 2026-07-13)
+
+Follow-ons deferidos por escopo (Mandamento #4) na wave GRAPH-REAL-REPO Stage 1
+(`docs/superpowers/plans/2026-07-13-graph-real-repo-readiness.md`). Registrados
+aqui pra não virarem dívida silenciosa (Mandamentos #6/#7).
+
+- **Extração da SQL duplicada** entre `engine/graph/duplicates.py` (detecção
+  build-time) e `engine/graph/queries.py` (read-time): as duas carregam SQL
+  quase-idêntica pras queries `redundant-platform-specific` e
+  `kmp-migration-candidate`. Consolidar num constante/helper compartilhado
+  quando a forma estabilizar. (Fora do escopo Stage 1 — não refatorar agora.)
+- **Monitorar o estreitamento de recall** do `kmp-migration-candidate` no
+  re-spike (G2): arquivos do módulo `shared` com `source_set NULL` fora de
+  `commonMain` deixam de ser candidatos (a gate mudou de `module='shared' +
+  source_set IN (commonMain, NULL)` pra `platform='common'`). Confirmar no
+  re-spike que o estreitamento não descarta candidatos legítimos (degrade
+  seguro documentado na spec §Risks).
+- **Latente (padrão pré-existente): índice em coluna adicionada mid-version no
+  DDL canônico crasha `init_schema` em DB legado.** `CREATE TABLE IF NOT EXISTS`
+  não backfilla a coluna nova numa tabela pré-existente, então um `CREATE INDEX
+  ... ON files(<coluna>)` no `_SCHEMA_DDL` referencia coluna ausente e aborta o
+  `executescript`. Padrão correto: o índice de coluna mid-version vive no
+  `_ensure_*`/migração, NÃO no DDL canônico (foi o que fizemos pra
+  `idx_files_platform`). `source_set`/`idx_files_source_set` tem o MESMO landmine
+  no DDL — inofensivo hoje só porque nenhum DB v2 pré-`source_set` existe na
+  prática. Fix geral (opcional, fora do escopo Stage 1): tornar `init_schema`
+  column-aware (garantir colunas antes de criar índices, ou criar índices
+  tolerando coluna ausente).
+
 ---
 
 **For a fresh session retomando o projeto, use o handoff:**

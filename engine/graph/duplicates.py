@@ -257,8 +257,7 @@ def _q_kmp_migration_candidates(conn: sqlite3.Connection) -> list[dict]:
           AND kt_f.path LIKE '%.kt'
           AND sw.kind = 'func'
           AND sw_f.path LIKE '%.swift'
-          AND (kt_f.module = 'shared' OR kt_f.module LIKE 'shared:%')
-          AND (kt_f.source_set = 'commonMain' OR kt_f.source_set IS NULL)
+          AND kt_f.platform = 'common'
         ORDER BY kt.receiver_type, kt.name
         """
     ).fetchall()
@@ -322,13 +321,8 @@ def _q_redundant_platform_specific(conn: sqlite3.Connection) -> list[dict]:
           AND shared.body_hash IS NOT NULL
           AND shared_f.path LIKE '%.kt'
           AND android_f.path LIKE '%.kt'
-          AND (shared_f.module = 'shared' OR shared_f.module LIKE 'shared:%')
-          AND shared_f.source_set = 'commonMain'
-          AND (
-            ((android_f.module = 'shared' OR android_f.module LIKE 'shared:%')
-             AND android_f.source_set = 'androidMain')
-            OR android_f.module LIKE 'androidApp%'
-          )
+          AND shared_f.platform = 'common'
+          AND android_f.platform = 'android'
         ORDER BY shared.receiver_type, shared.name
         """
     ).fetchall()

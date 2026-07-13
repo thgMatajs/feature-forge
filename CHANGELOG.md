@@ -52,6 +52,7 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
 ### Changed
 
+- **Reuse-queries plataforma-específicas discriminam por `files.platform` (GRAPH-REAL-REPO Stage 1):** `redundant-platform-specific` (lado comum `platform='common'` ↔ redundante `platform='android'`) e `kmp-migration-candidate` (lado Kotlin `platform='common'`) substituem a heurística `module LIKE 'androidApp%'` + `source_set` literal. Universo de comparação cresce para incluir Android em `/src/main/` (qualquer módulo) e Swift do `iosApp`. Semântica dos findings preservada (só o WHERE mudou; row shape idêntico). Mudança espelhada em `duplicates.py` (detecção build-time) e `queries.py` (read-time). `test_query_q14_redundant_platform` atualizado para semear `platform`.
 - discovery cache do `forge init` ganha content-fingerprint top-level (invalida fora do replay mecânico) — hardening cinto-e-suspensório sobre o lifecycle de checkpoint (Fase 1 Track B, B2; fecha BUG-2 follow-on).
 - `forge init` brownfield computa `compose_backend_axes` uma única vez (era 2× por fase no hot-path) — `_handle_backend_multi_axis_brownfield` aceita `composer_result` pré-computado; no-behavior-change confirmado; docstring de `_handle_backend_multi_axis_brownfield` corrigido (estava stale: "só pelo integration test" — a função está no hot-path ativo via `_run_pipeline`) (Fase 1 Track B, B3; fecha BUG-1b — CAMINHO A confirmado empiricamente).
 - Rename `apply_proposal_to_l2` → `route_proposal_to_inbox` (misnomer desde W-ROUTE 6b —

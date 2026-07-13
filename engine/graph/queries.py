@@ -515,11 +515,11 @@ def find_kmp_migration_candidates(
     *,
     db_path: Optional[Path] = None,
 ) -> list[dict]:
-    """Q14 — Swift extensions whose ``(receiver, name)`` mirrors Kotlin shared.
+    """Q14 — Swift extensions whose ``(receiver, name)`` mirrors Kotlin common.
 
     Returns raw matches (no token-similarity filter at SQL level — caller
-    applies the Jaccard threshold). Kotlin side must be in ``shared`` /
-    ``shared:*`` AND ``commonMain`` source-set so SKIE can expose it.
+    applies the Jaccard threshold). Kotlin side must be ``platform='common'``
+    (commonMain, exposto via SKIE) para ser candidato a migração.
     """
     conn = _connect(project_root, db_path)
     try:
@@ -552,8 +552,7 @@ def find_kmp_migration_candidates(
               AND kt_f.path LIKE '%.kt'
               AND sw.kind = 'func'
               AND sw_f.path LIKE '%.swift'
-              AND (kt_f.module = 'shared' OR kt_f.module LIKE 'shared:%')
-              AND (kt_f.source_set = 'commonMain' OR kt_f.source_set IS NULL)
+              AND kt_f.platform = 'common'
             ORDER BY kt.receiver_type, kt.name
             """
         ).fetchall()
@@ -607,12 +606,12 @@ def find_redundant_platform_specific(
     *,
     db_path: Optional[Path] = None,
 ) -> list[dict]:
-    """Q16 — Android-side Kotlin extension identical to a ``shared:commonMain`` one.
+    """Q16 — Android-side Kotlin extension identical to a common one.
 
-    The Android copy is redundant — consumers should use the shared
-    implementation. ``android_module`` covers two layouts:
-      1. Multi-module Android: ``module LIKE 'androidApp%'``.
-      2. KMP shared/androidMain: ``source_set = 'androidMain'``.
+    Discrimina por ``files.platform``: lado comum = ``platform='common'``;
+    cópia redundante = ``platform='android'`` (inclui Android em ``/src/main/``
+    em qualquer módulo, não só ``androidApp*``). O lado Android é redundante —
+    consumidores devem usar a implementação comum.
     """
     conn = _connect(project_root, db_path)
     try:
@@ -646,13 +645,8 @@ def find_redundant_platform_specific(
               AND shared.body_hash IS NOT NULL
               AND shared_f.path LIKE '%.kt'
               AND android_f.path LIKE '%.kt'
-              AND (shared_f.module = 'shared' OR shared_f.module LIKE 'shared:%')
-              AND shared_f.source_set = 'commonMain'
-              AND (
-                ((android_f.module = 'shared' OR android_f.module LIKE 'shared:%')
-                 AND android_f.source_set = 'androidMain')
-                OR android_f.module LIKE 'androidApp%'
-              )
+              AND shared_f.platform = 'common'
+              AND android_f.platform = 'android'
             ORDER BY shared.receiver_type, shared.name
             """
         ).fetchall()
