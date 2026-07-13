@@ -1087,21 +1087,55 @@ def _resolve_import_targets(conn: sqlite3.Connection) -> None:
     import resolvia para alvos diferentes entre runs. `f.path` é estável
     por definição (vem do filesystem).
     """
-    conn.execute(
-        """
-        UPDATE imports
-        SET to_file_id = (
-            SELECT s.file_id
-            FROM symbols s
-            JOIN files f ON s.file_id = f.id
-            WHERE s.name = imports.to_symbol
-               OR imports.to_symbol LIKE '%.' || s.name
-            ORDER BY f.path, s.name
-            LIMIT 1
+    # F-perf (GRAPH-REAL-REPO Stage 1): o loop correlacionado
+    # `LIKE '%.'||s.name` era O(imports × symbols) (wildcard à esquerda,
+    # não-indexável) e não completava em monorepo real. Trocado por um
+    # índice em memória `name -> (menor path, file_id)` (uma passada sobre
+    # symbols) + resolução por segmento terminal. Edges idênticas para matches
+    # LITERAIS (exato/sufixo) com o mesmo desempate ORDER BY (f.path, s.name);
+    # os over-matches acidentais de coringa (`_`/`%` no nome do símbolo) e de
+    # caixa do `LIKE` legado são descartados por design (o índice literal é
+    # estritamente mais correto) — ver test_resolve_import_targets_equivalence.
+    best_by_name: dict[str, tuple[str, int]] = {}
+    for row in conn.execute(
+        "SELECT s.name AS name, s.file_id AS file_id, f.path AS path "
+        "FROM symbols s JOIN files f ON s.file_id = f.id"
+    ):
+        name = row["name"]
+        path = row["path"]
+        prev = best_by_name.get(name)
+        if prev is None or path < prev[0]:
+            best_by_name[name] = (path, row["file_id"])
+
+    updates: list[tuple[int, int]] = []
+    for row in conn.execute(
+        "SELECT rowid AS rid, to_symbol AS to_symbol "
+        "FROM imports WHERE to_file_id IS NULL"
+    ).fetchall():
+        target = row["to_symbol"]
+        if target is None:
+            continue
+        # Candidate symbol names = exact target + every dot-suffix tail,
+        # mirroring `s.name = to_symbol OR to_symbol LIKE '%.' || s.name`.
+        candidates = [target]
+        for pos, ch in enumerate(target):
+            if ch == ".":
+                candidates.append(target[pos + 1:])
+        best: tuple[str, str, int] | None = None  # (path, name, file_id)
+        for name in candidates:
+            entry = best_by_name.get(name)
+            if entry is None:
+                continue
+            cand = (entry[0], name, entry[1])
+            if best is None or (cand[0], cand[1]) < (best[0], best[1]):
+                best = cand
+        if best is not None:
+            updates.append((best[2], row["rid"]))
+
+    if updates:
+        conn.executemany(
+            "UPDATE imports SET to_file_id = ? WHERE rowid = ?", updates
         )
-        WHERE to_file_id IS NULL
-        """
-    )
 
 
 def _ensure_imports_to_file_id_column(conn: sqlite3.Connection) -> None:
