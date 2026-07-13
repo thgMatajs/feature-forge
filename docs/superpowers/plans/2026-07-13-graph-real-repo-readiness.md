@@ -4,7 +4,7 @@
 
 **Goal:** Make the codebase graph buildable and platform-aware on a production mobile monorepo — `_resolve_import_targets` completes in ~O(imports + symbols), and a new `files.platform` column drives the platform-specific reuse queries.
 
-**Architecture:** Two independent fixes. **Fix A** replaces the correlated `LIKE '%.'||s.name` subquery in `_resolve_import_targets` (currently ~O(imports × symbols)) with a single-pass in-memory `name → (path, file_id)` index; the edge set is provably preserved by an equivalence test that runs the legacy SQL as an oracle on a controlled fixture. **Fix B** adds a `files.platform` column (`{common, android, ios, jvm, NULL}`) via idempotent ALTER + canonical DDL (no `SCHEMA_VERSION` bump), populated by a new `infer_platform(...)` helper on both the full-build and incremental insert paths, then rewires the two platform-specific reuse queries (`redundant-platform-specific`, `kmp-migration-candidate`) to discriminate by `files.platform` instead of the `module LIKE 'androidApp%'` + literal `source_set` heuristic.
+**Architecture:** Two independent fixes. **Fix A** replaces the correlated `LIKE '%.'||s.name` subquery in `_resolve_import_targets` (currently ~O(imports × symbols)) with a single-pass in-memory `name → (path, file_id)` index; o conjunto de edges é preservado para matches LITERAIS (exato + sufixo `.`+name), guardado por um teste de equivalência que roda a SQL legada como oráculo num fixture de nomes limpos. Os over-matches acidentais do `LIKE` legado (coringa `_`/`%` no nome do símbolo tratados como wildcard, e a case-insensitivity do `LIKE`) são descartados por design — o índice literal é estritamente mais correto. **Fix B** adds a `files.platform` column (`{common, android, ios, jvm, NULL}`) via idempotent ALTER + canonical DDL (no `SCHEMA_VERSION` bump), populated by a new `infer_platform(...)` helper on both the full-build and incremental insert paths, then rewires the two platform-specific reuse queries (`redundant-platform-specific`, `kmp-migration-candidate`) to discriminate by `files.platform` instead of the `module LIKE 'androidApp%'` + literal `source_set` heuristic.
 
 **Tech Stack:** Python 3.13, stdlib `sqlite3`, `pathspec` (already vendored). Tests via `.venv/bin/pytest`. No new dependencies.
 
@@ -12,7 +12,7 @@
 
 - **Dependencies:** stdlib + `pathspec` only. NO new external dependency.
 - **`SCHEMA_VERSION` stays `"2"`** (`engine/utils/sqlite_io.py:24`). The new column is added exactly like `body`/`source_set` were: canonical DDL for fresh DBs + idempotent `ALTER TABLE` for legacy DBs. Do NOT bump it.
-- **Behavior-preserving perf fix:** Fix A must resolve the SAME set of `(from_file_id, to_file_id)` edges as the current algorithm. The equivalence test is the guard.
+- **Perf fix — edges preservadas nos matches literais:** Fix A resolve edges idênticas às do algoritmo atual para matches LITERAIS (exato + sufixo `.`+name). Os matches acidentais via coringa (`_`/`%` no nome do símbolo, tratados como wildcard pelo `LIKE` legado) e a case-insensitivity do `LIKE` são over-matches ESPÚRIOS e são DESCARTADOS por design (o índice literal é estritamente mais correto — um import `com.x.onXclick` não deve resolver pro símbolo `on_click`). O teste de equivalência guarda os matches literais; o teste de correção guarda o descarte dos espúrios.
 - **Canonical test runner is `.venv/bin/pytest`** — the system `pytest` lacks `json5`/deps and gives false negatives. Every command below uses `.venv/bin/pytest`.
 - **TDD mandatory:** each code task writes a FAILING test first, runs it to confirm RED, writes minimal impl, runs it GREEN, commits.
 - **Atomic commits, repo message style:** `fix(graph): …`, `feat(graph): …`, `perf(graph): …`.
@@ -78,17 +78,22 @@
 
 Semantics: for every `imports` row whose `to_file_id IS NULL`, find candidate symbols where `s.name == to_symbol` (exact) OR `to_symbol` ends with `"." + s.name` (suffix), join to their owning file, order by `(f.path, s.name)` ascending, take the first, and set `to_file_id` to that symbol's `file_id`. No match → stays `NULL`. Rows already resolved are untouched. `imports` has no explicit primary key; use the implicit `rowid`.
 
-- [ ] **Step 1: Write the equivalence + scale test (RED)**
+- [ ] **Step 1: Write the equivalence guard, wildcard/case correction, and scale tests**
 
-Create `tests/unit/test_resolve_import_targets_equivalence.py`. The test embeds the legacy SQL as an oracle: it computes the reference `{rowid: to_file_id}` map with the old query on a controlled fixture, resets `to_file_id` to NULL, runs the new `_resolve_import_targets`, and asserts the maps are identical. A second test asserts the resolver stays fast and correct at scale.
+Create `tests/unit/test_resolve_import_targets_equivalence.py`. O teste de equivalência embute a SQL legada como oráculo: computa o mapa de referência `{rowid: to_file_id}` com a query antiga num fixture de NOMES LIMPOS, reseta `to_file_id` pra NULL, roda o novo `_resolve_import_targets`, e afirma que os mapas são idênticos para esses matches literais (exato/sufixo). Um segundo teste (`test_resolver_discards_legacy_wildcard_and_case_overmatches`) afirma DIRETAMENTE o comportamento corrigido na classe de nomes que o `LIKE` legado over-matcheava (símbolo com `_`; variação de caixa) — descarte por design, NÃO regressão; não comparamos contra o oráculo nesse caso porque o legado casaria esses três. Um terceiro teste garante que o resolver segue rápido e correto em escala.
 
 ```python
-"""Equivalence + scale guard for the rewritten `_resolve_import_targets`.
+"""Equivalence guard + wildcard/case correction + scale guard para `_resolve_import_targets`.
 
 Fix A (GRAPH-REAL-REPO Stage 1) replaced the correlated `LIKE '%.'||s.name`
-subquery with an in-memory `name -> (path, file_id)` index. The edge set MUST
-be identical to the legacy algorithm — this test embeds the legacy SQL as an
-oracle so any divergence is caught on a controlled fixture.
+subquery with an in-memory `name -> (path, file_id)` index. Para matches LITERAIS
+(exato + sufixo `.`+name) o conjunto de edges é idêntico ao algoritmo legado —
+este módulo embute a SQL legada como oráculo num fixture de NOMES LIMPOS pra
+guardar essa equivalência. Os over-matches acidentais do `LIKE` legado (coringa
+`_`/`%` no nome do símbolo; case-insensitivity) são DESCARTADOS por design — o
+índice literal é estritamente mais correto — e são guardados diretamente por
+`test_resolver_discards_legacy_wildcard_and_case_overmatches` (sem oráculo,
+porque o legado casaria esses matches espúrios).
 """
 
 from __future__ import annotations
@@ -147,6 +152,9 @@ def _snapshot(conn) -> dict[int, int | None]:
 
 
 def _build_fixture(conn) -> None:
+    # Fixture de NOMES LIMPOS (sem `_`/`%` no nome, sem divergência de caixa):
+    # cobre só os matches literais onde o novo índice e o oráculo legado
+    # coincidem. Os casos coringa/case ficam em `_build_wildcard_case_fixture`.
     # Same symbol name "Bar" in three files with deterministic path ordering;
     # ORDER BY f.path must pick "a/Aardvark.kt".
     f_aard = _add_file(conn, "a/Aardvark.kt")
@@ -166,6 +174,12 @@ def _build_fixture(conn) -> None:
 
 
 def test_resolver_matches_legacy_on_controlled_fixture(tmp_path: Path) -> None:
+    """Equivalência com o oráculo legado para NOMES LIMPOS (matches literais).
+
+    Guard baseline-verde: passa no código atual E após o rewrite. Os casos
+    coringa/case (onde o novo índice diverge do legado por design) NÃO entram
+    aqui — ver `test_resolver_discards_legacy_wildcard_and_case_overmatches`.
+    """
     db = tmp_path / "g.db"
     conn = open_db(db, create=True)
     try:
@@ -185,6 +199,57 @@ def test_resolver_matches_legacy_on_controlled_fixture(tmp_path: Path) -> None:
         # Sanity: the fixture actually resolved something and left one NULL.
         assert sum(1 for v in actual.values() if v is None) == 1
         assert sum(1 for v in actual.values() if v is not None) == 3
+    finally:
+        conn.close()
+
+
+def _build_wildcard_case_fixture(conn) -> None:
+    # Nomes que o `LIKE` legado casaria por coringa/caixa mas que o índice
+    # literal (estritamente mais correto) descarta de propósito.
+    f_onclick = _add_file(conn, "u/OnClick.kt")
+    f_bar = _add_file(conn, "v/Bar.kt")
+    consumer = _add_file(conn, "z/Consumer.kt")
+    _add_symbol(conn, f_onclick, "on_click")  # `_` vira coringa no LIKE legado
+    _add_symbol(conn, f_bar, "bar")           # minúsculo; LIKE é case-insensitive
+    # (1) match literal legítimo por sufixo — DEVE resolver.
+    _add_import(conn, consumer, "com.x.on_click")   # -> f_onclick
+    # (2) match acidental de coringa do LIKE legado — NÃO deve resolver.
+    _add_import(conn, consumer, "com.x.onXclick")   # legado casaria via `_`; agora NULL
+    # (3) variação de caixa — NÃO deve resolver (índice é case-sensitive).
+    _add_import(conn, consumer, "com.x.BAR")        # legado casaria `bar` via LIKE; agora NULL
+
+
+def test_resolver_discards_legacy_wildcard_and_case_overmatches(
+    tmp_path: Path,
+) -> None:
+    """Correção intencional do artefato coringa/case do `LIKE` legado — NÃO regressão.
+
+    O SQL legado concatenava `s.name` no lado-padrão de `LIKE '%.' || s.name`,
+    então `_`/`%` no nome do símbolo agiam como coringa; e o `LIKE` é
+    case-insensitive. O índice literal é estritamente mais correto: um import
+    `com.x.onXclick` não deve resolver pro símbolo `on_click`, nem `com.x.BAR`
+    pro símbolo `bar`. Este teste afirma o comportamento NOVO (corrigido)
+    diretamente — o oráculo legado casaria esses três, então NÃO comparamos
+    contra ele aqui. É red-first: FALHA no código atual, passa após o rewrite.
+    """
+    db = tmp_path / "wc.db"
+    conn = open_db(db, create=True)
+    try:
+        with transaction(conn):
+            _build_wildcard_case_fixture(conn)
+        with transaction(conn):
+            _resolve_import_targets(conn)
+        resolved = {
+            row["to_symbol"]: row["to_file_id"]
+            for row in conn.execute(
+                "SELECT to_symbol, to_file_id FROM imports"
+            ).fetchall()
+        }
+        # Match literal legítimo por sufixo resolve.
+        assert resolved["com.x.on_click"] is not None
+        # Over-matches espúrios do `LIKE` legado são descartados por design.
+        assert resolved["com.x.onXclick"] is None
+        assert resolved["com.x.BAR"] is None
     finally:
         conn.close()
 
@@ -214,10 +279,10 @@ def test_resolver_scale_smoke(tmp_path: Path) -> None:
         conn.close()
 ```
 
-- [ ] **Step 2: Run the test to verify it fails (RED)**
+- [ ] **Step 2: Confirmar que o guard passa no código atual (baseline verde)**
 
 Run: `.venv/bin/pytest tests/unit/test_resolve_import_targets_equivalence.py -v`
-Expected: both tests PASS against the current code (the current algorithm already produces the oracle result and n=3000 is small enough to finish under 10s). This test is a **guard**, not a red-first behavior test — the rewrite must keep it green. Confirm both pass now, then proceed. (If either fails on current code, stop and reconcile the fixture with actual semantics before touching `builder.py`.)
+Expected: os dois GUARDS — `test_resolver_matches_legacy_on_controlled_fixture` (equivalência em nomes limpos) e `test_resolver_scale_smoke` — PASSAM contra o código atual (o algoritmo atual já produz o resultado do oráculo, e n=3000 é pequeno o bastante pra terminar sob 10s). São guards de baseline, não testes red-first: o rewrite deve mantê-los verdes. O terceiro teste, `test_resolver_discards_legacy_wildcard_and_case_overmatches`, FALHA no código atual (é red-first) — ele documenta o over-match coringa/case do `LIKE` legado e só fica verde após o rewrite (Step 4). Confirme esse estado (2 guards verdes + 1 correção vermelha), depois prossiga. (Se um dos GUARDS falhar no código atual, pare e reconcilie o fixture com a semântica real antes de tocar `builder.py`.)
 
 - [ ] **Step 3: Rewrite `_resolve_import_targets` (minimal impl)**
 
@@ -228,9 +293,11 @@ Replace the `conn.execute(""" UPDATE imports ... """)` block (`engine/graph/buil
     # `LIKE '%.'||s.name` era O(imports × symbols) (wildcard à esquerda,
     # não-indexável) e não completava em monorepo real. Trocado por um
     # índice em memória `name -> (menor path, file_id)` (uma passada sobre
-    # symbols) + resolução por segmento terminal. Semântica preservada: o
-    # mesmo critério exato/sufixo e o mesmo desempate ORDER BY (f.path,
-    # s.name) — ver test_resolve_import_targets_equivalence.
+    # symbols) + resolução por segmento terminal. Edges idênticas para matches
+    # LITERAIS (exato/sufixo) com o mesmo desempate ORDER BY (f.path, s.name);
+    # os over-matches acidentais de coringa (`_`/`%` no nome do símbolo) e de
+    # caixa do `LIKE` legado são descartados por design (o índice literal é
+    # estritamente mais correto) — ver test_resolve_import_targets_equivalence.
     best_by_name: dict[str, tuple[str, int]] = {}
     for row in conn.execute(
         "SELECT s.name AS name, s.file_id AS file_id, f.path AS path "
@@ -278,7 +345,7 @@ Note: `best_by_name[name]` keeps the lexicographically smallest `path` for that 
 - [ ] **Step 4: Run the test to verify it passes (GREEN)**
 
 Run: `.venv/bin/pytest tests/unit/test_resolve_import_targets_equivalence.py -v`
-Expected: `2 passed`.
+Expected: `3 passed` (os dois guards + o teste de correção coringa/case agora verde).
 
 - [ ] **Step 5: Run the broader graph lane to confirm no regression**
 
@@ -290,7 +357,7 @@ Expected: all pass (no count regression vs. baseline).
 In `CHANGELOG.md` under `## [Unreleased] > ### Fixed`, add:
 
 ```markdown
-- **`_resolve_import_targets` — perf O(imports+symbols) (GRAPH-REAL-REPO Stage 1):** troca o subquery correlacionado `LIKE '%.'||s.name` (O(imports×symbols), não completava em monorepo real ~18k arquivos) por um índice em memória `name → (menor path, file_id)` + resolução por segmento terminal. Semântica de resolução de edges preservada (test de equivalência com a SQL legada como oráculo num fixture controlado). `forge init`/rebuild deixa de travar na escala de produção.
+- **`_resolve_import_targets` — perf O(imports+symbols) + correção de match coringa/case (GRAPH-REAL-REPO Stage 1):** troca o subquery correlacionado `LIKE '%.'||s.name` (O(imports×symbols), não completava em monorepo real ~18k arquivos) por um índice em memória `name → (menor path, file_id)` + resolução por segmento terminal. Edges preservadas para matches literais (exato/sufixo — guardado por test de equivalência com a SQL legada como oráculo num fixture de nomes limpos); corrige de propósito o match acidental de coringa (`_`/`%` no nome do símbolo) e de caixa do `LIKE` legado (o índice literal é estritamente mais correto — ex.: `com.x.onXclick` não resolve mais pro símbolo `on_click`). `forge init`/rebuild deixa de travar na escala de produção.
 ```
 
 - [ ] **Step 7: Commit**
@@ -486,7 +553,7 @@ from engine.graph.builder import (
     _ensure_platform_column,
     _ensure_reuse_intelligence_columns,
     _infer_feature_slug,
-    ...
+    # (demais imports existentes inalterados)
 )
 ```
 
@@ -929,6 +996,10 @@ git commit -m "feat(graph): popula files.platform no build full e incremental"
 - Modify: `engine/graph/duplicates.py:230-265` (`_q_kmp_migration_candidates`)
 - Modify: `engine/graph/queries.py:619-658` (`find_redundant_platform_specific`)
 - Modify: `engine/graph/queries.py:526-559` (`find_kmp_migration_candidates`)
+- Modify: `tests/unit/test_query_q14_redundant_platform.py` (seed `platform` — same-change test-sync)
+- Modify: `tests/unit/test_query_q16_kmp_migration_candidate.py` (seed `platform` no `_insert_kt_shared` — same-change test-sync)
+- Modify: `README.md` (bump da contagem `rapid` — doc-sync, Mandamento #6)
+- Modify: `docs/design/04-pending.md` (registra follow-ons deferidos — doc-sync, Mandamentos #6/#7)
 - Modify: `CHANGELOG.md`
 - Test: `tests/unit/test_platform_aware_reuse_queries.py` (create)
 
@@ -938,7 +1009,7 @@ git commit -m "feat(graph): popula files.platform no build full e incremental"
 
 **Semantic change (documented).** The old queries keyed off `module LIKE 'androidApp%'` + literal `source_set`. The new queries key off `files.platform`:
 - `redundant-platform-specific`: shared side `shared_f.platform = 'common'`, redundant side `android_f.platform = 'android'`. This grows the redundant side to include Android code under `/src/main/` in modules NOT named `androidApp*` (today missed).
-- `kmp-migration-candidate`: Kotlin side `kt_f.platform = 'common'` (replaces `module = 'shared'/'shared:%'` + `source_set = 'commonMain' OR source_set IS NULL`). The Swift side is unchanged (any `.swift func` matching receiver+name). The old `source_set IS NULL` fallback is subsumed by honest platform inference.
+- `kmp-migration-candidate`: Kotlin side `kt_f.platform = 'common'` (replaces `module = 'shared'/'shared:%'` + `source_set = 'commonMain' OR source_set IS NULL`). The Swift side is unchanged (any `.swift func` matching receiver+name). Isto muda o recall nas DUAS direções: (1) **cresce** — arquivos `commonMain` fora do módulo `shared` (ex.: `feature:x/src/commonMain/`) passam a entrar, já que o gate agora é a plataforma derivada e não mais `module = 'shared'`; (2) **estreita** — arquivos do módulo `shared` com `source_set NULL` que NÃO caem em `commonMain` deixam de ser candidatos (o antigo fallback `source_set IS NULL` os aceitava; agora são classificados `android` sob `/src/` ou `NULL` e saem da candidatura). O estreitamento é o degrade seguro documentado na spec (Risks) e deve ser monitorado no re-spike (ver follow-on em `04-pending`).
 
 **Note on duplication:** `duplicates.py` (build-time detection, materializes `reuse_findings`) and `queries.py` (read-time for `forge graph`) carry near-identical SQL for each of these two queries. Edit BOTH; keep them character-identical in the changed clause. Extracting a shared SQL constant is out of scope for Stage 1 (Mandamento #4) — flag it as a follow-on, do not refactor here.
 
@@ -1156,8 +1227,12 @@ Expected: `3 passed`.
 
 - [ ] **Step 5: Run the existing reuse-query lane (regression guard)**
 
-Run: `.venv/bin/pytest tests/unit/test_query_q14_redundant_platform.py tests/unit/test_reuse_intelligence.py tests/unit/test_graph_queries.py -q`
-Expected: pass. NOTE: the existing `tests/unit/test_query_q14_redundant_platform.py` hand-seeds files WITHOUT a `platform` value (it inserts `module`/`source_set` only), so its rows now have `platform=NULL` and the platform-aware query returns 0 → those assertions (`len(rows) == 1`) will FAIL. This is expected fallout of the semantic change. Update that test in THIS commit: add `platform="common"` to the shared file and `platform="android"` to the android file in both `_insert_file` calls so it exercises the new contract. (This is a same-change test-sync, not scope creep — the query it covers changed.) Re-run until green.
+Run: `.venv/bin/pytest tests/unit/test_query_q14_redundant_platform.py tests/unit/test_query_q16_kmp_migration_candidate.py tests/unit/test_reuse_intelligence.py tests/unit/test_graph_queries.py -q`
+Expected: pass. NOTE: **duas** suítes existentes semeiam arquivos SEM valor de `platform` e quebram com a mudança semântica — atualize AMBAS neste commit (test-sync na mesma mudança, não scope creep — as queries que elas cobrem mudaram):
+- `tests/unit/test_query_q14_redundant_platform.py` insere `module`/`source_set` só (`platform=NULL`), então a query plataforma-específica retorna 0 e `len(rows) == 1` FALHA. Adicione `platform="common"` ao arquivo shared e `platform="android"` ao arquivo android nas duas chamadas de `_insert_file` pra exercitar o novo contrato.
+- `tests/unit/test_query_q16_kmp_migration_candidate.py` semeia o lado Kotlin via o helper `_insert_kt_shared`, cujo INSERT lista só `files(path, language, module, source_set)` (`platform=NULL`); como `find_kmp_migration_candidates` agora exige `kt_f.platform = 'common'`, `assert len(rows) == 1` FALHA. Adicione `platform` à lista de colunas e o valor `'common'` ao INSERT do `_insert_kt_shared` (mesmo ajuste do q14). O lado Swift (`_insert_swift`) NÃO precisa de `platform` — a query não gateia o lado Swift por plataforma.
+
+Re-run until green.
 
 - [ ] **Step 6: CHANGELOG entry**
 
@@ -1167,10 +1242,26 @@ Expected: pass. NOTE: the existing `tests/unit/test_query_q14_redundant_platform
 - **Reuse-queries plataforma-específicas discriminam por `files.platform` (GRAPH-REAL-REPO Stage 1):** `redundant-platform-specific` (lado comum `platform='common'` ↔ redundante `platform='android'`) e `kmp-migration-candidate` (lado Kotlin `platform='common'`) substituem a heurística `module LIKE 'androidApp%'` + `source_set` literal. Universo de comparação cresce para incluir Android em `/src/main/` (qualquer módulo) e Swift do `iosApp`. Semântica dos findings preservada (só o WHERE mudou; row shape idêntico). Mudança espelhada em `duplicates.py` (detecção build-time) e `queries.py` (read-time). `test_query_q14_redundant_platform` atualizado para semear `platform`.
 ```
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 7: Doc-sync — bump da contagem `rapid` no README + follow-ons em `04-pending`**
+
+Este é o único bump de estatística do README pra a wave inteira (Mandamento #6), consolidado no commit da última task. NÃO hardcode número — rode o comando e use a saída.
+
+1. **README:** rode a lane rápida e leia a contagem confirmada:
 
 ```bash
-git add engine/graph/duplicates.py engine/graph/queries.py tests/unit/test_platform_aware_reuse_queries.py tests/unit/test_query_q14_redundant_platform.py CHANGELOG.md
+.venv/bin/pytest -m 'not integration and not e2e' -q | tail -1
+```
+
+Atualize a estatística canônica em `README.md:125` (linha da tabela `Tests`, campo `rapid **NNNN passed**`) com o número reportado por esse comando. Se houver outros espelhos da stat `rapid` (ex.: `README.md:198`), mantenha-os consistentes com o mesmo número.
+
+2. **04-pending:** registre em `docs/design/04-pending.md` os dois follow-ons deferidos por escopo (Mandamento #4) nesta wave, pra não virarem dívida silenciosa (Mandamentos #6/#7):
+   - **Extração da SQL duplicada** entre `engine/graph/duplicates.py` (detecção build-time) e `engine/graph/queries.py` (read-time) — as duas carregam SQL quase-idêntica pras queries `redundant-platform-specific` e `kmp-migration-candidate`; consolidar num constante/helper compartilhado quando a forma estabilizar.
+   - **Monitorar o estreitamento de recall** do `kmp-migration-candidate` no re-spike (G2): arquivos do módulo `shared` com `source_set NULL` fora de `commonMain` deixam de ser candidatos (ver "Semantic change" acima). Confirmar no re-spike que o estreitamento não descarta candidatos legítimos.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add engine/graph/duplicates.py engine/graph/queries.py tests/unit/test_platform_aware_reuse_queries.py tests/unit/test_query_q14_redundant_platform.py tests/unit/test_query_q16_kmp_migration_candidate.py README.md docs/design/04-pending.md CHANGELOG.md
 git commit -m "feat(graph): reuse-queries discriminam plataforma via files.platform"
 ```
 
@@ -1187,14 +1278,14 @@ Expected: all pass, no count regression vs. the branch baseline. Then `forge ver
 
 - [ ] **G2: Re-spike against `inchurch-app-main` (isolated, read-only)**
 
-Same protocol as the original spike: an isolated git worktree of feature-forge with its OWN `.venv` (editable-install trap — verify `python -c "import engine; print(engine.__file__)"` points INSIDE the worktree, not the main repo), graph DB written to the scratchpad (`/private/tmp/claude-503/.../scratchpad/inchurch-graph.db`), never inside the app. The app repo `/Users/thg.inchurch/StudioProjects/inchurch-app-main` is read-only input.
+Same protocol as the original spike: an isolated git worktree of feature-forge with its OWN `.venv` (editable-install trap — verify `python -c "import engine; print(engine.__file__)"` points INSIDE the worktree, not the main repo), graph DB written to the scratchpad (`/private/tmp/claude-503/-Users-thg-inchurch-Documents-feature-forge/aa8d73d7-b9fd-4fb3-b5a8-8720e724dca0/scratchpad/inchurch-graph.db`), never inside the app. The app repo `/Users/thg.inchurch/StudioProjects/inchurch-app-main` is read-only input.
 
 ```bash
 python - <<'PY'
 from pathlib import Path
 from engine.graph.builder import build_full
 app = Path("/Users/thg.inchurch/StudioProjects/inchurch-app-main")
-db = Path("/private/tmp/claude-503/.../scratchpad/inchurch-graph.db")
+db = Path("/private/tmp/claude-503/-Users-thg-inchurch-Documents-feature-forge/aa8d73d7-b9fd-4fb3-b5a8-8720e724dca0/scratchpad/inchurch-graph.db")
 stats = build_full(app, db_path=db)
 print("BUILD:", stats)  # (a) build completes + duration_ms
 PY
@@ -1213,7 +1304,7 @@ These three numbers are the input for the Stage 2 go/no-go decision (broaden sym
 
 | AC | Requirement | Task(s) |
 |---|---|---|
-| **AC-1** | `_resolve_import_targets` in ~O(imports+symbols); index-based; edge set preserved; verified by equivalence-on-fixture + scale | **Task 1** (rewrite + oracle equivalence test + scale smoke) |
+| **AC-1** | `_resolve_import_targets` in ~O(imports+symbols); index-based; edge set preserved for literal matches (legacy `LIKE` wildcard/case over-matches intentionally discarded); verified by equivalence-on-clean-fixture + wildcard/case correction test + scale | **Task 1** (rewrite + oracle equivalence test + correction test + scale smoke) |
 | **AC-2** | `files.platform` column via idempotent ALTER (no SCHEMA_VERSION bump) + `infer_platform` rules; fixture per-branch classification | **Task 2** (column + DDL + migration) · **Task 3** (`infer_platform` table-driven) · **Task 4** (populated on build) |
 | **AC-3** | `redundant-platform-specific` + `kmp-migration-candidate` discriminate via `files.platform`; semantics preserved; `/src/main/` android + `iosApp` swift now in universe; fixture that today produces no finding now does | **Task 5** (both queries in `duplicates.py` + `queries.py`; RED test = `/src/main/` android dup) |
 | **AC-4** | Incremental honors `platform` (re-insert identical to full) | **Task 4** (`_refresh_file` INSERT) · **Task 2** (marker bump so incremental applies the ALTER on legacy DBs) |
