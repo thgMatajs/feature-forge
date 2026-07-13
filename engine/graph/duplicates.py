@@ -191,14 +191,13 @@ def _q_duplicates_within_module(conn: sqlite3.Connection) -> list[dict]:
                COUNT(*) AS n
         FROM symbols s
         JOIN files f ON s.file_id = f.id
-        WHERE s.kind = 'fun'
-          AND s.receiver_type IS NOT NULL
+        WHERE s.kind IN ('fun', 'composable_fun')
           AND s.body_hash IS NOT NULL
           AND f.path LIKE '%.kt'
         GROUP BY f.module, COALESCE(f.source_set, ''),
-                 s.receiver_type, s.name, s.signature, s.body_hash
+                 COALESCE(s.receiver_type, ''), s.name, s.signature, s.body_hash
         HAVING COUNT(*) > 1
-        ORDER BY n DESC, f.module, s.receiver_type, s.name
+        ORDER BY n DESC, f.module, COALESCE(s.receiver_type, ''), s.name
         """
     ).fetchall()
     return [dict(r) for r in rows]
@@ -215,13 +214,12 @@ def _q_duplicates_cross_module(conn: sqlite3.Connection) -> list[dict]:
                COUNT(*) AS n_files
         FROM symbols s
         JOIN files f ON s.file_id = f.id
-        WHERE s.kind = 'fun'
-          AND s.receiver_type IS NOT NULL
+        WHERE s.kind IN ('fun', 'composable_fun')
           AND s.body_hash IS NOT NULL
           AND f.path LIKE '%.kt'
-        GROUP BY s.receiver_type, s.name, s.signature, s.body_hash
+        GROUP BY COALESCE(s.receiver_type, ''), s.name, s.signature, s.body_hash
         HAVING COUNT(DISTINCT f.module) > 1
-        ORDER BY n_modules DESC, n_files DESC, s.receiver_type, s.name
+        ORDER BY n_modules DESC, n_files DESC, COALESCE(s.receiver_type, ''), s.name
         """
     ).fetchall()
     return [dict(r) for r in rows]

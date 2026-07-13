@@ -62,6 +62,7 @@ Versionamento: [SemVer](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 - `docs/design/04-pending.md`: o follow-on "impl de gates-nativos (Tema 6, face 2)"
   deixa de dizer "pode exigir Decisão 33" — a Decisão 33 foi tomada nesta fase,
   destravando a impl da Fase 1.
+- **Reuse-intelligence: universo de dup exata ampliado (GRAPH-REUSE-STAGE2):** a detecção within/cross-module (`_q_duplicates_within_module` / `_q_duplicates_cross_module`) deixa de exigir `receiver_type IS NOT NULL` e passa a incluir `kind IN ('fun','composable_fun')` (os únicos kinds que carregam `body_hash`). Extension funs continuam cobertas; entram top-level funs e composables. Agrupamento por `COALESCE(receiver_type,'')`. Medido no precision spike vs `inchurch-app-main`: 1 finding → ~89 grupos brutos (piso + exclusão de teste na sequência).
 
 ### Changed (load-bearing)
 
