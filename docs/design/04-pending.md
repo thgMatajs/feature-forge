@@ -4137,8 +4137,13 @@ aqui pra não virarem dívida silenciosa (Mandamentos #6/#7).
 - **Extração da SQL duplicada** entre `engine/graph/duplicates.py` (detecção
   build-time) e `engine/graph/queries.py` (read-time): as duas carregam SQL
   quase-idêntica pras queries `redundant-platform-specific` e
-  `kmp-migration-candidate`. Consolidar num constante/helper compartilhado
-  quando a forma estabilizar. (Fora do escopo Stage 1 — não refatorar agora.)
+  `kmp-migration-candidate`. Extrair a SQL de dup compartilhada entre
+  `duplicates.py` e `queries.py` num helper único (elimina o desync das 4
+  cópias — L-001); ao fazê-lo (a) expandir o test-source exclusion pra
+  topologias KMP web/native (`jsTest`/`wasmJsTest`/`nativeTest`/`desktopTest` +
+  iOS arch-specific test sets) — M-001; (b) adicionar teste de regressão pra a
+  ordem floor-skip-ANTES-do-`claimed_exact.add` — L-002. (Fora do escopo Stage
+  1 — não refatorar agora.)
 - **Monitorar o estreitamento de recall** do `kmp-migration-candidate` no
   re-spike (G2): arquivos do módulo `shared` com `source_set NULL` fora de
   `commonMain` deixam de ser candidatos (a gate mudou de `module='shared' +
