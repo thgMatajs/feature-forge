@@ -53,6 +53,7 @@ CREATE TABLE files (
   language        TEXT,                          -- kotlin | swift | typescript | java | objc | xml | ...
   module          TEXT,                          -- shared | androidApp | iosApp | webApp
   source_set      TEXT,                          -- KMP source-set (commonMain | androidMain | iosMain | …) — NULL fora de KMP
+  platform        TEXT,                          -- plataforma derivada: common | android | ios | jvm — NULL quando indeterminado
   lines           INTEGER,
   last_modified   TEXT,                          -- ISO8601
   sha256          TEXT
@@ -60,6 +61,8 @@ CREATE TABLE files (
 CREATE INDEX idx_files_module ON files(module);
 CREATE INDEX idx_files_language ON files(language);
 CREATE INDEX idx_files_source_set ON files(source_set);
+-- idx_files_platform NÃO está no DDL canônico (é criado por _ensure_platform_column;
+-- ver nota abaixo + docs/design/04-pending.md).
 ```
 
 > **`files.language`** carrega o slug curto da linguagem detectada na
@@ -69,6 +72,22 @@ CREATE INDEX idx_files_source_set ON files(source_set);
 > no DDL canônico (`engine/utils/sqlite_io.py`) e fica `NULL` em projetos
 > sem layout KMP. Documentação detalhada da semântica está em §Reuse
 > Intelligence > New columns.
+
+> **`files.platform`** (GRAPH-REAL-REPO Stage 1) é a plataforma *derivada* do
+> arquivo — distinta de `source_set` (o nome literal do source-set KMP). Vem
+> de `infer_platform(module, source_set, rel_path, language)`
+> (`engine/graph/gradle_modules.py`): source-set KMP explícito mapeia direto
+> (`commonMain→common`, `androidMain/androidTest/androidUnitTest→android`,
+> `iosMain`/variantes iOS`→ios`, `jvmMain→jvm`); sem source-set KMP, Swift/ObjC
+> → `ios`, `.java` → `android`, e Kotlin/XML sob um dir `src/<sourceSet>/`
+> (layout Android/JVM padrão, ex.: `/src/main/`) → `android`. Casos sem sinal
+> (js/wasm/native, flavors custom) ficam `NULL` (degrade seguro — as queries
+> plataforma-específicas ignoram `NULL`). A **coluna** aparece no DDL canônico
+> (`engine/utils/sqlite_io.py`); o **índice** `idx_files_platform` é criado por
+> `_ensure_platform_column` (migração idempotente, roda no build full e no
+> incremental), NÃO no DDL canônico — de propósito, porque um `CREATE INDEX`
+> sobre coluna adicionada mid-version crasharia `init_schema` em DB legado.
+> SEM bump de `SCHEMA_VERSION` (mesmo padrão de coluna de `body`/`source_set`).
 
 ### `symbols`
 
@@ -623,7 +642,9 @@ redundant platform-specific) at `forge init` and on graph rebuild.
 **`symbols`**
 - `receiver_type TEXT` — receiver of an extension function. Non-NULL only for
   `fun ReceiverType.name(...)` (Kotlin) and `extension Type { func name }`
-  (Swift).
+  (Swift). (GRAPH-REUSE-STAGE2: a detecção de dup exata — Q12/Q13 — não depende
+  mais desta coluna ser não-NULL; o universo agora é `kind IN ('fun',
+  'composable_fun')`. Ver "Reuse-detection universe" abaixo.)
 - `body_hash TEXT` — SHA-1[:16] of the normalized function body. NULL when
   the parser couldn't close the brace counter.
 - `body_tokens TEXT` — JSON array of normalized identifiers / literals for
@@ -702,6 +723,39 @@ CREATE TABLE reuse_finding_locations (
 | Q17 | `find_duplicate_ts_helpers`         | `duplicate-ts-helper`          |
 
 Plus `list_reuse_findings(category=None)` reads the materialized table.
+
+### Reuse-detection universe (GRAPH-REUSE-STAGE2)
+
+A detecção de dup exata (Q12 within-module, Q13 cross-module) foi ampliada e
+calibrada. Mudança espelhada entre `engine/graph/duplicates.py` (build-time) e
+`engine/graph/queries.py` (read-time do `forge graph`) — os dois caminhos ficam
+consistentes.
+
+1. **Universo ampliado.** A detecção NÃO exige mais extension function
+   (`receiver_type IS NOT NULL`). O universo agora é
+   `kind IN ('fun','composable_fun')` — top-level funs, `@Composable` funs e
+   extensions. (Os demais kinds — `val`/`var`/`class`/`interface`/`enum`/
+   `object` — não carregam `body_hash`, então nunca entraram.) Agrupamento por
+   `COALESCE(receiver_type, '')` (top-level funs têm receiver NULL).
+2. **Piso de trivialidade.** Constante `REUSE_MIN_BODY_TOKENS = 5`
+   (`engine/graph/duplicates.py`): grupos **within-module** com menos de 5
+   `body_tokens` distintos são descartados (ruído — setter de 1 linha,
+   boilerplate). Contagem feita em Python (`_distinct_body_token_count`, replica
+   o precision spike; não depende da extensão JSON1 do SQLite). Grupos
+   **cross-module** (≥2 módulos, Q13) **bypassam** o piso (sinal mais forte).
+   Calibrado no precision spike vs `inchurch-app-main` (precisão 72%→98% sem
+   perder finding REAL).
+3. **Exclusão de test-source (path-based).** Símbolos em paths de teste —
+   `src/test`, `src/androidTest`, `src/androidUnitTest`, `src/androidHostTest`,
+   `src/commonTest`, `src/iosTest`, `src/jvmTest` — NÃO entram na detecção
+   (within OU cross). Predicado por **path** (não por `source_set`): o
+   `src/test/` padrão tem `source_set` NULL, e um filtro `NOT IN (...)` sobre
+   NULL descartaria quase toda a produção Android.
+4. **Advise-only.** Nada disso é enforcement/hard-block. Os findings continuam
+   materializando em `reuse_findings` e fluindo pela pipeline de proposals
+   existente (`proposed-evolutions.yaml`) com a mesma `confidence`. Q14
+   (`kmp-migration`), Q15 (`near-duplicate`) e Q16 (`redundant-platform-specific`)
+   NÃO foram tocados por este incremento.
 
 ### Signature normalization
 

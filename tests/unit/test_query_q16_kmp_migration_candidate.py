@@ -27,8 +27,8 @@ from engine.utils.sqlite_io import open_db, transaction
 
 def _insert_kt_shared(conn, path: str, name: str, receiver: str) -> int:
     cur = conn.execute(
-        "INSERT INTO files(path, language, module, source_set) "
-        "VALUES (?, 'kotlin', 'shared:core', 'commonMain')",
+        "INSERT INTO files(path, language, module, source_set, platform) "
+        "VALUES (?, 'kotlin', 'shared:core', 'commonMain', 'common')",
         (path,),
     )
     file_id = cur.lastrowid

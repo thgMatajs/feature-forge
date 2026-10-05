@@ -29,6 +29,7 @@ from engine.graph.gradle_deps import (
 )
 from engine.graph.gradle_modules import (
     infer_module_and_source_set,
+    infer_platform,
     load_gradle_modules,
 )
 from engine.graph.parser_java import JavaFileInfo, parse_java_file
@@ -104,6 +105,7 @@ def build_full(
             _ensure_imports_to_file_id_column(conn)
             _ensure_reuse_intelligence_columns(conn)
             _ensure_graph_body_column(conn)
+            _ensure_platform_column(conn)
         except sqlite3.Error as exc:
             _logger.error(
                 "schema migration failed during build_full: %s", exc, exc_info=True
@@ -519,6 +521,7 @@ def _ingest_file(
     language = _LANGUAGE_EXTENSIONS[ext]
     rel = _relpath(project_root, file_path)
     module, source_set = infer_module_and_source_set(rel, gradle_modules or {})
+    platform = infer_platform(module, source_set, rel, language)
 
     try:
         raw = file_path.read_bytes()
@@ -532,14 +535,14 @@ def _ingest_file(
     ).isoformat()
 
     conn.execute(
-        "INSERT INTO files(path, language, module, source_set, lines, last_modified, sha256) "
-        "VALUES(?, ?, ?, ?, ?, ?, ?) "
+        "INSERT INTO files(path, language, module, source_set, platform, lines, last_modified, sha256) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(path) DO UPDATE SET "
         "  language=excluded.language, module=excluded.module, "
-        "  source_set=excluded.source_set, "
+        "  source_set=excluded.source_set, platform=excluded.platform, "
         "  lines=excluded.lines, last_modified=excluded.last_modified, "
         "  sha256=excluded.sha256",
-        (rel, language, module, source_set, line_count, last_modified, sha256),
+        (rel, language, module, source_set, platform, line_count, last_modified, sha256),
     )
     file_id = conn.execute("SELECT id FROM files WHERE path = ?", (rel,)).fetchone()["id"]
 
@@ -1087,21 +1090,55 @@ def _resolve_import_targets(conn: sqlite3.Connection) -> None:
     import resolvia para alvos diferentes entre runs. `f.path` é estável
     por definição (vem do filesystem).
     """
-    conn.execute(
-        """
-        UPDATE imports
-        SET to_file_id = (
-            SELECT s.file_id
-            FROM symbols s
-            JOIN files f ON s.file_id = f.id
-            WHERE s.name = imports.to_symbol
-               OR imports.to_symbol LIKE '%.' || s.name
-            ORDER BY f.path, s.name
-            LIMIT 1
+    # F-perf (GRAPH-REAL-REPO Stage 1): o loop correlacionado
+    # `LIKE '%.'||s.name` era O(imports × symbols) (wildcard à esquerda,
+    # não-indexável) e não completava em monorepo real. Trocado por um
+    # índice em memória `name -> (menor path, file_id)` (uma passada sobre
+    # symbols) + resolução por segmento terminal. Edges idênticas para matches
+    # LITERAIS (exato/sufixo) com o mesmo desempate ORDER BY (f.path, s.name);
+    # os over-matches acidentais de coringa (`_`/`%` no nome do símbolo) e de
+    # caixa do `LIKE` legado são descartados por design (o índice literal é
+    # estritamente mais correto) — ver test_resolve_import_targets_equivalence.
+    best_by_name: dict[str, tuple[str, int]] = {}
+    for row in conn.execute(
+        "SELECT s.name AS name, s.file_id AS file_id, f.path AS path "
+        "FROM symbols s JOIN files f ON s.file_id = f.id"
+    ):
+        name = row["name"]
+        path = row["path"]
+        prev = best_by_name.get(name)
+        if prev is None or path < prev[0]:
+            best_by_name[name] = (path, row["file_id"])
+
+    updates: list[tuple[int, int]] = []
+    for row in conn.execute(
+        "SELECT rowid AS rid, to_symbol AS to_symbol "
+        "FROM imports WHERE to_file_id IS NULL"
+    ).fetchall():
+        target = row["to_symbol"]
+        if target is None:
+            continue
+        # Candidate symbol names = exact target + every dot-suffix tail,
+        # mirroring `s.name = to_symbol OR to_symbol LIKE '%.' || s.name`.
+        candidates = [target]
+        for pos, ch in enumerate(target):
+            if ch == ".":
+                candidates.append(target[pos + 1:])
+        best: tuple[str, str, int] | None = None  # (path, name, file_id)
+        for name in candidates:
+            entry = best_by_name.get(name)
+            if entry is None:
+                continue
+            cand = (entry[0], name, entry[1])
+            if best is None or (cand[0], cand[1]) < (best[0], best[1]):
+                best = cand
+        if best is not None:
+            updates.append((best[2], row["rid"]))
+
+    if updates:
+        conn.executemany(
+            "UPDATE imports SET to_file_id = ? WHERE rowid = ?", updates
         )
-        WHERE to_file_id IS NULL
-        """
-    )
 
 
 def _ensure_imports_to_file_id_column(conn: sqlite3.Connection) -> None:
@@ -1208,6 +1245,20 @@ def _ensure_reuse_intelligence_columns(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_reuse_finding_locations_file "
         "ON reuse_finding_locations(file_id)"
     )
+
+
+def _ensure_platform_column(conn: sqlite3.Connection) -> None:
+    """Migration: add ``files.platform TEXT`` + index for legacy DBs (schema v2).
+
+    Plataforma derivada (``common`` | ``android`` | ``ios`` | ``jvm`` | NULL)
+    via ``infer_platform``. Adicionada por ALTER idempotente — mesmo padrão do
+    ``source_set`` — sem bump de SCHEMA_VERSION; DBs novos já recebem a coluna
+    do DDL canônico em ``engine/utils/sqlite_io.py``.
+    """
+    cols = {c["name"] for c in conn.execute("PRAGMA table_info(files)").fetchall()}
+    if "platform" not in cols:
+        conn.execute("ALTER TABLE files ADD COLUMN platform TEXT")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_files_platform ON files(platform)")
 
 
 _FEATURE_DIR_RE = re.compile(r"(?:^|/)(?:feature|features)/([a-zA-Z0-9_\-]+)/")

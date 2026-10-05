@@ -15,10 +15,17 @@ from engine.graph import queries
 from engine.utils.sqlite_io import open_db, transaction
 
 
-def _insert_file(conn, path: str, module: str, source_set: str | None) -> int:
+def _insert_file(
+    conn,
+    path: str,
+    module: str,
+    source_set: str | None,
+    platform: str | None = None,
+) -> int:
     cur = conn.execute(
-        "INSERT INTO files(path, language, module, source_set) VALUES (?, ?, ?, ?)",
-        (path, "kotlin", module, source_set),
+        "INSERT INTO files(path, language, module, source_set, platform) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (path, "kotlin", module, source_set, platform),
     )
     return cur.lastrowid
 
@@ -54,12 +61,14 @@ def test_redundant_platform_shared_and_android(tmp_path: Path) -> None:
                 "shared/foo/Time.kt",
                 module="shared:foo",
                 source_set="commonMain",
+                platform="common",
             )
             android_f = _insert_file(
                 conn,
                 "androidApp/core/Time.kt",
                 module="androidApp:core",
                 source_set="main",
+                platform="android",
             )
             _insert_kt_ext(conn, shared_f)
             _insert_kt_ext(conn, android_f)
@@ -86,6 +95,7 @@ def test_redundant_platform_no_shared_peer(tmp_path: Path) -> None:
                 "androidApp/core/Time.kt",
                 module="androidApp:core",
                 source_set="main",
+                platform="android",
             )
             _insert_kt_ext(conn, android_f)
     finally:

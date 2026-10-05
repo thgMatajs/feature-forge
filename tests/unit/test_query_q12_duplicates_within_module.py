@@ -33,14 +33,15 @@ def _insert_kt_extension(
     signature: str,
     body_hash: str | None,
     line: int = 10,
+    body_tokens: str = '["t1","t2","t3","t4","t5"]',
 ) -> None:
     conn.execute(
         """
         INSERT INTO symbols(file_id, name, kind, signature, line_start,
-                            receiver_type, body_hash, modifiers)
-        VALUES (?, ?, 'fun', ?, ?, ?, ?, '')
+                            receiver_type, body_hash, body_tokens, modifiers)
+        VALUES (?, ?, 'fun', ?, ?, ?, ?, ?, '')
         """,
-        (file_id, name, signature, line, receiver_type, body_hash),
+        (file_id, name, signature, line, receiver_type, body_hash, body_tokens),
     )
 
 
